@@ -750,6 +750,10 @@ pub fn generate_config_toml() -> String {
 # wallpaper = "~/Pictures/bg.png"
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = 0.1
+# Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
+# wallpaper-blur = 0.0
+# Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
+# wallpaper-saturate = 1.0
 
 # Sort order for the session list on the landing page.
 # "created" = creation order (default), "mru" = most recently visited first,
@@ -771,8 +775,8 @@ pub fn generate_config_toml() -> String {
 # cursor-style = "bar"      # "block" | "underline" | "bar"
 # scrollback = 10000
 # font-size = 18.0
-# font-family = "JetBrains Mono"   # bundled: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", "Geist Mono", "Departure Mono"
-# font-weight = 200           # bold = font-weight + 200 (capped at 900)
+# font-family = "Geist Mono"        # bundled: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", "Geist Mono", "Departure Mono"
+# font-weight = 400           # bold = font-weight + 200 (capped at 900)
 #                              # bundled weight ranges: JetBrains Mono 100-800, Fira Code 300-700,
 #                              # Source Code Pro 200-900, Cascadia Code 200-700, Geist Mono 400-700, Departure Mono 400
 # allow-transparency = false

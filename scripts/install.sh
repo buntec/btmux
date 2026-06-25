@@ -66,5 +66,5 @@ case ":$PATH:" in
     ;;
 esac
 
-# Register as a background service
-"$INSTALL_DIR/$BINARY" install
+echo ""
+echo "Run 'btmux' to start the server, or 'btmux install' to register it as a background service."

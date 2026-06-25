@@ -29,12 +29,13 @@ Why run another app when your browser is already running?
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 ```
 
-This downloads the latest release binary for your platform, places it in `~/.local/bin`, and runs `btmux install` to register the background service. Set `BTMUX_INSTALL_DIR` to override the install location.
+This downloads the latest release binary for your platform and places it in `~/.local/bin`.
+Set `BTMUX_INSTALL_DIR` to override the install location.
 
-### Run as a background service (macOS, recommended)
+### Run as a background service (optional)
 
-btmux can install itself as a per-user service so it starts at login and
-restarts on crash (currently macOS only, via a [launchd](https://www.launchd.info/) LaunchAgent):
+btmux can register itself as a per-user background service so it starts at login and restarts on crash.
+macOS uses a [launchd](https://www.launchd.info/) LaunchAgent; Linux uses a [systemd](https://systemd.io/) user unit.
 
 ```sh
 btmux install              # install + start (defaults: 127.0.0.1:8004)
@@ -48,13 +49,20 @@ into the generated unit at install time, so re-run the installer after changing
 any of them. Install from a stable binary path (e.g. `~/.local/bin/btmux`), not a
 `target/` build artifact — a rebuild or `cargo clean` would break the service.
 
-## Use
+### Build from source
 
-If you are not running btmux as a service:
+Clone this repo.
 
 ```sh
-btmux                      # start btmux server (binds to localhost:8004 by default)
-btmux --port 8004          # pick a custom port
+just setup
+cargo install --path .
+```
+
+## Use
+
+```sh
+btmux         # start the server (binds to localhost:8004 by default)
+btmux --help  # get help
 ```
 
 Navigate to `localhost:<port>`
@@ -78,10 +86,10 @@ Config changes are picked up live.
 Requires [Rust](https://rustup.rs) and [Bun](https://bun.sh).
 
 ```sh
-just setup      # install dependencies
-just dev        # backend on :8044, frontend on :5173 (open http://localhost:5173)
-just build      # production build
-just run        # serve production build on :8004
+just setup  # install dependencies
+just dev    # backend on :8044, frontend on :5173 (open http://localhost:5173)
+just build  # production build
+just run    # serve production build on :8004
 ```
 
 ## License

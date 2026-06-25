@@ -41,6 +41,8 @@ fmt:
     cargo fmt
     cd frontend && bunx prettier --write "src/**/*.{ts,tsx}"
 
+format: fmt
+
 # Run clippy on the backend
 lint:
     cargo clippy -- -D warnings

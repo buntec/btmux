@@ -1,10 +1,8 @@
 //! Install/uninstall btmux as a per-user background service.
 //!
 //! The `install`/`uninstall` entry points detect the OS at runtime and delegate
-//! to a platform backend. Today only macOS is implemented; other platforms print
-//! a clear "not supported yet" message. Adding Linux (a systemd `--user` unit)
-//! later means filling in `install_linux`/`uninstall_linux` and wiring them into
-//! the `match` below — no CLI changes needed.
+//! to a platform backend. macOS and Linux are supported; other platforms print
+//! a clear "not supported yet" message.
 //!
 //! ## macOS
 //!
@@ -34,6 +32,7 @@ const LABEL: &str = "com.btmux.server";
 pub fn install(args: &CliArgs, print: bool) {
     match std::env::consts::OS {
         "macos" => install_macos(args, print),
+        "linux" => install_linux(args, print),
         other => unsupported(other),
     }
 }
@@ -42,6 +41,7 @@ pub fn install(args: &CliArgs, print: bool) {
 pub fn uninstall() {
     match std::env::consts::OS {
         "macos" => uninstall_macos(),
+        "linux" => uninstall_linux(),
         other => unsupported(other),
     }
 }
@@ -50,15 +50,158 @@ pub fn uninstall() {
 pub fn restart() {
     match std::env::consts::OS {
         "macos" => restart_macos(),
+        "linux" => restart_linux(),
         other => unsupported(other),
     }
 }
+
+// ── Linux (systemd --user) ────────────────────────────────────────────────
+
+/// Linux `install`: write a systemd user unit and enable + start it.
+fn install_linux(args: &CliArgs, print: bool) {
+    let exe = match current_exe() {
+        Ok(p) => p,
+        Err(e) => fail(&format!("cannot resolve the btmux binary path: {e}")),
+    };
+
+    let shell = resolve_shell(args);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let unit = render_systemd_unit(&exe, args, &shell, &path_env);
+
+    if print {
+        print!("{unit}");
+        return;
+    }
+
+    if exe.components().any(|c| c.as_os_str() == "target") {
+        eprintln!(
+            "warning: installing from a build-artifact path:\n  {}\n\
+             A `cargo clean` or rebuild will break the service. Consider copying\n\
+             the binary somewhere stable (e.g. ~/.local/bin/btmux) and running\n\
+             `install` from there.\n",
+            exe.display()
+        );
+    }
+
+    let unit_path = match systemd_unit_path() {
+        Some(p) => p,
+        None => fail("cannot resolve systemd user unit dir (is $HOME set?)"),
+    };
+
+    if let Some(dir) = unit_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            fail(&format!("cannot create {}: {e}", dir.display()));
+        }
+    }
+    if let Err(e) = std::fs::write(&unit_path, &unit) {
+        fail(&format!("cannot write {}: {e}", unit_path.display()));
+    }
+    println!("wrote {}", unit_path.display());
+
+    run_systemctl(&["--user", "daemon-reload"], false);
+    run_systemctl(&["--user", "enable", "--now", SYSTEMD_UNIT], false);
+
+    println!(
+        "btmux service installed and started.\n\n\
+         It is now running at http://{}:{} and will start at login.\n\n\
+           Status:  systemctl --user status {SYSTEMD_UNIT}\n\
+           Logs:    journalctl --user -u {SYSTEMD_UNIT} -f\n\
+           Stop:    btmux uninstall\n",
+        args.host, args.port,
+    );
+}
+
+/// Linux `restart`.
+fn restart_linux() {
+    if !run_systemctl(&["--user", "restart", SYSTEMD_UNIT], false) {
+        fail("failed to restart the btmux service — is it installed?");
+    }
+    println!("btmux service restarted.");
+}
+
+/// Linux `uninstall`.
+fn uninstall_linux() {
+    run_systemctl(&["--user", "disable", "--now", SYSTEMD_UNIT], true);
+
+    let unit_path = match systemd_unit_path() {
+        Some(p) => p,
+        None => fail("cannot resolve systemd user unit dir (is $HOME set?)"),
+    };
+    match std::fs::remove_file(&unit_path) {
+        Ok(()) => println!("removed {}", unit_path.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("no unit at {} — nothing to remove", unit_path.display());
+        }
+        Err(e) => fail(&format!("cannot remove {}: {e}", unit_path.display())),
+    }
+    run_systemctl(&["--user", "daemon-reload"], true);
+    println!("btmux service uninstalled.");
+}
+
+/// `~/.config/systemd/user/btmux.service`.
+const SYSTEMD_UNIT: &str = "btmux.service";
+
+fn systemd_unit_path() -> Option<PathBuf> {
+    // Respect $XDG_CONFIG_HOME if set.
+    let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| home().map(|h| h.join(".config")));
+    config_dir.map(|d| d.join("systemd").join("user").join(SYSTEMD_UNIT))
+}
+
+fn render_systemd_unit(exe: &Path, args: &CliArgs, shell: &str, path_env: &str) -> String {
+    format!(
+        "[Unit]\n\
+         Description=btmux — browser-based tmux\n\
+         After=network.target\n\
+         \n\
+         [Service]\n\
+         ExecStart={exe} --no-browser --host {host} --port {port} --shell {shell}\n\
+         Restart=on-failure\n\
+         Environment=PATH={path}\n\
+         Environment=SHELL={shell}\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n",
+        exe = exe.display(),
+        host = args.host,
+        port = args.port,
+        shell = shell,
+        path = path_env,
+    )
+}
+
+fn run_systemctl(args: &[&str], ignore_failure: bool) -> bool {
+    match std::process::Command::new("systemctl").args(args).output() {
+        Ok(out) => {
+            if out.status.success() {
+                return true;
+            }
+            if !ignore_failure {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if !stderr.trim().is_empty() {
+                    eprintln!("systemctl {}: {}", args.join(" "), stderr.trim());
+                }
+            }
+            false
+        }
+        Err(e) => {
+            if !ignore_failure {
+                eprintln!("failed to run systemctl: {e}");
+            }
+            false
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// No service backend for this OS yet. Kept as a single exit point so adding a
 /// platform is just another arm in the `install`/`uninstall` match above.
 fn unsupported(os: &str) -> ! {
     fail(&format!(
-        "installing btmux as a service is not supported on {os} yet (only macOS). \
+        "installing btmux as a service is not supported on {os} yet (macOS and Linux are supported). \
          Run btmux directly, or under your platform's service manager."
     ));
 }

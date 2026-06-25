@@ -29,7 +29,7 @@ Why run another app when your browser is already running?
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 ```
 
-This downloads the latest release binary for your platform, places it in `/usr/local/bin` on macOS or `~/.local/bin` on Linux, and runs `btmux install` to register the background service. Set `BTMUX_INSTALL_DIR` to override the install location.
+This downloads the latest release binary for your platform, places it in `~/.local/bin`, and runs `btmux install` to register the background service. Set `BTMUX_INSTALL_DIR` to override the install location.
 
 ### Run as a background service (macOS, recommended)
 

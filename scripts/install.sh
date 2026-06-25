@@ -11,7 +11,6 @@ ARCH=$(uname -m)
 
 case "$OS-$ARCH" in
   Darwin-arm64)   TARGET="aarch64-apple-darwin" ;;
-  Darwin-x86_64)  TARGET="x86_64-apple-darwin" ;;
   Linux-x86_64)   TARGET="x86_64-unknown-linux-gnu" ;;
   Linux-aarch64)  TARGET="aarch64-unknown-linux-gnu" ;;
   *)
@@ -20,13 +19,9 @@ case "$OS-$ARCH" in
     ;;
 esac
 
-# Resolve install directory: /usr/local/bin on macOS (canonical, no sudo needed),
-# ~/.local/bin on Linux (XDG standard, no sudo needed).
+# Resolve install directory: ~/.local/bin (user-writable, no sudo needed).
 if [ -z "$INSTALL_DIR" ]; then
-  case "$OS" in
-    Darwin) INSTALL_DIR="/usr/local/bin" ;;
-    Linux)  INSTALL_DIR="$HOME/.local/bin" ;;
-  esac
+  INSTALL_DIR="$HOME/.local/bin"
 fi
 
 # Fetch the latest release tag

@@ -29,23 +29,22 @@ interface Props {
   send: (msg: ClientMessage) => void;
 }
 
-const DEFAULT_FONT_SIZE = 14;
-const DEFAULT_FONT_FAMILY = 'JetBrains Mono';
 const FONT_FALLBACK = 'Symbols Nerd Font Mono, Menlo, Monaco, monospace';
 const MIN_FONT_SIZE = 6;
 const MAX_FONT_SIZE = 72;
 
 function buildFontFamily(configured: string | null | undefined): string {
-  const base = configured ?? DEFAULT_FONT_FAMILY;
+  const base = configured ?? 'monospace';
   return `${base}, ${FONT_FALLBACK}`;
 }
 
 export function buildTerminalOptions(
   config: ClientConfig | null,
   fontSizeOffset: number,
-): ConstructorParameters<typeof Terminal>[0] {
-  const t = config?.terminal;
-  const baseSize = t?.fontSize ?? DEFAULT_FONT_SIZE;
+): ConstructorParameters<typeof Terminal>[0] | null {
+  if (!config) return null;
+  const t = config.terminal;
+  const baseSize = t?.fontSize ?? 14;
   const opts: ConstructorParameters<typeof Terminal>[0] = {
     fontSize: Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, baseSize + fontSizeOffset)),
     fontFamily: buildFontFamily(t?.fontFamily),
@@ -90,7 +89,7 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || !termOptions) return;
 
     const term = new Terminal(termOptions);
     const fitAddon = new FitAddon();
@@ -111,10 +110,10 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
     // DOM text is rendered, causing the first Terminal to use a fallback/synthesized
     // weight until a config change forces a rebuild.
     let fontAbort = false;
-    const weight = termOptions!.fontWeight ?? 400;
+    const weight = termOptions.fontWeight ?? 400;
     const boldWeight = Math.min(weight + 200, 900);
-    const size = termOptions!.fontSize ?? DEFAULT_FONT_SIZE;
-    const family = termOptions!.fontFamily ?? 'monospace';
+    const size = termOptions.fontSize!;
+    const family = termOptions.fontFamily!;
     const primaryFamily = family
       .split(',')[0]
       .trim()

@@ -1,6 +1,7 @@
 # btmux
 
-A browser-based terminal manager with tmux-inspired UI, powered by [ghostty-web](https://github.com/buntec/ghostty-web).
+A browser-based terminal manager with tmux-inspired UI, powered by [ghostty-web](https://github.com/coder/ghostty-web).
+(Actually, this [fork](https://github.com/rcarmo/ghostty-web).)
 
 ## Why in the browser
 
@@ -54,6 +55,8 @@ Press `<prefix> + ?` to see a list of keybindings.
 
 ## Configuration
 
+A default config file is created on first launch:
+
 ```
 ~/.config/btmux/config.toml
 ```
@@ -67,12 +70,11 @@ Config changes are picked up live.
 Requires [Rust](https://rustup.rs) and [Bun](https://bun.sh).
 
 ```sh
+just setup      # install dependencies
 just dev        # backend on :8044, frontend on :5173 (open http://localhost:5173)
 just build      # production build
 just run        # serve production build on :8004
 ```
-
-Run `just` to list all available recipes.
 
 ## License
 

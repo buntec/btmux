@@ -127,6 +127,71 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
       fitAddon.fit();
     });
 
+    // Replace ghostty-web's built-in wheel handler for alt-screen applications
+    // (e.g. Claude Code) and mouse-tracking-enabled apps. The built-in handler
+    // fires raw arrow keys for alt-screen mode — one WheelEvent can emit up to
+    // 5 arrows, and trackpads fire many events per gesture, making scrolling
+    // uncontrollably fast. We accumulate pixel delta and emit exactly one scroll
+    // action per cell-height of travel, normalizing trackpad and mouse-wheel to
+    // the same rate.
+    //
+    // Decision tree:
+    //   • alt screen + mouse tracking → SGR mouse scroll sequences (most precise)
+    //   • alt screen + no tracking   → arrow keys, but accumulator-throttled
+    //   • normal screen              → return false; ghostty-web scrolls viewport
+    let scrollAccumPx = 0;
+    term.attachCustomWheelEventHandler((event: WheelEvent) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+
+      const hasMouseTracking = term.hasMouseTracking();
+      // Mode 1049 is the DEC private mode used by Ink.js/ncurses/etc. to
+      // switch to the alternate screen buffer.
+      const isAltScreen = term.getMode(1049, false);
+
+      if (!hasMouseTracking && !isAltScreen) return false; // let ghostty-web scroll viewport
+
+      const rect = container.getBoundingClientRect();
+      const lineHeight = rect.height / term.rows;
+
+      // Normalize deltaY to pixels regardless of deltaMode.
+      let deltaPx: number;
+      if (event.deltaMode === 0 /* DOM_DELTA_PIXEL */) {
+        deltaPx = event.deltaY;
+      } else if (event.deltaMode === 1 /* DOM_DELTA_LINE */) {
+        deltaPx = event.deltaY * lineHeight;
+      } else /* DOM_DELTA_PAGE */ {
+        deltaPx = event.deltaY * rect.height;
+      }
+
+      scrollAccumPx += deltaPx;
+      const ticks = Math.trunc(scrollAccumPx / lineHeight);
+      if (ticks === 0) return true; // consumed the event, wait for more travel
+      scrollAccumPx -= ticks * lineHeight;
+
+      if (hasMouseTracking) {
+        // Send SGR (or X10) mouse scroll sequences. button 64 = up, 65 = down.
+        const button = ticks > 0 ? 65 : 64;
+        const col = Math.max(
+          1,
+          Math.min(term.cols, Math.floor((event.clientX - rect.left) / (rect.width / term.cols)) + 1),
+        );
+        const row = Math.max(
+          1,
+          Math.min(term.rows, Math.floor((event.clientY - rect.top) / (rect.height / term.rows)) + 1),
+        );
+        const seq = term.getMode(1006, false)
+          ? `\x1b[<${button};${col};${row}M`
+          : `\x1b[M${String.fromCharCode(button + 32, Math.min(col + 32, 255), Math.min(row + 32, 255))}`;
+        for (let i = 0; i < Math.abs(ticks); i++) ws.send(seq);
+      } else {
+        // Alt screen, no mouse tracking: throttled arrow keys.
+        const arrow = ticks > 0 ? '\x1b[B' : '\x1b[A';
+        for (let i = 0; i < Math.abs(ticks); i++) ws.send(arrow);
+      }
+      return true;
+    });
+
     termRef.current = term;
     fitRef.current = fitAddon;
     registry?.set(paneId, term);

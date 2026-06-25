@@ -30,7 +30,6 @@ export function MirrorPane({ paneId, visible }: Props) {
   const termRef = useRef<Terminal | null>(null);
 
   const config = useStore((s) => s.config);
-  const fontSizeOffset = useStore((s) => s.fontSizeOffset);
 
   // Read visibility inside closures without re-running the mount effect (which
   // would dispose+rebuild the terminal and reconnect the socket).
@@ -61,7 +60,7 @@ export function MirrorPane({ paneId, visible }: Props) {
     // Mirror is read-only: stdin disabled, no onData/onResize wiring, no focus
     // registry, no store registration. It only ever displays.
     const term = new Terminal({
-      ...buildTerminalOptions(config, fontSizeOffset),
+      ...buildTerminalOptions(config),
       disableStdin: true,
       renderer: 'canvas',
     });
@@ -111,7 +110,7 @@ export function MirrorPane({ paneId, visible }: Props) {
     // Rebuild on config/font change so a live theme reload re-themes thumbnails,
     // matching TerminalPane. paneId is stable for the component's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneId, config, fontSizeOffset]);
+  }, [paneId, config]);
 
   // Park / wake with the grid's visibility (sockets keep streaming either way).
   useEffect(() => {

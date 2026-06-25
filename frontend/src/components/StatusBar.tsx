@@ -50,10 +50,9 @@ export function StatusBar({ sessionId }: Props) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
   const prefixActive = useStore((s) => s.prefixActive);
-  const fontSizeOffset = useStore((s) => s.fontSizeOffset);
   const notifications = useStore((s) => s.notifications);
   const navigate = useNavigate();
-  const fontSize = Math.max(6, Math.min(72, (config?.terminal?.fontSize ?? 14) + fontSizeOffset));
+  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
 
   const session = allSessions.find((s) => s.id === sessionId);
   if (!session) return null;

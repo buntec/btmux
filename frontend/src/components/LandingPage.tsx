@@ -132,8 +132,7 @@ export function LandingPage({ send, currentSessionId }: Props) {
   const config = useStore((s) => s.config);
   const setOverlay = useStore((s) => s.setOverlay);
   const navigate = useNavigate();
-  const fontSizeOffset = useStore((s) => s.fontSizeOffset);
-  const fontSize = Math.max(6, Math.min(72, (config?.terminal?.fontSize ?? 14) + fontSizeOffset));
+  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
 
   const sortedSessions = sortSessions(allSessions, config?.session_sort ?? 'created');
   const allNodes = buildTreeNodes(sortedSessions, currentSessionId);

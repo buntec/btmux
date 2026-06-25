@@ -27,7 +27,6 @@ interface AppStore {
   config: ClientConfig | null;
   prefixActive: boolean;
   overlay: Overlay | null;
-  fontSizeOffset: number;
   toasts: Toast[];
   // Window-grid (prefix + w) visibility. `windowGridMounted` flips true on first
   // open and stays true (sticky) so the grid's live thumbnail mirrors keep
@@ -66,7 +65,6 @@ interface AppStore {
   setWindowGridOpen: (open: boolean) => void;
   markWindowGridMounted: () => void;
   setPaneNumbersVisible: (visible: boolean) => void;
-  adjustFontSize: (delta: number) => void;
   showToast: (message: string, level?: 'info' | 'error', opts?: { body?: string; paneId?: string }) => void;
   dismissToast: (id: number) => void;
   setPaneNotification: (n: PaneNotification) => void;
@@ -87,7 +85,6 @@ export const useStore = create<AppStore>((set, get) => ({
   config: null,
   prefixActive: false,
   overlay: null,
-  fontSizeOffset: 0,
   toasts: [],
   windowGridOpen: false,
   windowGridMounted: false,
@@ -119,7 +116,6 @@ export const useStore = create<AppStore>((set, get) => ({
   setWindowGridOpen: (open) => set({ windowGridOpen: open }),
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
-  adjustFontSize: (delta) => set((s) => ({ fontSizeOffset: s.fontSizeOffset + delta })),
   showToast: (message, level, opts) => {
     const id = nextToastId++;
     set((s) => ({ toasts: [...s.toasts, { id, message, level, body: opts?.body, paneId: opts?.paneId }] }));

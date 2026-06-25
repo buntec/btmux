@@ -323,12 +323,6 @@ function runAction(
     case 'command-palette':
       openOverlay({ mode: 'command', title: 'Commands', commands: store.config?.commands ?? [] });
       break;
-    case 'font-size-increase':
-      store.adjustFontSize(2);
-      break;
-    case 'font-size-decrease':
-      store.adjustFontSize(-2);
-      break;
     case 'choose-colors': {
       const schemes = store.config?.color_schemes ?? [];
       const active = store.config?.active_color_scheme;

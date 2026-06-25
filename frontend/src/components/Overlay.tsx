@@ -14,8 +14,7 @@ interface Props {
 export function Overlay({ sessionId, send, config }: Props) {
   const overlay = useStore((s) => s.overlay);
   const setOverlay = useStore((s) => s.setOverlay);
-  const fontSizeOffset = useStore((s) => s.fontSizeOffset);
-  const fontSize = Math.max(6, Math.min(72, (config?.terminal?.fontSize ?? 14) + fontSizeOffset));
+  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const focusRef = useRef<HTMLDivElement>(null);

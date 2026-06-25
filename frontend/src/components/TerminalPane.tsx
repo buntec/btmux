@@ -38,15 +38,11 @@ function buildFontFamily(configured: string | null | undefined): string {
   return `${base}, ${FONT_FALLBACK}`;
 }
 
-export function buildTerminalOptions(
-  config: ClientConfig | null,
-  fontSizeOffset: number,
-): ConstructorParameters<typeof Terminal>[0] | null {
+export function buildTerminalOptions(config: ClientConfig | null): ConstructorParameters<typeof Terminal>[0] | null {
   if (!config) return null;
   const t = config.terminal;
-  const baseSize = t?.fontSize ?? 14;
   const opts: ConstructorParameters<typeof Terminal>[0] = {
-    fontSize: Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, baseSize + fontSizeOffset)),
+    fontSize: Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, t?.fontSize ?? 14)),
     fontFamily: buildFontFamily(t?.fontFamily),
     theme: config?.theme ?? DEFAULT_THEME,
     cursorBlink: t?.cursorBlink ?? true,
@@ -84,8 +80,7 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
 
   const config = useStore((s) => s.config);
   const overlay = useStore((s) => s.overlay);
-  const fontSizeOffset = useStore((s) => s.fontSizeOffset);
-  const termOptions = useMemo(() => buildTerminalOptions(config, fontSizeOffset), [config, fontSizeOffset]);
+  const termOptions = useMemo(() => buildTerminalOptions(config), [config]);
 
   useEffect(() => {
     const container = containerRef.current;

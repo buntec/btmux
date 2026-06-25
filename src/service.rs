@@ -64,9 +64,9 @@ fn install_linux(args: &CliArgs, print: bool) {
         Err(e) => fail(&format!("cannot resolve the btmux binary path: {e}")),
     };
 
-    let shell = resolve_shell(args);
+    let env_shell = resolve_shell(args);
     let path_env = std::env::var("PATH").unwrap_or_default();
-    let unit = render_systemd_unit(&exe, args, &shell, &path_env);
+    let unit = render_systemd_unit(&exe, args, args.shell.as_deref(), &env_shell, &path_env);
 
     if print {
         print!("{unit}");
@@ -150,24 +150,34 @@ fn systemd_unit_path() -> Option<PathBuf> {
     config_dir.map(|d| d.join("systemd").join("user").join(SYSTEMD_UNIT))
 }
 
-fn render_systemd_unit(exe: &Path, args: &CliArgs, shell: &str, path_env: &str) -> String {
+fn render_systemd_unit(
+    exe: &Path,
+    args: &CliArgs,
+    explicit_shell: Option<&str>,
+    env_shell: &str,
+    path_env: &str,
+) -> String {
+    let shell_arg = explicit_shell
+        .map(|s| format!(" --shell {s}"))
+        .unwrap_or_default();
     format!(
         "[Unit]\n\
          Description=btmux — browser-based tmux\n\
          After=network.target\n\
          \n\
          [Service]\n\
-         ExecStart={exe} --no-browser --host {host} --port {port} --shell {shell}\n\
+         ExecStart={exe} --no-browser --host {host} --port {port}{shell_arg}\n\
          Restart=on-failure\n\
          Environment=PATH={path}\n\
-         Environment=SHELL={shell}\n\
+         Environment=SHELL={env_shell}\n\
          \n\
          [Install]\n\
          WantedBy=default.target\n",
         exe = exe.display(),
         host = args.host,
         port = args.port,
-        shell = shell,
+        shell_arg = shell_arg,
+        env_shell = env_shell,
         path = path_env,
     )
 }
@@ -214,9 +224,9 @@ fn install_macos(args: &CliArgs, print: bool) {
         Err(e) => fail(&format!("cannot resolve the btmux binary path: {e}")),
     };
 
-    let shell = resolve_shell(args);
+    let env_shell = resolve_shell(args);
     let path_env = std::env::var("PATH").unwrap_or_default();
-    let plist = render_plist(&exe, args, &shell, &path_env);
+    let plist = render_plist(&exe, args, args.shell.as_deref(), &env_shell, &path_env);
 
     if print {
         print!("{plist}");
@@ -330,10 +340,25 @@ fn resolve_shell(args: &CliArgs) -> String {
 /// `KeepAlive` restarts it on crash. `--no-browser` is mandatory for a headless
 /// service. PATH/SHELL are injected so spawned (non-login) shells have a usable
 /// environment despite launchd's sparse default.
-fn render_plist(exe: &Path, args: &CliArgs, shell: &str, path_env: &str) -> String {
+fn render_plist(
+    exe: &Path,
+    args: &CliArgs,
+    explicit_shell: Option<&str>,
+    env_shell: &str,
+    path_env: &str,
+) -> String {
     let log = log_path()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "/tmp/btmux.log".to_string());
+
+    let shell_args = explicit_shell
+        .map(|s| {
+            format!(
+                "\n        <string>--shell</string>\n        <string>{}</string>",
+                xml_escape(s)
+            )
+        })
+        .unwrap_or_default();
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -349,16 +374,14 @@ fn render_plist(exe: &Path, args: &CliArgs, shell: &str, path_env: &str) -> Stri
         <string>--host</string>
         <string>{host}</string>
         <string>--port</string>
-        <string>{port}</string>
-        <string>--shell</string>
-        <string>{shell}</string>
+        <string>{port}</string>{shell_args}
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>{path}</string>
         <key>SHELL</key>
-        <string>{shell}</string>
+        <string>{env_shell}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -377,7 +400,8 @@ fn render_plist(exe: &Path, args: &CliArgs, shell: &str, path_env: &str) -> Stri
         exe = xml_escape(&exe.to_string_lossy()),
         host = xml_escape(&args.host),
         port = args.port,
-        shell = xml_escape(shell),
+        shell_args = shell_args,
+        env_shell = xml_escape(env_shell),
         path = xml_escape(path_env),
         log = xml_escape(&log),
     )

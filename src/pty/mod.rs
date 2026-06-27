@@ -152,12 +152,11 @@ impl PtyHandle {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let (scrollback_chunk, broadcast_chunk) =
-                            Self::strip_and_answer_da_queries(
-                                &buf[..n],
-                                &da_response_tx,
-                                &pending_cpr_reader,
-                            );
+                        let (scrollback_chunk, broadcast_chunk) = Self::strip_and_answer_da_queries(
+                            &buf[..n],
+                            &da_response_tx,
+                            &pending_cpr_reader,
+                        );
                         osc_parser.feed(&scrollback_chunk, &title_arc, &cwd_arc);
                         // Hold the scrollback lock across both the append AND the
                         // broadcast. subscribe_and_get_scrollback also holds this lock

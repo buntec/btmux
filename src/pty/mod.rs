@@ -1,6 +1,7 @@
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::os::unix::io::RawFd;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
@@ -27,6 +28,11 @@ pub struct PtyHandle {
     exit_tx: mpsc::UnboundedSender<Uuid>,
     /// Notifies the session manager that OSC title/cwd changed so it can re-broadcast state.
     meta_tx: mpsc::UnboundedSender<()>,
+    /// Count of DSR 6 queries forwarded to the emulator that haven't been
+    /// answered yet. The writer task checks this before passing a CPR response
+    /// (`ESC[row;colR`) through to the PTY — if zero, the response is stale
+    /// (the requesting app already exited) and is dropped silently.
+    pending_cpr: Arc<AtomicU32>,
     /// Last OSC 0/2 title emitted by the shell.
     pub title: Arc<Mutex<Option<String>>>,
     /// Last OSC 7 cwd URI emitted by the shell.
@@ -72,6 +78,7 @@ impl PtyHandle {
             pane_id,
             exit_tx,
             meta_tx,
+            pending_cpr: Arc::new(AtomicU32::new(0)),
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
             port,
@@ -137,6 +144,7 @@ impl PtyHandle {
         let title_arc = self.title.clone();
         let cwd_arc = self.cwd.clone();
         let meta_tx = self.meta_tx.clone();
+        let pending_cpr_reader = self.pending_cpr.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut osc_parser = OscParser::new(meta_tx);
@@ -145,7 +153,11 @@ impl PtyHandle {
                     Ok(0) => break,
                     Ok(n) => {
                         let (scrollback_chunk, broadcast_chunk) =
-                            Self::strip_and_answer_da_queries(&buf[..n], &da_response_tx);
+                            Self::strip_and_answer_da_queries(
+                                &buf[..n],
+                                &da_response_tx,
+                                &pending_cpr_reader,
+                            );
                         osc_parser.feed(&scrollback_chunk, &title_arc, &cwd_arc);
                         // Hold the scrollback lock across both the append AND the
                         // broadcast. subscribe_and_get_scrollback also holds this lock
@@ -171,10 +183,15 @@ impl PtyHandle {
             let _ = exit_tx.send(pane_id);
         });
 
-        // Start writer task
+        // Start writer task — filters stale CPR responses from emulator input
+        let pending_cpr_writer = self.pending_cpr.clone();
         tokio::spawn(async move {
             while let Some(data) = input_rx.recv().await {
-                if writer.write_all(&data).is_err() {
+                let filtered = Self::filter_stale_cpr(&data, &pending_cpr_writer);
+                if filtered.is_empty() {
+                    continue;
+                }
+                if writer.write_all(&filtered).is_err() {
                     break;
                 }
             }
@@ -223,36 +240,18 @@ impl PtyHandle {
     /// byte vectors: `(scrollback, broadcast)`.
     ///
     /// - `scrollback`: all queries stripped — safe for the replay buffer.
-    /// - `broadcast`: DA1/DA2/DSR5 stripped (backend answers these with fixed
-    ///   values), but DSR 6 and DECXCPR left **in place** so the browser's
-    ///   ghostty-web can answer with the real cursor position.
-    ///
-    /// Handled queries:
-    /// - DA1 (`ESC[c` / `ESC[0c`) — primary device attributes → answered here
-    /// - DA2 (`ESC[>c` / `ESC[>0c`) — secondary device attributes → answered here
-    /// - DSR 5 (`ESC[5n`) — device status report ("OK") → answered here
-    /// - DSR 6 (`ESC[6n`) — cursor position report (CPR) → forwarded to emulator
-    /// - DECXCPR (`ESC[?6n`) — extended cursor position report → forwarded to emulator
-    ///
-    /// **Why DA/DSR5 are answered here:** ghostty-web's WASM core also answers
-    /// DA, but btmux is one PTY fanned out to many emulators:
-    ///   1. Detached panes — no emulator attached; query hangs.
-    ///   2. Multi-tab — N tabs each answer, so N−1 replies leak as garbage.
-    ///   3. Reconnect replay — stale query in scrollback gets re-answered.
-    ///
-    /// DA1/DA2/DSR5 have fixed answers so the backend can safely own them.
-    ///
-    /// **Why DSR 6/DECXCPR are forwarded:** the cursor position is dynamic —
-    /// only the terminal emulator knows it. Answering (1,1) from the backend
-    /// breaks programs like IPython/prompt_toolkit that use CPR to discover
-    /// where the cursor actually is. DSR 6 is stripped from scrollback to
-    /// prevent spurious re-answers on reconnect replay.
+    /// - `broadcast`: DA1/DA2/DSR5 stripped (backend answers these), DSR 6 and
+    ///   DECXCPR left **in place** so ghostty-web can answer with the real
+    ///   cursor position. A `pending_cpr` counter is incremented for each
+    ///   forwarded DSR 6/DECXCPR; `filter_stale_cpr` on the input path uses
+    ///   this to drop CPR responses that arrive after the requesting app exits.
     ///
     /// DA responses are **ghostty-web's exact bytes** (pinned build). If
     /// ghostty-web is bumped and its DA replies change, re-probe and update.
     fn strip_and_answer_da_queries(
         data: &[u8],
         tx: &mpsc::UnboundedSender<Vec<u8>>,
+        pending_cpr: &AtomicU32,
     ) -> (Vec<u8>, Vec<u8>) {
         let mut scrollback_out = Vec::with_capacity(data.len());
         let mut broadcast_out = Vec::with_capacity(data.len());
@@ -285,7 +284,7 @@ impl PtyHandle {
                         }
                         // DSR 6 (cursor position) → forward to emulator
                         b"6" => {
-                            // Strip from scrollback but keep in broadcast
+                            pending_cpr.fetch_add(1, Ordering::Relaxed);
                             broadcast_out.extend_from_slice(&data[i..end + 1]);
                             i = end + 1;
                             continue;
@@ -308,6 +307,7 @@ impl PtyHandle {
                         let params = &data[p_start..p_end];
                         if params == b"6" {
                             // DECXCPR → forward to emulator
+                            pending_cpr.fetch_add(1, Ordering::Relaxed);
                             broadcast_out.extend_from_slice(&data[i..p_end + 1]);
                             i = p_end + 1;
                             continue;
@@ -340,6 +340,41 @@ impl PtyHandle {
             i += 1;
         }
         (scrollback_out, broadcast_out)
+    }
+
+    /// Filter CPR responses (`ESC[row;colR`) from emulator input. If a pending
+    /// DSR 6 request exists, the response is passed through and the counter
+    /// decremented. Otherwise it's a stale response (app exited before the
+    /// browser round-trip completed) and is dropped to prevent shell echo.
+    fn filter_stale_cpr(data: &[u8], pending_cpr: &AtomicU32) -> Vec<u8> {
+        let mut out = Vec::with_capacity(data.len());
+        let mut i = 0;
+        while i < data.len() {
+            if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' {
+                let start = i + 2;
+                let mut end = start;
+                while end < data.len() && (data[end].is_ascii_digit() || data[end] == b';') {
+                    end += 1;
+                }
+                // CPR: ESC[row;colR (final byte 'R')
+                if end < data.len() && data[end] == b'R' {
+                    let params = &data[start..end];
+                    if params.contains(&b';') {
+                        // This looks like a CPR response
+                        if pending_cpr.load(Ordering::Relaxed) > 0 {
+                            pending_cpr.fetch_sub(1, Ordering::Relaxed);
+                            out.extend_from_slice(&data[i..end + 1]);
+                        }
+                        // else: stale — drop silently
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+            out.push(data[i]);
+            i += 1;
+        }
+        out
     }
 
     fn configure_termios(fd: RawFd) {

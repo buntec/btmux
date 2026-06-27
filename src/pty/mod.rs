@@ -144,12 +144,9 @@ impl PtyHandle {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        // Answer DA1/DA2 on the backend AND strip the query bytes from
-                        // the stream, so the browser's ghostty-web never sees a DA query
-                        // to (re-)answer. See strip_and_answer_da_queries for why the
-                        // backend — not the emulator — must own this.
-                        let chunk = Self::strip_and_answer_da_queries(&buf[..n], &da_response_tx);
-                        osc_parser.feed(&chunk, &title_arc, &cwd_arc);
+                        let (scrollback_chunk, broadcast_chunk) =
+                            Self::strip_and_answer_da_queries(&buf[..n], &da_response_tx);
+                        osc_parser.feed(&scrollback_chunk, &title_arc, &cwd_arc);
                         // Hold the scrollback lock across both the append AND the
                         // broadcast. subscribe_and_get_scrollback also holds this lock
                         // while subscribing — this ensures a new subscriber cannot
@@ -158,12 +155,12 @@ impl PtyHandle {
                         // broadcast::send is non-blocking so holding the Mutex is safe.
                         {
                             let mut sb = scrollback_clone.lock().unwrap();
-                            sb.extend_from_slice(&chunk);
+                            sb.extend_from_slice(&scrollback_chunk);
                             if sb.len() > 65536 {
                                 let drain_to = sb.len() - 65536;
                                 sb.drain(..drain_to);
                             }
-                            let _ = output_tx_clone.send(chunk);
+                            let _ = output_tx_clone.send(broadcast_chunk);
                         }
                     }
                     Err(_) => break,
@@ -222,70 +219,83 @@ impl PtyHandle {
         *self.spawned.lock().unwrap() = true;
     }
 
-    /// Intercept terminal query sequences from the shell's output, answer them
-    /// directly, and return a copy of `data` with query bytes removed.
+    /// Intercept terminal query sequences from the shell's output. Returns two
+    /// byte vectors: `(scrollback, broadcast)`.
+    ///
+    /// - `scrollback`: all queries stripped — safe for the replay buffer.
+    /// - `broadcast`: DA1/DA2/DSR5 stripped (backend answers these with fixed
+    ///   values), but DSR 6 and DECXCPR left **in place** so the browser's
+    ///   ghostty-web can answer with the real cursor position.
     ///
     /// Handled queries:
-    /// - DA1 (`ESC[c` / `ESC[0c`) — primary device attributes
-    /// - DA2 (`ESC[>c` / `ESC[>0c`) — secondary device attributes
-    /// - DSR 5 (`ESC[5n`) — device status report ("OK")
-    /// - DSR 6 (`ESC[6n`) — cursor position report (CPR)
-    /// - DECXCPR (`ESC[?6n`) — extended cursor position report
+    /// - DA1 (`ESC[c` / `ESC[0c`) — primary device attributes → answered here
+    /// - DA2 (`ESC[>c` / `ESC[>0c`) — secondary device attributes → answered here
+    /// - DSR 5 (`ESC[5n`) — device status report ("OK") → answered here
+    /// - DSR 6 (`ESC[6n`) — cursor position report (CPR) → forwarded to emulator
+    /// - DECXCPR (`ESC[?6n`) — extended cursor position report → forwarded to emulator
     ///
-    /// **Why the backend owns these, not the browser.** ghostty-web's WASM core
-    /// answers DA/DSR (it forwards the reply through `onData` → the pane socket).
-    /// But btmux is one PTY fanned out to many emulators, so letting the emulator
-    /// answer is wrong:
+    /// **Why DA/DSR5 are answered here:** ghostty-web's WASM core also answers
+    /// DA, but btmux is one PTY fanned out to many emulators:
     ///   1. Detached panes — no emulator attached; query hangs.
     ///   2. Multi-tab — N tabs each answer, so N−1 replies leak as garbage.
     ///   3. Reconnect replay — stale query in scrollback gets re-answered.
     ///
-    /// For CPR/DECXCPR we respond with row 1, col 1. This is correct at shell
-    /// startup (when fish/zsh send DSR 6); after that, programs that need the
-    /// real cursor position are TUI apps that repaint anyway.
+    /// DA1/DA2/DSR5 have fixed answers so the backend can safely own them.
+    ///
+    /// **Why DSR 6/DECXCPR are forwarded:** the cursor position is dynamic —
+    /// only the terminal emulator knows it. Answering (1,1) from the backend
+    /// breaks programs like IPython/prompt_toolkit that use CPR to discover
+    /// where the cursor actually is. DSR 6 is stripped from scrollback to
+    /// prevent spurious re-answers on reconnect replay.
     ///
     /// DA responses are **ghostty-web's exact bytes** (pinned build). If
     /// ghostty-web is bumped and its DA replies change, re-probe and update.
-    fn strip_and_answer_da_queries(data: &[u8], tx: &mpsc::UnboundedSender<Vec<u8>>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(data.len());
+    fn strip_and_answer_da_queries(
+        data: &[u8],
+        tx: &mpsc::UnboundedSender<Vec<u8>>,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let mut scrollback_out = Vec::with_capacity(data.len());
+        let mut broadcast_out = Vec::with_capacity(data.len());
         let mut i = 0;
         while i < data.len() {
             if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' {
                 let start = i + 2;
                 let mut end = start;
-                // Scan parameter bytes (digits and semicolons)
                 while end < data.len() && (data[end].is_ascii_digit() || data[end] == b';') {
                     end += 1;
                 }
-                // Check for final byte 'c' (DA1 query)
+                // DA1: ESC[c or ESC[0c
                 if end < data.len() && data[end] == b'c' {
                     let params = &data[start..end];
-                    // DA1: no params or "0" — VT220 with ANSI color.
                     if params.is_empty() || params == b"0" {
                         let _ = tx.send(b"\x1b[?62;22c".to_vec());
                     }
-                    // Drop the query bytes (ESC..='c') from the output stream.
                     i = end + 1;
                     continue;
                 }
-                // Check for final byte 'n' (DSR queries)
+                // DSR queries: final byte 'n'
                 if end < data.len() && data[end] == b'n' {
                     let params = &data[start..end];
                     match params {
-                        // DSR device status (ESC[5n) → "OK"
+                        // DSR 5 (device status) → answered by backend
                         b"5" => {
                             let _ = tx.send(b"\x1b[0n".to_vec());
+                            i = end + 1;
+                            continue;
                         }
-                        // DSR cursor position (ESC[6n) → row 1, col 1
+                        // DSR 6 (cursor position) → forward to emulator
                         b"6" => {
-                            let _ = tx.send(b"\x1b[1;1R".to_vec());
+                            // Strip from scrollback but keep in broadcast
+                            broadcast_out.extend_from_slice(&data[i..end + 1]);
+                            i = end + 1;
+                            continue;
                         }
                         _ => {}
                     }
                     i = end + 1;
                     continue;
                 }
-                // Check for '?' prefix (DECRPM/DECXCPR queries)
+                // '?' prefix: DECXCPR (ESC[?6n)
                 if start < data.len() && data[start] == b'?' {
                     let p_start = start + 1;
                     let mut p_end = p_start;
@@ -294,17 +304,19 @@ impl PtyHandle {
                     {
                         p_end += 1;
                     }
-                    // DECXCPR (ESC[?6n) → extended cursor position
                     if p_end < data.len() && data[p_end] == b'n' {
                         let params = &data[p_start..p_end];
                         if params == b"6" {
-                            let _ = tx.send(b"\x1b[?1;1R".to_vec());
+                            // DECXCPR → forward to emulator
+                            broadcast_out.extend_from_slice(&data[i..p_end + 1]);
+                            i = p_end + 1;
+                            continue;
                         }
                         i = p_end + 1;
                         continue;
                     }
                 }
-                // Check for '>' prefix (DA2 query: ESC [ > c or ESC [ > 0 c)
+                // '>' prefix: DA2 (ESC[>c or ESC[>0c)
                 if start < data.len() && data[start] == b'>' {
                     let p_start = start + 1;
                     let mut p_end = p_start;
@@ -316,19 +328,18 @@ impl PtyHandle {
                     if p_end < data.len() && data[p_end] == b'c' {
                         let params = &data[p_start..p_end];
                         if params.is_empty() || params == b"0" {
-                            // DA2: VT220-class (type 1), version 0 — matches ghostty-web.
                             let _ = tx.send(b"\x1b[>1;0;0c".to_vec());
                         }
-                        // Drop the query bytes from the output stream.
                         i = p_end + 1;
                         continue;
                     }
                 }
             }
-            out.push(data[i]);
+            scrollback_out.push(data[i]);
+            broadcast_out.push(data[i]);
             i += 1;
         }
-        out
+        (scrollback_out, broadcast_out)
     }
 
     fn configure_termios(fd: RawFd) {

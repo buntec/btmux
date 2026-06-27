@@ -230,6 +230,7 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
 
           term.onData((data: string) => {
             if (ws!.readyState === WebSocket.OPEN) ws!.send(data);
+            if (term.viewportY !== 0) term.scrollToBottom();
           });
 
           term.onResize(({ cols, rows }: { cols: number; rows: number }) => {

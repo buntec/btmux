@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+pub mod vt_query;
+
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -156,25 +159,29 @@ impl PtyHandle {
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut osc_parser = OscParser::new(meta_tx);
+            let mut interceptor = vt_query::VtQueryInterceptor::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let (scrollback_chunk, broadcast_chunk) =
-                            Self::strip_and_answer_da_queries(
-                                &buf[..n],
-                                &master_fd_reader,
-                                &pending_cpr_pgrps_reader,
-                            );
-                        osc_parser.feed(&scrollback_chunk, &title_arc, &cwd_arc);
+                        let result = interceptor.feed(&buf[..n]);
+
+                        for response in &result.responses {
+                            Self::sync_write_to_master(&master_fd_reader, response);
+                        }
+                        for _ in 0..result.forwarded_cpr_queries {
+                            Self::record_cpr_pgrp(&master_fd_reader, &pending_cpr_pgrps_reader);
+                        }
+
+                        osc_parser.feed(&result.scrollback, &title_arc, &cwd_arc);
                         {
                             let mut sb = scrollback_clone.lock().unwrap();
-                            sb.extend_from_slice(&scrollback_chunk);
+                            sb.extend_from_slice(&result.scrollback);
                             if sb.len() > 65536 {
                                 let drain_to = sb.len() - 65536;
                                 sb.drain(..drain_to);
                             }
-                            let _ = output_tx_clone.send(broadcast_chunk);
+                            let _ = output_tx_clone.send(result.broadcast);
                         }
                     }
                     Err(_) => break,
@@ -236,113 +243,6 @@ impl PtyHandle {
         self.resize_tx = resize_tx;
         *self.size.lock().unwrap() = (cols, rows);
         *self.spawned.lock().unwrap() = true;
-    }
-
-    /// Intercept terminal query sequences from the shell's output. Returns two
-    /// byte vectors: `(scrollback, broadcast)`.
-    ///
-    /// - `scrollback`: all queries stripped — safe for the replay buffer.
-    /// - `broadcast`: DA1/DA2/DSR5 stripped (backend answers these), DSR 6 and
-    ///   DECXCPR left **in place** so ghostty-web can answer with the real
-    ///   cursor position.
-    ///
-    /// DA1/DA2/DSR5 responses are written **synchronously** via the master fd.
-    /// This eliminates the async race where the response arrives after the
-    /// requesting app has exited (Ctrl-C) and leaks to the shell prompt.
-    ///
-    /// For DSR 6/DECXCPR, we record the current foreground pgroup so that
-    /// `filter_stale_cpr` on the input path can detect when the requester died.
-    fn strip_and_answer_da_queries(
-        data: &[u8],
-        master_fd: &Mutex<Option<RawFd>>,
-        pending_cpr_pgrps: &Mutex<VecDeque<libc::pid_t>>,
-    ) -> (Vec<u8>, Vec<u8>) {
-        let mut scrollback_out = Vec::with_capacity(data.len());
-        let mut broadcast_out = Vec::with_capacity(data.len());
-        let mut i = 0;
-        while i < data.len() {
-            if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' {
-                let start = i + 2;
-                let mut end = start;
-                while end < data.len() && (data[end].is_ascii_digit() || data[end] == b';') {
-                    end += 1;
-                }
-                // DA1: ESC[c or ESC[0c
-                if end < data.len() && data[end] == b'c' {
-                    let params = &data[start..end];
-                    if params.is_empty() || params == b"0" {
-                        Self::sync_write_to_master(master_fd, b"\x1b[?62;22c");
-                    }
-                    i = end + 1;
-                    continue;
-                }
-                // DSR queries: final byte 'n'
-                if end < data.len() && data[end] == b'n' {
-                    let params = &data[start..end];
-                    match params {
-                        // DSR 5 (device status) → answered by backend
-                        b"5" => {
-                            Self::sync_write_to_master(master_fd, b"\x1b[0n");
-                            i = end + 1;
-                            continue;
-                        }
-                        // DSR 6 (cursor position) → forward to emulator, record pgrp
-                        b"6" => {
-                            Self::record_cpr_pgrp(master_fd, pending_cpr_pgrps);
-                            broadcast_out.extend_from_slice(&data[i..end + 1]);
-                            i = end + 1;
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    i = end + 1;
-                    continue;
-                }
-                // '?' prefix: DECXCPR (ESC[?6n)
-                if start < data.len() && data[start] == b'?' {
-                    let p_start = start + 1;
-                    let mut p_end = p_start;
-                    while p_end < data.len()
-                        && (data[p_end].is_ascii_digit() || data[p_end] == b';')
-                    {
-                        p_end += 1;
-                    }
-                    if p_end < data.len() && data[p_end] == b'n' {
-                        let params = &data[p_start..p_end];
-                        if params == b"6" {
-                            Self::record_cpr_pgrp(master_fd, pending_cpr_pgrps);
-                            broadcast_out.extend_from_slice(&data[i..p_end + 1]);
-                            i = p_end + 1;
-                            continue;
-                        }
-                        i = p_end + 1;
-                        continue;
-                    }
-                }
-                // '>' prefix: DA2 (ESC[>c or ESC[>0c)
-                if start < data.len() && data[start] == b'>' {
-                    let p_start = start + 1;
-                    let mut p_end = p_start;
-                    while p_end < data.len()
-                        && (data[p_end].is_ascii_digit() || data[p_end] == b';')
-                    {
-                        p_end += 1;
-                    }
-                    if p_end < data.len() && data[p_end] == b'c' {
-                        let params = &data[p_start..p_end];
-                        if params.is_empty() || params == b"0" {
-                            Self::sync_write_to_master(master_fd, b"\x1b[>1;0;0c");
-                        }
-                        i = p_end + 1;
-                        continue;
-                    }
-                }
-            }
-            scrollback_out.push(data[i]);
-            broadcast_out.push(data[i]);
-            i += 1;
-        }
-        (scrollback_out, broadcast_out)
     }
 
     /// Write a response directly to the PTY master fd. Synchronous — the

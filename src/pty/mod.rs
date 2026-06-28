@@ -1,7 +1,7 @@
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::unix::io::RawFd;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
@@ -28,11 +28,12 @@ pub struct PtyHandle {
     exit_tx: mpsc::UnboundedSender<Uuid>,
     /// Notifies the session manager that OSC title/cwd changed so it can re-broadcast state.
     meta_tx: mpsc::UnboundedSender<()>,
-    /// Count of DSR 6 queries forwarded to the emulator that haven't been
-    /// answered yet. The writer task checks this before passing a CPR response
-    /// (`ESC[row;colR`) through to the PTY — if zero, the response is stale
-    /// (the requesting app already exited) and is dropped silently.
-    pending_cpr: Arc<AtomicU32>,
+    /// Foreground pgroup at the time each DSR 6 query was forwarded. When a
+    /// CPR response arrives, pop the front: if tcgetpgrp(master) differs, the
+    /// requester died and the response is stale.
+    pending_cpr_pgrps: Arc<Mutex<VecDeque<libc::pid_t>>>,
+    /// Raw fd of the PTY master, kept for synchronous DA writes and tcgetpgrp.
+    master_fd: Arc<Mutex<Option<RawFd>>>,
     /// Last OSC 0/2 title emitted by the shell.
     pub title: Arc<Mutex<Option<String>>>,
     /// Last OSC 7 cwd URI emitted by the shell.
@@ -78,7 +79,8 @@ impl PtyHandle {
             pane_id,
             exit_tx,
             meta_tx,
-            pending_cpr: Arc::new(AtomicU32::new(0)),
+            pending_cpr_pgrps: Arc::new(Mutex::new(VecDeque::new())),
+            master_fd: Arc::new(Mutex::new(None)),
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
             port,
@@ -132,19 +134,25 @@ impl PtyHandle {
             .try_clone_reader()
             .expect("failed to get pty reader");
 
+        // Store master fd for tcgetpgrp checks and synchronous DA writes.
+        let master_raw_fd = pair.master.as_raw_fd();
+        if let Some(fd) = master_raw_fd {
+            *self.master_fd.lock().unwrap() = Some(fd);
+        }
+
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let (resize_tx, mut resize_rx) = mpsc::unbounded_channel::<(u16, u16)>();
 
         // Start reader thread BEFORE spawning shell
         let output_tx_clone = self.output_tx.clone();
         let scrollback_clone = self.scrollback.clone();
-        let da_response_tx = input_tx.clone();
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
         let title_arc = self.title.clone();
         let cwd_arc = self.cwd.clone();
         let meta_tx = self.meta_tx.clone();
-        let pending_cpr_reader = self.pending_cpr.clone();
+        let pending_cpr_pgrps_reader = self.pending_cpr_pgrps.clone();
+        let master_fd_reader = self.master_fd.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut osc_parser = OscParser::new(meta_tx);
@@ -152,18 +160,13 @@ impl PtyHandle {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let (scrollback_chunk, broadcast_chunk) = Self::strip_and_answer_da_queries(
-                            &buf[..n],
-                            &da_response_tx,
-                            &pending_cpr_reader,
-                        );
+                        let (scrollback_chunk, broadcast_chunk) =
+                            Self::strip_and_answer_da_queries(
+                                &buf[..n],
+                                &master_fd_reader,
+                                &pending_cpr_pgrps_reader,
+                            );
                         osc_parser.feed(&scrollback_chunk, &title_arc, &cwd_arc);
-                        // Hold the scrollback lock across both the append AND the
-                        // broadcast. subscribe_and_get_scrollback also holds this lock
-                        // while subscribing — this ensures a new subscriber cannot
-                        // snapshot a chunk AND then receive it again from the live
-                        // stream (which would double-write and garble output).
-                        // broadcast::send is non-blocking so holding the Mutex is safe.
                         {
                             let mut sb = scrollback_clone.lock().unwrap();
                             sb.extend_from_slice(&scrollback_chunk);
@@ -177,16 +180,16 @@ impl PtyHandle {
                     Err(_) => break,
                 }
             }
-            // EOF or read error: the shell has exited. Tell the session manager so
-            // it can remove this pane (and cascade up to window/session as needed).
             let _ = exit_tx.send(pane_id);
         });
 
         // Start writer task — filters stale CPR responses from emulator input
-        let pending_cpr_writer = self.pending_cpr.clone();
+        let pending_cpr_pgrps_writer = self.pending_cpr_pgrps.clone();
+        let master_fd_writer = self.master_fd.clone();
         tokio::spawn(async move {
             while let Some(data) = input_rx.recv().await {
-                let filtered = Self::filter_stale_cpr(&data, &pending_cpr_writer);
+                let filtered =
+                    Self::filter_stale_cpr(&data, &pending_cpr_pgrps_writer, &master_fd_writer);
                 if filtered.is_empty() {
                     continue;
                 }
@@ -241,16 +244,18 @@ impl PtyHandle {
     /// - `scrollback`: all queries stripped — safe for the replay buffer.
     /// - `broadcast`: DA1/DA2/DSR5 stripped (backend answers these), DSR 6 and
     ///   DECXCPR left **in place** so ghostty-web can answer with the real
-    ///   cursor position. A `pending_cpr` counter is incremented for each
-    ///   forwarded DSR 6/DECXCPR; `filter_stale_cpr` on the input path uses
-    ///   this to drop CPR responses that arrive after the requesting app exits.
+    ///   cursor position.
     ///
-    /// DA responses are **ghostty-web's exact bytes** (pinned build). If
-    /// ghostty-web is bumped and its DA replies change, re-probe and update.
+    /// DA1/DA2/DSR5 responses are written **synchronously** via the master fd.
+    /// This eliminates the async race where the response arrives after the
+    /// requesting app has exited (Ctrl-C) and leaks to the shell prompt.
+    ///
+    /// For DSR 6/DECXCPR, we record the current foreground pgroup so that
+    /// `filter_stale_cpr` on the input path can detect when the requester died.
     fn strip_and_answer_da_queries(
         data: &[u8],
-        tx: &mpsc::UnboundedSender<Vec<u8>>,
-        pending_cpr: &AtomicU32,
+        master_fd: &Mutex<Option<RawFd>>,
+        pending_cpr_pgrps: &Mutex<VecDeque<libc::pid_t>>,
     ) -> (Vec<u8>, Vec<u8>) {
         let mut scrollback_out = Vec::with_capacity(data.len());
         let mut broadcast_out = Vec::with_capacity(data.len());
@@ -266,7 +271,7 @@ impl PtyHandle {
                 if end < data.len() && data[end] == b'c' {
                     let params = &data[start..end];
                     if params.is_empty() || params == b"0" {
-                        let _ = tx.send(b"\x1b[?62;22c".to_vec());
+                        Self::sync_write_to_master(master_fd, b"\x1b[?62;22c");
                     }
                     i = end + 1;
                     continue;
@@ -277,13 +282,13 @@ impl PtyHandle {
                     match params {
                         // DSR 5 (device status) → answered by backend
                         b"5" => {
-                            let _ = tx.send(b"\x1b[0n".to_vec());
+                            Self::sync_write_to_master(master_fd, b"\x1b[0n");
                             i = end + 1;
                             continue;
                         }
-                        // DSR 6 (cursor position) → forward to emulator
+                        // DSR 6 (cursor position) → forward to emulator, record pgrp
                         b"6" => {
-                            pending_cpr.fetch_add(1, Ordering::Relaxed);
+                            Self::record_cpr_pgrp(master_fd, pending_cpr_pgrps);
                             broadcast_out.extend_from_slice(&data[i..end + 1]);
                             i = end + 1;
                             continue;
@@ -305,8 +310,7 @@ impl PtyHandle {
                     if p_end < data.len() && data[p_end] == b'n' {
                         let params = &data[p_start..p_end];
                         if params == b"6" {
-                            // DECXCPR → forward to emulator
-                            pending_cpr.fetch_add(1, Ordering::Relaxed);
+                            Self::record_cpr_pgrp(master_fd, pending_cpr_pgrps);
                             broadcast_out.extend_from_slice(&data[i..p_end + 1]);
                             i = p_end + 1;
                             continue;
@@ -327,7 +331,7 @@ impl PtyHandle {
                     if p_end < data.len() && data[p_end] == b'c' {
                         let params = &data[p_start..p_end];
                         if params.is_empty() || params == b"0" {
-                            let _ = tx.send(b"\x1b[>1;0;0c".to_vec());
+                            Self::sync_write_to_master(master_fd, b"\x1b[>1;0;0c");
                         }
                         i = p_end + 1;
                         continue;
@@ -341,11 +345,40 @@ impl PtyHandle {
         (scrollback_out, broadcast_out)
     }
 
-    /// Filter CPR responses (`ESC[row;colR`) from emulator input. If a pending
-    /// DSR 6 request exists, the response is passed through and the counter
-    /// decremented. Otherwise it's a stale response (app exited before the
-    /// browser round-trip completed) and is dropped to prevent shell echo.
-    fn filter_stale_cpr(data: &[u8], pending_cpr: &AtomicU32) -> Vec<u8> {
+    /// Write a response directly to the PTY master fd. Synchronous — the
+    /// requesting app is still alive (we're processing its output in the same
+    /// read loop), so the response cannot race with Ctrl-C.
+    fn sync_write_to_master(master_fd: &Mutex<Option<RawFd>>, response: &[u8]) {
+        if let Some(fd) = *master_fd.lock().unwrap() {
+            unsafe {
+                libc::write(fd, response.as_ptr() as *const libc::c_void, response.len());
+            }
+        }
+    }
+
+    /// Record the current foreground process group for a forwarded DSR 6 query.
+    fn record_cpr_pgrp(
+        master_fd: &Mutex<Option<RawFd>>,
+        pending_cpr_pgrps: &Mutex<VecDeque<libc::pid_t>>,
+    ) {
+        let pgrp = master_fd
+            .lock()
+            .unwrap()
+            .map(|fd| unsafe { libc::tcgetpgrp(fd) })
+            .unwrap_or(-1);
+        pending_cpr_pgrps.lock().unwrap().push_back(pgrp);
+    }
+
+    /// Filter CPR responses (`ESC[row;colR`) from emulator input. A response
+    /// is valid only if (a) a pending DSR 6 was recorded AND (b) the foreground
+    /// pgroup hasn't changed since the query was sent. If the pgroup differs,
+    /// the requester exited (e.g. Ctrl-C killed the app) and writing the
+    /// response would echo garbage to the new foreground (the shell).
+    fn filter_stale_cpr(
+        data: &[u8],
+        pending_cpr_pgrps: &Mutex<VecDeque<libc::pid_t>>,
+        master_fd: &Mutex<Option<RawFd>>,
+    ) -> Vec<u8> {
         let mut out = Vec::with_capacity(data.len());
         let mut i = 0;
         while i < data.len() {
@@ -359,12 +392,19 @@ impl PtyHandle {
                 if end < data.len() && data[end] == b'R' {
                     let params = &data[start..end];
                     if params.contains(&b';') {
-                        // This looks like a CPR response
-                        if pending_cpr.load(Ordering::Relaxed) > 0 {
-                            pending_cpr.fetch_sub(1, Ordering::Relaxed);
-                            out.extend_from_slice(&data[i..end + 1]);
+                        let recorded_pgrp = pending_cpr_pgrps.lock().unwrap().pop_front();
+                        if let Some(pgrp) = recorded_pgrp {
+                            let current_pgrp = master_fd
+                                .lock()
+                                .unwrap()
+                                .map(|fd| unsafe { libc::tcgetpgrp(fd) })
+                                .unwrap_or(-1);
+                            if pgrp == current_pgrp {
+                                out.extend_from_slice(&data[i..end + 1]);
+                            }
+                            // else: pgrp changed → requester dead → drop
                         }
-                        // else: stale — drop silently
+                        // else: no pending query → unsolicited → drop
                         i = end + 1;
                         continue;
                     }

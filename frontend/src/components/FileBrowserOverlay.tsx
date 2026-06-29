@@ -18,6 +18,8 @@ interface FileBrowserOverlayProps {
 
 export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayProps) {
   const { send: fileSend } = useFileSocket();
+  const config = useStore((s) => s.config);
+  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
   const currentPath = useFileStore((s) => s.currentPath);
   const entries = useFileStore((s) => s.entries);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
@@ -98,6 +100,21 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     },
     [send, onClose, getActivePaneInfo],
   );
+
+  // Auto-preview focused file
+  useEffect(() => {
+    const visible = entries.filter((entry) => {
+      if (!showDotFiles && entry.name.startsWith('.')) return false;
+      if (isFilterActive && filterQuery) {
+        return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+      }
+      return true;
+    });
+    const entry = visible[focusedIndex];
+    if (!entry || entry.is_dir) return;
+    const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    selectFile(fullPath, false);
+  }, [focusedIndex, entries, currentPath, showDotFiles, isFilterActive, filterQuery, selectFile]);
 
   // Keyboard handler
   useEffect(() => {
@@ -223,13 +240,20 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   ]);
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-background">
+    <div
+      className="absolute inset-0 z-20 flex flex-col bg-background"
+      style={{
+        fontSize: `${fontSize}px`,
+        fontFamily: 'var(--btmux-font, monospace)',
+        fontWeight: 'var(--btmux-font-weight, 400)',
+      }}
+    >
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border">
         <Breadcrumb onNavigate={navigate} />
         <div className="flex-1" />
         {isFilterActive && (
-          <div className="text-xs text-muted-foreground">
+          <div className="text-muted-foreground">
             filter: <span className="text-foreground">{filterQuery || '...'}</span>
           </div>
         )}
@@ -254,7 +278,10 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       </div>
 
       {/* Footer */}
-      <div className="flex items-center gap-4 px-3 py-1 border-t border-border text-[10px] text-muted-foreground">
+      <div
+        className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
+        style={{ fontSize: `${Math.max(6, fontSize - 2)}px` }}
+      >
         <span>j/k navigate</span>
         <span>Enter insert path</span>
         <span>Ctrl+Enter open/cd</span>

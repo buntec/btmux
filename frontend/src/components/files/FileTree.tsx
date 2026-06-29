@@ -40,7 +40,7 @@ export function FileTree({ onNavigate, onSelect }: FileTreeProps) {
   }, [focusedIndex]);
 
   if (isLoading) {
-    return <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs">Loading...</div>;
+    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading...</div>;
   }
 
   return (
@@ -58,7 +58,7 @@ export function FileTree({ onNavigate, onSelect }: FileTreeProps) {
           />
         ))}
         {visible.length === 0 && (
-          <div className="px-3 py-6 text-center text-muted-foreground text-xs">Empty</div>
+          <div className="px-3 py-6 text-center text-muted-foreground">Empty</div>
         )}
       </div>
     </ScrollArea>
@@ -86,7 +86,7 @@ function FileRow({
     <div
       data-index={index}
       className={cn(
-        'flex items-center gap-2 px-3 py-0.5 cursor-pointer text-xs',
+        'flex items-center gap-2 px-3 py-0.5 cursor-pointer',
         focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
       )}
       onClick={() => {
@@ -106,7 +106,7 @@ function FileRow({
       {entry.is_dir ? (
         <ChevronRight className="size-3 text-muted-foreground shrink-0" />
       ) : (
-        <span className="text-muted-foreground text-[10px] shrink-0">{formatSize(entry.size)}</span>
+        <span className="text-muted-foreground shrink-0" style={{ fontSize: '0.85em' }}>{formatSize(entry.size)}</span>
       )}
     </div>
   );

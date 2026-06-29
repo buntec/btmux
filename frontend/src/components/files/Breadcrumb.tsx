@@ -10,7 +10,7 @@ export function Breadcrumb({ onNavigate }: BreadcrumbProps) {
   const parts = currentPath.split('/').filter(Boolean);
 
   return (
-    <div className="flex items-center gap-0.5 text-xs text-muted-foreground overflow-hidden">
+    <div className="flex items-center gap-0.5 text-muted-foreground overflow-hidden">
       <button
         className="hover:text-foreground shrink-0 px-1"
         onClick={() => onNavigate('/')}

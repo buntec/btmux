@@ -86,7 +86,7 @@ function FileRow({
     <div
       data-index={index}
       className={cn(
-        'flex items-center gap-2 px-2 py-0.5 cursor-pointer',
+        'flex items-center gap-2 px-2 py-px cursor-pointer',
         focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
       )}
       onClick={() => {

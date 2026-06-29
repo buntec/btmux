@@ -475,7 +475,7 @@ export function LandingPage({ send, currentSessionId }: Props) {
                 navigateToNode(node, allNodes, send, navigate);
               }}
               style={{
-                padding: `2px 16px 2px ${16 + indent}px`,
+                padding: `1px 16px 1px ${16 + indent}px`,
                 cursor: 'pointer',
                 background: isSelected ? selBg : 'transparent',
                 color,

@@ -103,7 +103,7 @@ export function GitStatus() {
                 key={`header-${item.section}`}
                 data-git-index={i}
                 className={cn(
-                  'flex items-center gap-1.5 px-2 py-1 cursor-pointer select-none text-muted-foreground',
+                  'flex items-center gap-1.5 px-2 py-0.5 cursor-pointer select-none text-muted-foreground',
                   i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
                 )}
               >
@@ -126,7 +126,7 @@ export function GitStatus() {
               key={`${item.section}-${item.path}`}
               data-git-index={i}
               className={cn(
-                'flex items-center gap-2 px-2 py-0.5 pl-5 cursor-pointer',
+                'flex items-center gap-2 px-2 py-px pl-5 cursor-pointer',
                 i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
               )}
               title={path}

@@ -9,7 +9,7 @@ import { StatusBar } from './components/StatusBar';
 import { Overlay } from './components/Overlay';
 import { WindowGrid } from './components/WindowGrid';
 import { ConnectionBanner } from './components/ConnectionBanner';
-import { ToastContainer } from './components/Toast';
+import { Toaster } from './components/ui/sonner';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
@@ -206,7 +206,7 @@ export function App() {
   return (
     <BrowserRouter>
       <ConnectionBanner />
-      <ToastContainer />
+      <Toaster position="top-right" closeButton />
       <AppInner send={send} />
     </BrowserRouter>
   );

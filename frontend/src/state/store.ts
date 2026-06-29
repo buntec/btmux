@@ -1,15 +1,8 @@
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import type { Terminal } from 'ghostty-web';
 import { SessionState, SessionSummary, ClientConfig, Overlay } from './types';
 import type { NotificationLevel } from '../protocol/messages';
-
-export interface Toast {
-  id: number;
-  message: string;
-  body?: string;
-  level?: 'info' | 'error';
-  paneId?: string;
-}
 
 export interface PaneNotification {
   paneId: string;
@@ -27,7 +20,6 @@ interface AppStore {
   config: ClientConfig | null;
   prefixActive: boolean;
   overlay: Overlay | null;
-  toasts: Toast[];
   // Window-grid (prefix + w) visibility. `windowGridMounted` flips true on first
   // open and stays true (sticky) so the grid's live thumbnail mirrors keep
   // streaming + suspend()ed in the background — reopening is then instant, the
@@ -69,7 +61,6 @@ interface AppStore {
   markWindowGridMounted: () => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   showToast: (message: string, level?: 'info' | 'error', opts?: { body?: string; paneId?: string }) => void;
-  dismissToast: (id: number) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
   setFileBrowserOpen: (open: boolean, cwd?: string | null) => void;
@@ -81,15 +72,12 @@ interface AppStore {
   getActivePaneId: (sessionId: string) => string | null;
 }
 
-let nextToastId = 0;
-
 export const useStore = create<AppStore>((set, get) => ({
   sessions: [],
   allSessions: [],
   config: null,
   prefixActive: false,
   overlay: null,
-  toasts: [],
   windowGridOpen: false,
   windowGridMounted: false,
   paneNumbersVisible: false,
@@ -124,11 +112,17 @@ export const useStore = create<AppStore>((set, get) => ({
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   showToast: (message, level, opts) => {
-    const id = nextToastId++;
-    set((s) => ({ toasts: [...s.toasts, { id, message, level, body: opts?.body, paneId: opts?.paneId }] }));
-    setTimeout(() => get().dismissToast(id), level === 'error' ? 8000 : 5000);
+    const emit = level === 'error' ? toast.error : toast.info;
+    const paneId = opts?.paneId;
+    emit(message, {
+      description: opts?.body,
+      duration: level === 'error' ? 8000 : 5000,
+      // Preserve the old click-to-navigate behavior: jump to the pane that
+      // raised the toast. Exposed as an explicit "View" action so the rest of
+      // the toast stays dismiss-only.
+      action: paneId ? { label: 'View', onClick: () => get().navigateToPane(paneId) } : undefined,
+    });
   },
-  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setPaneNotification: (n) =>
     set((s) => {
       const next = new Map(s.notifications);

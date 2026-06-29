@@ -26,7 +26,8 @@ export type ClientMessage =
   | { type: 'resize_split'; session_id: string; split_id: string; ratio: number }
   | { type: 'capture_pane'; pane_id: string; content: string }
   | { type: 'run_command'; command: string; session_id: string }
-  | { type: 'update_config'; update: { colors?: string; font_family?: string; font_weight?: number } };
+  | { type: 'update_config'; update: { colors?: string; font_family?: string; font_weight?: number } }
+  | { type: 'write_pane_input'; session_id: string; pane_id: string; text: string };
 
 export interface ServerStateMessage {
   type: 'state';

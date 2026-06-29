@@ -557,6 +557,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     (";", "last-pane"),
     ("?", "list-keys"),
     (":", "command-palette"),
+    ("f", "file-browser"),
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling

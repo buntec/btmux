@@ -13,10 +13,14 @@ import { ToastContainer } from './components/Toast';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
+import { applyThemeVars } from './lib/apply-theme-vars';
+import { FileBrowserOverlay } from './components/FileBrowserOverlay';
 
 function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
+  const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
+  const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -130,6 +134,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         {/* Live window-grid thumbnails (prefix + w). Sits above the pane region
             like the Overlay; mounts lazily on first open and stays warm. */}
         <WindowGrid send={send} />
+        {fileBrowserOpen && (
+          <FileBrowserOverlay
+            cwd={fileBrowserCwd}
+            send={send}
+            onClose={() => useStore.getState().setFileBrowserOpen(false)}
+          />
+        )}
       </div>
       {/* No status bar on the landing page (it has its own full-height chrome). */}
       {!onLanding && <StatusBar sessionId={activeSessionId ?? ''} />}
@@ -152,7 +163,8 @@ export function App() {
 
   useEffect(() => {
     document.body.style.background = config?.theme?.background ?? DEFAULT_THEME.background;
-  }, [config?.theme?.background]);
+    applyThemeVars(config?.theme ?? DEFAULT_THEME);
+  }, [config?.theme]);
 
   if (allSessions.length === 0 || !config) {
     const cached = (() => {

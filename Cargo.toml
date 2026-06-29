@@ -27,3 +27,8 @@ notify = "6"
 open = "5"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 serde_yaml = "0.9"
+nucleo = "0.5"
+base64 = "0.22"
+dirs = "6"
+async-recursion = "1"
+git2 = "0.20"

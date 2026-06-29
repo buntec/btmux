@@ -39,6 +39,9 @@ interface AppStore {
   // window. While true the keybinding hook captures digit presses to select a
   // pane by number (and any other key dismisses it); it auto-hides on a timer.
   paneNumbersVisible: boolean;
+  // File browser overlay (prefix + f)
+  fileBrowserOpen: boolean;
+  fileBrowserCwd: string | null;
   // Whether the /ws/control socket is currently connected. The frontend holds
   // no canonical state, so while this is false the UI is showing stale data.
   controlConnected: boolean;
@@ -69,6 +72,7 @@ interface AppStore {
   dismissToast: (id: number) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
+  setFileBrowserOpen: (open: boolean, cwd?: string | null) => void;
   setNavigateFn: (fn: (path: string) => void) => void;
   // Navigate to the window containing a pane, if it can be located.
   navigateToPane: (paneId: string) => void;
@@ -89,6 +93,8 @@ export const useStore = create<AppStore>((set, get) => ({
   windowGridOpen: false,
   windowGridMounted: false,
   paneNumbersVisible: false,
+  fileBrowserOpen: false,
+  fileBrowserCwd: null,
   controlConnected: false,
   terminals: new Map(),
   notifications: new Map(),
@@ -113,6 +119,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   setPrefixActive: (active) => set({ prefixActive: active }),
   setOverlay: (overlay) => set({ overlay }),
+  setFileBrowserOpen: (open, cwd) => set({ fileBrowserOpen: open, fileBrowserCwd: cwd ?? null }),
   setWindowGridOpen: (open) => set({ windowGridOpen: open }),
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),

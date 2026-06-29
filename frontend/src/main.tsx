@@ -3,6 +3,7 @@ import { init } from 'ghostty-web';
 import { App } from './App';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import './fonts.css';
+import './index.css';
 import '@fontsource/jetbrains-mono/100.css';
 import '@fontsource/jetbrains-mono/200.css';
 import '@fontsource/jetbrains-mono/300.css';

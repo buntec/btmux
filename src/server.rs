@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -10,6 +12,7 @@ use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::file_search::FileIndex;
 use crate::ws;
 use crate::AppState;
 
@@ -18,9 +21,17 @@ use crate::AppState;
 struct Assets;
 
 pub fn create_app(state: AppState) -> Router {
+    let files_state = Arc::new(ws::files::FilesState {
+        file_index: Arc::new(FileIndex::new()),
+    });
+
     Router::new()
         .route("/ws/pane/{pane_id}", get(ws::pane_io::handle))
         .route("/ws/control", get(ws::control::handle))
+        .route(
+            "/ws/files",
+            get(ws::files::handle).with_state(files_state),
+        )
         .route(
             "/api/sessions",
             axum::routing::get(api_list_sessions)

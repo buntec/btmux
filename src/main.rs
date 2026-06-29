@@ -1,4 +1,7 @@
 mod config;
+mod file_git;
+mod file_search;
+mod fs_ops;
 mod git;
 mod persistence;
 mod pty;

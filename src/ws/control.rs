@@ -81,6 +81,14 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) {
         return;
     }
 
+    if let ClientMessage::WritePaneInput { pane_id, text, .. } = &cmd {
+        let mgr = state.read().await;
+        if let Some(pane) = mgr.find_pane(*pane_id) {
+            let _ = pane.pty.input_tx.send(text.as_bytes().to_vec());
+        }
+        return;
+    }
+
     if let ClientMessage::UpdateConfig { update } = &cmd {
         if let Err(e) = crate::config::apply_config_update(update) {
             tracing::error!("config update failed: {}", e);
@@ -142,7 +150,9 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) {
             mgr.capture_pane_to_editor(pane_id, content)
         }
         // Handled (and returned) above, before this write lock.
-        ClientMessage::RunCommand { .. } | ClientMessage::UpdateConfig { .. } => unreachable!(),
+        ClientMessage::RunCommand { .. }
+        | ClientMessage::UpdateConfig { .. }
+        | ClientMessage::WritePaneInput { .. } => unreachable!(),
     }
 
     let msg = ServerMessage::State {
@@ -299,6 +309,12 @@ enum ClientMessage {
     CapturePane {
         pane_id: Uuid,
         content: String,
+    },
+    WritePaneInput {
+        #[allow(dead_code)]
+        session_id: Uuid,
+        pane_id: Uuid,
+        text: String,
     },
     RunCommand {
         command: String,

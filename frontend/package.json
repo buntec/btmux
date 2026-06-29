@@ -8,6 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@fontsource/cascadia-code": "^5.2.3",
     "@fontsource/fira-code": "^5.2.7",
@@ -21,7 +22,6 @@
     "ghostty-web": "github:buntec/ghostty-web",
     "lucide-react": "^1.21.0",
     "papaparse": "^5.5.4",
-    "radix-ui": "^1.6.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

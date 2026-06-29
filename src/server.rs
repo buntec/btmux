@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -46,6 +46,7 @@ pub fn create_app(state: AppState) -> Router {
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify).delete(api_pane_notify_clear),
         )
+        .route("/api/file", get(serve_raw_file))
         .route("/wallpaper", get(serve_wallpaper))
         .route("/", get(|| async { serve("index.html") }))
         .route(
@@ -313,6 +314,30 @@ fn infer_level(event: &str) -> ws::control::NotificationLevel {
         "TaskCompleted" => ws::control::NotificationLevel::Success,
         _ => ws::control::NotificationLevel::Info,
     }
+}
+
+#[derive(Deserialize)]
+struct RawFileQuery {
+    path: String,
+}
+
+async fn serve_raw_file(Query(query): Query<RawFileQuery>) -> Response {
+    let path = std::path::Path::new(&query.path);
+    let Ok(canonical) = path.canonicalize() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(data) = tokio::fs::read(&canonical).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mime = mime_guess::from_path(&canonical).first_or_octet_stream();
+    (
+        [
+            (header::CONTENT_TYPE, mime.as_ref().to_string()),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+        ],
+        Body::from(data),
+    )
+        .into_response()
 }
 
 async fn serve_wallpaper(State(state): State<AppState>) -> Response {

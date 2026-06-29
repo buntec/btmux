@@ -6,6 +6,7 @@ import type {
   SearchResult,
   GitStatusResult,
   FileDiff,
+  TreeNode,
 } from '../protocol/file-messages';
 
 export type SearchMode = 'off' | 'files' | 'content';
@@ -26,12 +27,15 @@ interface FileStore {
   searchResults: FileSearchResult[];
   contentSearchResults: SearchResult[];
 
+  directoryTree: TreeNode | null;
+
   isGitMode: boolean;
   gitStatus: GitStatusResult | null;
   gitDiff: FileDiff | null;
   gitFocusedIndex: number;
   gitExpandedSections: Set<string>;
 
+  setDirectoryTree: (tree: TreeNode | null) => void;
   setCurrentPath: (path: string) => void;
   setEntries: (entries: FileEntry[]) => void;
   setSelectedFile: (path: string | null) => void;
@@ -67,12 +71,15 @@ export const useFileStore = create<FileStore>((set, get) => ({
   searchQuery: '',
   searchResults: [],
   contentSearchResults: [],
+  directoryTree: null,
+
   isGitMode: false,
   gitStatus: null,
   gitDiff: null,
   gitFocusedIndex: 0,
   gitExpandedSections: new Set(['staged', 'unstaged', 'untracked']),
 
+  setDirectoryTree: (tree) => set({ directoryTree: tree }),
   setCurrentPath: (path) => set({ currentPath: path }),
   setEntries: (entries) => set({ entries, focusedIndex: 0 }),
   setSelectedFile: (path) => set({ selectedFile: path }),
@@ -106,6 +113,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       focusedIndex: 0,
       filterQuery: '',
       isFilterActive: false,
+      directoryTree: null,
       searchMode: 'off',
       searchQuery: '',
       searchResults: [],

@@ -80,6 +80,7 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
 
   const config = useStore((s) => s.config);
   const overlay = useStore((s) => s.overlay);
+  const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
   const termOptions = useMemo(() => buildTerminalOptions(config), [config]);
 
   useEffect(() => {
@@ -92,10 +93,10 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
     term.open(container);
     // ghostty-web's open() auto-focuses (and schedules a deferred setTimeout(0)
     // focus); undo both if an overlay is active so the picker keeps focus.
-    if (useStore.getState().overlay) {
+    if (useStore.getState().overlay || useStore.getState().fileBrowserOpen) {
       term.blur();
       setTimeout(() => {
-        if (useStore.getState().overlay) term.blur();
+        if (useStore.getState().overlay || useStore.getState().fileBrowserOpen) term.blur();
       }, 0);
     }
 
@@ -301,23 +302,28 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
   // deferred re-focus of the active pane resolve that race.
   const prevIsActive = useRef(false);
   const prevOverlay = useRef(overlay);
+  const prevFileBrowser = useRef(fileBrowserOpen);
   useEffect(() => {
     const wasActive = prevIsActive.current;
     const hadOverlay = prevOverlay.current;
+    const hadFileBrowser = prevFileBrowser.current;
     prevIsActive.current = isActive;
     prevOverlay.current = overlay;
+    prevFileBrowser.current = fileBrowserOpen;
 
-    if (!isActive) {
+    const anyOverlay = overlay || fileBrowserOpen;
+
+    if (!isActive || anyOverlay) {
       termRef.current?.blur();
       return;
     }
 
     const becameActive = !wasActive;
-    const overlayClosed = !overlay && !!hadOverlay;
-    if ((becameActive || overlayClosed) && !overlay) {
+    const overlayClosed = (!overlay && !!hadOverlay) || (!fileBrowserOpen && hadFileBrowser);
+    if (becameActive || overlayClosed) {
       termRef.current?.focus();
     }
-  }, [isActive, overlay]);
+  }, [isActive, overlay, fileBrowserOpen]);
 
   // When the user clicks this pane, tell the backend to make it active so the
   // border and server-side state stay in sync with DOM focus.

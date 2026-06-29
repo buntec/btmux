@@ -7,8 +7,13 @@ import { FileTree } from './files/FileTree';
 import { FilePreview } from './files/FilePreview';
 import { Breadcrumb } from './files/Breadcrumb';
 import { getParent } from '@/lib/utils';
-import type { FileEntry, FileContent } from '@/protocol/file-messages';
+import type { FileEntry, FileContent, TreeNode } from '@/protocol/file-messages';
 import type { ClientMessage } from '@/protocol/messages';
+
+const MEDIA_EXTENSIONS = new Set([
+  'pdf', 'mp4', 'webm', 'mov', 'avi', 'mkv', 'ogv',
+  'mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'wma',
+]);
 
 interface FileBrowserOverlayProps {
   cwd: string | null;
@@ -34,6 +39,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       store.getState().setIsLoading(true);
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
+      store.getState().setDirectoryTree(null);
       try {
         const resp = await fileSend('list_dir', { root: path, path: '.' });
         const payload = resp.payload as { path: string; entries: FileEntry[] };
@@ -51,6 +57,19 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   const selectFile = useCallback(
     async (path: string, _isDir: boolean) => {
       store.getState().setSelectedFile(path);
+      store.getState().setDirectoryTree(null);
+      const ext = path.split('.').pop()?.toLowerCase() || '';
+      if (MEDIA_EXTENSIONS.has(ext)) {
+        store.getState().setFileContent({
+          path,
+          content: '',
+          mime_type: ext === 'pdf' ? 'application/pdf' : ext,
+          encoding: 'binary',
+          size: 0,
+          truncated: false,
+        });
+        return;
+      }
       try {
         const resp = await fileSend('read_file', { root: currentPath, path });
         store.getState().setFileContent(resp.payload as unknown as FileContent);
@@ -59,6 +78,20 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       }
     },
     [fileSend, currentPath, store],
+  );
+
+  const selectDir = useCallback(
+    async (path: string) => {
+      store.getState().setSelectedFile(null);
+      store.getState().setFileContent(null);
+      try {
+        const resp = await fileSend('list_tree', { root: path, path: '.', max_depth: 4, max_items: 15 });
+        store.getState().setDirectoryTree(resp.payload as unknown as TreeNode);
+      } catch (e) {
+        console.error('list_tree failed:', e);
+      }
+    },
+    [fileSend, store],
   );
 
   useEffect(() => {
@@ -101,7 +134,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     [send, onClose, getActivePaneInfo],
   );
 
-  // Auto-preview focused file
+  // Auto-preview focused entry (file or directory)
   useEffect(() => {
     const visible = entries.filter((entry) => {
       if (!showDotFiles && entry.name.startsWith('.')) return false;
@@ -111,10 +144,14 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       return true;
     });
     const entry = visible[focusedIndex];
-    if (!entry || entry.is_dir) return;
+    if (!entry) return;
     const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-    selectFile(fullPath, false);
-  }, [focusedIndex, entries, currentPath, showDotFiles, isFilterActive, filterQuery, selectFile]);
+    if (entry.is_dir) {
+      selectDir(fullPath);
+    } else {
+      selectFile(fullPath, false);
+    }
+  }, [focusedIndex, entries, currentPath, showDotFiles, isFilterActive, filterQuery, selectFile, selectDir]);
 
   // Keyboard handler
   useEffect(() => {
@@ -122,7 +159,11 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        onClose();
+        if (isFilterActive) {
+          store.getState().setIsFilterActive(false);
+        } else {
+          onClose();
+        }
         return;
       }
 
@@ -130,6 +171,25 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         if (e.key === 'Enter') {
           e.preventDefault();
           store.getState().setIsFilterActive(false);
+          const vis = entries.filter((entry) => {
+            if (!showDotFiles && entry.name.startsWith('.')) return false;
+            if (filterQuery) {
+              return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+            }
+            return true;
+          });
+          const entry = vis[focusedIndex];
+          if (entry) {
+            const fullPath =
+              currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+            if (e.ctrlKey) {
+              openPath(fullPath, entry.is_dir);
+            } else if (entry.is_dir) {
+              navigate(fullPath);
+            } else {
+              insertPath(fullPath);
+            }
+          }
           return;
         }
         if (e.key === 'Backspace') {
@@ -142,7 +202,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
           store.getState().setFilterQuery(filterQuery + e.key);
           return;
         }
-        return;
+        if (!e.ctrlKey) return;
       }
 
       const visible = entries.filter((entry) => {
@@ -152,6 +212,33 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         }
         return true;
       });
+
+      if (e.ctrlKey && e.key === 'n') {
+        e.preventDefault();
+        store.getState().setFocusedIndex(Math.min(focusedIndex + 1, visible.length - 1));
+        return;
+      }
+      if (e.ctrlKey && e.key === 'p') {
+        e.preventDefault();
+        store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
+        return;
+      }
+      if (e.ctrlKey && e.key === 'd') {
+        e.preventDefault();
+        const viewport = document.querySelector(
+          '.file-preview-scroll [data-slot="scroll-area-viewport"]',
+        );
+        if (viewport) viewport.scrollBy({ top: viewport.clientHeight / 2 });
+        return;
+      }
+      if (e.ctrlKey && e.key === 'u') {
+        e.preventDefault();
+        const viewport = document.querySelector(
+          '.file-preview-scroll [data-slot="scroll-area-viewport"]',
+        );
+        if (viewport) viewport.scrollBy({ top: -viewport.clientHeight / 2 });
+        return;
+      }
 
       switch (e.key) {
         case 'j':
@@ -272,7 +359,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
           <FileTree onNavigate={navigate} onSelect={selectFile} />
         </div>
         {/* Preview */}
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col min-h-0 file-preview-scroll">
           <FilePreview />
         </div>
       </div>
@@ -282,11 +369,12 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
         style={{ fontSize: `${Math.max(6, fontSize - 2)}px` }}
       >
-        <span>j/k navigate</span>
+        <span>j/k/^n/^p navigate</span>
         <span>Enter insert path</span>
         <span>Ctrl+Enter open/cd</span>
         <span>l preview</span>
         <span>h/Backspace up</span>
+        <span>^d/^u scroll</span>
         <span>/ filter</span>
         <span>. dotfiles</span>
         <span>Esc close</span>

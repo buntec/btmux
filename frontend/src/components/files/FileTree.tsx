@@ -44,7 +44,7 @@ export function FileTree({ onNavigate, onSelect }: FileTreeProps) {
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="flex-1 overflow-hidden">
       <div ref={listRef} className="py-1">
         {visible.map((entry, i) => (
           <FileRow
@@ -102,7 +102,7 @@ function FileRow({
       ) : (
         <File className="size-3.5 text-muted-foreground shrink-0" />
       )}
-      <span className="flex-1 truncate">{entry.name}</span>
+      <span className="flex-1 truncate" title={entry.name}>{entry.name}</span>
       {entry.is_dir ? (
         <ChevronRight className="size-3 text-muted-foreground shrink-0" />
       ) : (

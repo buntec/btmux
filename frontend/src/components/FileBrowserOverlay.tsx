@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
 import { useFileStore } from '@/state/fileStore';
@@ -6,8 +6,10 @@ import { useStore } from '@/state/store';
 import { FileTree } from './files/FileTree';
 import { FilePreview } from './files/FilePreview';
 import { Breadcrumb } from './files/Breadcrumb';
+import { GitModeHeader } from './files/GitModeHeader';
+import { GitStatus, computeGitItems } from './files/GitStatus';
 import { getParent } from '@/lib/utils';
-import type { FileEntry, FileContent, TreeNode } from '@/protocol/file-messages';
+import type { FileEntry, FileContent, GitStatusResult, FileDiff, TreeNode } from '@/protocol/file-messages';
 import type { ClientMessage } from '@/protocol/messages';
 
 const MEDIA_EXTENSIONS = new Set([
@@ -31,8 +33,36 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   const filterQuery = useFileStore((s) => s.filterQuery);
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const showDotFiles = useFileStore((s) => s.showDotFiles);
+  const isGitMode = useFileStore((s) => s.isGitMode);
+  const gitStatus = useFileStore((s) => s.gitStatus);
+  const gitFocusedIndex = useFileStore((s) => s.gitFocusedIndex);
+  const gitExpandedSections = useFileStore((s) => s.gitExpandedSections);
   const store = useFileStore;
   const initialized = useRef(false);
+  const gitPreviewGenRef = useRef(0);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const dragging = useRef(false);
+
+  const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const newWidth = Math.max(160, Math.min(ev.clientX, window.innerWidth * 0.5));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      dragging.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, []);
 
   const navigate = useCallback(
     async (path: string) => {
@@ -93,6 +123,75 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     },
     [fileSend, store],
   );
+
+  const toggleGitMode = useCallback(async () => {
+    const { isGitMode } = store.getState();
+    if (isGitMode) {
+      store.getState().setIsGitMode(false);
+      store.getState().setGitDiff(null);
+    } else {
+      store.getState().setIsGitMode(true);
+      store.getState().setGitFocusedIndex(0);
+      try {
+        const resp = await fileSend('git_status', { path: currentPath });
+        store.getState().setGitStatus(resp.payload as unknown as GitStatusResult);
+      } catch (e) {
+        console.error('git_status failed:', e);
+        store.getState().setIsGitMode(false);
+      }
+    }
+  }, [fileSend, currentPath, store]);
+
+  const gitStage = useCallback(async (path: string) => {
+    try {
+      const resp = await fileSend('git_stage', { path, cwd: currentPath });
+      const payload = resp.payload as { status: GitStatusResult };
+      store.getState().setGitStatus(payload.status);
+    } catch (e) {
+      console.error('git_stage failed:', e);
+    }
+  }, [fileSend, currentPath, store]);
+
+  const gitUnstage = useCallback(async (path: string) => {
+    try {
+      const resp = await fileSend('git_unstage', { path, cwd: currentPath });
+      const payload = resp.payload as { status: GitStatusResult };
+      store.getState().setGitStatus(payload.status);
+    } catch (e) {
+      console.error('git_unstage failed:', e);
+    }
+  }, [fileSend, currentPath, store]);
+
+  const gitDiscard = useCallback(async (path: string) => {
+    try {
+      const resp = await fileSend('git_discard', { path, cwd: currentPath });
+      const payload = resp.payload as { status: GitStatusResult };
+      store.getState().setGitStatus(payload.status);
+    } catch (e) {
+      console.error('git_discard failed:', e);
+    }
+  }, [fileSend, currentPath, store]);
+
+  // Auto-preview diff when git focused index changes
+  useEffect(() => {
+    if (!isGitMode || !gitStatus) return;
+    const items = computeGitItems(gitStatus, gitExpandedSections);
+    const item = items[gitFocusedIndex];
+    if (!item || item.kind === 'section-header' || !item.path) {
+      store.getState().setGitDiff(null);
+      return;
+    }
+    const gen = ++gitPreviewGenRef.current;
+    const staged = item.section === 'staged';
+    fileSend('git_diff', { path: item.path, staged, cwd: currentPath }).then(
+      (resp) => {
+        if (gitPreviewGenRef.current === gen) {
+          store.getState().setGitDiff(resp.payload as unknown as FileDiff);
+        }
+      },
+      () => {},
+    );
+  }, [isGitMode, gitFocusedIndex, gitStatus, gitExpandedSections, fileSend, currentPath, store]);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -161,8 +260,82 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         e.stopPropagation();
         if (isFilterActive) {
           store.getState().setIsFilterActive(false);
+        } else if (isGitMode) {
+          store.getState().setIsGitMode(false);
+          store.getState().setGitDiff(null);
         } else {
           onClose();
+        }
+        return;
+      }
+
+      // Git mode keybindings
+      if (isGitMode) {
+        const items = gitStatus ? computeGitItems(gitStatus, gitExpandedSections) : [];
+        const count = items.length;
+
+        if (e.ctrlKey && e.key === 'n') {
+          e.preventDefault();
+          store.getState().setGitFocusedIndex(Math.min(gitFocusedIndex + 1, count - 1));
+          return;
+        }
+        if (e.ctrlKey && e.key === 'p') {
+          e.preventDefault();
+          store.getState().setGitFocusedIndex(Math.max(gitFocusedIndex - 1, 0));
+          return;
+        }
+
+        switch (e.key) {
+          case 'j':
+          case 'ArrowDown':
+            e.preventDefault();
+            store.getState().setGitFocusedIndex(Math.min(gitFocusedIndex + 1, count - 1));
+            break;
+          case 'k':
+          case 'ArrowUp':
+            e.preventDefault();
+            store.getState().setGitFocusedIndex(Math.max(gitFocusedIndex - 1, 0));
+            break;
+          case 'Tab': {
+            e.preventDefault();
+            const item = items[gitFocusedIndex];
+            if (item?.kind === 'section-header') {
+              store.getState().toggleGitSection(item.section);
+            }
+            break;
+          }
+          case 's': {
+            e.preventDefault();
+            const item = items[gitFocusedIndex];
+            if (item?.kind === 'file' && item.path && item.section !== 'staged') {
+              gitStage(item.path);
+            }
+            break;
+          }
+          case 'u': {
+            e.preventDefault();
+            const item = items[gitFocusedIndex];
+            if (item?.kind === 'file' && item.path && item.section === 'staged') {
+              gitUnstage(item.path);
+            }
+            break;
+          }
+          case 'x': {
+            e.preventDefault();
+            const item = items[gitFocusedIndex];
+            if (item?.kind === 'file' && item.path && item.section === 'unstaged') {
+              gitDiscard(item.path);
+            }
+            break;
+          }
+          case 'g':
+            e.preventDefault();
+            store.getState().setGitFocusedIndex(0);
+            break;
+          case 'G':
+            e.preventDefault();
+            store.getState().setGitFocusedIndex(count - 1);
+            break;
         }
         return;
       }
@@ -306,6 +479,10 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
           e.preventDefault();
           navigate('~');
           break;
+        case 's':
+          e.preventDefault();
+          toggleGitMode();
+          break;
       }
     };
 
@@ -318,11 +495,19 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     isFilterActive,
     filterQuery,
     showDotFiles,
+    isGitMode,
+    gitStatus,
+    gitFocusedIndex,
+    gitExpandedSections,
     navigate,
     selectFile,
     insertPath,
     openPath,
     onClose,
+    toggleGitMode,
+    gitStage,
+    gitUnstage,
+    gitDiscard,
     store,
   ]);
 
@@ -355,9 +540,24 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       {/* Body */}
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
-        <div className="w-64 border-r border-border flex flex-col min-h-0">
-          <FileTree onNavigate={navigate} onSelect={selectFile} />
+        <div
+          className="shrink-0 flex flex-col min-h-0 overflow-hidden"
+          style={{ width: sidebarWidth }}
+        >
+          {isGitMode ? (
+            <>
+              <GitModeHeader />
+              <GitStatus />
+            </>
+          ) : (
+            <FileTree onNavigate={navigate} onSelect={selectFile} />
+          )}
         </div>
+        {/* Drag handle */}
+        <div
+          onMouseDown={onDividerMouseDown}
+          className="w-1 shrink-0 cursor-col-resize border-r border-border hover:bg-accent active:bg-accent"
+        />
         {/* Preview */}
         <div className="flex-1 flex flex-col min-h-0 file-preview-scroll">
           <FilePreview />
@@ -369,15 +569,29 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
         style={{ fontSize: `${Math.max(6, fontSize - 2)}px` }}
       >
-        <span>j/k/^n/^p navigate</span>
-        <span>Enter insert path</span>
-        <span>Ctrl+Enter open/cd</span>
-        <span>l preview</span>
-        <span>h/Backspace up</span>
-        <span>^d/^u scroll</span>
-        <span>/ filter</span>
-        <span>. dotfiles</span>
-        <span>Esc close</span>
+        {isGitMode ? (
+          <>
+            <span>j/k navigate</span>
+            <span>Tab expand/collapse</span>
+            <span>s stage</span>
+            <span>u unstage</span>
+            <span>x discard</span>
+            <span>Esc exit git</span>
+          </>
+        ) : (
+          <>
+            <span>j/k/^n/^p navigate</span>
+            <span>Enter insert path</span>
+            <span>Ctrl+Enter open/cd</span>
+            <span>l preview</span>
+            <span>h/Backspace up</span>
+            <span>^d/^u scroll</span>
+            <span>/ filter</span>
+            <span>. dotfiles</span>
+            <span>s git</span>
+            <span>Esc close</span>
+          </>
+        )}
       </div>
     </div>
   );

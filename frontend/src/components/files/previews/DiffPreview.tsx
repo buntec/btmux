@@ -30,7 +30,7 @@ export function DiffPreview() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-4 font-mono text-xs leading-5">
+      <div className="px-3 py-2 font-mono text-xs leading-5">
         <div className="mb-2 text-muted-foreground">
           {gitDiff.old_path
             ? `${gitDiff.old_path} → ${gitDiff.path}`

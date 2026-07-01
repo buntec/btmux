@@ -2,7 +2,7 @@ import { ChevronRight } from 'lucide-react';
 import { useFileStore } from '@/state/fileStore';
 
 interface BreadcrumbProps {
-  onNavigate: (path: string) => void;
+  onNavigate: (path: string, focusTarget?: string) => void;
 }
 
 export function Breadcrumb({ onNavigate }: BreadcrumbProps) {
@@ -13,7 +13,7 @@ export function Breadcrumb({ onNavigate }: BreadcrumbProps) {
     <div className="flex items-center gap-0.5 text-muted-foreground overflow-hidden">
       <button
         className="hover:text-foreground shrink-0 px-1"
-        onClick={() => onNavigate('/')}
+        onClick={() => onNavigate('/', parts[0])}
       >
         /
       </button>
@@ -28,7 +28,7 @@ export function Breadcrumb({ onNavigate }: BreadcrumbProps) {
             ) : (
               <button
                 className="hover:text-foreground truncate"
-                onClick={() => onNavigate(path)}
+                onClick={() => onNavigate(path, parts[i + 1])}
               >
                 {part}
               </button>

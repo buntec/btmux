@@ -65,7 +65,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   }, []);
 
   const navigate = useCallback(
-    async (path: string) => {
+    async (path: string, focusTarget?: string) => {
       store.getState().setIsLoading(true);
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
@@ -75,6 +75,10 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         const payload = resp.payload as { path: string; entries: FileEntry[] };
         store.getState().setCurrentPath(payload.path);
         store.getState().setEntries(payload.entries);
+        if (focusTarget) {
+          const idx = payload.entries.findIndex((e) => e.name === focusTarget);
+          if (idx !== -1) store.getState().setFocusedIndex(idx);
+        }
       } catch (e) {
         console.error('list_dir failed:', e);
       } finally {
@@ -455,10 +459,12 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         }
         case 'h':
         case 'ArrowLeft':
-        case 'Backspace':
+        case 'Backspace': {
           e.preventDefault();
-          navigate(getParent(currentPath));
+          const basename = currentPath.slice(currentPath.lastIndexOf('/') + 1);
+          navigate(getParent(currentPath), basename || undefined);
           break;
+        }
         case '/':
           e.preventDefault();
           store.getState().setIsFilterActive(true);

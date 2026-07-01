@@ -34,6 +34,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const showDotFiles = useFileStore((s) => s.showDotFiles);
   const isGitMode = useFileStore((s) => s.isGitMode);
+  const treeDepth = useFileStore((s) => s.treeDepth);
   const gitStatus = useFileStore((s) => s.gitStatus);
   const gitFocusedIndex = useFileStore((s) => s.gitFocusedIndex);
   const gitExpandedSections = useFileStore((s) => s.gitExpandedSections);
@@ -70,6 +71,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
       store.getState().setDirectoryTree(null);
+      store.getState().setTreeDepth(1);
       try {
         const resp = await fileSend('list_dir', { root: path, path: '.' });
         const payload = resp.payload as { path: string; entries: FileEntry[] };
@@ -115,11 +117,12 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   );
 
   const selectDir = useCallback(
-    async (path: string) => {
+    async (path: string, depth?: number) => {
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
+      const resolvedDepth = depth ?? store.getState().treeDepth;
       try {
-        const resp = await fileSend('list_tree', { root: path, path: '.', max_depth: 4, max_items: 15 });
+        const resp = await fileSend('list_tree', { root: path, path: '.', max_depth: resolvedDepth, max_items: 200 });
         store.getState().setDirectoryTree(resp.payload as unknown as TreeNode);
       } catch (e) {
         console.error('list_tree failed:', e);
@@ -250,11 +253,11 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     if (!entry) return;
     const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
     if (entry.is_dir) {
-      selectDir(fullPath);
+      selectDir(fullPath, treeDepth);
     } else {
       selectFile(fullPath, false);
     }
-  }, [focusedIndex, entries, currentPath, showDotFiles, isFilterActive, filterQuery, selectFile, selectDir]);
+  }, [focusedIndex, entries, currentPath, showDotFiles, isFilterActive, filterQuery, treeDepth, selectFile, selectDir]);
 
   // Keyboard handler
   useEffect(() => {
@@ -392,12 +395,28 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
 
       if (e.ctrlKey && e.key === 'n') {
         e.preventDefault();
-        store.getState().setFocusedIndex(Math.min(focusedIndex + 1, visible.length - 1));
+        const focusedEntry = visible[focusedIndex];
+        if (focusedEntry?.is_dir) {
+          const newDepth = treeDepth + 1;
+          store.getState().setTreeDepth(newDepth);
+          const fullPath = currentPath === '/' ? `/${focusedEntry.name}` : `${currentPath}/${focusedEntry.name}`;
+          selectDir(fullPath, newDepth);
+        } else {
+          store.getState().setFocusedIndex(Math.min(focusedIndex + 1, visible.length - 1));
+        }
         return;
       }
       if (e.ctrlKey && e.key === 'p') {
         e.preventDefault();
-        store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
+        const focusedEntry = visible[focusedIndex];
+        if (focusedEntry?.is_dir) {
+          const newDepth = Math.max(1, treeDepth - 1);
+          store.getState().setTreeDepth(newDepth);
+          const fullPath = currentPath === '/' ? `/${focusedEntry.name}` : `${currentPath}/${focusedEntry.name}`;
+          selectDir(fullPath, newDepth);
+        } else {
+          store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
+        }
         return;
       }
       if (e.ctrlKey && e.key === 'd') {
@@ -505,8 +524,10 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     gitStatus,
     gitFocusedIndex,
     gitExpandedSections,
+    treeDepth,
     navigate,
     selectFile,
+    selectDir,
     insertPath,
     openPath,
     onClose,
@@ -516,6 +537,15 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     gitDiscard,
     store,
   ]);
+
+  const focusedEntryIsDir = (() => {
+    const visible = entries.filter((entry) => {
+      if (!showDotFiles && entry.name.startsWith('.')) return false;
+      if (isFilterActive && filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+      return true;
+    });
+    return visible[focusedIndex]?.is_dir ?? false;
+  })();
 
   return (
     <div
@@ -586,7 +616,8 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
           </>
         ) : (
           <>
-            <span>j/k/^n/^p navigate</span>
+            <span>j/k navigate</span>
+            <span>^n/^p {focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate'}</span>
             <span>Enter insert path</span>
             <span>Ctrl+Enter open/cd</span>
             <span>l preview</span>

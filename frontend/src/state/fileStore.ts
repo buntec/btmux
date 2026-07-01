@@ -28,6 +28,7 @@ interface FileStore {
   contentSearchResults: SearchResult[];
 
   directoryTree: TreeNode | null;
+  treeDepth: number;
 
   isGitMode: boolean;
   gitStatus: GitStatusResult | null;
@@ -36,6 +37,7 @@ interface FileStore {
   gitExpandedSections: Set<string>;
 
   setDirectoryTree: (tree: TreeNode | null) => void;
+  setTreeDepth: (depth: number) => void;
   setCurrentPath: (path: string) => void;
   setEntries: (entries: FileEntry[]) => void;
   setSelectedFile: (path: string | null) => void;
@@ -72,6 +74,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   searchResults: [],
   contentSearchResults: [],
   directoryTree: null,
+  treeDepth: 1,
 
   isGitMode: false,
   gitStatus: null,
@@ -80,6 +83,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   gitExpandedSections: new Set(['staged', 'unstaged', 'untracked']),
 
   setDirectoryTree: (tree) => set({ directoryTree: tree }),
+  setTreeDepth: (depth) => set({ treeDepth: depth }),
   setCurrentPath: (path) => set({ currentPath: path }),
   setEntries: (entries) => set({ entries, focusedIndex: 0 }),
   setSelectedFile: (path) => set({ selectedFile: path }),
@@ -114,6 +118,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       filterQuery: '',
       isFilterActive: false,
       directoryTree: null,
+      treeDepth: 1,
       searchMode: 'off',
       searchQuery: '',
       searchResults: [],

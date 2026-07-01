@@ -45,7 +45,7 @@ export function FileTree({ onNavigate, onSelect }: FileTreeProps) {
 
   return (
     <ScrollArea className="flex-1 overflow-hidden">
-      <div ref={listRef} className="py-1">
+      <div ref={listRef}>
         {visible.map((entry, i) => (
           <FileRow
             key={entry.name}
@@ -86,7 +86,7 @@ function FileRow({
     <div
       data-index={index}
       className={cn(
-        'flex items-center gap-2 px-2 py-px cursor-pointer',
+        'flex items-center gap-2 px-2 cursor-pointer leading-tight',
         focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
       )}
       onClick={() => {

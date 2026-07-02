@@ -332,6 +332,38 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => error_response(id, &e),
             }
         }
+        "trash_file" => {
+            let path = request
+                .payload
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            match fs_ops::trash_file(&root, path).await {
+                Ok(()) => ServerMessage {
+                    id,
+                    msg_type: "trash_file_result".to_string(),
+                    payload: serde_json::json!({}),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
+        "delete_file" => {
+            let path = request
+                .payload
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            match fs_ops::delete_file(&root, path).await {
+                Ok(()) => ServerMessage {
+                    id,
+                    msg_type: "delete_file_result".to_string(),
+                    payload: serde_json::json!({}),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
         _ => error_response(id, &format!("Unknown message type: {}", request.msg_type)),
     }
 }

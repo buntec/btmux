@@ -284,6 +284,31 @@ pub async fn get_metadata(root: &Path, path: &str) -> Result<FileMetadata, Strin
     })
 }
 
+pub async fn trash_file(root: &Path, path: &str) -> Result<(), String> {
+    let file_path = validate_path(root, path)?;
+    tokio::task::spawn_blocking(move || {
+        trash::delete(&file_path).map_err(|e| format!("Cannot trash: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+pub async fn delete_file(root: &Path, path: &str) -> Result<(), String> {
+    let file_path = validate_path(root, path)?;
+    let meta = tokio::fs::symlink_metadata(&file_path)
+        .await
+        .map_err(|e| format!("Cannot stat: {}", e))?;
+    if meta.is_dir() {
+        tokio::fs::remove_dir_all(&file_path)
+            .await
+            .map_err(|e| format!("Cannot delete directory: {}", e))
+    } else {
+        tokio::fs::remove_file(&file_path)
+            .await
+            .map_err(|e| format!("Cannot delete file: {}", e))
+    }
+}
+
 fn time_to_string(time: SystemTime) -> Result<String, String> {
     let duration = time
         .duration_since(SystemTime::UNIX_EPOCH)

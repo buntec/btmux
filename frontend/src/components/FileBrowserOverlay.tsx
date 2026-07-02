@@ -9,6 +9,7 @@ import { Breadcrumb } from './files/Breadcrumb';
 import { GitModeHeader } from './files/GitModeHeader';
 import { GitStatus, computeGitItems } from './files/GitStatus';
 import { getParent } from '@/lib/utils';
+import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import type { FileEntry, FileContent, GitStatusResult, FileDiff, TreeNode } from '@/protocol/file-messages';
 import type { ClientMessage } from '@/protocol/messages';
 
@@ -43,6 +44,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   const gitPreviewGenRef = useRef(0);
   const [sidebarWidth, setSidebarWidth] = useState(288);
   const dragging = useRef(false);
+  const [pendingDelete, setPendingDelete] = useState<{ path: string; name: string; permanent: boolean } | null>(null);
 
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -179,6 +181,24 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     }
   }, [fileSend, currentPath, store]);
 
+  const trashFile = useCallback(async (path: string) => {
+    try {
+      await fileSend('trash_file', { root: currentPath, path });
+      await navigate(currentPath);
+    } catch (e) {
+      console.error('trash_file failed:', e);
+    }
+  }, [fileSend, currentPath, navigate]);
+
+  const deleteFile = useCallback(async (path: string) => {
+    try {
+      await fileSend('delete_file', { root: currentPath, path });
+      await navigate(currentPath);
+    } catch (e) {
+      console.error('delete_file failed:', e);
+    }
+  }, [fileSend, currentPath, navigate]);
+
   // Auto-preview diff when git focused index changes
   useEffect(() => {
     if (!isGitMode || !gitStatus) return;
@@ -265,13 +285,32 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        if (isFilterActive) {
+        if (pendingDelete) {
+          setPendingDelete(null);
+        } else if (isFilterActive) {
           store.getState().setIsFilterActive(false);
         } else if (isGitMode) {
           store.getState().setIsGitMode(false);
           store.getState().setGitDiff(null);
         } else {
           onClose();
+        }
+        return;
+      }
+
+      if (pendingDelete) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'y' || e.key === 'Y') {
+          const { path, permanent } = pendingDelete;
+          setPendingDelete(null);
+          if (permanent) {
+            deleteFile(path);
+          } else {
+            trashFile(path);
+          }
+        } else if (e.key === 'n' || e.key === 'N') {
+          setPendingDelete(null);
         }
         return;
       }
@@ -380,6 +419,19 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
           e.preventDefault();
           store.getState().setFilterQuery(filterQuery + e.key);
+          return;
+        }
+        if (e.ctrlKey && (e.key === 'n' || e.key === 'p')) {
+          e.preventDefault();
+          const vis = entries.filter((entry) => {
+            if (!showDotFiles && entry.name.startsWith('.')) return false;
+            if (filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+            return true;
+          });
+          const next = e.key === 'n'
+            ? Math.min(focusedIndex + 1, vis.length - 1)
+            : Math.max(focusedIndex - 1, 0);
+          store.getState().setFocusedIndex(next);
           return;
         }
         if (!e.ctrlKey) return;
@@ -508,6 +560,26 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
           e.preventDefault();
           toggleGitMode();
           break;
+        case 'q':
+          e.preventDefault();
+          onClose();
+          break;
+        case 'd': {
+          e.preventDefault();
+          const entry = visible[focusedIndex];
+          if (!entry) break;
+          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+          setPendingDelete({ path: fullPath, name: entry.name, permanent: false });
+          break;
+        }
+        case 'D': {
+          e.preventDefault();
+          const entry = visible[focusedIndex];
+          if (!entry) break;
+          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+          setPendingDelete({ path: fullPath, name: entry.name, permanent: true });
+          break;
+        }
       }
     };
 
@@ -535,6 +607,9 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     gitStage,
     gitUnstage,
     gitDiscard,
+    trashFile,
+    deleteFile,
+    pendingDelete,
     store,
   ]);
 
@@ -605,28 +680,36 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
         style={{ fontSize: `${Math.max(6, fontSize - 2)}px` }}
       >
-        {isGitMode ? (
+        {pendingDelete ? (
+          <span className="text-foreground">
+            {pendingDelete.permanent ? 'permanently delete' : 'move to trash'}{' '}
+            <span className="text-yellow-400">{pendingDelete.name}</span>?{' '}
+            <KbdGroup><Kbd>y</Kbd></KbdGroup> confirm <KbdGroup><Kbd>n</Kbd></KbdGroup> cancel
+          </span>
+        ) : isGitMode ? (
           <>
-            <span>j/k navigate</span>
-            <span>Tab expand/collapse</span>
-            <span>s stage</span>
-            <span>u unstage</span>
-            <span>x discard</span>
-            <span>Esc exit git</span>
+            <span><KbdGroup><Kbd>j</Kbd><Kbd>k</Kbd></KbdGroup> navigate</span>
+            <span><KbdGroup><Kbd>Tab</Kbd></KbdGroup> expand</span>
+            <span><KbdGroup><Kbd>s</Kbd></KbdGroup> stage</span>
+            <span><KbdGroup><Kbd>u</Kbd></KbdGroup> unstage</span>
+            <span><KbdGroup><Kbd>x</Kbd></KbdGroup> discard</span>
+            <span><KbdGroup><Kbd>Esc</Kbd></KbdGroup> exit git</span>
           </>
         ) : (
           <>
-            <span>j/k navigate</span>
-            <span>^n/^p {focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate'}</span>
-            <span>Enter insert path</span>
-            <span>Ctrl+Enter open/cd</span>
-            <span>l preview</span>
-            <span>h/Backspace up</span>
-            <span>^d/^u scroll</span>
-            <span>/ filter</span>
-            <span>. dotfiles</span>
-            <span>s git</span>
-            <span>Esc close</span>
+            <span><KbdGroup><Kbd>j</Kbd><Kbd>k</Kbd></KbdGroup> navigate</span>
+            <span><KbdGroup><Kbd>^n</Kbd><Kbd>^p</Kbd></KbdGroup> {focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate'}</span>
+            <span><KbdGroup><Kbd>Enter</Kbd></KbdGroup> insert</span>
+            <span><KbdGroup><Kbd>^Enter</Kbd></KbdGroup> open</span>
+            <span><KbdGroup><Kbd>l</Kbd></KbdGroup> preview</span>
+            <span><KbdGroup><Kbd>h</Kbd></KbdGroup> up</span>
+            <span><KbdGroup><Kbd>^d</Kbd><Kbd>^u</Kbd></KbdGroup> scroll</span>
+            <span><KbdGroup><Kbd>/</Kbd></KbdGroup> filter</span>
+            <span><KbdGroup><Kbd>.</Kbd></KbdGroup> dotfiles</span>
+            <span><KbdGroup><Kbd>s</Kbd></KbdGroup> git</span>
+            <span><KbdGroup><Kbd>d</Kbd></KbdGroup> trash</span>
+            <span><KbdGroup><Kbd>D</Kbd></KbdGroup> delete</span>
+            <span><KbdGroup><Kbd>q</Kbd></KbdGroup> close</span>
           </>
         )}
       </div>

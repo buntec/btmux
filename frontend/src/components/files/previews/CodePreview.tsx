@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomOneDark } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { buildSyntaxStyle } from '../syntax-theme';
@@ -103,6 +103,10 @@ const LANGUAGE_MAP: Record<string, string> = {
 export function CodePreview() {
   const fileContent = useFileStore((s) => s.fileContent);
   const selectedFile = useFileStore((s) => s.selectedFile);
+  const searchMode = useFileStore((s) => s.searchMode);
+  const searchQuery = useFileStore((s) => s.searchQuery);
+  const contentSearchResults = useFileStore((s) => s.contentSearchResults);
+  const focusedIndex = useFileStore((s) => s.focusedIndex);
   const theme = useStore((s) => s.config?.theme ?? null);
 
   if (!fileContent) return null;
@@ -110,10 +114,7 @@ export function CodePreview() {
   const ext = selectedFile?.split('.').pop()?.toLowerCase() || '';
   const language = LANGUAGE_MAP[ext] || 'plaintext';
 
-  const style = useMemo(
-    () => (theme ? buildSyntaxStyle(theme) : atomOneDark),
-    [theme],
-  );
+  const style = useMemo(() => (theme ? buildSyntaxStyle(theme) : atomOneDark), [theme]);
 
   const { text, lineTruncated } = useMemo(() => {
     const lines = fileContent.content.split('\n');
@@ -125,6 +126,34 @@ export function CodePreview() {
     }
     return { text: fileContent.content, lineTruncated: false };
   }, [fileContent.content]);
+
+  // When in content search mode, highlight the focused result's line
+  const targetLine = useMemo(() => {
+    if (searchMode !== 'content') return null;
+    const result = contentSearchResults[focusedIndex];
+    if (!result || result.path !== selectedFile) return null;
+    return result.line ?? null;
+  }, [searchMode, contentSearchResults, focusedIndex, selectedFile]);
+
+  // Scroll target line into the centre of the preview viewport
+  useEffect(() => {
+    if (targetLine == null) return;
+    const scrollArea = document.querySelector('.file-preview-scroll [data-slot="scroll-area-viewport"]');
+    if (!scrollArea) return;
+    // SyntaxHighlighter renders one <span> block per line, or we can use the
+    // data-line attribute injected via lineProps. Fall back to a rough estimate.
+    const lineEl = scrollArea.querySelector(`[data-line="${targetLine}"]`);
+    if (lineEl) {
+      lineEl.scrollIntoView({ block: 'center' });
+    } else {
+      // Estimate line height from the pre element
+      const pre = scrollArea.querySelector('pre');
+      if (!pre) return;
+      const lineHeight = pre.scrollHeight / (text.split('\n').length || 1);
+      const offset = (targetLine - 1) * lineHeight;
+      scrollArea.scrollTop = Math.max(0, offset - scrollArea.clientHeight / 2);
+    }
+  }, [targetLine, text]);
 
   const useHighlighting = text.length <= MAX_HIGHLIGHT_BYTES;
   const bg = theme?.background ?? '#282c34';
@@ -142,14 +171,25 @@ export function CodePreview() {
             borderRadius: '0.5rem',
             fontSize: '0.8125rem',
           }}
+          lineProps={(lineNumber) => {
+            const isTarget = targetLine != null && lineNumber === targetLine;
+            return {
+              'data-line': lineNumber,
+              style: {
+                display: 'block',
+                ...(isTarget && {
+                  backgroundColor: 'rgba(255,220,0,0.15)',
+                  boxShadow: 'inset 2px 0 0 rgba(255,220,0,0.7)',
+                }),
+              },
+            } as React.HTMLAttributes<HTMLElement> & { 'data-line': number };
+          }}
+          wrapLines
         >
           {text}
         </SyntaxHighlighter>
       ) : (
-        <pre
-          className="rounded-lg p-4 text-[0.8125rem] overflow-x-auto"
-          style={{ background: bg, color: fg }}
-        >
+        <pre className="rounded-lg p-4 text-[0.8125rem] overflow-x-auto" style={{ background: bg, color: fg }}>
           <code>{text}</code>
         </pre>
       )}

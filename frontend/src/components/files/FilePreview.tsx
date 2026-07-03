@@ -9,7 +9,18 @@ import { MediaPreview } from './previews/MediaPreview';
 import { PdfPreview } from './previews/PdfPreview';
 import { DirectoryPreview } from './previews/DirectoryPreview';
 
-type PreviewType = 'code' | 'image' | 'markdown' | 'json' | 'csv' | 'diff' | 'pdf' | 'video' | 'audio' | 'directory' | 'unknown';
+type PreviewType =
+  | 'code'
+  | 'image'
+  | 'markdown'
+  | 'json'
+  | 'csv'
+  | 'diff'
+  | 'pdf'
+  | 'video'
+  | 'audio'
+  | 'directory'
+  | 'unknown';
 
 const EXTENSION_MAP: Record<string, PreviewType> = {
   rs: 'code',
@@ -126,9 +137,7 @@ export function FilePreview() {
 
   if (!selectedFile || !fileContent) {
     return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        Select a file to preview
-      </div>
+      <div className="flex-1 flex items-center justify-center text-muted-foreground">Select a file to preview</div>
     );
   }
 
@@ -154,25 +163,15 @@ export function FilePreview() {
     }
 
     const src =
-      fileContent.encoding === 'base64'
-        ? `data:${fileContent.mime_type};base64,${fileContent.content}`
-        : undefined;
+      fileContent.encoding === 'base64' ? `data:${fileContent.mime_type};base64,${fileContent.content}` : undefined;
 
     if (!src) {
-      return (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          Cannot preview image
-        </div>
-      );
+      return <div className="flex-1 flex items-center justify-center text-muted-foreground">Cannot preview image</div>;
     }
 
     return (
       <div className="flex-1 flex items-center justify-center p-4">
-        <img
-          src={src}
-          alt={selectedFile}
-          className="max-w-full max-h-full object-contain"
-        />
+        <img src={src} alt={selectedFile} className="max-w-full max-h-full object-contain" />
       </div>
     );
   }
@@ -195,9 +194,7 @@ export function FilePreview() {
         {previewType === 'unknown' && (
           <pre className="leading-relaxed whitespace-pre-wrap break-all font-mono text-foreground text-sm">
             {fileContent.content}
-            {fileContent.truncated && (
-              <span className="text-muted-foreground">{'\n\n'}[truncated]</span>
-            )}
+            {fileContent.truncated && <span className="text-muted-foreground">{'\n\n'}[truncated]</span>}
           </pre>
         )}
       </div>

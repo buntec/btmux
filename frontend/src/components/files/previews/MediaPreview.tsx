@@ -21,11 +21,7 @@ export function MediaPreview() {
   if (mediaType === 'video') {
     return (
       <div className="flex-1 flex items-center justify-center p-4">
-        <video
-          src={src}
-          controls
-          className="max-w-full max-h-full rounded-lg"
-        />
+        <video src={src} controls className="max-w-full max-h-full rounded-lg" />
       </div>
     );
   }
@@ -33,9 +29,7 @@ export function MediaPreview() {
   if (mediaType === 'audio') {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 p-4">
-        <div className="text-muted-foreground text-sm">
-          {selectedFile.split('/').pop()}
-        </div>
+        <div className="text-muted-foreground text-sm">{selectedFile.split('/').pop()}</div>
         <audio src={src} controls className="w-full max-w-md" />
       </div>
     );

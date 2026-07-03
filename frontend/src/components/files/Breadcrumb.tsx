@@ -11,10 +11,7 @@ export function Breadcrumb({ onNavigate }: BreadcrumbProps) {
 
   return (
     <div className="flex items-center gap-0.5 text-muted-foreground overflow-hidden">
-      <button
-        className="hover:text-foreground shrink-0 px-1"
-        onClick={() => onNavigate('/', parts[0])}
-      >
+      <button className="hover:text-foreground shrink-0 px-1" onClick={() => onNavigate('/', parts[0])}>
         /
       </button>
       {parts.map((part, i) => {
@@ -26,10 +23,7 @@ export function Breadcrumb({ onNavigate }: BreadcrumbProps) {
             {isLast ? (
               <span className="text-foreground truncate">{part}</span>
             ) : (
-              <button
-                className="hover:text-foreground truncate"
-                onClick={() => onNavigate(path, parts[i + 1])}
-              >
+              <button className="hover:text-foreground truncate" onClick={() => onNavigate(path, parts[i + 1])}>
                 {part}
               </button>
             )}

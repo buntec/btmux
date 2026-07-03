@@ -72,6 +72,7 @@ impl FileIndex {
                     "*/dist/*",
                 ])
                 .current_dir(&root_owned)
+                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()
@@ -153,6 +154,7 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
             query,
         ])
         .current_dir(root)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

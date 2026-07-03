@@ -28,10 +28,7 @@ pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/ws/pane/{pane_id}", get(ws::pane_io::handle))
         .route("/ws/control", get(ws::control::handle))
-        .route(
-            "/ws/files",
-            get(ws::files::handle).with_state(files_state),
-        )
+        .route("/ws/files", get(ws::files::handle).with_state(files_state))
         .route(
             "/api/sessions",
             axum::routing::get(api_list_sessions)

@@ -6,35 +6,23 @@ export function DiffPreview() {
 
   if (!gitDiff) {
     return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        Select a file to view diff
-      </div>
+      <div className="flex h-full items-center justify-center text-muted-foreground">Select a file to view diff</div>
     );
   }
 
   if (gitDiff.is_binary) {
-    return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        Binary file differs
-      </div>
-    );
+    return <div className="flex h-full items-center justify-center text-muted-foreground">Binary file differs</div>;
   }
 
   if (gitDiff.hunks.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        No changes
-      </div>
-    );
+    return <div className="flex h-full items-center justify-center text-muted-foreground">No changes</div>;
   }
 
   return (
     <ScrollArea className="h-full">
       <div className="px-3 py-2 font-mono text-xs leading-5">
         <div className="mb-2 text-muted-foreground">
-          {gitDiff.old_path
-            ? `${gitDiff.old_path} → ${gitDiff.path}`
-            : gitDiff.path}
+          {gitDiff.old_path ? `${gitDiff.old_path} → ${gitDiff.path}` : gitDiff.path}
         </div>
         {gitDiff.hunks.map((hunk, hunkIdx) => (
           <div key={hunkIdx} className="mb-4">
@@ -51,10 +39,7 @@ export function DiffPreview() {
               }
 
               return (
-                <div
-                  key={lineIdx}
-                  className={`${bgClass} ${textClass} whitespace-pre-wrap break-all px-2`}
-                >
+                <div key={lineIdx} className={`${bgClass} ${textClass} whitespace-pre-wrap break-all px-2`}>
                   <span className="inline-block w-4 select-none text-muted-foreground opacity-60">
                     {line.origin === ' ' ? ' ' : line.origin}
                   </span>

@@ -18,10 +18,7 @@ export function JsonPreview() {
 
   if (!fileContent) return null;
 
-  const style = useMemo(
-    () => (theme ? buildSyntaxStyle(theme) : atomOneDark),
-    [theme],
-  );
+  const style = useMemo(() => (theme ? buildSyntaxStyle(theme) : atomOneDark), [theme]);
 
   const { text, lineTruncated } = useMemo(() => {
     let formatted: string;
@@ -48,10 +45,7 @@ export function JsonPreview() {
   return (
     <div>
       <div className="mb-2 flex justify-end">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="rounded px-2 py-1 text-xs hover:bg-accent"
-        >
+        <button onClick={() => setExpanded(!expanded)} className="rounded px-2 py-1 text-xs hover:bg-accent">
           {expanded ? 'Collapse' : 'Expand'}
         </button>
       </div>
@@ -69,10 +63,7 @@ export function JsonPreview() {
           {text}
         </SyntaxHighlighter>
       ) : (
-        <pre
-          className="rounded-lg p-4 text-[0.8125rem] overflow-x-auto"
-          style={{ background: bg, color: fg }}
-        >
+        <pre className="rounded-lg p-4 text-[0.8125rem] overflow-x-auto" style={{ background: bg, color: fg }}>
           <code>{text}</code>
         </pre>
       )}

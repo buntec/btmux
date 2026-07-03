@@ -57,9 +57,7 @@ export function FileTree({ onNavigate, onSelect }: FileTreeProps) {
             onSelect={onSelect}
           />
         ))}
-        {visible.length === 0 && (
-          <div className="px-3 py-6 text-center text-muted-foreground">Empty</div>
-        )}
+        {visible.length === 0 && <div className="px-3 py-6 text-center text-muted-foreground">Empty</div>}
       </div>
     </ScrollArea>
   );
@@ -102,11 +100,15 @@ function FileRow({
       ) : (
         <File className="size-3.5 text-muted-foreground shrink-0" />
       )}
-      <span className="flex-1 truncate" title={entry.name}>{entry.name}</span>
+      <span className="flex-1 truncate" title={entry.name}>
+        {entry.name}
+      </span>
       {entry.is_dir ? (
         <ChevronRight className="size-3 text-muted-foreground shrink-0" />
       ) : (
-        <span className="text-muted-foreground shrink-0" style={{ fontSize: '0.85em' }}>{formatSize(entry.size)}</span>
+        <span className="text-muted-foreground shrink-0" style={{ fontSize: '0.85em' }}>
+          {formatSize(entry.size)}
+        </span>
       )}
     </div>
   );

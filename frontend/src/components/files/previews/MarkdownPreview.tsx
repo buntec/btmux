@@ -8,9 +8,7 @@ export function MarkdownPreview() {
 
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {fileContent.content}
-      </ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent.content}</ReactMarkdown>
     </div>
   );
 }

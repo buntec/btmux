@@ -26,10 +26,7 @@ export function CsvPreview() {
         <thead className="bg-muted">
           <tr>
             {data.headers.map((h, i) => (
-              <th
-                key={i}
-                className="whitespace-nowrap border-b px-3 py-2 text-left font-medium"
-              >
+              <th key={i} className="whitespace-nowrap border-b px-3 py-2 text-left font-medium">
                 {h}
               </th>
             ))}

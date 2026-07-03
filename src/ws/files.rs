@@ -1,8 +1,10 @@
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::file_git;
 use crate::file_search::{self, FileIndex};
@@ -35,11 +37,21 @@ pub async fn handle(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<FilesState>) {
-    loop {
-        let Some(Ok(msg)) = socket.recv().await else {
-            break;
-        };
+async fn handle_socket(socket: WebSocket, state: Arc<FilesState>) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (tx, mut rx) = mpsc::channel::<String>(64);
+
+    // Writer task: drains the mpsc channel into the WebSocket
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Reader loop: spawns one task per message so dispatch runs concurrently
+    while let Some(Ok(msg)) = ws_rx.next().await {
         let Message::Text(text) = msg else {
             continue;
         };
@@ -52,19 +64,17 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<FilesState>) {
                     msg_type: "error".to_string(),
                     payload: serde_json::json!({ "message": format!("Invalid message: {}", e) }),
                 };
-                let _ = socket
-                    .send(Message::Text(serde_json::to_string(&err).unwrap().into()))
-                    .await;
+                let _ = tx.send(serde_json::to_string(&err).unwrap()).await;
                 continue;
             }
         };
 
-        let response = dispatch(&request, &state).await;
-        let _ = socket
-            .send(Message::Text(
-                serde_json::to_string(&response).unwrap().into(),
-            ))
-            .await;
+        let state = state.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let response = dispatch(&request, &state).await;
+            let _ = tx.send(serde_json::to_string(&response).unwrap()).await;
+        });
     }
 }
 
@@ -167,8 +177,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("path")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
-            let search_root =
-                fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
+            let search_root = fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
 
             match state.file_index.search(query, &search_root).await {
                 Ok(results) => ServerMessage {
@@ -193,8 +202,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("path")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
-            let search_root =
-                fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
+            let search_root = fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
 
             match file_search::content_search(query, &search_root).await {
                 Ok(results) => ServerMessage {
@@ -214,8 +222,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("path")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
-            let git_root =
-                fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
+            let git_root = fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
 
             match file_git::git_status(&git_root).await {
                 Ok(result) => ServerMessage {
@@ -242,8 +249,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("cwd")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
-            let git_root =
-                fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+            let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
             match file_git::git_diff_file(&git_root, path, staged).await {
                 Ok(result) => ServerMessage {
@@ -265,8 +271,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("cwd")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
-            let status_root =
-                fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+            let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
             if let Err(e) = file_git::git_stage_file(&status_root, path).await {
                 return error_response(id, &e);
@@ -291,8 +296,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("cwd")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
-            let status_root =
-                fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+            let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
             if let Err(e) = file_git::git_unstage_file(&status_root, path).await {
                 return error_response(id, &e);
@@ -317,8 +321,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("cwd")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
-            let status_root =
-                fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+            let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
             if let Err(e) = file_git::git_discard_file(&status_root, path).await {
                 return error_response(id, &e);

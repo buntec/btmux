@@ -11,7 +11,7 @@ type HljsStyle = Record<string, CSSProperties>;
  */
 export function buildSyntaxStyle(theme: Theme): HljsStyle {
   return {
-    'hljs': {
+    hljs: {
       display: 'block',
       overflowX: 'auto',
       padding: '0.5em',

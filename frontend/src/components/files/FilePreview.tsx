@@ -122,6 +122,7 @@ export function FilePreview() {
   const isGitMode = useFileStore((s) => s.isGitMode);
   const gitDiff = useFileStore((s) => s.gitDiff);
   const directoryTree = useFileStore((s) => s.directoryTree);
+  const searchMode = useFileStore((s) => s.searchMode);
 
   if (isGitMode && gitDiff) {
     return <DiffPreview />;
@@ -187,15 +188,21 @@ export function FilePreview() {
   return (
     <ScrollArea className="flex-1 overflow-hidden">
       <div className="p-4">
-        {previewType === 'code' && <CodePreview />}
-        {previewType === 'markdown' && <MarkdownPreview />}
-        {previewType === 'json' && <JsonPreview />}
-        {previewType === 'csv' && <CsvPreview />}
-        {previewType === 'unknown' && (
-          <pre className="leading-relaxed whitespace-pre-wrap break-all font-mono text-foreground text-sm">
-            {fileContent.content}
-            {fileContent.truncated && <span className="text-muted-foreground">{'\n\n'}[truncated]</span>}
-          </pre>
+        {searchMode === 'content' ? (
+          <CodePreview />
+        ) : (
+          <>
+            {previewType === 'code' && <CodePreview />}
+            {previewType === 'markdown' && <MarkdownPreview />}
+            {previewType === 'json' && <JsonPreview />}
+            {previewType === 'csv' && <CsvPreview />}
+            {previewType === 'unknown' && (
+              <pre className="leading-relaxed whitespace-pre-wrap break-all font-mono text-foreground text-sm">
+                {fileContent.content}
+                {fileContent.truncated && <span className="text-muted-foreground">{'\n\n'}[truncated]</span>}
+              </pre>
+            )}
+          </>
         )}
       </div>
     </ScrollArea>

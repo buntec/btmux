@@ -74,6 +74,10 @@ impl SessionManager {
         self.shell = shell;
     }
 
+    fn scrollback_lines(&self) -> u32 {
+        self.config.terminal.scrollback.unwrap_or(10_000)
+    }
+
     pub async fn create_session(&mut self, name: Option<String>) -> Uuid {
         self.create_session_with_cwd(name, None).await
     }
@@ -102,6 +106,7 @@ impl SessionManager {
             self.meta_tx.clone(),
             cwd,
             self.port,
+            self.scrollback_lines(),
         );
 
         let pane = Pane { id: pane_id, pty };
@@ -179,6 +184,7 @@ impl SessionManager {
             self.meta_tx.clone(),
             cwd,
             self.port,
+            self.scrollback_lines(),
         );
         let new_pane = Pane {
             id: new_pane_id,
@@ -384,6 +390,7 @@ impl SessionManager {
             self.meta_tx.clone(),
             cwd,
             self.port,
+            self.scrollback_lines(),
         );
         let pane = Pane { id: pane_id, pty };
         let base = name.unwrap_or_else(|| shell_name(&self.shell));
@@ -692,6 +699,7 @@ impl SessionManager {
                     self.meta_tx.clone(),
                     cwd,
                     self.port,
+                    self.scrollback_lines(),
                 );
                 Pane { id: p.id, pty }
             })

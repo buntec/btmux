@@ -43,19 +43,13 @@ pub struct PtyHandle {
     pub cwd: Arc<Mutex<Option<String>>>,
     /// Server port, injected as BTMUX_API_URL into the shell environment.
     port: u16,
+    /// Maximum backend replay buffer size in bytes, derived from the config's
+    /// scrollback line count. Controls how much PTY output is kept for replay
+    /// on reconnect; ghostty-web's in-memory scrollback uses the line count directly.
+    scrollback_bytes: usize,
 }
 
 impl PtyHandle {
-    pub fn new(
-        shell: &str,
-        pane_id: Uuid,
-        exit_tx: mpsc::UnboundedSender<Uuid>,
-        meta_tx: mpsc::UnboundedSender<()>,
-        port: u16,
-    ) -> Self {
-        Self::new_with_cwd(shell, pane_id, exit_tx, meta_tx, None, port)
-    }
-
     pub fn new_with_cwd(
         shell: &str,
         pane_id: Uuid,
@@ -63,6 +57,7 @@ impl PtyHandle {
         meta_tx: mpsc::UnboundedSender<()>,
         spawn_cwd: Option<std::path::PathBuf>,
         port: u16,
+        scrollback_lines: u32,
     ) -> Self {
         let (input_tx, _) = mpsc::unbounded_channel::<Vec<u8>>();
         let (output_tx, _) = broadcast::channel::<Vec<u8>>(256);
@@ -87,6 +82,7 @@ impl PtyHandle {
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
             port,
+            scrollback_bytes: scrollback_lines as usize * 200,
         }
     }
 
@@ -149,6 +145,7 @@ impl PtyHandle {
         // Start reader thread BEFORE spawning shell
         let output_tx_clone = self.output_tx.clone();
         let scrollback_clone = self.scrollback.clone();
+        let scrollback_cap = self.scrollback_bytes;
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
         let title_arc = self.title.clone();
@@ -177,8 +174,8 @@ impl PtyHandle {
                         {
                             let mut sb = scrollback_clone.lock().unwrap();
                             sb.extend_from_slice(&result.scrollback);
-                            if sb.len() > 65536 {
-                                let drain_to = sb.len() - 65536;
+                            if sb.len() > scrollback_cap {
+                                let drain_to = sb.len() - scrollback_cap;
                                 sb.drain(..drain_to);
                             }
                             let _ = output_tx_clone.send(result.broadcast);

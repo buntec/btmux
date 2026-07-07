@@ -32,6 +32,11 @@ interface Props {
 const FONT_FALLBACK = 'Symbols Nerd Font Mono, Menlo, Monaco, monospace';
 const MIN_FONT_SIZE = 6;
 const MAX_FONT_SIZE = 72;
+// ghostty-web's `scrollback` option feeds the WASM core's `max_scrollback`,
+// which is a BYTE budget (see the conversion in buildTerminalOptions). This is
+// the assumed average bytes-per-line used to turn the configured line count
+// into that budget; upstream Ghostty defaults to ~1 KB/line (10 MB / 10000).
+const SCROLLBACK_BYTES_PER_LINE = 1000;
 
 function buildFontFamily(configured: string | null | undefined): string {
   const base = configured ?? 'monospace';
@@ -51,7 +56,14 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   // WebGL2 init fails. Omitted when unset so ghostty-web's canvas default applies.
   if (t?.renderer != null) opts.renderer = t.renderer;
   if (t?.cursorStyle != null) opts.cursorStyle = t.cursorStyle;
-  if (t?.scrollback != null) opts.scrollback = t.scrollback;
+  // ghostty-web's `scrollback` option is documented (and configured here) as a
+  // LINE count, but it's written verbatim into the WASM core's `max_scrollback`
+  // field, which Ghostty interprets in BYTES. Passing `10000` therefore yields
+  // only ~10 KB of scrollback (~800 lines of plain text). Convert the configured
+  // line count into a byte budget so the emulator retains roughly the requested
+  // number of lines even for wide/colored output (10000 lines → 10 MB, matching
+  // upstream Ghostty's default).
+  if (t?.scrollback != null) opts.scrollback = t.scrollback * SCROLLBACK_BYTES_PER_LINE;
   // When a wallpaper is configured, enable transparency so the image shows
   // through the terminal background; explicit allow-transparency still wins.
   const allowTransparency = t?.allowTransparency ?? (config?.wallpaper != null ? true : null);

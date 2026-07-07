@@ -82,7 +82,7 @@ impl PtyHandle {
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
             port,
-            scrollback_bytes: scrollback_lines as usize * 200,
+            scrollback_bytes: scrollback_lines as usize * 1000,
         }
     }
 

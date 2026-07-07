@@ -58,7 +58,7 @@ SyntaxHighlighter.registerLanguage('typescript', typescript);
 SyntaxHighlighter.registerLanguage('xml', xml);
 SyntaxHighlighter.registerLanguage('yaml', yaml);
 
-const MAX_HIGHLIGHT_BYTES = 100 * 1024;
+const MAX_HIGHLIGHT_BYTES = 20 * 1024;
 const MAX_LINES = 5000;
 
 const LANGUAGE_MAP: Record<string, string> = {

@@ -169,7 +169,7 @@ export function CodePreview() {
           customStyle={{
             margin: 0,
             borderRadius: '0.5rem',
-            fontSize: '0.8125rem',
+            fontSize: '1em',
           }}
           lineProps={(lineNumber) => {
             const isTarget = targetLine != null && lineNumber === targetLine;
@@ -189,7 +189,7 @@ export function CodePreview() {
           {text}
         </SyntaxHighlighter>
       ) : (
-        <pre className="rounded-lg p-4 text-[0.8125rem] overflow-x-auto" style={{ background: bg, color: fg }}>
+        <pre className="rounded-lg p-4 overflow-x-auto" style={{ background: bg, color: fg }}>
           <code>{text}</code>
         </pre>
       )}

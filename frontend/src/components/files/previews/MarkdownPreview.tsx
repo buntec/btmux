@@ -7,7 +7,7 @@ export function MarkdownPreview() {
   if (!fileContent) return null;
 
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none">
+    <div className="prose dark:prose-invert max-w-none" style={{ fontSize: '1em' }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent.content}</ReactMarkdown>
     </div>
   );

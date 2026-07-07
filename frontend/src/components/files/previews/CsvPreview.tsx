@@ -22,7 +22,7 @@ export function CsvPreview() {
 
   return (
     <div className="overflow-auto rounded border">
-      <table className="w-full text-sm">
+      <table className="w-full">
         <thead className="bg-muted">
           <tr>
             {data.headers.map((h, i) => (

@@ -34,6 +34,8 @@ interface AppStore {
   // File browser overlay (prefix + f)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
+  // The pane whose slot the file browser occupies. Null when closed.
+  fileBrowserPaneId: string | null;
   // Whether the /ws/control socket is currently connected. The frontend holds
   // no canonical state, so while this is false the UI is showing stale data.
   controlConnected: boolean;
@@ -63,7 +65,7 @@ interface AppStore {
   showToast: (message: string, level?: 'info' | 'error', opts?: { body?: string; paneId?: string }) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
-  setFileBrowserOpen: (open: boolean, cwd?: string | null) => void;
+  setFileBrowserOpen: (open: boolean, cwd?: string | null, paneId?: string | null) => void;
   setNavigateFn: (fn: (path: string) => void) => void;
   // Navigate to the window containing a pane, if it can be located.
   navigateToPane: (paneId: string) => void;
@@ -83,6 +85,7 @@ export const useStore = create<AppStore>((set, get) => ({
   paneNumbersVisible: false,
   fileBrowserOpen: false,
   fileBrowserCwd: null,
+  fileBrowserPaneId: null,
   controlConnected: false,
   terminals: new Map(),
   notifications: new Map(),
@@ -107,7 +110,8 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   setPrefixActive: (active) => set({ prefixActive: active }),
   setOverlay: (overlay) => set({ overlay }),
-  setFileBrowserOpen: (open, cwd) => set({ fileBrowserOpen: open, fileBrowserCwd: cwd ?? null }),
+  setFileBrowserOpen: (open, cwd, paneId) =>
+    set({ fileBrowserOpen: open, fileBrowserCwd: cwd ?? null, fileBrowserPaneId: paneId ?? null }),
   setWindowGridOpen: (open) => set({ windowGridOpen: open }),
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),

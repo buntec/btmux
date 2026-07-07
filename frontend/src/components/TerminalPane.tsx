@@ -92,7 +92,7 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
 
   const config = useStore((s) => s.config);
   const overlay = useStore((s) => s.overlay);
-  const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
+  const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const termOptions = useMemo(() => buildTerminalOptions(config), [config]);
 
   useEffect(() => {
@@ -105,11 +105,13 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
     term.open(container);
     // ghostty-web's open() auto-focuses (and schedules a deferred setTimeout(0)
     // focus); undo both if an overlay is active so the picker keeps focus.
-    if (useStore.getState().overlay || useStore.getState().fileBrowserOpen) {
+    const shouldBlurOnOpen = () => {
+      const s = useStore.getState();
+      return !!s.overlay || (s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
+    };
+    if (shouldBlurOnOpen()) {
       term.blur();
-      setTimeout(() => {
-        if (useStore.getState().overlay || useStore.getState().fileBrowserOpen) term.blur();
-      }, 0);
+      setTimeout(() => { if (shouldBlurOnOpen()) term.blur(); }, 0);
     }
 
     // Explicitly load the configured font at the requested weight so the browser

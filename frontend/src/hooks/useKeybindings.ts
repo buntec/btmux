@@ -80,8 +80,6 @@ export function useKeybindings(
       }
 
       if (overlayRef.current) return;
-      // While the file browser is open it owns the keyboard.
-      if (useStore.getState().fileBrowserOpen) return;
       // While the window-grid is open it owns the keyboard (arrows/enter/esc/
       // digits navigate the grid); don't let the prefix or pane binds fire.
       if (windowGridOpenRef.current) return;
@@ -385,7 +383,7 @@ function runAction(
       const win = session?.windows[session.active_window];
       const pane = win?.panes[win.active_pane];
       const cwd = pane?.cwd ?? null;
-      store.setFileBrowserOpen(true, cwd);
+      store.setFileBrowserOpen(true, cwd, pane?.id ?? null);
       break;
     }
   }

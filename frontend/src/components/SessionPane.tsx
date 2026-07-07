@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal } from 'ghostty-web';
 import { TerminalPane } from './TerminalPane';
+import { FileBrowserOverlay } from './FileBrowserOverlay';
 import { LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
@@ -33,6 +34,9 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
+  const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
+  const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
+  const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
   const config = useStore((s) => s.config);
 
   // Read this session's own state from the store. Subscribing to allSessions
@@ -95,13 +99,15 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
   const clearPaneNotification = useStore((s) => s.clearPaneNotification);
   useEffect(() => {
     const focusId = zoomedPaneId ?? activePaneId;
-    if (overlay || windowGridOpen || !focusId || !isActiveSession) return;
+    // Don't steal focus into the terminal while the file browser occupies that pane.
+    const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
+    if (overlay || windowGridOpen || browserOwnsActivePane || !focusId || !isActiveSession) return;
     clearPaneNotification(focusId);
     const id = window.setTimeout(() => {
       registryRef.current.get(focusId)?.focus();
     }, 0);
     return () => window.clearTimeout(id);
-  }, [activePaneId, zoomedPaneId, overlay, windowGridOpen, isActiveSession, clearPaneNotification]);
+  }, [activePaneId, zoomedPaneId, overlay, windowGridOpen, fileBrowserOpen, fileBrowserPaneId, isActiveSession, clearPaneNotification]);
 
   const handleDividerMouseDown = useCallback(
     (divider: Divider, e: React.MouseEvent) => {
@@ -248,6 +254,34 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
             }
           />
         ))}
+      {fileBrowserOpen && isActiveSession && (() => {
+        const isFileBrowserZoomed = fileBrowserPaneId === zoomedPaneId;
+        const rect = isFileBrowserZoomed
+          ? HIDDEN
+          : (fileBrowserPaneId ? rectByPane.get(fileBrowserPaneId) : null);
+        if (!rect) return null;
+        return (
+          <div
+            key="file-browser"
+            style={{
+              position: 'absolute',
+              top: `${rect.top}%`,
+              left: `${rect.left}%`,
+              width: `${rect.width}%`,
+              height: `${rect.height}%`,
+              zIndex: 20,
+            }}
+          >
+            <FileBrowserOverlay
+              cwd={fileBrowserCwd}
+              sessionId={sessionId}
+              paneId={fileBrowserPaneId!}
+              send={send}
+              onClose={() => useStore.getState().setFileBrowserOpen(false)}
+            />
+          </div>
+        );
+      })()}
       {showPaneNumbers &&
         rects.map((rect) => {
           const n = paneNumberById.get(rect.paneId);

@@ -41,11 +41,13 @@ const MEDIA_EXTENSIONS = new Set([
 
 interface FileBrowserOverlayProps {
   cwd: string | null;
+  sessionId: string;
+  paneId: string;
   send: (msg: ClientMessage) => void;
   onClose: () => void;
 }
 
-export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayProps) {
+export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: FileBrowserOverlayProps) {
   const { send: fileSend } = useFileSocket();
   const config = useStore((s) => s.config);
   const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
@@ -69,6 +71,7 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
   const [sidebarWidth, setSidebarWidth] = useState(288);
   const dragging = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<{ path: string; name: string; permanent: boolean } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -274,40 +277,21 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     navigate(startPath);
   }, [cwd, navigate]);
 
-  const getActivePaneInfo = useCallback(() => {
-    const mainStore = useStore.getState();
-    const match = window.location.pathname.match(/^\/s\/([^/]+)/);
-    const sessionName = match ? decodeURIComponent(match[1]) : null;
-    const session = sessionName
-      ? mainStore.allSessions.find((s) => s.name === sessionName)
-      : mainStore.allSessions[0];
-    if (!session) return null;
-    const win = session.windows[session.active_window];
-    if (!win) return null;
-    const pane = win.panes[win.active_pane];
-    if (!pane) return null;
-    return { sessionId: session.id, paneId: pane.id };
-  }, []);
-
   const insertPath = useCallback(
     (path: string) => {
-      const info = getActivePaneInfo();
-      if (!info) return;
-      send({ type: 'write_pane_input', session_id: info.sessionId, pane_id: info.paneId, text: path });
+      send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text: path });
       onClose();
     },
-    [send, onClose, getActivePaneInfo],
+    [send, onClose, sessionId, paneId],
   );
 
   const openPath = useCallback(
     (path: string, isDir: boolean) => {
-      const info = getActivePaneInfo();
-      if (!info) return;
       const text = isDir ? `cd ${path}\n` : `$EDITOR ${path}\n`;
-      send({ type: 'write_pane_input', session_id: info.sessionId, pane_id: info.paneId, text });
+      send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
       onClose();
     },
-    [send, onClose, getActivePaneInfo],
+    [send, onClose, sessionId, paneId],
   );
 
   const selectSearchResult = useCallback(
@@ -372,9 +356,36 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
     selectDir,
   ]);
 
-  // Keyboard handler
+  // Track whether this pane is the active one, and focus/blur accordingly —
+  // mirrors the same pattern as TerminalPane so navigation between panes works.
+  const allSessions = useStore((s) => s.allSessions);
+  const activePaneId = (() => {
+    const session = allSessions.find((s) => s.id === sessionId);
+    if (!session) return null;
+    const win = session.windows[session.active_window];
+    return win?.panes[win.active_pane]?.id ?? null;
+  })();
+  const isActive = activePaneId === paneId;
+  const prevIsActive = useRef(false);
+  useEffect(() => {
+    const wasActive = prevIsActive.current;
+    prevIsActive.current = isActive;
+    if (isActive && !wasActive) {
+      const id = window.setTimeout(() => rootRef.current?.focus(), 0);
+      return () => window.clearTimeout(id);
+    }
+  }, [isActive]);
+
+  // Auto-focus on mount.
+  useEffect(() => {
+    const id = window.setTimeout(() => rootRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  // Keyboard handler — only active while this overlay (or a child) has focus.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (!rootRef.current?.contains(document.activeElement)) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -758,11 +769,17 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
 
   return (
     <div
-      className="absolute inset-0 z-20 flex flex-col bg-background"
+      ref={rootRef}
+      tabIndex={-1}
+      className="absolute inset-0 flex flex-col bg-background outline-none overflow-hidden"
       style={{
         fontSize: `${fontSize}px`,
         fontFamily: 'var(--btmux-font, monospace)',
         fontWeight: 'var(--btmux-font-weight, 400)',
+      }}
+      onMouseDown={() => {
+        if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
+        rootRef.current?.focus();
       }}
     >
       {/* Header */}

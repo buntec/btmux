@@ -104,7 +104,11 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
         store.getState().setCurrentPath(payload.path);
         store.getState().setEntries(payload.entries);
         if (focusTarget) {
-          const idx = payload.entries.findIndex((e) => e.name === focusTarget);
+          const { showDotFiles } = store.getState();
+          const visible = payload.entries.filter(
+            (e) => showDotFiles || !e.name.startsWith('.'),
+          );
+          const idx = visible.findIndex((e) => e.name === focusTarget);
           if (idx !== -1) store.getState().setFocusedIndex(idx);
         }
       } catch (e) {
@@ -272,14 +276,17 @@ export function FileBrowserOverlay({ cwd, send, onClose }: FileBrowserOverlayPro
 
   const getActivePaneInfo = useCallback(() => {
     const mainStore = useStore.getState();
-    const sessions = mainStore.allSessions;
-    for (const session of sessions) {
-      const win = session.windows[session.active_window];
-      if (!win) continue;
-      const pane = win.panes[win.active_pane];
-      if (pane) return { sessionId: session.id, paneId: pane.id };
-    }
-    return null;
+    const match = window.location.pathname.match(/^\/s\/([^/]+)/);
+    const sessionName = match ? decodeURIComponent(match[1]) : null;
+    const session = sessionName
+      ? mainStore.allSessions.find((s) => s.name === sessionName)
+      : mainStore.allSessions[0];
+    if (!session) return null;
+    const win = session.windows[session.active_window];
+    if (!win) return null;
+    const pane = win.panes[win.active_pane];
+    if (!pane) return null;
+    return { sessionId: session.id, paneId: pane.id };
   }, []);
 
   const insertPath = useCallback(

@@ -396,10 +396,7 @@ export function TerminalPane({
   // between them and from the outer edge. This mirrors the mockup's padding/gap.
   const GAP = 4; // px on each side → 8px total between adjacent panes
   const borderWidth = isActive ? '1.5px' : '1px';
-  const boxShadow =
-    isActive || isZoomed
-      ? `0 0 0 1px ${borderColor}, 0 0 24px ${accentGlow}`
-      : undefined;
+  const boxShadow = isActive || isZoomed ? `0 0 0 1px ${borderColor}, 0 0 24px ${accentGlow}` : undefined;
 
   return (
     <div
@@ -436,7 +433,6 @@ export function TerminalPane({
           cols={dims?.cols ?? null}
           rows={dims?.rows ?? null}
           isActive={isActive}
-          isZoomed={isZoomed}
           notificationColor={notifColor}
           termFont={termFont}
         />

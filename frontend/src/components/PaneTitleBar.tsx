@@ -31,7 +31,6 @@ interface Props {
   cols: number | null;
   rows: number | null;
   isActive: boolean;
-  isZoomed: boolean;
   /** Color of the pending-notification dot for this pane, or null if none. */
   notificationColor: string | null;
   termFont: number;
@@ -39,23 +38,11 @@ interface Props {
 
 /**
  * The per-pane title bar from the "btmux Chrome" design: an accent stripe +
- * numbered badge, the pane title/shell, its working directory, an optional zoom
- * tag, and the live cols×rows. The active pane gets a filled accent badge and a
+ * numbered badge, the pane title/shell, its working directory, and the live cols×rows. The active pane gets a filled accent badge and a
  * brighter fill; inactive panes get a muted badge and a status dot. Fully
  * theme-driven via `chromePalette`.
  */
-export function PaneTitleBar({
-  theme,
-  index,
-  title,
-  cwd,
-  cols,
-  rows,
-  isActive,
-  isZoomed,
-  notificationColor,
-  termFont,
-}: Props) {
+export function PaneTitleBar({ theme, index, title, cwd, cols, rows, isActive, notificationColor, termFont }: Props) {
   const c = chromePalette(theme);
   const font = chromeFont(termFont);
   const height = paneTitleHeight(termFont);
@@ -118,22 +105,6 @@ export function PaneTitleBar({
         </span>
       )}
       <span style={{ flex: 1 }} />
-      {isZoomed && (
-        <span
-          style={{
-            padding: '2px 7px',
-            borderRadius: '5px',
-            background: withAlpha(c.zoom, 0.16),
-            color: c.zoom,
-            fontSize: `${Math.max(9, font - 2)}px`,
-            fontWeight: 700,
-            letterSpacing: '.04em',
-            flex: 'none',
-          }}
-        >
-          ⛶ ZOOM
-        </span>
-      )}
       {notificationColor ? (
         <span
           style={{

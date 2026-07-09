@@ -6,6 +6,7 @@ import { chromePalette, withAlpha } from '../lib/chrome-colors';
 import { computeRectsAndDividers } from '../state/layout';
 import { SessionState } from '../state/types';
 import { MirrorPane } from './MirrorPane';
+import { sortSessions } from '../state/sessionMru';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -64,9 +65,13 @@ export function SessionSwitcher({ send }: Props) {
   const activeWindowId = activeSession?.windows[activeSession.active_window]?.id ?? null;
 
   const query = filterQuery.trim().toLowerCase();
+  const sortedSessions = useMemo(
+    () => sortSessions(allSessions, config?.session_sort ?? 'created'),
+    [allSessions, config?.session_sort],
+  );
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
-    for (const sess of allSessions) {
+    for (const sess of sortedSessions) {
       // A session shows if it matches by name, or if any of its windows match.
       // While filtering, matching sessions auto-expand so the matches are visible.
       const sessMatch = !query || sess.name.toLowerCase().includes(query);
@@ -86,7 +91,7 @@ export function SessionSwitcher({ send }: Props) {
       }
     }
     return out;
-  }, [allSessions, expanded, query]);
+  }, [sortedSessions, expanded, query]);
 
   const sessionById = useMemo(() => new Map(allSessions.map((s) => [s.id, s])), [allSessions]);
 

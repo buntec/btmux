@@ -108,9 +108,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         store.getState().setEntries(payload.entries);
         if (focusTarget) {
           const { showDotFiles } = store.getState();
-          const visible = payload.entries.filter(
-            (e) => showDotFiles || !e.name.startsWith('.'),
-          );
+          const visible = payload.entries.filter((e) => showDotFiles || !e.name.startsWith('.'));
           const idx = visible.findIndex((e) => e.name === focusTarget);
           if (idx !== -1) store.getState().setFocusedIndex(idx);
         }

@@ -107,7 +107,16 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
       registryRef.current.get(focusId)?.focus();
     }, 0);
     return () => window.clearTimeout(id);
-  }, [activePaneId, zoomedPaneId, overlay, windowGridOpen, fileBrowserOpen, fileBrowserPaneId, isActiveSession, clearPaneNotification]);
+  }, [
+    activePaneId,
+    zoomedPaneId,
+    overlay,
+    windowGridOpen,
+    fileBrowserOpen,
+    fileBrowserPaneId,
+    isActiveSession,
+    clearPaneNotification,
+  ]);
 
   const handleDividerMouseDown = useCallback(
     (divider: Divider, e: React.MouseEvent) => {
@@ -254,34 +263,34 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
             }
           />
         ))}
-      {fileBrowserOpen && isActiveSession && (() => {
-        const isFileBrowserZoomed = fileBrowserPaneId === zoomedPaneId;
-        const rect = isFileBrowserZoomed
-          ? HIDDEN
-          : (fileBrowserPaneId ? rectByPane.get(fileBrowserPaneId) : null);
-        if (!rect) return null;
-        return (
-          <div
-            key="file-browser"
-            style={{
-              position: 'absolute',
-              top: `${rect.top}%`,
-              left: `${rect.left}%`,
-              width: `${rect.width}%`,
-              height: `${rect.height}%`,
-              zIndex: 20,
-            }}
-          >
-            <FileBrowserOverlay
-              cwd={fileBrowserCwd}
-              sessionId={sessionId}
-              paneId={fileBrowserPaneId!}
-              send={send}
-              onClose={() => useStore.getState().setFileBrowserOpen(false)}
-            />
-          </div>
-        );
-      })()}
+      {fileBrowserOpen &&
+        isActiveSession &&
+        (() => {
+          const isFileBrowserZoomed = fileBrowserPaneId === zoomedPaneId;
+          const rect = isFileBrowserZoomed ? HIDDEN : fileBrowserPaneId ? rectByPane.get(fileBrowserPaneId) : null;
+          if (!rect) return null;
+          return (
+            <div
+              key="file-browser"
+              style={{
+                position: 'absolute',
+                top: `${rect.top}%`,
+                left: `${rect.left}%`,
+                width: `${rect.width}%`,
+                height: `${rect.height}%`,
+                zIndex: 20,
+              }}
+            >
+              <FileBrowserOverlay
+                cwd={fileBrowserCwd}
+                sessionId={sessionId}
+                paneId={fileBrowserPaneId!}
+                send={send}
+                onClose={() => useStore.getState().setFileBrowserOpen(false)}
+              />
+            </div>
+          );
+        })()}
       {showPaneNumbers &&
         rects.map((rect) => {
           const n = paneNumberById.get(rect.paneId);

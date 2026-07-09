@@ -111,7 +111,9 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
     };
     if (shouldBlurOnOpen()) {
       term.blur();
-      setTimeout(() => { if (shouldBlurOnOpen()) term.blur(); }, 0);
+      setTimeout(() => {
+        if (shouldBlurOnOpen()) term.blur();
+      }, 0);
     }
 
     // Explicitly load the configured font at the requested weight so the browser

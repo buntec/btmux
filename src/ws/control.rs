@@ -198,22 +198,27 @@ async fn run_palette_command(command: &str, session_id: Uuid, state: &AppState) 
                 mgr.active_pane_cwd(session_id)
             };
             let Some(base_dir) = base_dir else { return };
-            let layouts =
-                match tokio::task::spawn_blocking(move || git::discover_repo_layouts(&base_dir))
-                    .await
-                {
-                    Ok(layouts) => layouts,
+            let discovery =
+                match tokio::task::spawn_blocking(move || git::discover(&base_dir)).await {
+                    Ok(d) => d,
                     Err(e) => {
                         tracing::warn!("git repo discovery task failed: {}", e);
                         return;
                     }
                 };
-            if layouts.is_empty() {
-                tracing::info!("no git repos found");
-                return;
-            }
             let mut mgr = state.write().await;
-            mgr.create_sessions_from_git_repos(layouts).await;
+            match discovery {
+                git::Discovery::InsideRepo(layout) => {
+                    mgr.add_worktree_windows(session_id, layout).await;
+                }
+                git::Discovery::ChildRepos(layouts) => {
+                    if layouts.is_empty() {
+                        tracing::info!("no git repos found");
+                        return;
+                    }
+                    mgr.create_sessions_from_git_repos(layouts).await;
+                }
+            }
         }
         other => {
             tracing::warn!("unknown palette command: {}", other);

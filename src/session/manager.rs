@@ -611,6 +611,26 @@ impl SessionManager {
         }
     }
 
+    /// Add a window for each worktree in `layout` to the session `session_id`,
+    /// skipping any worktree whose sanitized branch name already exists as a
+    /// window name in that session.
+    pub async fn add_worktree_windows(&mut self, session_id: Uuid, layout: RepoLayout) {
+        for (branch, path) in layout.windows {
+            let already_exists = self
+                .sessions
+                .iter()
+                .find(|s| s.id == session_id)
+                .map(|s| s.windows.iter().any(|w| w.name == branch))
+                .unwrap_or(false);
+            if already_exists {
+                tracing::info!("window '{}' already exists, skipping", branch);
+                continue;
+            }
+            self.create_window_named(session_id, Some(branch), Some(path))
+                .await;
+        }
+    }
+
     pub fn kill_window(&mut self, window_id: Uuid) {
         for session in &mut self.sessions {
             if let Some(wi) = session.windows.iter().position(|w| w.id == window_id) {

@@ -43,11 +43,16 @@ export function SessionSwitcher({ send }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Which sessions are collapsed in the tree. Default: everything expanded (the
-  // design shows sessions expanded to their windows).
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Which sessions are expanded in the tree. Default: everything collapsed —
+  // sessions fold up to a single row each, expand (→ / l) to reveal windows.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedIdx, setSelectedIdx] = useState(0);
+  // Incremental filter (tmux-style): `/` enters filter mode; typing narrows the
+  // tree to sessions whose name (or a window's name) matches.
+  const [filterMode, setFilterMode] = useState(false);
+  const [filterQuery, setFilterQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLDivElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
 
   // The active session/window, derived from the URL (same approach as SessionPool).
@@ -58,33 +63,53 @@ export function SessionSwitcher({ send }: Props) {
   const activeSession = activeSessionName ? allSessions.find((s) => s.name === activeSessionName) : null;
   const activeWindowId = activeSession?.windows[activeSession.active_window]?.id ?? null;
 
+  const query = filterQuery.trim().toLowerCase();
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     for (const sess of allSessions) {
-      const expanded = !collapsed.has(sess.id);
-      out.push({ kind: 'session', sessionId: sess.id, expanded });
-      if (expanded) {
-        sess.windows.forEach((win, windowIndex) =>
-          out.push({ kind: 'window', sessionId: sess.id, windowId: win.id, windowIndex }),
-        );
+      // A session shows if it matches by name, or if any of its windows match.
+      // While filtering, matching sessions auto-expand so the matches are visible.
+      const sessMatch = !query || sess.name.toLowerCase().includes(query);
+      const matchingWindows = query
+        ? sess.windows
+            .map((win, windowIndex) => ({ win, windowIndex }))
+            .filter(({ win }) => sessMatch || win.name.toLowerCase().includes(query))
+        : sess.windows.map((win, windowIndex) => ({ win, windowIndex }));
+      if (query && !sessMatch && matchingWindows.length === 0) continue;
+
+      const isExpanded = query ? true : expanded.has(sess.id);
+      out.push({ kind: 'session', sessionId: sess.id, expanded: isExpanded });
+      if (isExpanded) {
+        for (const { win, windowIndex } of matchingWindows) {
+          out.push({ kind: 'window', sessionId: sess.id, windowId: win.id, windowIndex });
+        }
       }
     }
     return out;
-  }, [allSessions, collapsed]);
+  }, [allSessions, expanded, query]);
 
   const sessionById = useMemo(() => new Map(allSessions.map((s) => [s.id, s])), [allSessions]);
 
-  // On open: remember prior focus, focus the modal, and select the active window.
+  // On open: remember prior focus, focus the modal, reset the filter, and select
+  // the active session's row (the tree starts collapsed, so windows aren't shown).
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
       prevFocusRef.current = document.activeElement as HTMLElement | null;
-      const idx = activeWindowId ? rows.findIndex((r) => r.kind === 'window' && r.windowId === activeWindowId) : -1;
+      setFilterMode(false);
+      setFilterQuery('');
+      setExpanded(new Set());
+      const idx = activeSession ? rows.findIndex((r) => r.kind === 'session' && r.sessionId === activeSession.id) : -1;
       setSelectedIdx(idx >= 0 ? idx : 0);
       containerRef.current?.focus();
     }
     wasOpen.current = open;
   }, [open, rows.length]);
+
+  // Keep the selected row scrolled into view as the cursor moves.
+  useEffect(() => {
+    if (open) selectedRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIdx, open, rows.length]);
 
   // A kill from the switcher opens a confirm overlay (which grabs focus); when it
   // closes, return keyboard focus to the switcher so navigation keeps working.
@@ -162,41 +187,104 @@ export function SessionSwitcher({ send }: Props) {
     }
   };
 
+  const setSessionExpanded = (sessionId: string, want: boolean) => {
+    setExpanded((prev) => {
+      if (prev.has(sessionId) === want) return prev;
+      const next = new Set(prev);
+      if (want) next.add(sessionId);
+      else next.delete(sessionId);
+      return next;
+    });
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     e.stopPropagation();
     const n = rows.length;
+
     if (e.key === 'Escape') {
       e.preventDefault();
-      cancel();
-      return;
-    }
-    if (n === 0) return;
-    const down = e.key === 'ArrowDown' || e.key === 'j' || (e.ctrlKey && e.key === 'n');
-    const up = e.key === 'ArrowUp' || e.key === 'k' || (e.ctrlKey && e.key === 'p');
-    if (down || up) {
-      e.preventDefault();
-      setSelectedIdx((i) => (Math.min(i, n - 1) + (down ? 1 : -1) + n) % n);
-      return;
-    }
-    // Collapse/expand a session with left/right.
-    if ((e.key === 'ArrowRight' || e.key === 'l' || e.key === 'ArrowLeft' || e.key === 'h') && selected) {
-      const collapse = e.key === 'ArrowLeft' || e.key === 'h';
-      if (selected.kind === 'session') {
-        e.preventDefault();
-        setCollapsed((prev) => {
-          const next = new Set(prev);
-          if (collapse) next.add(selected.sessionId);
-          else next.delete(selected.sessionId);
-          return next;
-        });
+      // Escape first exits filter mode, then closes the modal.
+      if (filterMode) {
+        setFilterMode(false);
+        setFilterQuery('');
+        setSelectedIdx(0);
+      } else {
+        cancel();
       }
       return;
     }
+
+    const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n') || (!filterMode && e.key === 'j');
+    const up = e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p') || (!filterMode && e.key === 'k');
+    if (down || up) {
+      e.preventDefault();
+      if (n === 0) return;
+      setSelectedIdx((i) => (Math.min(i, n - 1) + (down ? 1 : -1) + n) % n);
+      return;
+    }
+
     if (e.key === 'Enter') {
       e.preventDefault();
       if (selected) activate(selected);
       return;
     }
+
+    // Filter mode: printable keys edit the query; arrows (handled above) move the
+    // cursor. j/k/h/l/x are reserved for typing while filtering.
+    if (filterMode) {
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        setFilterQuery((q) => q.slice(0, -1));
+        setSelectedIdx(0);
+        return;
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        setFilterQuery((q) => q + e.key);
+        setSelectedIdx(0);
+      }
+      return;
+    }
+
+    if (e.key === '/') {
+      e.preventDefault();
+      setFilterMode(true);
+      setFilterQuery('');
+      setSelectedIdx(0);
+      return;
+    }
+
+    if (n === 0) return;
+
+    // Collapse/expand a session with left/right (or vi h/l). On a window row,
+    // left collapses back to its parent session.
+    if (selected && (e.key === 'ArrowRight' || e.key === 'l')) {
+      e.preventDefault();
+      if (selected.kind === 'session') {
+        if (selected.expanded) {
+          // Already open: move onto its first window.
+          const firstWin = rows.findIndex(
+            (r, i) => i > clampedIdx && r.kind === 'window' && r.sessionId === selected.sessionId,
+          );
+          if (firstWin >= 0) setSelectedIdx(firstWin);
+        } else {
+          setSessionExpanded(selected.sessionId, true);
+        }
+      }
+      return;
+    }
+    if (selected && (e.key === 'ArrowLeft' || e.key === 'h')) {
+      e.preventDefault();
+      if (selected.kind === 'window') {
+        const parentIdx = rows.findIndex((r) => r.kind === 'session' && r.sessionId === selected.sessionId);
+        setSessionExpanded(selected.sessionId, false);
+        if (parentIdx >= 0) setSelectedIdx(parentIdx);
+      } else if (selected.kind === 'session') {
+        setSessionExpanded(selected.sessionId, false);
+      }
+      return;
+    }
+
     if (e.key === 'x') {
       e.preventDefault();
       if (selected) killRow(selected);
@@ -216,6 +304,14 @@ export function SessionSwitcher({ send }: Props) {
       ref={containerRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
+      onFocus={(e) => {
+        // MirrorPane's ghostty-web Terminal.open() calls element.focus() which
+        // steals keyboard focus away from this container. Reclaim it immediately
+        // by checking if focus arrived from a child element.
+        if (e.target !== e.currentTarget) {
+          e.currentTarget.focus();
+        }
+      }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) cancel();
       }}
@@ -273,7 +369,12 @@ export function SessionSwitcher({ send }: Props) {
           >
             Sessions
           </div>
-          <div style={{ overflow: 'auto', padding: '0 8px 12px' }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: '0 8px 12px' }}>
+            {rows.length === 0 && (
+              <div style={{ color: c.fgDim, padding: '8px 10px', fontSize: '12.5px' }}>
+                {query ? `No sessions matching "${filterQuery.trim()}".` : 'No sessions.'}
+              </div>
+            )}
             {rows.map((row, i) => {
               const isSelected = i === clampedIdx;
               const sess = sessionById.get(row.sessionId);
@@ -282,6 +383,7 @@ export function SessionSwitcher({ send }: Props) {
                 return (
                   <div
                     key={`s-${row.sessionId}`}
+                    ref={isSelected ? selectedRef : null}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setSelectedIdx(i);
@@ -315,6 +417,7 @@ export function SessionSwitcher({ send }: Props) {
               return (
                 <div
                   key={`w-${row.windowId}`}
+                  ref={isSelected ? selectedRef : null}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     setSelectedIdx(i);
@@ -367,6 +470,27 @@ export function SessionSwitcher({ send }: Props) {
               );
             })}
           </div>
+          {/* Filter bar (tmux-style), shown while filtering. */}
+          {filterMode && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 14px',
+                borderTop: `1px solid ${c.borderDim}`,
+                color: c.fg,
+              }}
+            >
+              <span style={{ color: c.accent }}>/</span>
+              <span>{filterQuery}</span>
+              <span
+                style={{ color: c.accent, animation: animations ? 'btm-blink 1.05s steps(1) infinite' : undefined }}
+              >
+                ▏
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Preview */}
@@ -393,6 +517,12 @@ export function SessionSwitcher({ send }: Props) {
           <div style={{ marginTop: '12px', display: 'flex', gap: '16px', color: c.fgDim, fontSize: '11.5px' }}>
             <span>
               <span style={{ color: c.fgMuted }}>↑↓</span> navigate
+            </span>
+            <span>
+              <span style={{ color: c.fgMuted }}>←→</span> fold
+            </span>
+            <span>
+              <span style={{ color: c.fgMuted }}>/</span> filter
             </span>
             <span>
               <span style={{ color: c.fgMuted }}>↵</span> switch

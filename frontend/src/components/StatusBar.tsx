@@ -48,8 +48,24 @@ function windowNotificationLevel(
   return highest;
 }
 
-/** A right-pointing powerline arrow whose fill matches the segment it trails. */
-function Arrow({ color, size }: { color: string; size: number }) {
+/**
+ * A right-pointing powerline separator. `color` is the triangle's color (the
+ * trailing segment it continues). When `fill` is given, the triangle sits on a
+ * `fill`-colored box so it joins seamlessly into the next segment with no
+ * bar-background gap (used for the session → active-window transition); without
+ * `fill` it's a plain triangle trailing into the bar.
+ */
+function Arrow({ color, size, fill }: { color: string; size: number; fill?: string }) {
+  const w = Math.round(size * 0.34);
+  if (fill) {
+    return (
+      <div style={{ width: `${w}px`, height: '100%', flex: 'none', position: 'relative', background: fill }}>
+        <div
+          style={{ position: 'absolute', inset: 0, background: color, clipPath: 'polygon(0 0, 100% 50%, 0 100%)' }}
+        />
+      </div>
+    );
+  }
   return (
     <div
       style={{
@@ -57,7 +73,7 @@ function Arrow({ color, size }: { color: string; size: number }) {
         height: '100%',
         borderTop: `${size / 2}px solid transparent`,
         borderBottom: `${size / 2}px solid transparent`,
-        borderLeft: `${Math.round(size * 0.32)}px solid ${color}`,
+        borderLeft: `${w}px solid ${color}`,
         flex: 'none',
       }}
     />
@@ -74,8 +90,8 @@ export function StatusBar({ sessionId }: Props) {
   // Chrome is compact relative to the terminal font (the design's bar/font ratio),
   // clamped so it stays legible at tiny sizes and doesn't dominate at huge ones.
   const termFont = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
-  const font = Math.max(10, Math.min(18, Math.round(termFont * 0.7)));
-  const barH = Math.round(font * 2.6);
+  const font = Math.max(10, Math.min(17, Math.round(termFont * 0.68)));
+  const barH = Math.round(font * 2.15);
 
   const session = allSessions.find((s) => s.id === sessionId);
   if (!session) return null;
@@ -84,6 +100,11 @@ export function StatusBar({ sessionId }: Props) {
   const activeWindow = session.windows[session.active_window];
   const paneCount = activeWindow?.panes.length ?? 0;
   const activeZoomed = !!activeWindow?.zoomed_pane;
+  // Seamless powerline: when the first window is the active one, its segment
+  // sits directly after the session segment, so the session→window chevron fills
+  // into the active-window color (no bar-background gap). Otherwise a plain
+  // accent triangle trails into the bar.
+  const firstWindowActive = session.active_window === 0;
 
   const segPadY = 0;
   const indexBadge: React.CSSProperties = {
@@ -141,7 +162,7 @@ export function StatusBar({ sessionId }: Props) {
         />
         <span>{session.name}</span>
       </div>
-      <Arrow color={c.accent} size={barH} />
+      <Arrow color={c.accent} size={barH} fill={firstWindowActive ? c.titleActiveBg : undefined} />
 
       {/* Windows */}
       {session.windows.map((w, i) => {

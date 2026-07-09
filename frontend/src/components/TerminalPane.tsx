@@ -5,6 +5,7 @@ import { LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { PaneTitleBar } from './PaneTitleBar';
+import { withAlpha } from '../lib/chrome-colors';
 
 interface Props {
   sessionId: string;
@@ -389,6 +390,17 @@ export function TerminalPane({
   const notification = useStore((s) => s.notifications.get(paneId));
   const notifColor = notification ? notificationColorFor(notification.level, config?.theme ?? null) : null;
 
+  const accentGlow = withAlpha(borderColor, 0.25);
+
+  // Panes are inset by a small fixed gap so adjacent panes have visible space
+  // between them and from the outer edge. This mirrors the mockup's padding/gap.
+  const GAP = 4; // px on each side → 8px total between adjacent panes
+  const borderWidth = isActive ? '1.5px' : '1px';
+  const boxShadow =
+    isActive || isZoomed
+      ? `0 0 0 1px ${borderColor}, 0 0 24px ${accentGlow}`
+      : undefined;
+
   return (
     <div
       ref={outerRef}
@@ -400,17 +412,19 @@ export function TerminalPane({
         display: visible ? 'flex' : 'none',
         flexDirection: 'column',
         position: 'absolute',
-        top: `${rect.top}%`,
-        left: `${rect.left}%`,
-        width: `${rect.width}%`,
-        height: `${rect.height}%`,
-        border: `1px solid ${borderColor}`,
+        top: `calc(${rect.top}% + ${GAP}px)`,
+        left: `calc(${rect.left}% + ${GAP}px)`,
+        width: `calc(${rect.width}% - ${GAP * 2}px)`,
+        height: `calc(${rect.height}% - ${GAP * 2}px)`,
+        border: `${borderWidth} solid ${borderColor}`,
+        borderRadius: '7px',
         overflow: 'hidden',
         caretColor: 'transparent',
+        boxShadow,
         // A zoomed pane fills the grid and must paint over the panes it covers
         // (which stay mounted). Above dividers' zIndex of 10.
         zIndex: isZoomed ? 20 : undefined,
-        transition: animations ? 'border-color 200ms ease-out' : undefined,
+        transition: animations ? 'border-color 200ms ease-out, box-shadow 200ms ease-out' : undefined,
       }}
     >
       {showTitle && (

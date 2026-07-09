@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useStore, PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
-import { chromePalette, withAlpha } from '../lib/chrome-colors';
+import { chromePalette } from '../lib/chrome-colors';
 import type { NotificationLevel } from '../protocol/messages';
 import type { Theme } from '../state/types';
 
@@ -49,13 +49,23 @@ function windowNotificationLevel(
 }
 
 /**
- * A right-pointing powerline separator. `color` is the triangle's color (the
- * trailing segment it continues). When `fill` is given, the triangle sits on a
- * `fill`-colored box so it joins seamlessly into the next segment with no
- * bar-background gap (used for the session → active-window transition); without
- * `fill` it's a plain triangle trailing into the bar.
+ * A powerline separator. `color` is the triangle's fill color. `direction`
+ * controls which way the arrow points: `'right'` (default, ▶) for left-side
+ * transitions (session→window), `'left'` (◀) for right-side entries like the
+ * PREFIX indicator. When `fill` is given the triangle sits on a `fill`-colored
+ * box for seamless session→active-window joins; only valid for `'right'`.
  */
-function Arrow({ color, size, fill }: { color: string; size: number; fill?: string }) {
+function Arrow({
+  color,
+  size,
+  fill,
+  direction = 'right',
+}: {
+  color: string;
+  size: number;
+  fill?: string;
+  direction?: 'right' | 'left';
+}) {
   const w = Math.round(size * 0.34);
   if (fill) {
     return (
@@ -64,6 +74,20 @@ function Arrow({ color, size, fill }: { color: string; size: number; fill?: stri
           style={{ position: 'absolute', inset: 0, background: color, clipPath: 'polygon(0 0, 100% 50%, 0 100%)' }}
         />
       </div>
+    );
+  }
+  if (direction === 'left') {
+    return (
+      <div
+        style={{
+          width: 0,
+          height: '100%',
+          borderTop: `${size / 2}px solid transparent`,
+          borderBottom: `${size / 2}px solid transparent`,
+          borderRight: `${w}px solid ${color}`,
+          flex: 'none',
+        }}
+      />
     );
   }
   return (
@@ -241,7 +265,7 @@ export function StatusBar({ sessionId }: Props) {
       {/* Right cluster */}
       {prefixActive && (
         <div style={{ display: 'flex', height: '100%' }}>
-          <Arrow color={c.warn} size={barH} />
+          <Arrow color={c.warn} size={barH} direction="left" />
           <div
             style={{
               display: 'flex',
@@ -285,19 +309,6 @@ export function StatusBar({ sessionId }: Props) {
           borderLeft: `1px solid ${c.borderDim}`,
         }}
       >
-        <span style={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
-          {[0, 1, 2].map((n) => (
-            <span
-              key={n}
-              style={{
-                width: '5px',
-                height: `${Math.round(font * 0.85)}px`,
-                borderRadius: '1.5px',
-                background: n < Math.min(paneCount, 3) ? c.accent : withAlpha(c.fgMuted, 0.5),
-              }}
-            />
-          ))}
-        </span>
         <span style={{ color: c.fgBright, fontWeight: 700 }}>{paneCount}</span>
         <span style={{ color: c.fgDim }}>{paneCount === 1 ? 'pane' : 'panes'}</span>
       </div>

@@ -37,6 +37,7 @@ export function useKeybindings(
   const setPrefixActive = useStore((s) => s.setPrefixActive);
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
+  const switcherOpen = useStore((s) => s.switcherOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const timeoutRef = useRef<number>(0);
 
@@ -52,6 +53,7 @@ export function useKeybindings(
   const prefixActiveRef = useRef(prefixActive);
   const overlayRef = useRef(overlay);
   const windowGridOpenRef = useRef(windowGridOpen);
+  const switcherOpenRef = useRef(switcherOpen);
   const paneNumbersVisibleRef = useRef(paneNumbersVisible);
   const prefixRef = useRef(prefix);
   const bindsRef = useRef(binds);
@@ -63,6 +65,7 @@ export function useKeybindings(
   prefixActiveRef.current = prefixActive;
   overlayRef.current = overlay;
   windowGridOpenRef.current = windowGridOpen;
+  switcherOpenRef.current = switcherOpen;
   paneNumbersVisibleRef.current = paneNumbersVisible;
   prefixRef.current = prefix;
   bindsRef.current = binds;
@@ -80,9 +83,10 @@ export function useKeybindings(
       }
 
       if (overlayRef.current) return;
-      // While the window-grid is open it owns the keyboard (arrows/enter/esc/
-      // digits navigate the grid); don't let the prefix or pane binds fire.
-      if (windowGridOpenRef.current) return;
+      // While the window-grid or session switcher is open it owns the keyboard
+      // (arrows/enter/esc/digits navigate it); don't let the prefix or pane binds
+      // fire.
+      if (windowGridOpenRef.current || switcherOpenRef.current) return;
 
       // While display-panes (prefix + q) numbers are showing, the keyboard is
       // captured: a digit selects the pane with that index, any other key just
@@ -261,7 +265,9 @@ function runAction(
       break;
     case 'choose-session':
     case 'choose-tree':
-      onNavigateToLanding();
+      // Open the centered session/window switcher modal. It takes over the
+      // keyboard while open (the hook early-returns on switcherOpen below).
+      store.setSwitcherOpen(true);
       break;
     case 'window-grid':
       // Mount the grid (sticky) and show it. The WindowGrid component takes over

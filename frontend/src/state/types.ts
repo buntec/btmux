@@ -115,6 +115,8 @@ export interface ClientConfig {
   theme: Theme | null;
   vi_mode: boolean;
   animations: boolean;
+  /** Whether panes render a per-pane title bar. */
+  show_pane_titles: boolean;
   wallpaper: string | null;
   wallpaper_opacity: number | null;
   wallpaper_blur: number | null;

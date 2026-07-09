@@ -1,12 +1,14 @@
 import { useNavigate } from 'react-router-dom';
 import { useStore, PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
+import { chromePalette, withAlpha } from '../lib/chrome-colors';
 import type { NotificationLevel } from '../protocol/messages';
+import type { Theme } from '../state/types';
 
 function prefixLabel(prefix: string): string {
   const parts = prefix.split('-');
   const key = parts.pop() ?? '';
-  const mods = parts.map((m) => (m.toUpperCase() === 'C' ? '^' : m.toUpperCase() === 'M' ? 'M-' : m)).join('');
+  const mods = parts.map((m) => (m.toUpperCase() === 'C' ? '⌃' : m.toUpperCase() === 'M' ? '⌥' : m)).join('');
   return `${mods}${key.toUpperCase()}`;
 }
 
@@ -14,7 +16,7 @@ interface Props {
   sessionId: string;
 }
 
-function notificationColor(level: NotificationLevel, theme: typeof DEFAULT_THEME | null): string {
+function notificationColor(level: NotificationLevel, theme: Theme | null): string {
   const t = theme ?? DEFAULT_THEME;
   switch (level) {
     case 'attention':
@@ -46,96 +48,238 @@ function windowNotificationLevel(
   return highest;
 }
 
+/** A right-pointing powerline arrow whose fill matches the segment it trails. */
+function Arrow({ color, size }: { color: string; size: number }) {
+  return (
+    <div
+      style={{
+        width: 0,
+        height: '100%',
+        borderTop: `${size / 2}px solid transparent`,
+        borderBottom: `${size / 2}px solid transparent`,
+        borderLeft: `${Math.round(size * 0.32)}px solid ${color}`,
+        flex: 'none',
+      }}
+    />
+  );
+}
+
 export function StatusBar({ sessionId }: Props) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
   const prefixActive = useStore((s) => s.prefixActive);
   const notifications = useStore((s) => s.notifications);
   const navigate = useNavigate();
-  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+
+  // Chrome is compact relative to the terminal font (the design's bar/font ratio),
+  // clamped so it stays legible at tiny sizes and doesn't dominate at huge ones.
+  const termFont = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const font = Math.max(10, Math.min(18, Math.round(termFont * 0.7)));
+  const barH = Math.round(font * 2.6);
 
   const session = allSessions.find((s) => s.id === sessionId);
   if (!session) return null;
 
-  const theme = config?.theme;
-  const bg = adjustBrightness(theme?.background ?? DEFAULT_THEME.background, 20);
-  const fg = theme?.foreground ?? DEFAULT_THEME.foreground;
-  const border = theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
-  const dimFg = theme?.brightBlack ?? DEFAULT_THEME.brightBlack;
-  const winActiveFg = theme?.white ?? DEFAULT_THEME.white;
-  const accentFg = theme?.yellow ?? DEFAULT_THEME.yellow;
-  const zoomFg = theme?.magenta ?? DEFAULT_THEME.magenta;
+  const c = chromePalette(config?.theme ?? null);
+  const activeWindow = session.windows[session.active_window];
+  const paneCount = activeWindow?.panes.length ?? 0;
+  const activeZoomed = !!activeWindow?.zoomed_pane;
+
+  const segPadY = 0;
+  const indexBadge: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: `${Math.round(font * 1.25)}px`,
+    height: `${Math.round(font * 1.25)}px`,
+    padding: '0 4px',
+    borderRadius: '4px',
+    background: c.accent,
+    color: c.accentInk,
+    fontSize: `${Math.max(9, font - 2)}px`,
+    fontWeight: 800,
+  };
 
   return (
     <div
       style={{
-        height: `${fontSize + 12}px`,
-        background: bg,
-        color: fg,
+        height: `${barH}px`,
         display: 'flex',
-        alignItems: 'center',
-        padding: '0 8px',
-        fontSize: `${fontSize}px`,
+        alignItems: 'stretch',
+        background: c.barBg,
+        color: c.fg,
+        fontSize: `${font}px`,
         fontFamily: 'var(--btmux-font, monospace)',
         fontWeight: 'var(--btmux-font-weight, 400)',
-        borderTop: `1px solid ${border}`,
+        borderTop: `1px solid ${c.border}`,
+        overflow: 'hidden',
+        whiteSpace: 'nowrap',
       }}
     >
-      <span style={{ color: dimFg, marginRight: '8px' }}>[{session.name}]</span>
-      <span>
-        {session.windows.map((w, i) => {
-          const winLevel = windowNotificationLevel(
-            w.panes.map((p) => p.id),
-            notifications,
-          );
+      {/* Session segment */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '7px',
+          height: '100%',
+          padding: `${segPadY}px 11px ${segPadY}px 13px`,
+          background: c.accent,
+          color: c.accentInk,
+          fontWeight: 800,
+          letterSpacing: '.03em',
+        }}
+      >
+        <span
+          style={{
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            background: c.accentInk,
+            opacity: 0.7,
+          }}
+        />
+        <span>{session.name}</span>
+      </div>
+      <Arrow color={c.accent} size={barH} />
+
+      {/* Windows */}
+      {session.windows.map((w, i) => {
+        const isActive = i === session.active_window;
+        const winLevel = windowNotificationLevel(
+          w.panes.map((p) => p.id),
+          notifications,
+        );
+        const zoomGlyph = w.zoomed_pane ? <span style={{ color: c.zoom, marginLeft: '3px' }}>⛶</span> : null;
+        const dot = winLevel ? (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(w.name)}`);
+            }}
+            style={{
+              color: notificationColor(winLevel, config?.theme ?? null),
+              marginLeft: '4px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+            }}
+          >
+            ●
+          </span>
+        ) : null;
+
+        if (isActive) {
           return (
-            <span
-              key={w.id}
-              style={{
-                marginRight: '8px',
-                color: i === session.active_window ? winActiveFg : dimFg,
-                fontWeight: i === session.active_window ? 'bold' : 'normal',
-              }}
-            >
-              {i}:{w.name}
-              {i === session.active_window ? '*' : ''}
-              {w.zoomed_pane && <span style={{ color: zoomFg, fontWeight: 'bold' }}>Z</span>}
-              {winLevel && (
-                <span
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(w.name)}`);
-                  }}
-                  style={{
-                    color: notificationColor(winLevel, theme ?? null),
-                    marginLeft: '2px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                  }}
-                >
-                  ●
-                </span>
-              )}
-            </span>
+            <div key={w.id} style={{ display: 'flex', height: '100%' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '7px',
+                  height: '100%',
+                  padding: '0 12px',
+                  background: c.titleActiveBg,
+                  color: c.fgBright,
+                  fontWeight: 700,
+                }}
+              >
+                <span style={indexBadge}>{i}</span>
+                <span>{w.name}</span>
+                <span style={{ color: c.accent }}>*</span>
+                {zoomGlyph}
+                {dot}
+              </div>
+              <Arrow color={c.titleActiveBg} size={barH} />
+            </div>
           );
-        })}
-      </span>
-      <span style={{ marginLeft: 'auto', color: dimFg }}>
-        {prefixActive && <span style={{ color: accentFg }}>{config ? prefixLabel(config.prefix) : '^B'}</span>}
-      </span>
+        }
+        return (
+          <div
+            key={w.id}
+            onClick={() => navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(w.name)}`)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              height: '100%',
+              padding: '0 12px',
+              color: c.fgMuted,
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ color: c.fgDim }}>{i}</span>
+            <span>{w.name}</span>
+            {zoomGlyph}
+            {dot}
+          </div>
+        );
+      })}
+
+      <span style={{ flex: 1 }} />
+
+      {/* Right cluster */}
+      {prefixActive && (
+        <div style={{ display: 'flex', height: '100%' }}>
+          <Arrow color={c.warn} size={barH} />
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '7px',
+              height: '100%',
+              padding: '0 12px',
+              background: c.warn,
+              color: c.warnInk,
+              fontWeight: 800,
+              letterSpacing: '.04em',
+            }}
+          >
+            PREFIX <span style={{ opacity: 0.75, fontWeight: 700 }}>{config ? prefixLabel(config.prefix) : '⌃B'}</span>
+          </div>
+        </div>
+      )}
+      {activeZoomed && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            height: '100%',
+            padding: '0 13px',
+            color: c.zoom,
+            borderLeft: `1px solid ${c.borderDim}`,
+          }}
+        >
+          ⛶ <span style={{ fontWeight: 700 }}>ZOOM</span>
+        </div>
+      )}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '7px',
+          height: '100%',
+          padding: '0 15px 0 13px',
+          color: c.fgMuted,
+          borderLeft: `1px solid ${c.borderDim}`,
+        }}
+      >
+        <span style={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
+          {[0, 1, 2].map((n) => (
+            <span
+              key={n}
+              style={{
+                width: '5px',
+                height: `${Math.round(font * 0.85)}px`,
+                borderRadius: '1.5px',
+                background: n < Math.min(paneCount, 3) ? c.accent : withAlpha(c.fgMuted, 0.5),
+              }}
+            />
+          ))}
+        </span>
+        <span style={{ color: c.fgBright, fontWeight: 700 }}>{paneCount}</span>
+        <span style={{ color: c.fgDim }}>{paneCount === 1 ? 'pane' : 'panes'}</span>
+      </div>
     </div>
   );
-}
-
-function adjustBrightness(hex: string, amount: number): string {
-  const h = hex.replace('#', '');
-  if (h.length !== 6) return hex;
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  // Perceived luminance — if the background is light, darken; otherwise brighten.
-  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-  const dir = luminance > 128 ? -amount : amount;
-  const clamp = (v: number) => Math.max(0, Math.min(255, v + dir));
-  return `#${clamp(r).toString(16).padStart(2, '0')}${clamp(g).toString(16).padStart(2, '0')}${clamp(b).toString(16).padStart(2, '0')}`;
 }

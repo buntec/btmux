@@ -105,6 +105,10 @@ pub struct FileConfig {
     /// when switching panes). Set to false to disable all animated effects.
     #[serde(default = "default_true")]
     pub animations: bool,
+    /// Show a per-pane title bar (shell/title, cwd, dimensions, zoom tag) above
+    /// each pane. Defaults to true; set to false for borderless bare panes.
+    #[serde(rename = "show-pane-titles", default = "default_true")]
+    pub show_pane_titles: bool,
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
     /// How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
@@ -146,6 +150,7 @@ impl Default for FileConfig {
             shell: None,
             vi_mode: false,
             animations: true,
+            show_pane_titles: true,
             wallpaper: None,
             wallpaper_opacity: None,
             wallpaper_blur: None,
@@ -492,6 +497,8 @@ pub struct ClientConfig {
     pub vi_mode: bool,
     /// Whether CSS animations/transitions are enabled in the browser.
     pub animations: bool,
+    /// Whether panes render a per-pane title bar.
+    pub show_pane_titles: bool,
     /// URL of a background image displayed behind all terminal panes, or `null`.
     /// When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
     pub wallpaper: Option<String>,
@@ -743,6 +750,10 @@ pub fn generate_config_toml() -> String {
 # switching panes). Set to false to disable all animated effects.
 # animations = true
 
+# Show a per-pane title bar (shell/title, working directory, dimensions, zoom
+# tag) above each pane. Set to false for borderless bare panes.
+# show-pane-titles = true
+
 # Background wallpaper image displayed behind all terminal panes.
 # Accepts a URL or a local file path (absolute or ~/relative).
 # wallpaper = "https://example.com/bg.jpg"
@@ -917,6 +928,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         theme,
         vi_mode: file.vi_mode,
         animations: file.animations,
+        show_pane_titles: file.show_pane_titles,
         wallpaper: wallpaper_url,
         wallpaper_path,
         wallpaper_opacity,

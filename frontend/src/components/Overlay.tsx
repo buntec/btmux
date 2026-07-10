@@ -511,8 +511,9 @@ export function Overlay({ sessionId, send, config }: Props) {
             }}
           >
             <span style={{ color: accent, fontWeight: 800, fontSize: `${fontSize + 1}px` }}>:</span>
-            <span style={{ color: c.fgBright }}>{cmdQuery}</span>
-            <span style={{ color: c.fgBright, animation: 'btm-blink 1.05s steps(1) infinite' }}>▏</span>
+            <span style={{ color: c.fgBright }}>
+              {cmdQuery}<span style={{ animation: 'btm-blink 1.05s steps(1) infinite' }}>▏</span>
+            </span>
             <span style={{ flex: 1 }} />
             <span style={{ color: dimFg, fontSize: hintFont }}>↵ run · ⇥/↑↓ select · esc cancel</span>
           </div>

@@ -488,11 +488,11 @@ export function SessionSwitcher({ send }: Props) {
               }}
             >
               <span style={{ color: c.accent }}>/</span>
-              <span>{filterQuery}</span>
-              <span
-                style={{ color: c.accent, animation: animations ? 'btm-blink 1.05s steps(1) infinite' : undefined }}
-              >
-                ▏
+              <span>
+                {filterQuery}
+                <span
+                  style={{ color: c.accent, animation: animations ? 'btm-blink 1.05s steps(1) infinite' : undefined }}
+                >▏</span>
               </span>
             </div>
           )}

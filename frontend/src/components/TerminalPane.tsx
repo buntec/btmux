@@ -395,7 +395,7 @@ export function TerminalPane({
   // Panes are inset by a small fixed gap so adjacent panes have visible space
   // between them and from the outer edge. This mirrors the mockup's padding/gap.
   const GAP = 4; // px on each side → 8px total between adjacent panes
-  const borderWidth = isActive ? '1.5px' : '1px';
+  const borderWidth = '1px';
   const boxShadow = isActive || isZoomed ? `0 0 0 1px ${borderColor}, 0 0 24px ${accentGlow}` : undefined;
 
   return (
@@ -440,7 +440,7 @@ export function TerminalPane({
       {/* The terminal fills the space below the (optional) title bar. inset-style
           padding around it keeps a small gutter so glyphs don't touch the border. */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-        <div ref={containerRef} style={{ position: 'absolute', inset: '4px' }} />
+        <div ref={containerRef} style={{ position: 'absolute', inset: '8px' }} />
       </div>
     </div>
   );

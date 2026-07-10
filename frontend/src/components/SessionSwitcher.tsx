@@ -144,9 +144,26 @@ export function SessionSwitcher({ send }: Props) {
     const sess = sessionById.get(selected.sessionId);
     return sess?.windows[sess.active_window] ?? sess?.windows[0] ?? null;
   }, [selected, sessionById]);
+
+  // Debounce the preview so rapid cycling doesn't mount/unmount MirrorPanes
+  // on every keypress (each mount opens a WebSocket + Terminal init).
+  const [debouncedPreviewWindow, setDebouncedPreviewWindow] = useState(previewWindow);
+  const previewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (previewDebounceRef.current) clearTimeout(previewDebounceRef.current);
+    previewDebounceRef.current = setTimeout(() => {
+      setDebouncedPreviewWindow(previewWindow);
+    }, 120);
+    return () => {
+      if (previewDebounceRef.current) clearTimeout(previewDebounceRef.current);
+    };
+  }, [previewWindow]);
+
   const previewSession = selected ? (sessionById.get(selected.sessionId) ?? null) : null;
   const previewWindowIndex =
-    previewSession && previewWindow ? previewSession.windows.findIndex((w) => w.id === previewWindow.id) : -1;
+    previewSession && debouncedPreviewWindow
+      ? previewSession.windows.findIndex((w) => w.id === debouncedPreviewWindow.id)
+      : -1;
 
   const cancel = () => {
     if (closing) return;
@@ -521,17 +538,17 @@ export function SessionSwitcher({ send }: Props) {
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', marginBottom: '12px' }}>
             <span style={{ color: c.fgBright, fontWeight: 700 }}>
               {previewWindowIndex >= 0 ? `${previewWindowIndex}: ` : ''}
-              {previewWindow?.name ?? '—'}
+              {debouncedPreviewWindow?.name ?? '—'}
             </span>
             <span style={{ color: c.fgDim, fontSize: '12px' }}>preview</span>
           </div>
           <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-            {previewWindow ? (
+            {debouncedPreviewWindow ? (
               <PreviewLayout
-                window={previewWindow}
+                window={debouncedPreviewWindow}
                 open={open}
                 c={c}
-                activePaneId={previewWindow.panes[previewWindow.active_pane]?.id ?? null}
+                activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
               />
             ) : (
               <div style={{ color: c.fgDim }}>No window.</div>

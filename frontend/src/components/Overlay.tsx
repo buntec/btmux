@@ -199,7 +199,10 @@ export function Overlay({ sessionId, send, config }: Props) {
 
   const close = () => {
     if (closing) return;
-    if (!animations) { setOverlay(null); return; }
+    if (!animations) {
+      setOverlay(null);
+      return;
+    }
     setClosing(true);
     closingTimerRef.current = window.setTimeout(() => {
       setClosing(false);
@@ -354,11 +357,7 @@ export function Overlay({ sessionId, send, config }: Props) {
           fontFamily: 'var(--btmux-font, monospace)',
           fontWeight: 'var(--btmux-font-weight, 400)',
           fontSize: `${fontSize}px`,
-          animation: animations
-            ? closing
-              ? 'btm-fade-out .16s ease forwards'
-              : 'btm-fade .15s ease'
-            : undefined,
+          animation: animations ? (closing ? 'btm-fade-out .16s ease forwards' : 'btm-fade .15s ease') : undefined,
         }}
         onMouseDown={(e) => {
           if (e.target === e.currentTarget) close();
@@ -374,11 +373,7 @@ export function Overlay({ sessionId, send, config }: Props) {
             background: c.panelBg,
             border: `1px solid ${c.border}`,
             boxShadow: `0 30px 80px ${withAlpha(c.bodyBg, 0.55)}`,
-            animation: animations
-              ? closing
-                ? 'btm-out .17s ease forwards'
-                : 'btm-in .18s ease'
-              : undefined,
+            animation: animations ? (closing ? 'btm-out .17s ease forwards' : 'btm-in .18s ease') : undefined,
           }}
         >
           <div
@@ -390,7 +385,9 @@ export function Overlay({ sessionId, send, config }: Props) {
               borderBottom: `1px solid ${c.borderDim}`,
             }}
           >
-            <span style={{ color: c.fgBright, fontWeight: 800, fontSize: `${fontSize + 2}px` }}>{activeOverlay.title}</span>
+            <span style={{ color: c.fgBright, fontWeight: 800, fontSize: `${fontSize + 2}px` }}>
+              {activeOverlay.title}
+            </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: c.fgDim, fontSize: hintFont }}>
               prefix
               <span style={{ ...keycapStyle(c), fontSize: hintFont }}>{config?.prefix ?? 'C-b'}</span>
@@ -444,11 +441,7 @@ export function Overlay({ sessionId, send, config }: Props) {
         fontWeight: 'var(--btmux-font-weight, 400)',
         fontSize: `${fontSize}px`,
         zIndex: 10,
-        animation: animations
-          ? closing
-            ? 'btm-sheet-out .16s ease forwards'
-            : 'btm-in .16s ease'
-          : undefined,
+        animation: animations ? (closing ? 'btm-sheet-out .16s ease forwards' : 'btm-in .16s ease') : undefined,
       }}
     >
       {activeOverlay.mode === 'prompt' ? (
@@ -546,7 +539,8 @@ export function Overlay({ sessionId, send, config }: Props) {
           >
             <span style={{ color: accent, fontWeight: 800, fontSize: `${fontSize + 1}px` }}>:</span>
             <span style={{ color: c.fgBright }}>
-              {cmdQuery}<span style={{ animation: 'btm-blink 1.05s steps(1) infinite' }}>▏</span>
+              {cmdQuery}
+              <span style={{ animation: 'btm-blink 1.05s steps(1) infinite' }}>▏</span>
             </span>
             <span style={{ flex: 1 }} />
             <span style={{ color: dimFg, fontSize: hintFont }}>↵ run · ⇥/↑↓ select · esc cancel</span>

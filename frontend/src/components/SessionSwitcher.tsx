@@ -172,10 +172,15 @@ export function SessionSwitcher({ send }: Props) {
       setClosing(false);
       setOpen(false);
       if (prev && prev.isConnected) {
-        window.setTimeout(() => { if (prev.isConnected) prev.focus(); }, 0);
+        window.setTimeout(() => {
+          if (prev.isConnected) prev.focus();
+        }, 0);
       }
     };
-    if (!(config?.animations ?? true)) { doClose(); return; }
+    if (!(config?.animations ?? true)) {
+      doClose();
+      return;
+    }
     setClosing(true);
     closingTimerRef.current = window.setTimeout(doClose, 165);
   };
@@ -361,11 +366,7 @@ export function SessionSwitcher({ send }: Props) {
         fontFamily: 'var(--btmux-font, monospace)',
         fontWeight: 'var(--btmux-font-weight, 400)',
         fontSize: `${font}px`,
-        animation: animations
-          ? closing
-            ? 'btm-fade-out .16s ease forwards'
-            : 'btm-fade .15s ease'
-          : undefined,
+        animation: animations ? (closing ? 'btm-fade-out .16s ease forwards' : 'btm-fade .15s ease') : undefined,
       }}
     >
       <div
@@ -380,11 +381,7 @@ export function SessionSwitcher({ send }: Props) {
           background: c.panelBg,
           border: `1px solid ${c.border}`,
           boxShadow: `0 30px 80px ${withAlpha(c.bodyBg, 0.55)}`,
-          animation: animations
-            ? closing
-              ? 'btm-out .17s ease forwards'
-              : 'btm-in .18s ease'
-            : undefined,
+          animation: animations ? (closing ? 'btm-out .17s ease forwards' : 'btm-in .18s ease') : undefined,
         }}
       >
         {/* Tree */}
@@ -527,7 +524,9 @@ export function SessionSwitcher({ send }: Props) {
                 {filterQuery}
                 <span
                   style={{ color: c.accent, animation: animations ? 'btm-blink 1.05s steps(1) infinite' : undefined }}
-                >▏</span>
+                >
+                  ▏
+                </span>
               </span>
             </div>
           )}

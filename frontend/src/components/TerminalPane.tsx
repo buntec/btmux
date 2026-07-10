@@ -390,13 +390,11 @@ export function TerminalPane({
   const notification = useStore((s) => s.notifications.get(paneId));
   const notifColor = notification ? notificationColorFor(notification.level, config?.theme ?? null) : null;
 
-  const accentGlow = withAlpha(borderColor, 0.25);
+  const accentGlow = withAlpha(borderColor, 0.2);
 
   // Panes are inset by a small fixed gap so adjacent panes have visible space
   // between them and from the outer edge. This mirrors the mockup's padding/gap.
   const GAP = 4; // px on each side → 8px total between adjacent panes
-  const borderWidth = '1px';
-  const boxShadow = isActive || isZoomed ? `0 0 0 1px ${borderColor}, 0 0 24px ${accentGlow}` : undefined;
 
   return (
     <div
@@ -413,15 +411,14 @@ export function TerminalPane({
         left: `calc(${rect.left}% + ${GAP}px)`,
         width: `calc(${rect.width}% - ${GAP * 2}px)`,
         height: `calc(${rect.height}% - ${GAP * 2}px)`,
-        border: `${borderWidth} solid ${borderColor}`,
+        border: `1px solid ${isActive || isZoomed ? 'transparent' : borderColor}`,
         borderRadius: '7px',
         overflow: 'hidden',
         caretColor: 'transparent',
-        boxShadow,
         // A zoomed pane fills the grid and must paint over the panes it covers
         // (which stay mounted). Above dividers' zIndex of 10.
         zIndex: isZoomed ? 20 : undefined,
-        transition: animations ? 'border-color 200ms ease-out, box-shadow 200ms ease-out' : undefined,
+        transition: animations ? 'border-color .15s ease, background .15s ease' : undefined,
       }}
     >
       {showTitle && (
@@ -435,6 +432,22 @@ export function TerminalPane({
           isActive={isActive}
           notificationColor={notifColor}
           termFont={termFont}
+        />
+      )}
+      {/* Focus ring — only rendered on the active/zoomed pane so mounting it
+          replays btm-bloom on every focus change without needing a key trick. */}
+      {(isActive || isZoomed) && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            borderRadius: '7px',
+            border: `1.5px solid ${borderColor}`,
+            boxShadow: `0 0 0 1px ${borderColor}, 0 0 26px ${accentGlow}`,
+            pointerEvents: 'none',
+            animation: animations ? 'btm-bloom .3s cubic-bezier(.2,.8,.2,1)' : undefined,
+            zIndex: 1,
+          }}
         />
       )}
       {/* The terminal fills the space below the (optional) title bar. inset-style

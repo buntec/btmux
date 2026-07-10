@@ -87,9 +87,20 @@ export function Overlay({ sessionId, send, config }: Props) {
   const [pickerIdx, setPickerIdx] = useState(0);
   // Tracks which picker item was last applied (space/click).
   const [pickerApplied, setPickerApplied] = useState<string | null>(null);
+  // Closing flag: set on close request; actual unmount happens 165ms later after
+  // the exit animation completes. frozenOverlay holds a snapshot of the last
+  // non-null overlay so the content stays visible during the exit animation.
+  const [closing, setClosing] = useState(false);
+  const closingTimerRef = useRef<number>(0);
+  const frozenOverlay = useRef(overlay);
+
+  if (overlay) frozenOverlay.current = overlay;
 
   useEffect(() => {
     if (!overlay) return;
+    // Cancel any in-flight close when a new overlay opens.
+    clearTimeout(closingTimerRef.current);
+    setClosing(false);
     if (overlay.mode === 'prompt') inputRef.current?.focus();
     else focusRef.current?.focus();
     // Reset palette state whenever a new overlay opens.
@@ -115,7 +126,10 @@ export function Overlay({ sessionId, send, config }: Props) {
     }
   });
 
-  if (!overlay) return null;
+  // Keep mounted during the exit animation.
+  if (!overlay && !closing) return null;
+  // Use the frozen snapshot during the exit animation so content stays visible.
+  const activeOverlay = overlay ?? frozenOverlay.current!;
 
   const runCommand = (cmdId: string) => {
     if (cmdId === 'choose-colors') {
@@ -178,12 +192,20 @@ export function Overlay({ sessionId, send, config }: Props) {
   // Filtered command list (palette mode). Computed before the early-return-free
   // render so the key handler and the list render agree on indices.
   const filteredCommands =
-    overlay.mode === 'command'
-      ? overlay.commands.filter((c) => c.label.toLowerCase().includes(cmdQuery.trim().toLowerCase()))
+    activeOverlay.mode === 'command'
+      ? activeOverlay.commands.filter((c) => c.label.toLowerCase().includes(cmdQuery.trim().toLowerCase()))
       : [];
   const clampedCmdIdx = Math.min(cmdIdx, Math.max(0, filteredCommands.length - 1));
 
-  const close = () => setOverlay(null);
+  const close = () => {
+    if (closing) return;
+    if (!animations) { setOverlay(null); return; }
+    setClosing(true);
+    closingTimerRef.current = window.setTimeout(() => {
+      setClosing(false);
+      setOverlay(null);
+    }, 165);
+  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     e.stopPropagation();
@@ -194,26 +216,26 @@ export function Overlay({ sessionId, send, config }: Props) {
       return;
     }
 
-    if (overlay.mode === 'prompt' && e.key === 'Enter') {
+    if (activeOverlay.mode === 'prompt' && e.key === 'Enter') {
       e.preventDefault();
-      const name = overlay.value.trim();
+      const name = activeOverlay.value.trim();
       if (name) {
-        if (overlay.action === 'rename-window') {
+        if (activeOverlay.action === 'rename-window') {
           send({ type: 'rename_window', session_id: sessionId, name });
-        } else if (overlay.action === 'rename-session') {
+        } else if (activeOverlay.action === 'rename-session') {
           send({ type: 'rename_session', session_id: sessionId, name });
           navigate(`/s/${encodeURIComponent(name)}`, { replace: true });
-        } else if (overlay.action === 'new-session') {
+        } else if (activeOverlay.action === 'new-session') {
           send({ type: 'create_session', name });
         }
-      } else if (overlay.action === 'new-session') {
+      } else if (activeOverlay.action === 'new-session') {
         send({ type: 'create_session', name: null });
       }
       close();
       return;
     }
 
-    if (overlay.mode === 'command') {
+    if (activeOverlay.mode === 'command') {
       const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n');
       const up = e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p');
       if (down || up) {
@@ -255,8 +277,8 @@ export function Overlay({ sessionId, send, config }: Props) {
       return;
     }
 
-    if (overlay.mode === 'picker') {
-      const n = overlay.items.length;
+    if (activeOverlay.mode === 'picker') {
+      const n = activeOverlay.items.length;
       const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n') || e.key === 'j';
       const up = e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p') || e.key === 'k';
       if (down || up) {
@@ -267,18 +289,18 @@ export function Overlay({ sessionId, send, config }: Props) {
       }
       if (e.key === ' ') {
         e.preventDefault();
-        const item = overlay.items[Math.min(pickerIdx, n - 1)];
+        const item = activeOverlay.items[Math.min(pickerIdx, n - 1)];
         if (item) {
-          overlay.onSelect(item.id);
+          activeOverlay.onSelect(item.id);
           setPickerApplied(item.id);
         }
         return;
       }
       if (e.key === 'Enter') {
         e.preventDefault();
-        const item = overlay.items[Math.min(pickerIdx, n - 1)];
+        const item = activeOverlay.items[Math.min(pickerIdx, n - 1)];
         if (item) {
-          overlay.onSelect(item.id);
+          activeOverlay.onSelect(item.id);
           close();
         }
         return;
@@ -286,15 +308,15 @@ export function Overlay({ sessionId, send, config }: Props) {
       return;
     }
 
-    if (overlay.mode === 'confirm') {
+    if (activeOverlay.mode === 'confirm') {
       if (e.key === 'y' || e.key === 'Enter') {
         e.preventDefault();
-        overlay.onConfirm();
-        if (overlay.returnTo) setOverlay(overlay.returnTo);
+        activeOverlay.onConfirm();
+        if (activeOverlay.returnTo) setOverlay(activeOverlay.returnTo);
         else close();
       } else if (e.key === 'n' || e.key === 'Escape') {
         e.preventDefault();
-        if (overlay.returnTo) setOverlay(overlay.returnTo);
+        if (activeOverlay.returnTo) setOverlay(activeOverlay.returnTo);
         else close();
       }
     }
@@ -310,8 +332,8 @@ export function Overlay({ sessionId, send, config }: Props) {
 
   // The keybinding-help overlay is a centered modal (backdrop + panel); every
   // other overlay mode is a bottom-anchored sheet.
-  if (overlay.mode === 'keys') {
-    const byAction = new Map(overlay.binds.map((b) => [b.action, b] as const));
+  if (activeOverlay.mode === 'keys') {
+    const byAction = new Map(activeOverlay.binds.map((b) => [b.action, b] as const));
     const shown = new Set<string>();
     return (
       <div
@@ -332,7 +354,11 @@ export function Overlay({ sessionId, send, config }: Props) {
           fontFamily: 'var(--btmux-font, monospace)',
           fontWeight: 'var(--btmux-font-weight, 400)',
           fontSize: `${fontSize}px`,
-          animation: animations ? 'btm-fade .15s ease' : undefined,
+          animation: animations
+            ? closing
+              ? 'btm-fade-out .16s ease forwards'
+              : 'btm-fade .15s ease'
+            : undefined,
         }}
         onMouseDown={(e) => {
           if (e.target === e.currentTarget) close();
@@ -348,7 +374,11 @@ export function Overlay({ sessionId, send, config }: Props) {
             background: c.panelBg,
             border: `1px solid ${c.border}`,
             boxShadow: `0 30px 80px ${withAlpha(c.bodyBg, 0.55)}`,
-            animation: animations ? 'btm-in .18s ease' : undefined,
+            animation: animations
+              ? closing
+                ? 'btm-out .17s ease forwards'
+                : 'btm-in .18s ease'
+              : undefined,
           }}
         >
           <div
@@ -360,7 +390,7 @@ export function Overlay({ sessionId, send, config }: Props) {
               borderBottom: `1px solid ${c.borderDim}`,
             }}
           >
-            <span style={{ color: c.fgBright, fontWeight: 800, fontSize: `${fontSize + 2}px` }}>{overlay.title}</span>
+            <span style={{ color: c.fgBright, fontWeight: 800, fontSize: `${fontSize + 2}px` }}>{activeOverlay.title}</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: c.fgDim, fontSize: hintFont }}>
               prefix
               <span style={{ ...keycapStyle(c), fontSize: hintFont }}>{config?.prefix ?? 'C-b'}</span>
@@ -386,7 +416,7 @@ export function Overlay({ sessionId, send, config }: Props) {
             {(() => {
               // Any bound action not placed in a named section (e.g. user-added
               // vi binds) goes in a catch-all so the help stays complete.
-              const rest = overlay.binds.filter((b) => !shown.has(b.action));
+              const rest = activeOverlay.mode === 'keys' ? activeOverlay.binds.filter((b) => !shown.has(b.action)) : [];
               if (rest.length === 0) return null;
               return <KeySection title="Other" rows={rest} c={c} />;
             })()}
@@ -414,16 +444,20 @@ export function Overlay({ sessionId, send, config }: Props) {
         fontWeight: 'var(--btmux-font-weight, 400)',
         fontSize: `${fontSize}px`,
         zIndex: 10,
-        animation: animations ? 'btm-in .16s ease' : undefined,
+        animation: animations
+          ? closing
+            ? 'btm-sheet-out .16s ease forwards'
+            : 'btm-in .16s ease'
+          : undefined,
       }}
     >
-      {overlay.mode === 'prompt' ? (
+      {activeOverlay.mode === 'prompt' ? (
         <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px' }}>
-          <span style={{ color: accent, marginRight: '8px' }}>{overlay.title}:</span>
+          <span style={{ color: accent, marginRight: '8px' }}>{activeOverlay.title}:</span>
           <input
             ref={inputRef}
-            value={overlay.value}
-            onChange={(e) => setOverlay({ ...overlay, value: e.target.value })}
+            value={activeOverlay.value}
+            onChange={(e) => activeOverlay.mode === 'prompt' && setOverlay({ ...activeOverlay, value: e.target.value })}
             style={{
               flex: 1,
               background: 'transparent',
@@ -436,12 +470,12 @@ export function Overlay({ sessionId, send, config }: Props) {
             }}
           />
         </div>
-      ) : overlay.mode === 'confirm' ? (
+      ) : activeOverlay.mode === 'confirm' ? (
         <div tabIndex={0} ref={focusRef} style={{ outline: 'none', padding: '4px 8px' }}>
-          <span style={{ color: accent }}>{overlay.title} </span>
+          <span style={{ color: accent }}>{activeOverlay.title} </span>
           <span style={{ color: dimFg }}>(y/enter=yes, n/esc=no)</span>
         </div>
-      ) : overlay.mode === 'command' ? (
+      ) : activeOverlay.mode === 'command' ? (
         /* command palette */
         <div tabIndex={0} ref={focusRef} style={{ outline: 'none' }}>
           <div
@@ -458,7 +492,7 @@ export function Overlay({ sessionId, send, config }: Props) {
           <div style={{ maxHeight: '48vh', overflowY: 'auto' }}>
             {filteredCommands.length === 0 ? (
               <div style={{ color: dimFg, padding: '8px 14px' }}>
-                {overlay.commands.length === 0 ? 'No commands.' : 'No matching commands.'}
+                {activeOverlay.commands.length === 0 ? 'No commands.' : 'No matching commands.'}
               </div>
             ) : (
               filteredCommands.map((cmd, i) => {
@@ -518,7 +552,7 @@ export function Overlay({ sessionId, send, config }: Props) {
             <span style={{ color: dimFg, fontSize: hintFont }}>↵ run · ⇥/↑↓ select · esc cancel</span>
           </div>
         </div>
-      ) : overlay.mode === 'picker' ? (
+      ) : activeOverlay.mode === 'picker' ? (
         /* picker overlay */
         <div tabIndex={0} ref={focusRef} style={{ outline: 'none' }}>
           <div
@@ -537,18 +571,18 @@ export function Overlay({ sessionId, send, config }: Props) {
                 color: c.fgDim,
               }}
             >
-              {overlay.title}
+              {activeOverlay.title}
             </span>
             <span style={{ marginLeft: 'auto', color: dimFg, fontSize: hintFont }}>
               ↑/↓ select · space apply · enter confirm · esc cancel
             </span>
           </div>
           <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
-            {overlay.items.length === 0 ? (
+            {activeOverlay.items.length === 0 ? (
               <div style={{ color: dimFg, padding: '8px 14px' }}>No items available.</div>
             ) : (
-              overlay.items.map((item, i) => {
-                const selected = i === Math.min(pickerIdx, overlay.items.length - 1);
+              activeOverlay.items.map((item, i) => {
+                const selected = i === Math.min(pickerIdx, activeOverlay.items.length - 1);
                 const isApplied = pickerApplied !== null ? item.id === pickerApplied : item.active;
                 return (
                   <div
@@ -556,7 +590,7 @@ export function Overlay({ sessionId, send, config }: Props) {
                     onMouseDown={(ev) => {
                       ev.preventDefault();
                       setPickerIdx(i);
-                      overlay.onSelect(item.id);
+                      activeOverlay.onSelect(item.id);
                       setPickerApplied(item.id);
                     }}
                     style={{

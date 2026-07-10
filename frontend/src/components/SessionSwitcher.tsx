@@ -52,6 +52,9 @@ export function SessionSwitcher({ send }: Props) {
   // tree to sessions whose name (or a window's name) matches.
   const [filterMode, setFilterMode] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
+  // Closing flag for exit animation (165ms before actual unmount).
+  const [closing, setClosing] = useState(false);
+  const closingTimerRef = useRef<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
@@ -100,6 +103,8 @@ export function SessionSwitcher({ send }: Props) {
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
+      clearTimeout(closingTimerRef.current);
+      setClosing(false);
       prevFocusRef.current = document.activeElement as HTMLElement | null;
       setFilterMode(false);
       setFilterQuery('');
@@ -144,13 +149,18 @@ export function SessionSwitcher({ send }: Props) {
     previewSession && previewWindow ? previewSession.windows.findIndex((w) => w.id === previewWindow.id) : -1;
 
   const cancel = () => {
-    setOpen(false);
+    if (closing) return;
     const prev = prevFocusRef.current;
-    if (prev && prev.isConnected) {
-      window.setTimeout(() => {
-        if (prev.isConnected) prev.focus();
-      }, 0);
-    }
+    const doClose = () => {
+      setClosing(false);
+      setOpen(false);
+      if (prev && prev.isConnected) {
+        window.setTimeout(() => { if (prev.isConnected) prev.focus(); }, 0);
+      }
+    };
+    if (!(config?.animations ?? true)) { doClose(); return; }
+    setClosing(true);
+    closingTimerRef.current = window.setTimeout(doClose, 165);
   };
 
   const switchToWindow = (sess: SessionState, windowIndex: number) => {
@@ -323,7 +333,7 @@ export function SessionSwitcher({ send }: Props) {
       style={{
         position: 'absolute',
         inset: 0,
-        display: open ? 'flex' : 'none',
+        display: open || closing ? 'flex' : 'none',
         alignItems: 'center',
         justifyContent: 'center',
         background: withAlpha(c.bodyBg, 0.55),
@@ -334,7 +344,11 @@ export function SessionSwitcher({ send }: Props) {
         fontFamily: 'var(--btmux-font, monospace)',
         fontWeight: 'var(--btmux-font-weight, 400)',
         fontSize: `${font}px`,
-        animation: open && animations ? 'btm-fade .15s ease' : undefined,
+        animation: animations
+          ? closing
+            ? 'btm-fade-out .16s ease forwards'
+            : 'btm-fade .15s ease'
+          : undefined,
       }}
     >
       <div
@@ -349,7 +363,11 @@ export function SessionSwitcher({ send }: Props) {
           background: c.panelBg,
           border: `1px solid ${c.border}`,
           boxShadow: `0 30px 80px ${withAlpha(c.bodyBg, 0.55)}`,
-          animation: open && animations ? 'btm-in .18s ease' : undefined,
+          animation: animations
+            ? closing
+              ? 'btm-out .17s ease forwards'
+              : 'btm-in .18s ease'
+            : undefined,
         }}
       >
         {/* Tree */}

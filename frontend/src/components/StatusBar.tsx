@@ -121,6 +121,7 @@ export function StatusBar({ sessionId }: Props) {
   if (!session) return null;
 
   const c = chromePalette(config?.theme ?? null);
+  const animations = config?.animations ?? true;
   const activeWindow = session.windows[session.active_window];
   const paneCount = activeWindow?.panes.length ?? 0;
   const activeZoomed = !!activeWindow?.zoomed_pane;
@@ -264,7 +265,13 @@ export function StatusBar({ sessionId }: Props) {
 
       {/* Right cluster */}
       {prefixActive && (
-        <div style={{ display: 'flex', height: '100%' }}>
+        <div
+          style={{
+            display: 'flex',
+            height: '100%',
+            animation: animations ? 'btm-prefix-in .22s ease both' : undefined,
+          }}
+        >
           <Arrow color={c.warn} size={barH} direction="left" />
           <div
             style={{
@@ -277,6 +284,7 @@ export function StatusBar({ sessionId }: Props) {
               color: c.warnInk,
               fontWeight: 800,
               letterSpacing: '.04em',
+              animation: animations ? 'btm-prefix-pulse 1.5s ease-in-out .3s infinite' : undefined,
             }}
           >
             PREFIX <span style={{ opacity: 0.75, fontWeight: 700 }}>{config ? prefixLabel(config.prefix) : '⌃B'}</span>

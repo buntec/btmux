@@ -67,6 +67,14 @@ bump level="patch":
 install: build
     cargo install --path .
 
+# Record a demo video against the running production instance (port 8004).
+# Output: demo.webm (and demo.mp4 if ffmpeg is in PATH) in the repo root.
+# Override the target with: BTMUX_URL=http://localhost:5173 just record-demo
+# Override the prefix with: BTMUX_PREFIX=C-a just record-demo
+record-demo:
+    cd frontend && bunx playwright install --with-deps chromium
+    cd frontend && bun run record-demo.ts
+
 # Kill all dev processes (vite, dev backend, concurrently)
 kill-dev:
     -pkill -f "target/debug/btmux"

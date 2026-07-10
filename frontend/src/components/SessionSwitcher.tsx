@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
@@ -58,6 +58,15 @@ export function SessionSwitcher({ send }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
+
+  // Track viewport aspect ratio so the preview box matches the real terminal window.
+  const viewportAspect = useSyncExternalStore(
+    (cb) => {
+      window.addEventListener('resize', cb);
+      return () => window.removeEventListener('resize', cb);
+    },
+    () => window.innerWidth / window.innerHeight,
+  );
 
   // The active session/window, derived from the URL (same approach as SessionPool).
   const activeSessionName = useMemo(() => {
@@ -541,17 +550,19 @@ export function SessionSwitcher({ send }: Props) {
             </span>
             <span style={{ color: c.fgDim, fontSize: '12px' }}>preview</span>
           </div>
-          <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-            {debouncedPreviewWindow ? (
-              <PreviewLayout
-                window={debouncedPreviewWindow}
-                open={open}
-                c={c}
-                activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
-              />
-            ) : (
-              <div style={{ color: c.fgDim }}>No window.</div>
-            )}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ aspectRatio: `${viewportAspect}`, maxWidth: '100%', maxHeight: '100%', width: '100%', position: 'relative', overflow: 'hidden' }}>
+              {debouncedPreviewWindow ? (
+                <PreviewLayout
+                  window={debouncedPreviewWindow}
+                  open={open}
+                  c={c}
+                  activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
+                />
+              ) : (
+                <div style={{ color: c.fgDim }}>No window.</div>
+              )}
+            </div>
           </div>
           <div style={{ marginTop: '12px', display: 'flex', gap: '16px', color: c.fgDim, fontSize: '11.5px' }}>
             <span>

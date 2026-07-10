@@ -4,46 +4,14 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { buildTreeNodes } from '../state/treeNodes';
-import { SessionState, TreeNode } from '../state/types';
+import { TreeNode } from '../state/types';
+import { recordSessionMruVisit, sortSessions } from '../state/sessionMru';
+
+export { recordSessionMruVisit as recordMruVisit };
 
 function hexToRgb(hex: string): string {
   const h = hex.replace('#', '');
   return `${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}`;
-}
-
-const MRU_KEY = 'btmux-session-mru';
-
-function getMruOrder(): string[] {
-  try {
-    return JSON.parse(localStorage.getItem(MRU_KEY) ?? '[]');
-  } catch {
-    return [];
-  }
-}
-
-export function recordMruVisit(sessionId: string): void {
-  const order = getMruOrder().filter((id) => id !== sessionId);
-  order.unshift(sessionId);
-  localStorage.setItem(MRU_KEY, JSON.stringify(order));
-}
-
-function sortSessions(sessions: SessionState[], sort: string): SessionState[] {
-  if (sort === 'alphabetical') {
-    return [...sessions].sort((a, b) => a.name.localeCompare(b.name));
-  }
-  if (sort === 'mru') {
-    const order = getMruOrder();
-    return [...sessions].sort((a, b) => {
-      const ai = order.indexOf(a.id);
-      const bi = order.indexOf(b.id);
-      // Sessions not yet in MRU list fall to the end in their original order.
-      if (ai === -1 && bi === -1) return 0;
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
-      return ai - bi;
-    });
-  }
-  return sessions;
 }
 
 interface Props {

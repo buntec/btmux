@@ -1,15 +1,23 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal, FitAddon } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { LayoutRect, ClientConfig } from '../state/types';
-import { ClientMessage } from '../protocol/messages';
+import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
+import { PaneTitleBar } from './PaneTitleBar';
+import { withAlpha } from '../lib/chrome-colors';
 
 interface Props {
   sessionId: string;
   paneId: string;
   rect: LayoutRect;
   isActive: boolean;
+  /** Pane title (OSC 0/2), shown in the title bar. */
+  title?: string | null;
+  /** Pane working directory (OSC 7), shown in the title bar. */
+  cwd?: string | null;
+  /** 0-based pane index within its window (layout order), shown as the badge. */
+  paneIndex?: number;
   /**
    * Whether this pane is shown right now — i.e. it's in the active window of the
    * active session. Panes of inactive windows (or of pooled-but-inactive
@@ -77,12 +85,27 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   return opts;
 }
 
-export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoomed = false, registry, send }: Props) {
+export function TerminalPane({
+  sessionId,
+  paneId,
+  rect,
+  isActive,
+  title,
+  cwd,
+  paneIndex,
+  visible,
+  isZoomed = false,
+  registry,
+  send,
+}: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // Live terminal dimensions, shown as "cols×rows" in the title bar. Updated from
+  // the fit/resize path so the bar tracks the pane's real grid.
+  const [dims, setDims] = useState<{ cols: number; rows: number } | null>(null);
   // Read inside the ResizeObserver/rAF closures so they always see the current
   // visibility without re-running the mount effect (which would dispose+rebuild
   // the terminal). A hidden pane has a 0-size container, so it must neither fit
@@ -219,6 +242,13 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
     // again at the correct size. Opening the WebSocket too early means the backend
     // replays scrollback at the wrong cols, producing garbled output. We defer the
     // initial connection with rAF so the browser has committed the final layout.
+    // Push the terminal's current grid size to the title bar, skipping no-op
+    // updates so we don't re-render on every ResizeObserver tick.
+    const syncDims = () =>
+      setDims((prev) =>
+        prev?.cols === term.cols && prev?.rows === term.rows ? prev : { cols: term.cols, rows: term.rows },
+      );
+
     let connectRaf = 0;
     const observer = new ResizeObserver(() => {
       // While hidden the container is display:none (0×0); fitting would resize
@@ -226,11 +256,13 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
       // wrong size. Skip both — the visibility effect fits on the way back in.
       if (!visibleRef.current) return;
       fitAddon.fit();
+      syncDims();
       if (!ws) {
         cancelAnimationFrame(connectRaf);
         connectRaf = requestAnimationFrame(() => {
           if (ws || !visibleRef.current) return;
           fitAddon.fit();
+          syncDims();
           const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
           const url = `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${term.cols}&rows=${term.rows}`;
           ws = new WebSocket(url);
@@ -251,6 +283,7 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
           });
 
           term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+            setDims({ cols, rows });
             if (ws!.readyState === WebSocket.OPEN) {
               ws!.send(JSON.stringify({ type: 'resize', cols, rows }));
             }
@@ -352,6 +385,16 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
   const borderZoomed = config?.theme?.magenta ?? DEFAULT_THEME.magenta;
   const borderColor = isZoomed ? borderZoomed : isActive ? borderActive : borderInactive;
   const animations = config?.animations ?? true;
+  const showTitle = config?.show_pane_titles ?? true;
+  const termFont = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const notification = useStore((s) => s.notifications.get(paneId));
+  const notifColor = notification ? notificationColorFor(notification.level, config?.theme ?? null) : null;
+
+  const accentGlow = withAlpha(borderColor, 0.2);
+
+  // Panes are inset by a small fixed gap so adjacent panes have visible space
+  // between them and from the outer edge. This mirrors the mockup's padding/gap.
+  const GAP = 4; // px on each side → 8px total between adjacent panes
 
   return (
     <div
@@ -361,22 +404,72 @@ export function TerminalPane({ sessionId, paneId, rect, isActive, visible, isZoo
         // Panes of inactive windows stay mounted but hidden (the keep-alive
         // pool). display:none detaches them from layout so they don't paint or
         // intercept clicks; the suspend() effect stops their render loop.
-        display: visible ? undefined : 'none',
+        display: visible ? 'flex' : 'none',
+        flexDirection: 'column',
         position: 'absolute',
-        top: `${rect.top}%`,
-        left: `${rect.left}%`,
-        width: `${rect.width}%`,
-        height: `${rect.height}%`,
-        border: `1px solid ${borderColor}`,
+        top: `calc(${rect.top}% + ${GAP}px)`,
+        left: `calc(${rect.left}% + ${GAP}px)`,
+        width: `calc(${rect.width}% - ${GAP * 2}px)`,
+        height: `calc(${rect.height}% - ${GAP * 2}px)`,
+        border: `1px solid ${isActive || isZoomed ? 'transparent' : borderColor}`,
+        borderRadius: '7px',
         overflow: 'hidden',
         caretColor: 'transparent',
         // A zoomed pane fills the grid and must paint over the panes it covers
         // (which stay mounted). Above dividers' zIndex of 10.
         zIndex: isZoomed ? 20 : undefined,
-        transition: animations ? 'border-color 200ms ease-out' : undefined,
+        transition: animations ? 'border-color .15s ease, background .15s ease' : undefined,
       }}
     >
-      <div ref={containerRef} style={{ position: 'absolute', inset: '4px' }} />
+      {showTitle && (
+        <PaneTitleBar
+          theme={config?.theme ?? null}
+          index={paneIndex ?? 0}
+          title={title}
+          cwd={cwd}
+          cols={dims?.cols ?? null}
+          rows={dims?.rows ?? null}
+          isActive={isActive}
+          notificationColor={notifColor}
+          termFont={termFont}
+        />
+      )}
+      {/* Focus ring — only rendered on the active/zoomed pane so mounting it
+          replays btm-bloom on every focus change without needing a key trick. */}
+      {(isActive || isZoomed) && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            borderRadius: '7px',
+            border: `1.5px solid ${borderColor}`,
+            boxShadow: `0 0 0 1px ${borderColor}, 0 0 26px ${accentGlow}`,
+            pointerEvents: 'none',
+            animation: animations ? 'btm-bloom .3s cubic-bezier(.2,.8,.2,1)' : undefined,
+            zIndex: 1,
+          }}
+        />
+      )}
+      {/* The terminal fills the space below the (optional) title bar. inset-style
+          padding around it keeps a small gutter so glyphs don't touch the border. */}
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+        <div ref={containerRef} style={{ position: 'absolute', inset: '8px' }} />
+      </div>
     </div>
   );
+}
+
+/** Notification-level → theme color (mirrors StatusBar). */
+function notificationColorFor(level: NotificationLevel, theme: typeof DEFAULT_THEME | null): string {
+  const t = theme ?? DEFAULT_THEME;
+  switch (level) {
+    case 'attention':
+      return t.yellow;
+    case 'error':
+      return t.red;
+    case 'success':
+      return t.green;
+    default:
+      return t.blue;
+  }
 }

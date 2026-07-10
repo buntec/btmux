@@ -33,6 +33,7 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
   const [ratioOverrides, setRatioOverrides] = useState<Map<string, number>>(new Map());
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
+  const switcherOpen = useStore((s) => s.switcherOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
   const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
@@ -101,7 +102,7 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
     const focusId = zoomedPaneId ?? activePaneId;
     // Don't steal focus into the terminal while the file browser occupies that pane.
     const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
-    if (overlay || windowGridOpen || browserOwnsActivePane || !focusId || !isActiveSession) return;
+    if (overlay || windowGridOpen || switcherOpen || browserOwnsActivePane || !focusId || !isActiveSession) return;
     clearPaneNotification(focusId);
     const id = window.setTimeout(() => {
       registryRef.current.get(focusId)?.focus();
@@ -112,6 +113,7 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
     zoomedPaneId,
     overlay,
     windowGridOpen,
+    switcherOpen,
     fileBrowserOpen,
     fileBrowserPaneId,
     isActiveSession,
@@ -225,6 +227,9 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
                 paneId={pane.id}
                 rect={isZoomed ? { ...HIDDEN, paneId: pane.id } : (rect ?? { ...HIDDEN, paneId: pane.id })}
                 isActive={visible && (zoomedPaneId ? isZoomed : pane.id === activePaneId)}
+                title={pane.title}
+                cwd={pane.cwd}
+                paneIndex={paneNumberById.get(pane.id) ?? 0}
                 visible={visible}
                 isZoomed={isZoomed}
                 registry={registryRef.current}

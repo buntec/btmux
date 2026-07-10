@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './state/store';
 import { useControlSocket } from './hooks/useControlSocket';
@@ -8,12 +8,69 @@ import { SessionPool } from './components/SessionPool';
 import { StatusBar } from './components/StatusBar';
 import { Overlay } from './components/Overlay';
 import { WindowGrid } from './components/WindowGrid';
+import { SessionSwitcher } from './components/SessionSwitcher';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { Toaster } from './components/ui/sonner';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
 import { applyThemeVars } from './lib/apply-theme-vars';
+import { setPixBlock, animatePix } from './lib/pix-filter';
+
+/**
+ * Wraps SessionPool in an absolutely-positioned stage div. When the session
+ * switcher or help overlay opens, the stage gets the btm-pix SVG filter applied
+ * (with the block size ramped up via animatePix); on close it ramps back down.
+ * The overlays themselves sit above this div (higher z-index) and are not pixelated.
+ */
+function PixStage({ send }: { send: (msg: ClientMessage) => void }) {
+  const switcherOpen = useStore((s) => s.switcherOpen);
+  const overlay = useStore((s) => s.overlay);
+  const config = useStore((s) => s.config);
+  const animations = config?.animations ?? true;
+
+  // Whether an overlay that triggers pixelation is currently open.
+  const pixActive = switcherOpen || overlay?.mode === 'keys';
+  // filterOn trails pixActive: it goes true immediately on open, but stays true
+  // until the ramp-down animation finishes so the filter is still applied while
+  // the block size animates back to near-zero.
+  const filterOn = usePixFilter(pixActive, animations);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        filter: filterOn ? 'url(#btm-pix) brightness(.78)' : 'none',
+      }}
+    >
+      <SessionPool send={send} />
+    </div>
+  );
+}
+
+function usePixFilter(pixActive: boolean, animations: boolean): boolean {
+  const [filterOn, setFilterOn] = useState(false);
+  const prevActive = useRef(false);
+
+  useEffect(() => {
+    if (!animations) {
+      setFilterOn(false);
+      prevActive.current = false;
+      return;
+    }
+    if (pixActive && !prevActive.current) {
+      setPixBlock(2);
+      setFilterOn(true);
+      animatePix(2, 16, 200);
+    } else if (!pixActive && prevActive.current) {
+      animatePix(16, 2, 150, () => setFilterOn(false));
+    }
+    prevActive.current = pixActive;
+  }, [pixActive, animations]);
+
+  return filterOn;
+}
 
 function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const allSessions = useStore((s) => s.allSessions);
@@ -114,7 +171,19 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         />
       )}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        <SessionPool send={send} />
+        {/* Hidden SVG filter for pixelation effect (switcher/help backdrop). */}
+        <svg aria-hidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
+          <defs>
+            <filter id="btm-pix" x="0" y="0" colorInterpolationFilters="sRGB">
+              <feFlood id="btm-pix-flood" x="5" y="5" width="2" height="2" />
+              <feComposite id="btm-pix-cell" width="12" height="12" />
+              <feTile result="a" />
+              <feComposite in="SourceGraphic" in2="a" operator="in" />
+              <feMorphology id="btm-pix-morph" operator="dilate" radius="6" />
+            </filter>
+          </defs>
+        </svg>
+        <PixStage send={send} />
         <Routes>
           <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
           <Route path="/s/:sessionName" element={<SessionView send={send} />} />
@@ -131,6 +200,9 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         {/* Live window-grid thumbnails (prefix + w). Sits above the pane region
             like the Overlay; mounts lazily on first open and stays warm. */}
         <WindowGrid send={send} />
+        {/* Session/window switcher modal (prefix + s). Also above the pane region;
+            lazily mounted on first open and kept warm like the grid. */}
+        <SessionSwitcher send={send} />
       </div>
       {/* No status bar on the landing page (it has its own full-height chrome). */}
       {!onLanding && <StatusBar sessionId={activeSessionId ?? ''} />}

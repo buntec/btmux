@@ -31,6 +31,10 @@ interface AppStore {
   // window. While true the keybinding hook captures digit presses to select a
   // pane by number (and any other key dismisses it); it auto-hides on a timer.
   paneNumbersVisible: boolean;
+  // Session/window switcher modal (prefix + s / choose-tree). A centered modal
+  // with a session→window tree and a live pane preview. Like the window-grid it
+  // takes over the keyboard while open (the keybinding hook early-returns).
+  switcherOpen: boolean;
   // File browser overlay (prefix + f)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
@@ -62,6 +66,7 @@ interface AppStore {
   setWindowGridOpen: (open: boolean) => void;
   markWindowGridMounted: () => void;
   setPaneNumbersVisible: (visible: boolean) => void;
+  setSwitcherOpen: (open: boolean) => void;
   showToast: (message: string, level?: 'info' | 'error', opts?: { body?: string; paneId?: string }) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
@@ -83,6 +88,7 @@ export const useStore = create<AppStore>((set, get) => ({
   windowGridOpen: false,
   windowGridMounted: false,
   paneNumbersVisible: false,
+  switcherOpen: false,
   fileBrowserOpen: false,
   fileBrowserCwd: null,
   fileBrowserPaneId: null,
@@ -115,6 +121,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setWindowGridOpen: (open) => set({ windowGridOpen: open }),
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
+  setSwitcherOpen: (open) => set({ switcherOpen: open }),
   showToast: (message, level, opts) => {
     const emit = level === 'error' ? toast.error : toast.info;
     const paneId = opts?.paneId;

@@ -551,7 +551,16 @@ export function SessionSwitcher({ send }: Props) {
             <span style={{ color: c.fgDim, fontSize: '12px' }}>preview</span>
           </div>
           <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ aspectRatio: `${viewportAspect}`, maxWidth: '100%', maxHeight: '100%', width: '100%', position: 'relative', overflow: 'hidden' }}>
+            <div
+              style={{
+                aspectRatio: `${viewportAspect}`,
+                maxWidth: '100%',
+                maxHeight: '100%',
+                width: '100%',
+                position: 'relative',
+                overflow: 'hidden',
+              }}
+            >
               {debouncedPreviewWindow ? (
                 <PreviewLayout
                   window={debouncedPreviewWindow}

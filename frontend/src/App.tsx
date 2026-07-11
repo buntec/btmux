@@ -15,7 +15,15 @@ import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
 import { applyThemeVars } from './lib/apply-theme-vars';
-import { setPixBlock, animatePix } from './lib/pix-filter';
+import {
+  setPixBlock,
+  animatePix,
+  PIX_MIN_BLOCK,
+  PIX_MAX_BLOCK,
+  PIX_RAMP_IN_MS,
+  PIX_RAMP_OUT_MS,
+  PIX_BRIGHTNESS,
+} from './lib/pix-filter';
 
 /**
  * Wraps SessionPool in an absolutely-positioned stage div. When the session
@@ -41,7 +49,7 @@ function PixStage({ send }: { send: (msg: ClientMessage) => void }) {
       style={{
         position: 'absolute',
         inset: 0,
-        filter: filterOn ? 'url(#btm-pix) brightness(.78)' : 'none',
+        filter: filterOn ? `url(#btm-pix) brightness(${PIX_BRIGHTNESS})` : 'none',
       }}
     >
       <SessionPool send={send} />
@@ -60,11 +68,11 @@ function usePixFilter(pixActive: boolean, animations: boolean): boolean {
       return;
     }
     if (pixActive && !prevActive.current) {
-      setPixBlock(2);
+      setPixBlock(PIX_MIN_BLOCK);
       setFilterOn(true);
-      animatePix(2, 16, 200);
+      animatePix(PIX_MIN_BLOCK, PIX_MAX_BLOCK, PIX_RAMP_IN_MS);
     } else if (!pixActive && prevActive.current) {
-      animatePix(16, 2, 150, () => setFilterOn(false));
+      animatePix(PIX_MAX_BLOCK, PIX_MIN_BLOCK, PIX_RAMP_OUT_MS, () => setFilterOn(false));
     }
     prevActive.current = pixActive;
   }, [pixActive, animations]);

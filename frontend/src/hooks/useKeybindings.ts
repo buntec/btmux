@@ -3,6 +3,7 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { Overlay, PickerItem } from '../state/types';
 import { paneIdsInOrder } from '../state/layout';
+import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from './useFontLoader';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -346,8 +347,8 @@ function runAction(
     }
     case 'choose-font': {
       const fonts = store.config?.fonts ?? [];
-      const currentFamily = store.config?.terminal?.fontFamily ?? 'JetBrains Mono';
-      const currentWeight = store.config?.terminal?.fontWeight ?? 200;
+      const currentFamily = store.config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
+      const currentWeight = store.config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
       const items: PickerItem[] = fonts.map((f) => ({
         id: `${f.family}:${f.weight_min}`,
         label: `${f.family} (${f.weight_min}–${f.weight_max})`,
@@ -366,8 +367,8 @@ function runAction(
     }
     case 'choose-font-weight': {
       const fonts = store.config?.fonts ?? [];
-      const currentFamily = store.config?.terminal?.fontFamily ?? 'JetBrains Mono';
-      const currentWeight = store.config?.terminal?.fontWeight ?? 200;
+      const currentFamily = store.config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
+      const currentWeight = store.config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
       const fontInfo = fonts.find((f) => f.family === currentFamily);
       const min = fontInfo?.weight_min ?? 100;
       const max = fontInfo?.weight_max ?? 900;

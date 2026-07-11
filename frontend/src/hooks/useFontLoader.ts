@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
 import { useStore } from '../state/store';
 
-const DEFAULT_FONT_FAMILY = 'JetBrains Mono';
-const DEFAULT_FONT_WEIGHT = 400;
+// Mirrors the backend's TerminalOptions::default() in src/config.rs — used only
+// before the control socket delivers the real config (config starts as `null`).
+export const DEFAULT_FONT_FAMILY = 'Geist Mono';
+export const DEFAULT_FONT_WEIGHT = 400;
 
 export function useFontLoader() {
   const fontFamily = useStore((s) => s.config?.terminal?.fontFamily) ?? DEFAULT_FONT_FAMILY;

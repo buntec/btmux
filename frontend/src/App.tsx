@@ -13,7 +13,7 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { Toaster } from './components/ui/sonner';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
-import { useFontLoader } from './hooks/useFontLoader';
+import { useFontLoader, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from './hooks/useFontLoader';
 import { applyThemeVars } from './lib/apply-theme-vars';
 import {
   setPixBlock,
@@ -225,8 +225,8 @@ export function App() {
   useFontLoader();
 
   useEffect(() => {
-    const family = config?.terminal?.fontFamily ?? 'JetBrains Mono';
-    const weight = String(config?.terminal?.fontWeight ?? 400);
+    const family = config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
+    const weight = String(config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT);
     document.documentElement.style.setProperty('--btmux-font', `"${family}", monospace`);
     document.documentElement.style.setProperty('--btmux-font-weight', weight);
   }, [config?.terminal?.fontFamily, config?.terminal?.fontWeight]);

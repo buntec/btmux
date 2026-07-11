@@ -4,6 +4,7 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { Bind, ClientConfig } from '../state/types';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
+import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../hooks/useFontLoader';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -148,8 +149,8 @@ export function Overlay({ sessionId, send, config }: Props) {
     }
     if (cmdId === 'choose-font') {
       const fonts = config?.fonts ?? [];
-      const currentFamily = config?.terminal?.fontFamily ?? 'JetBrains Mono';
-      const currentWeight = config?.terminal?.fontWeight ?? 200;
+      const currentFamily = config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
+      const currentWeight = config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
       setOverlay({
         mode: 'picker',
         title: `Font (current: ${currentFamily} @ ${currentWeight})`,
@@ -167,8 +168,8 @@ export function Overlay({ sessionId, send, config }: Props) {
     }
     if (cmdId === 'choose-font-weight') {
       const fonts = config?.fonts ?? [];
-      const currentFamily = config?.terminal?.fontFamily ?? 'JetBrains Mono';
-      const currentWeight = config?.terminal?.fontWeight ?? 200;
+      const currentFamily = config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
+      const currentWeight = config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
       const fontInfo = fonts.find((f) => f.family === currentFamily);
       const min = fontInfo?.weight_min ?? 100;
       const max = fontInfo?.weight_max ?? 900;

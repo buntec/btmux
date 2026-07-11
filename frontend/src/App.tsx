@@ -276,7 +276,7 @@ export function App() {
   return (
     <BrowserRouter>
       <ConnectionBanner />
-      <Toaster position="top-right" closeButton />
+      <Toaster position="top-right" />
       <AppInner send={send} />
     </BrowserRouter>
   );

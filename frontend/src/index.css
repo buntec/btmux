@@ -188,6 +188,14 @@
     box-shadow: 0 0 15px rgba(224, 138, 99, 0.8);
   }
 }
+@keyframes btm-toast-shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   @keyframes btm-bloom {

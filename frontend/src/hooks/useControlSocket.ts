@@ -82,7 +82,7 @@ export function useControlSocket() {
               : null;
             if (msg.pane_id !== focusedPaneId) {
               const label = msg.title || msg.event;
-              showToast(label, msg.level === 'error' ? 'error' : 'info', {
+              showToast(label, msg.level, {
                 body: msg.body ?? undefined,
                 paneId: msg.pane_id,
               });

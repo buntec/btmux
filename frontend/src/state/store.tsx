@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import type { Terminal } from 'ghostty-web';
 import { SessionState, SessionSummary, ClientConfig, Overlay } from './types';
 import type { NotificationLevel } from '../protocol/messages';
+import { ToastCard } from '../components/ToastCard';
 
 export interface PaneNotification {
   paneId: string;
@@ -67,7 +68,7 @@ interface AppStore {
   markWindowGridMounted: () => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
-  showToast: (message: string, level?: 'info' | 'error', opts?: { body?: string; paneId?: string }) => void;
+  showToast: (message: string, level?: NotificationLevel, opts?: { body?: string; paneId?: string }) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
   setFileBrowserOpen: (open: boolean, cwd?: string | null, paneId?: string | null) => void;
@@ -122,17 +123,24 @@ export const useStore = create<AppStore>((set, get) => ({
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
-  showToast: (message, level, opts) => {
-    const emit = level === 'error' ? toast.error : toast.info;
+  showToast: (message, level = 'info', opts) => {
     const paneId = opts?.paneId;
-    emit(message, {
-      description: opts?.body,
-      duration: level === 'error' ? 8000 : 5000,
-      // Preserve the old click-to-navigate behavior: jump to the pane that
-      // raised the toast. Exposed as an explicit "View" action so the rest of
-      // the toast stays dismiss-only.
-      action: paneId ? { label: 'View', onClick: () => get().navigateToPane(paneId) } : undefined,
-    });
+    // Attention and error both mean "needs a look" (Claude Code waiting on
+    // input, or a hard failure) — give them longer than routine info/success.
+    const duration = level === 'error' || level === 'attention' ? 8000 : 5000;
+    toast.custom(
+      (id) => (
+        <ToastCard
+          level={level}
+          title={message}
+          message={opts?.body}
+          duration={duration}
+          onDismiss={() => toast.dismiss(id)}
+          onView={paneId ? () => get().navigateToPane(paneId) : undefined}
+        />
+      ),
+      { duration },
+    );
   },
   setPaneNotification: (n) =>
     set((s) => {

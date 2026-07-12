@@ -25,13 +25,12 @@ libc = "0.2"
 toml = "0.8"
 notify = "6"
 open = "5"
-reqwest = { version = "0.12", features = ["json", "blocking"] }
 serde_yaml = "0.9"
 nucleo = "0.5"
 base64 = "0.22"
 dirs = "6"
 async-recursion = "1"
-git2 = "0.20"
+git2 = { version = "0.20", default-features = false }
 trash = "5"
 rmcp = { version = "2.2.0", features = ["server", "macros", "transport-streamable-http-server"] }
 strip-ansi-escapes = "0.2.1"

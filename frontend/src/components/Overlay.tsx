@@ -354,7 +354,9 @@ export function Overlay({ sessionId, send, config }: Props) {
           alignItems: 'center',
           justifyContent: 'center',
           outline: 'none',
-          zIndex: 10,
+          // Above the session switcher / window grid (zIndex 30) so the
+          // keybinding-help modal isn't stuck behind their blurred backdrop.
+          zIndex: 40,
           fontFamily: 'var(--btmux-font, monospace)',
           fontWeight: 'var(--btmux-font-weight, 400)',
           fontSize: `${fontSize}px`,
@@ -441,7 +443,10 @@ export function Overlay({ sessionId, send, config }: Props) {
         fontFamily: 'var(--btmux-font, monospace)',
         fontWeight: 'var(--btmux-font-weight, 400)',
         fontSize: `${fontSize}px`,
-        zIndex: 10,
+        // Above the session switcher / window grid (zIndex 30) — a confirm/prompt
+        // sheet opened from within either (e.g. killing a session) must render on
+        // top of their blurred backdrop, not underneath it.
+        zIndex: 40,
         animation: animations ? (closing ? 'btm-sheet-out .16s ease forwards' : 'btm-in .16s ease') : undefined,
       }}
     >

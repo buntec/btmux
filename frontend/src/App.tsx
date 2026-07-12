@@ -182,7 +182,10 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         {/* Hidden SVG filter for pixelation effect (switcher/help backdrop). */}
         <svg aria-hidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
           <defs>
-            <filter id="btm-pix" x="0" y="0" colorInterpolationFilters="sRGB">
+            {/* x/y/width/height hard-crop the filter region to exactly the target
+                element's box — the SVG default (-10%..120%) otherwise lets the
+                dilate/tile bleed past the box, showing up under the status bar. */}
+            <filter id="btm-pix" x="0" y="0" width="100%" height="100%" colorInterpolationFilters="sRGB">
               <feFlood id="btm-pix-flood" x="5" y="5" width="2" height="2" />
               <feComposite id="btm-pix-cell" width="12" height="12" />
               <feTile result="a" />
@@ -191,7 +194,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
             </filter>
           </defs>
         </svg>
-        <PixStage send={send} />
+        {/* A filtered element's own overflow doesn't clip its own filter output —
+            only an ANCESTOR's overflow does. This wrapper exists solely so the
+            pixelation filter's bleed is clipped instead of showing past the pane
+            region into the status bar below. */}
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+          <PixStage send={send} />
+        </div>
         <Routes>
           <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
           <Route path="/s/:sessionName" element={<SessionView send={send} />} />

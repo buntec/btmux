@@ -300,6 +300,17 @@ export function SessionSwitcher({ send }: Props) {
       return;
     }
 
+    if (e.key === 'c' || e.key === 'n') {
+      e.preventDefault();
+      setOverlay({
+        mode: 'prompt',
+        title: 'new-session',
+        value: '',
+        action: 'new-session',
+      });
+      return;
+    }
+
     if (n === 0) return;
 
     // Collapse/expand a session with left/right (or vi h/l). On a window row,
@@ -585,6 +596,9 @@ export function SessionSwitcher({ send }: Props) {
             </span>
             <span>
               <span style={{ color: c.fgMuted }}>↵</span> switch
+            </span>
+            <span>
+              <span style={{ color: c.fgMuted }}>c</span> new
             </span>
             <span>
               <span style={{ color: c.fgMuted }}>x</span> kill

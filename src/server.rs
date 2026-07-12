@@ -45,6 +45,8 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/file", get(serve_raw_file))
         .route("/wallpaper", get(serve_wallpaper))
+        .merge(crate::api::router())
+        .nest_service("/mcp", crate::mcp::mcp_service(state.clone()))
         .route("/", get(|| async { serve("index.html") }))
         .route(
             "/{*path}",
@@ -87,11 +89,7 @@ async fn api_create_session(
         .map(|s| s.name.clone())
         .unwrap_or_default();
 
-    let msg = crate::ws::control::ServerMessage::State {
-        sessions: mgr.session_summaries(),
-        all_sessions: mgr.all_snapshots(),
-    };
-    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    ws::control::broadcast_state(&mgr);
 
     Json(CreateSessionResponse { id, name })
 }
@@ -103,11 +101,7 @@ async fn api_clear_sessions(State(state): State<AppState>) -> impl IntoResponse 
     let mut mgr = state.write().await;
     mgr.clear_sessions().await;
 
-    let msg = crate::ws::control::ServerMessage::State {
-        sessions: mgr.session_summaries(),
-        all_sessions: mgr.all_snapshots(),
-    };
-    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    ws::control::broadcast_state(&mgr);
 
     Json(mgr.session_summaries())
 }
@@ -135,11 +129,7 @@ async fn api_create_window(
     }
     mgr.create_window_named(session_id, body.name, cwd).await;
 
-    let msg = crate::ws::control::ServerMessage::State {
-        sessions: mgr.session_summaries(),
-        all_sessions: mgr.all_snapshots(),
-    };
-    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    ws::control::broadcast_state(&mgr);
 
     Json(CreateWindowResponse { session_id }).into_response()
 }

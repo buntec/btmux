@@ -1,8 +1,10 @@
+mod api;
 mod config;
 mod file_git;
 mod file_search;
 mod fs_ops;
 mod git;
+mod mcp;
 mod persistence;
 mod pty;
 mod server;
@@ -304,11 +306,7 @@ fn spawn_meta_change_handler(
             tokio::time::sleep(Duration::from_millis(100)).await;
             while meta_rx.try_recv().is_ok() {}
             let mgr = state.read().await;
-            let msg = ServerMessage::State {
-                sessions: mgr.session_summaries(),
-                all_sessions: mgr.all_snapshots(),
-            };
-            let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+            ws::control::broadcast_state(&mgr);
         }
     });
 }
@@ -324,11 +322,7 @@ fn spawn_pane_exit_handler(
         while let Some(pane_id) = exit_rx.recv().await {
             let mut mgr = state.write().await;
             mgr.handle_pane_exit(pane_id).await;
-            let msg = ServerMessage::State {
-                sessions: mgr.session_summaries(),
-                all_sessions: mgr.all_snapshots(),
-            };
-            let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+            ws::control::broadcast_state(&mgr);
         }
     });
 }

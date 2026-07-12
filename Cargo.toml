@@ -33,3 +33,6 @@ dirs = "6"
 async-recursion = "1"
 git2 = "0.20"
 trash = "5"
+rmcp = { version = "2.2.0", features = ["server", "macros", "transport-streamable-http-server"] }
+strip-ansi-escapes = "0.2.1"
+schemars = "1.2.1"

@@ -20,6 +20,19 @@ pub async fn handle(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
+/// Build a `ServerMessage::State` snapshot from `mgr` and broadcast it to every
+/// connected `/ws/control` socket. Every structural mutation — whether it came
+/// in over the control socket or a REST endpoint — ends with this call so all
+/// tabs re-render. Takes `&SessionManager` so it works under either a read or
+/// write lock guard.
+pub(crate) fn broadcast_state(mgr: &crate::session::manager::SessionManager) {
+    let msg = ServerMessage::State {
+        sessions: mgr.session_summaries(),
+        all_sessions: mgr.all_snapshots(),
+    };
+    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+}
+
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut ws_tx, mut ws_rx) = socket.split();
 
@@ -155,11 +168,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) {
         | ClientMessage::WritePaneInput { .. } => unreachable!(),
     }
 
-    let msg = ServerMessage::State {
-        sessions: mgr.session_summaries(),
-        all_sessions: mgr.all_snapshots(),
-    };
-    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    broadcast_state(&mgr);
 }
 
 /// Run a built-in command-palette entry (`prefix + :`). Unlike the structural
@@ -176,11 +185,7 @@ async fn run_palette_command(command: &str, session_id: Uuid, state: &AppState) 
         };
         let mut mgr = state.write().await;
         mgr.select_layout(session_id, preset);
-        let msg = ServerMessage::State {
-            sessions: mgr.session_summaries(),
-            all_sessions: mgr.all_snapshots(),
-        };
-        let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+        broadcast_state(&mgr);
         return;
     }
 
@@ -227,11 +232,7 @@ async fn run_palette_command(command: &str, session_id: Uuid, state: &AppState) 
     }
 
     let mgr = state.read().await;
-    let msg = ServerMessage::State {
-        sessions: mgr.session_summaries(),
-        all_sessions: mgr.all_snapshots(),
-    };
-    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    broadcast_state(&mgr);
 }
 
 #[derive(Deserialize)]

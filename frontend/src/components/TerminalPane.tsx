@@ -392,10 +392,6 @@ export function TerminalPane({
 
   const accentGlow = withAlpha(borderColor, 0.2);
 
-  // Panes are inset by a small fixed gap so adjacent panes have visible space
-  // between them and from the outer edge. This mirrors the mockup's padding/gap.
-  const GAP = 4; // px on each side → 8px total between adjacent panes
-
   return (
     <div
       ref={outerRef}
@@ -407,12 +403,11 @@ export function TerminalPane({
         display: visible ? 'flex' : 'none',
         flexDirection: 'column',
         position: 'absolute',
-        top: `calc(${rect.top}% + ${GAP}px)`,
-        left: `calc(${rect.left}% + ${GAP}px)`,
-        width: `calc(${rect.width}% - ${GAP * 2}px)`,
-        height: `calc(${rect.height}% - ${GAP * 2}px)`,
+        top: `${rect.top}%`,
+        left: `${rect.left}%`,
+        width: `${rect.width}%`,
+        height: `${rect.height}%`,
         border: `1px solid ${isActive || isZoomed ? 'transparent' : borderColor}`,
-        borderRadius: '7px',
         overflow: 'hidden',
         caretColor: 'transparent',
         // A zoomed pane fills the grid and must paint over the panes it covers
@@ -441,7 +436,6 @@ export function TerminalPane({
           style={{
             position: 'absolute',
             inset: 0,
-            borderRadius: '7px',
             border: `1.5px solid ${borderColor}`,
             boxShadow: `0 0 0 1px ${borderColor}, 0 0 26px ${accentGlow}`,
             pointerEvents: 'none',

@@ -28,6 +28,7 @@ pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/ws/pane/{pane_id}", get(ws::pane_io::handle))
         .route("/ws/control", get(ws::control::handle))
+        .route("/ws/sysstat", get(ws::sysstat::handle))
         .route("/ws/files", get(ws::files::handle).with_state(files_state))
         .route(
             "/api/sessions",

@@ -4,6 +4,7 @@ import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette } from '../lib/chrome-colors';
 import type { NotificationLevel } from '../protocol/messages';
 import type { Theme } from '../state/types';
+import { SysStatBar } from './SysStatBar';
 
 function prefixLabel(prefix: string): string {
   const parts = prefix.split('-');
@@ -306,20 +307,7 @@ export function StatusBar({ sessionId }: Props) {
           ⛶ <span style={{ fontWeight: 700 }}>ZOOM</span>
         </div>
       )}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '7px',
-          height: '100%',
-          padding: '0 15px 0 13px',
-          color: c.fgMuted,
-          borderLeft: `1px solid ${c.borderDim}`,
-        }}
-      >
-        <span style={{ color: c.fgBright, fontWeight: 700 }}>{paneCount}</span>
-        <span style={{ color: c.fgDim }}>{paneCount === 1 ? 'pane' : 'panes'}</span>
-      </div>
+      <SysStatBar c={c} barH={barH} font={font} />
     </div>
   );
 }

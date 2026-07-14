@@ -11,6 +11,11 @@ import type {
 
 export type SearchMode = 'off' | 'files' | 'content';
 
+export interface YankRegister {
+  paths: string[];
+  mode: 'copy' | 'cut';
+}
+
 interface FileStore {
   currentPath: string;
   entries: FileEntry[];
@@ -21,6 +26,13 @@ interface FileStore {
   filterQuery: string;
   isFilterActive: boolean;
   showDotFiles: boolean;
+
+  // Multi-select
+  selectedPaths: Set<string>;
+  yankRegister: YankRegister | null;
+
+  // Inline rename
+  pendingRename: { path: string; name: string } | null;
 
   searchMode: SearchMode;
   searchQuery: string;
@@ -47,6 +59,10 @@ interface FileStore {
   setFilterQuery: (query: string) => void;
   setIsFilterActive: (active: boolean) => void;
   setShowDotFiles: (show: boolean) => void;
+  toggleSelectedPath: (path: string) => void;
+  clearSelection: () => void;
+  setYankRegister: (register: YankRegister | null) => void;
+  setPendingRename: (rename: { path: string; name: string } | null) => void;
   setSearchMode: (mode: SearchMode) => void;
   setSearchQuery: (query: string) => void;
   setSearchResults: (results: FileSearchResult[]) => void;
@@ -69,6 +85,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
   filterQuery: '',
   isFilterActive: false,
   showDotFiles: false,
+  selectedPaths: new Set(),
+  yankRegister: null,
+  pendingRename: null,
   searchMode: 'off',
   searchQuery: '',
   searchResults: [],
@@ -93,6 +112,15 @@ export const useFileStore = create<FileStore>((set, get) => ({
   setFilterQuery: (query) => set({ filterQuery: query }),
   setIsFilterActive: (active) => set({ isFilterActive: active, filterQuery: active ? get().filterQuery : '' }),
   setShowDotFiles: (show) => set({ showDotFiles: show }),
+  toggleSelectedPath: (path) => {
+    const s = new Set(get().selectedPaths);
+    if (s.has(path)) s.delete(path);
+    else s.add(path);
+    set({ selectedPaths: s });
+  },
+  clearSelection: () => set({ selectedPaths: new Set() }),
+  setYankRegister: (register) => set({ yankRegister: register }),
+  setPendingRename: (rename) => set({ pendingRename: rename }),
   setSearchMode: (mode) => set({ searchMode: mode }),
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSearchResults: (results) => set({ searchResults: results }),
@@ -119,6 +147,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
       isFilterActive: false,
       directoryTree: null,
       treeDepth: 1,
+      selectedPaths: new Set(),
+      yankRegister: null,
+      pendingRename: null,
       searchMode: 'off',
       searchQuery: '',
       searchResults: [],

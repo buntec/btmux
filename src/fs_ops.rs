@@ -284,6 +284,139 @@ pub async fn get_metadata(root: &Path, path: &str) -> Result<FileMetadata, Strin
     })
 }
 
+pub async fn rename_file(from: &str, to: &str) -> Result<(), String> {
+    tokio::fs::rename(from, to)
+        .await
+        .map_err(|e| format!("Cannot rename: {}", e))
+}
+
+#[async_recursion::async_recursion]
+async fn copy_entry(src: std::path::PathBuf, dst: std::path::PathBuf) -> Result<(), String> {
+    let meta = tokio::fs::symlink_metadata(&src)
+        .await
+        .map_err(|e| format!("Cannot stat {}: {}", src.display(), e))?;
+    if meta.is_dir() {
+        tokio::fs::create_dir_all(&dst)
+            .await
+            .map_err(|e| format!("Cannot create dir {}: {}", dst.display(), e))?;
+        let mut rd = tokio::fs::read_dir(&src)
+            .await
+            .map_err(|e| format!("Cannot read dir {}: {}", src.display(), e))?;
+        while let Some(entry) = rd.next_entry().await.map_err(|e| e.to_string())? {
+            let child_dst = dst.join(entry.file_name());
+            copy_entry(entry.path(), child_dst).await?;
+        }
+    } else {
+        tokio::fs::copy(&src, &dst)
+            .await
+            .map_err(|e| format!("Cannot copy {} → {}: {}", src.display(), dst.display(), e))?;
+    }
+    Ok(())
+}
+
+fn unique_dest(dest_dir: &Path, name: &str) -> std::path::PathBuf {
+    let candidate = dest_dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let p = Path::new(name);
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string());
+    let ext = p
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut i = 1usize;
+    loop {
+        let new_name = if i == 1 {
+            format!("{}_copy{}", stem, ext)
+        } else {
+            format!("{}_copy_{}{}", stem, i, ext)
+        };
+        let candidate = dest_dir.join(&new_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+        i += 1;
+    }
+}
+
+pub async fn copy_entries(src_paths: Vec<String>, dest_dir: &str) -> Result<Vec<String>, String> {
+    let dest = PathBuf::from(dest_dir);
+    if !dest.is_dir() {
+        return Err(format!("Destination is not a directory: {}", dest_dir));
+    }
+    let mut errors = Vec::new();
+    for src_str in src_paths {
+        let src = PathBuf::from(&src_str);
+        let name = match src.file_name() {
+            Some(n) => n.to_string_lossy().to_string(),
+            None => {
+                errors.push(format!("Cannot determine filename for {}", src_str));
+                continue;
+            }
+        };
+        let dst = unique_dest(&dest, &name);
+        if let Err(e) = copy_entry(src, dst).await {
+            errors.push(e);
+        }
+    }
+    Ok(errors)
+}
+
+pub async fn move_entries(src_paths: Vec<String>, dest_dir: &str) -> Result<Vec<String>, String> {
+    let dest = PathBuf::from(dest_dir);
+    if !dest.is_dir() {
+        return Err(format!("Destination is not a directory: {}", dest_dir));
+    }
+    let mut errors = Vec::new();
+    for src_str in src_paths {
+        let src = PathBuf::from(&src_str);
+        let name = match src.file_name() {
+            Some(n) => n.to_string_lossy().to_string(),
+            None => {
+                errors.push(format!("Cannot determine filename for {}", src_str));
+                continue;
+            }
+        };
+        let dst = unique_dest(&dest, &name);
+        // Try rename first (atomic, works within same filesystem)
+        if tokio::fs::rename(&src, &dst).await.is_ok() {
+            continue;
+        }
+        // Fall back to copy + delete for cross-device moves
+        if let Err(e) = copy_entry(src.clone(), dst).await {
+            errors.push(e);
+            continue;
+        }
+        if let Err(e) = delete_file_path(&src).await {
+            errors.push(format!(
+                "Copied but could not remove source {}: {}",
+                src.display(),
+                e
+            ));
+        }
+    }
+    Ok(errors)
+}
+
+async fn delete_file_path(path: &Path) -> Result<(), String> {
+    let meta = tokio::fs::symlink_metadata(path)
+        .await
+        .map_err(|e| format!("Cannot stat: {}", e))?;
+    if meta.is_dir() {
+        tokio::fs::remove_dir_all(path)
+            .await
+            .map_err(|e| format!("Cannot delete directory: {}", e))
+    } else {
+        tokio::fs::remove_file(path)
+            .await
+            .map_err(|e| format!("Cannot delete file: {}", e))
+    }
+}
+
 pub async fn trash_file(root: &Path, path: &str) -> Result<(), String> {
     let file_path = validate_path(root, path)?;
     tokio::task::spawn_blocking(move || {

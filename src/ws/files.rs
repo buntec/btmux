@@ -335,6 +335,79 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => error_response(id, &e),
             }
         }
+        "rename_file" => {
+            let from = request
+                .payload
+                .get("from")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+            let to = request
+                .payload
+                .get("to")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            match fs_ops::rename_file(from, to).await {
+                Ok(()) => ServerMessage {
+                    id,
+                    msg_type: "rename_file_result".to_string(),
+                    payload: serde_json::json!({}),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
+        "copy_entries" => {
+            let paths: Vec<String> = request
+                .payload
+                .get("paths")
+                .and_then(|p| p.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let dest = request
+                .payload
+                .get("dest")
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+
+            match fs_ops::copy_entries(paths, dest).await {
+                Ok(errors) => ServerMessage {
+                    id,
+                    msg_type: "copy_entries_result".to_string(),
+                    payload: serde_json::json!({ "errors": errors }),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
+        "move_entries" => {
+            let paths: Vec<String> = request
+                .payload
+                .get("paths")
+                .and_then(|p| p.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let dest = request
+                .payload
+                .get("dest")
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+
+            match fs_ops::move_entries(paths, dest).await {
+                Ok(errors) => ServerMessage {
+                    id,
+                    msg_type: "move_entries_result".to_string(),
+                    payload: serde_json::json!({ "errors": errors }),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
         "trash_file" => {
             let path = request
                 .payload

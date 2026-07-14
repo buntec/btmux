@@ -65,13 +65,20 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const searchMode = useFileStore((s) => s.searchMode);
   const searchResults = useFileStore((s) => s.searchResults);
   const contentSearchResults = useFileStore((s) => s.contentSearchResults);
+  const selectedPaths = useFileStore((s) => s.selectedPaths);
+  const yankRegister = useFileStore((s) => s.yankRegister);
+  const pendingRename = useFileStore((s) => s.pendingRename);
   const store = useFileStore;
   const initialized = useRef(false);
   const gitPreviewGenRef = useRef(0);
   const [sidebarWidth, setSidebarWidth] = useState(288);
   const dragging = useRef(false);
-  const [pendingDelete, setPendingDelete] = useState<{ path: string; name: string; permanent: boolean } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
+    null,
+  );
+  const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -123,9 +130,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const selectFile = useCallback(
     async (path: string, _isDir: boolean) => {
-      // Skip re-fetching if this file is already loaded — avoids clearing
-      // fileContent (and disrupting scroll position) when cycling search results
-      // within the same file.
       if (store.getState().selectedFile === path && store.getState().fileContent !== null) return;
       store.getState().setSelectedFile(path);
       store.getState().setDirectoryTree(null);
@@ -224,28 +228,84 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   );
 
   const trashFile = useCallback(
-    async (path: string) => {
-      try {
-        await fileSend('trash_file', { root: currentPath, path });
-        await navigate(currentPath);
-      } catch (e) {
-        console.error('trash_file failed:', e);
+    async (paths: string[]) => {
+      for (const path of paths) {
+        try {
+          await fileSend('trash_file', { root: currentPath, path });
+        } catch (e) {
+          console.error('trash_file failed:', e);
+        }
       }
+      store.getState().clearSelection();
+      await navigate(currentPath);
     },
-    [fileSend, currentPath, navigate],
+    [fileSend, currentPath, navigate, store],
   );
 
   const deleteFile = useCallback(
-    async (path: string) => {
-      try {
-        await fileSend('delete_file', { root: currentPath, path });
-        await navigate(currentPath);
-      } catch (e) {
-        console.error('delete_file failed:', e);
+    async (paths: string[]) => {
+      for (const path of paths) {
+        try {
+          await fileSend('delete_file', { root: currentPath, path });
+        } catch (e) {
+          console.error('delete_file failed:', e);
+        }
       }
+      store.getState().clearSelection();
+      await navigate(currentPath);
     },
-    [fileSend, currentPath, navigate],
+    [fileSend, currentPath, navigate, store],
   );
+
+  const pasteEntries = useCallback(async () => {
+    const reg = store.getState().yankRegister;
+    if (!reg || reg.paths.length === 0) return;
+    const dest = store.getState().currentPath;
+    try {
+      if (reg.mode === 'cut') {
+        await fileSend('move_entries', { paths: reg.paths, dest });
+        store.getState().setYankRegister(null);
+      } else {
+        await fileSend('copy_entries', { paths: reg.paths, dest });
+      }
+    } catch (e) {
+      console.error('paste failed:', e);
+    }
+    store.getState().clearSelection();
+    await navigate(dest);
+  }, [fileSend, navigate, store]);
+
+  const commitRename = useCallback(
+    async (newName: string) => {
+      const { pendingRename } = store.getState();
+      if (!pendingRename || !newName.trim()) {
+        store.getState().setPendingRename(null);
+        return;
+      }
+      const dir = pendingRename.path.slice(0, pendingRename.path.lastIndexOf('/') + 1);
+      const to = dir + newName.trim();
+      if (to === pendingRename.path) {
+        store.getState().setPendingRename(null);
+        return;
+      }
+      try {
+        await fileSend('rename_file', { from: pendingRename.path, to });
+      } catch (e) {
+        console.error('rename_file failed:', e);
+      }
+      store.getState().setPendingRename(null);
+      await navigate(currentPath, newName.trim());
+    },
+    [fileSend, currentPath, navigate, store],
+  );
+
+  // Focus rename input when it appears
+  useEffect(() => {
+    if (pendingRename) {
+      setRenameValue(pendingRename.name);
+      window.setTimeout(() => renameInputRef.current?.focus(), 0);
+    }
+  }, [pendingRename]);
 
   // Auto-preview diff when git focused index changes
   useEffect(() => {
@@ -354,8 +414,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     selectDir,
   ]);
 
-  // Track whether this pane is the active one, and focus/blur accordingly —
-  // mirrors the same pattern as TerminalPane so navigation between panes works.
+  // Track whether this pane is the active one, and focus/blur accordingly
   const allSessions = useStore((s) => s.allSessions);
   const activePaneId = (() => {
     const session = allSessions.find((s) => s.id === sessionId);
@@ -384,11 +443,26 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!rootRef.current?.contains(document.activeElement)) return;
+
+      // Rename input eats its own keys — let it handle Escape/Enter only
+      if (pendingRename && document.activeElement === renameInputRef.current) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          store.getState().setPendingRename(null);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          commitRename(renameValue);
+        }
+        return;
+      }
+
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
         if (pendingDelete) {
           setPendingDelete(null);
+        } else if (selectedPaths.size > 0) {
+          store.getState().clearSelection();
         } else if (searchMode !== 'off') {
           store.getState().setSearchMode('off');
           store.getState().setSearchQuery('');
@@ -407,12 +481,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         e.preventDefault();
         e.stopPropagation();
         if (e.key === 'y' || e.key === 'Y') {
-          const { path, permanent } = pendingDelete;
+          const { paths, permanent } = pendingDelete;
           setPendingDelete(null);
           if (permanent) {
-            deleteFile(path);
+            deleteFile(paths);
           } else {
-            trashFile(path);
+            trashFile(paths);
           }
         } else if (e.key === 'n' || e.key === 'N') {
           setPendingDelete(null);
@@ -581,14 +655,19 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         return true;
       });
 
+      const focusedEntry = visible[focusedIndex];
+      const focusedFullPath = focusedEntry
+        ? currentPath === '/'
+          ? `/${focusedEntry.name}`
+          : `${currentPath}/${focusedEntry.name}`
+        : null;
+
       if (e.ctrlKey && e.key === 'n') {
         e.preventDefault();
-        const focusedEntry = visible[focusedIndex];
-        if (focusedEntry?.is_dir) {
+        if (focusedEntry?.is_dir && focusedFullPath) {
           const newDepth = treeDepth + 1;
           store.getState().setTreeDepth(newDepth);
-          const fullPath = currentPath === '/' ? `/${focusedEntry.name}` : `${currentPath}/${focusedEntry.name}`;
-          selectDir(fullPath, newDepth);
+          selectDir(focusedFullPath, newDepth);
         } else {
           store.getState().setFocusedIndex(Math.min(focusedIndex + 1, visible.length - 1));
         }
@@ -596,12 +675,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
       if (e.ctrlKey && e.key === 'p') {
         e.preventDefault();
-        const focusedEntry = visible[focusedIndex];
-        if (focusedEntry?.is_dir) {
+        if (focusedEntry?.is_dir && focusedFullPath) {
           const newDepth = Math.max(1, treeDepth - 1);
           store.getState().setTreeDepth(newDepth);
-          const fullPath = currentPath === '/' ? `/${focusedEntry.name}` : `${currentPath}/${focusedEntry.name}`;
-          selectDir(fullPath, newDepth);
+          selectDir(focusedFullPath, newDepth);
         } else {
           store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
         }
@@ -631,30 +708,34 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
           break;
+        case ' ': {
+          // Toggle selection on focused entry, advance cursor
+          e.preventDefault();
+          if (!focusedFullPath) break;
+          store.getState().toggleSelectedPath(focusedFullPath);
+          store.getState().setFocusedIndex(Math.min(focusedIndex + 1, visible.length - 1));
+          break;
+        }
         case 'Enter': {
           e.preventDefault();
-          const entry = visible[focusedIndex];
-          if (!entry) break;
-          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+          if (!focusedEntry || !focusedFullPath) break;
           if (e.ctrlKey) {
-            openPath(fullPath, entry.is_dir);
-          } else if (entry.is_dir) {
-            navigate(fullPath);
+            openPath(focusedFullPath, focusedEntry.is_dir);
+          } else if (focusedEntry.is_dir) {
+            navigate(focusedFullPath);
           } else {
-            insertPath(fullPath);
+            insertPath(focusedFullPath);
           }
           break;
         }
         case 'l':
         case 'ArrowRight': {
           e.preventDefault();
-          const entry = visible[focusedIndex];
-          if (!entry) break;
-          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-          if (entry.is_dir) {
-            navigate(fullPath);
+          if (!focusedEntry || !focusedFullPath) break;
+          if (focusedEntry.is_dir) {
+            navigate(focusedFullPath);
           } else {
-            selectFile(fullPath, false);
+            selectFile(focusedFullPath, false);
           }
           break;
         }
@@ -702,20 +783,49 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           onClose();
           break;
+        case 'r': {
+          // Rename focused entry
+          e.preventDefault();
+          if (!focusedEntry || !focusedFullPath) break;
+          store.getState().setPendingRename({ path: focusedFullPath, name: focusedEntry.name });
+          break;
+        }
+        case 'y': {
+          // Yank (copy) — selected set or focused entry
+          e.preventDefault();
+          const paths = selectedPaths.size > 0 ? Array.from(selectedPaths) : focusedFullPath ? [focusedFullPath] : [];
+          if (paths.length === 0) break;
+          store.getState().setYankRegister({ paths, mode: 'copy' });
+          break;
+        }
+        case 'x': {
+          // Cut — selected set or focused entry
+          e.preventDefault();
+          const paths = selectedPaths.size > 0 ? Array.from(selectedPaths) : focusedFullPath ? [focusedFullPath] : [];
+          if (paths.length === 0) break;
+          store.getState().setYankRegister({ paths, mode: 'cut' });
+          break;
+        }
+        case 'p': {
+          // Paste yank register into current directory
+          e.preventDefault();
+          pasteEntries();
+          break;
+        }
         case 'd': {
           e.preventDefault();
-          const entry = visible[focusedIndex];
-          if (!entry) break;
-          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-          setPendingDelete({ path: fullPath, name: entry.name, permanent: false });
+          if (!focusedEntry && selectedPaths.size === 0) break;
+          const paths = selectedPaths.size > 0 ? Array.from(selectedPaths) : focusedFullPath ? [focusedFullPath] : [];
+          const names = paths.map((p) => p.slice(p.lastIndexOf('/') + 1));
+          setPendingDelete({ paths, names, permanent: false });
           break;
         }
         case 'D': {
           e.preventDefault();
-          const entry = visible[focusedIndex];
-          if (!entry) break;
-          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-          setPendingDelete({ path: fullPath, name: entry.name, permanent: true });
+          if (!focusedEntry && selectedPaths.size === 0) break;
+          const paths = selectedPaths.size > 0 ? Array.from(selectedPaths) : focusedFullPath ? [focusedFullPath] : [];
+          const names = paths.map((p) => p.slice(p.lastIndexOf('/') + 1));
+          setPendingDelete({ paths, names, permanent: true });
           break;
         }
       }
@@ -748,6 +858,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     trashFile,
     deleteFile,
     pendingDelete,
+    pendingRename,
+    renameValue,
+    commitRename,
+    selectedPaths,
+    yankRegister,
+    pasteEntries,
     searchMode,
     searchResults,
     contentSearchResults,
@@ -764,6 +880,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     });
     return visible[focusedIndex]?.is_dir ?? false;
   })();
+
+  const selectionCount = selectedPaths.size;
 
   return (
     <div
@@ -787,6 +905,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         {isFilterActive && (
           <div className="text-muted-foreground">
             filter: <span className="text-foreground">{filterQuery || '...'}</span>
+          </div>
+        )}
+        {selectionCount > 0 && !isFilterActive && (
+          <div className="text-muted-foreground text-xs">
+            <span className="text-foreground font-medium">{selectionCount}</span> selected
+          </div>
+        )}
+        {yankRegister && !isFilterActive && (
+          <div className="text-muted-foreground text-xs">
+            {yankRegister.mode === 'cut' ? '✂' : '⎘'}{' '}
+            <span className="text-foreground font-medium">{yankRegister.paths.length}</span> in register
           </div>
         )}
         <button
@@ -828,10 +957,45 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
         style={{ fontSize: `${Math.max(6, fontSize - 2)}px` }}
       >
-        {pendingDelete ? (
+        {pendingRename ? (
+          <span className="flex items-center gap-2 text-foreground w-full">
+            <span>rename:</span>
+            <input
+              ref={renameInputRef}
+              className="flex-1 bg-transparent border-b border-border outline-none text-foreground"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitRename(renameValue);
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  store.getState().setPendingRename(null);
+                }
+                e.stopPropagation();
+              }}
+            />
+            <span className="text-muted-foreground">
+              <KbdGroup>
+                <Kbd>Enter</Kbd>
+              </KbdGroup>{' '}
+              confirm{' '}
+              <KbdGroup>
+                <Kbd>Esc</Kbd>
+              </KbdGroup>{' '}
+              cancel
+            </span>
+          </span>
+        ) : pendingDelete ? (
           <span className="text-foreground">
             {pendingDelete.permanent ? 'permanently delete' : 'move to trash'}{' '}
-            <span className="text-yellow-400">{pendingDelete.name}</span>?{' '}
+            {pendingDelete.names.length === 1 ? (
+              <span className="text-yellow-400">{pendingDelete.names[0]}</span>
+            ) : (
+              <span className="text-yellow-400">{pendingDelete.names.length} items</span>
+            )}
+            ?{' '}
             <KbdGroup>
               <Kbd>y</Kbd>
             </KbdGroup>{' '}
@@ -926,6 +1090,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             </span>
             <span>
               <KbdGroup>
+                <Kbd>Space</Kbd>
+              </KbdGroup>{' '}
+              select
+            </span>
+            <span>
+              <KbdGroup>
                 <Kbd>^n</Kbd>
                 <Kbd>^p</Kbd>
               </KbdGroup>{' '}
@@ -933,15 +1103,33 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             </span>
             <span>
               <KbdGroup>
-                <Kbd>Enter</Kbd>
+                <Kbd>y</Kbd>
               </KbdGroup>{' '}
-              insert
+              copy
             </span>
             <span>
               <KbdGroup>
-                <Kbd>^Enter</Kbd>
+                <Kbd>x</Kbd>
               </KbdGroup>{' '}
-              open
+              cut
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>p</Kbd>
+              </KbdGroup>{' '}
+              paste
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>r</Kbd>
+              </KbdGroup>{' '}
+              rename
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>Enter</Kbd>
+              </KbdGroup>{' '}
+              insert
             </span>
             <span>
               <KbdGroup>

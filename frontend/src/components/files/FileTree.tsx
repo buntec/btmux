@@ -24,7 +24,11 @@ export function FileTree({ onNavigate, onSelect }: FileTreeProps) {
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const showDotFiles = useFileStore((s) => s.showDotFiles);
   const isLoading = useFileStore((s) => s.isLoading);
+  const selectedPaths = useFileStore((s) => s.selectedPaths);
+  const yankRegister = useFileStore((s) => s.yankRegister);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const cutPaths = yankRegister?.mode === 'cut' ? yankRegister.paths : [];
 
   const visible = entries.filter((e) => {
     if (!showDotFiles && e.name.startsWith('.')) return false;
@@ -46,17 +50,22 @@ export function FileTree({ onNavigate, onSelect }: FileTreeProps) {
   return (
     <ScrollArea className="flex-1 overflow-hidden">
       <div ref={listRef}>
-        {visible.map((entry, i) => (
-          <FileRow
-            key={entry.name}
-            entry={entry}
-            index={i}
-            focused={i === focusedIndex}
-            currentPath={currentPath}
-            onNavigate={onNavigate}
-            onSelect={onSelect}
-          />
-        ))}
+        {visible.map((entry, i) => {
+          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+          return (
+            <FileRow
+              key={entry.name}
+              entry={entry}
+              index={i}
+              focused={i === focusedIndex}
+              currentPath={currentPath}
+              isSelected={selectedPaths.has(fullPath)}
+              isCut={cutPaths.includes(fullPath)}
+              onNavigate={onNavigate}
+              onSelect={onSelect}
+            />
+          );
+        })}
         {visible.length === 0 && <div className="px-3 py-6 text-center text-muted-foreground">Empty</div>}
       </div>
     </ScrollArea>
@@ -68,6 +77,8 @@ function FileRow({
   index,
   focused,
   currentPath,
+  isSelected,
+  isCut,
   onNavigate,
   onSelect,
 }: {
@@ -75,6 +86,8 @@ function FileRow({
   index: number;
   focused: boolean;
   currentPath: string;
+  isSelected: boolean;
+  isCut: boolean;
   onNavigate: (path: string) => void;
   onSelect: (path: string, isDir: boolean) => void;
 }) {
@@ -86,6 +99,7 @@ function FileRow({
       className={cn(
         'flex items-center gap-2 px-2 cursor-pointer leading-tight',
         focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+        isCut && 'opacity-40',
       )}
       onClick={() => {
         if (entry.is_dir) {
@@ -95,12 +109,16 @@ function FileRow({
         }
       }}
     >
-      {entry.is_dir ? (
+      {isSelected ? (
+        <span className="size-3.5 shrink-0 text-theme-blue flex items-center justify-center" aria-hidden>
+          ■
+        </span>
+      ) : entry.is_dir ? (
         <Folder className="size-3.5 text-theme-blue shrink-0" />
       ) : (
         <File className="size-3.5 text-muted-foreground shrink-0" />
       )}
-      <span className="flex-1 truncate" title={entry.name}>
+      <span className={cn('flex-1 truncate', isCut && 'line-through decoration-muted-foreground')} title={entry.name}>
         {entry.name}
       </span>
       {entry.is_dir ? (

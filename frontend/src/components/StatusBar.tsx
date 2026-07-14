@@ -133,19 +133,6 @@ export function StatusBar({ sessionId }: Props) {
   const firstWindowActive = session.active_window === 0;
 
   const segPadY = 0;
-  const indexBadge: React.CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: `${Math.round(font * 1.25)}px`,
-    height: `${Math.round(font * 1.25)}px`,
-    padding: '0 4px',
-    borderRadius: '4px',
-    background: c.accent,
-    color: c.accentInk,
-    fontSize: `${Math.max(9, font - 2)}px`,
-    fontWeight: 800,
-  };
 
   return (
     <div
@@ -230,7 +217,7 @@ export function StatusBar({ sessionId }: Props) {
                   fontWeight: 700,
                 }}
               >
-                <span style={indexBadge}>{i}</span>
+                <span style={{ color: c.accent }}>{i}</span>
                 <span>{w.name}</span>
                 <span style={{ color: c.accent }}>*</span>
                 {zoomGlyph}

@@ -53,7 +53,8 @@ pub async fn run_command(
 
     let mut acc: Vec<u8> = Vec::new();
     let idle = Duration::from_millis(idle_ms.unwrap_or(DEFAULT_IDLE_MS));
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
     let mut timed_out = false;
 
     loop {

@@ -37,9 +37,7 @@ function CpuBars({ cpu, c, barH }: { cpu: number[]; c: ChromePalette; barH: numb
       {cpu.map((pct, i) => {
         // Color: green → yellow → red based on load
         const t = Math.min(1, pct / 100);
-        const color = t < 0.6
-          ? mix(c.accent, c.warn, t / 0.6)
-          : mix(c.warn, '#ff5f5f', (t - 0.6) / 0.4);
+        const color = t < 0.6 ? mix(c.accent, c.warn, t / 0.6) : mix(c.warn, '#ff5f5f', (t - 0.6) / 0.4);
         const h = Math.max(1, Math.round(innerH * Math.max(0.04, t)));
         return (
           <div

@@ -53,7 +53,11 @@ pub fn router() -> Router<AppState> {
 
 /// Resolves session-not-found (404) vs. pane-not-in-active-window (409) for
 /// the pane-addressed endpoints below. `Ok(())` means it's safe to mutate.
-fn check_pane(mgr: &crate::session::manager::SessionManager, session_id: Uuid, pane_id: Uuid) -> Result<(), StatusCode> {
+fn check_pane(
+    mgr: &crate::session::manager::SessionManager,
+    session_id: Uuid,
+    pane_id: Uuid,
+) -> Result<(), StatusCode> {
     match super::pane_in_active_window(mgr, session_id, pane_id) {
         None => Err(StatusCode::NOT_FOUND),
         Some(false) => Err(StatusCode::CONFLICT),
@@ -82,7 +86,10 @@ async fn api_split_pane(
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn api_kill_pane(State(state): State<AppState>, Path((session_id, pane_id)): Path<(Uuid, Uuid)>) -> Response {
+async fn api_kill_pane(
+    State(state): State<AppState>,
+    Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
+) -> Response {
     let mut mgr = state.write().await;
     if let Err(status) = check_pane(&mgr, session_id, pane_id) {
         return status.into_response();
@@ -94,7 +101,10 @@ async fn api_kill_pane(State(state): State<AppState>, Path((session_id, pane_id)
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn api_zoom_pane(State(state): State<AppState>, Path((session_id, pane_id)): Path<(Uuid, Uuid)>) -> Response {
+async fn api_zoom_pane(
+    State(state): State<AppState>,
+    Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
+) -> Response {
     let mut mgr = state.write().await;
     if let Err(status) = check_pane(&mgr, session_id, pane_id) {
         return status.into_response();
@@ -106,7 +116,10 @@ async fn api_zoom_pane(State(state): State<AppState>, Path((session_id, pane_id)
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn api_select_pane(State(state): State<AppState>, Path((session_id, pane_id)): Path<(Uuid, Uuid)>) -> Response {
+async fn api_select_pane(
+    State(state): State<AppState>,
+    Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
+) -> Response {
     let mut mgr = state.write().await;
     if let Err(status) = check_pane(&mgr, session_id, pane_id) {
         return status.into_response();

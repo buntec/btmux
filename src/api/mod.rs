@@ -27,7 +27,11 @@ pub(crate) fn session_exists(mgr: &SessionManager, session_id: Uuid) -> bool {
 /// `select_pane`) only ever operate on `session.windows[session.active_window]`
 /// and silently no-op for a pane outside it — this turns that into an
 /// explicit 409 instead of a false-success response.
-pub(crate) fn pane_in_active_window(mgr: &SessionManager, session_id: Uuid, pane_id: Uuid) -> Option<bool> {
+pub(crate) fn pane_in_active_window(
+    mgr: &SessionManager,
+    session_id: Uuid,
+    pane_id: Uuid,
+) -> Option<bool> {
     let session = mgr.sessions.iter().find(|s| s.id == session_id)?;
     let window = &session.windows[session.active_window];
     Some(window.panes.iter().any(|p| p.id == pane_id))

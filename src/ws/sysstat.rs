@@ -1,5 +1,8 @@
 use axum::{
-    extract::{ws::{Message, WebSocket}, WebSocketUpgrade},
+    extract::{
+        ws::{Message, WebSocket},
+        WebSocketUpgrade,
+    },
     response::IntoResponse,
 };
 use serde::Serialize;
@@ -47,8 +50,16 @@ async fn handle_socket(mut socket: WebSocket) {
             (rx + n.received(), tx + n.transmitted())
         });
 
-        let frame = SysStatFrame { cpu, mem_used, mem_total, net_rx, net_tx };
-        let Ok(json) = serde_json::to_string(&frame) else { continue };
+        let frame = SysStatFrame {
+            cpu,
+            mem_used,
+            mem_total,
+            net_rx,
+            net_tx,
+        };
+        let Ok(json) = serde_json::to_string(&frame) else {
+            continue;
+        };
         if socket.send(Message::Text(json.into())).await.is_err() {
             break;
         }

@@ -77,7 +77,12 @@ async fn api_rename_window(
     };
     let active_window = session.active_window;
     mgr.rename_window(session_id, body.name);
-    let name = mgr.sessions.iter().find(|s| s.id == session_id).unwrap().windows[active_window]
+    let name = mgr
+        .sessions
+        .iter()
+        .find(|s| s.id == session_id)
+        .unwrap()
+        .windows[active_window]
         .name
         .clone();
 
@@ -104,7 +109,11 @@ async fn api_close_window(State(state): State<AppState>, Path(session_id): Path<
 
 async fn api_kill_window(State(state): State<AppState>, Path(window_id): Path<Uuid>) -> Response {
     let mut mgr = state.write().await;
-    let Some(session) = mgr.sessions.iter().find(|s| s.windows.iter().any(|w| w.id == window_id)) else {
+    let Some(session) = mgr
+        .sessions
+        .iter()
+        .find(|s| s.windows.iter().any(|w| w.id == window_id))
+    else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if session.windows.len() <= 1 {

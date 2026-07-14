@@ -19,7 +19,9 @@ fn ok_json<T: Serialize>(value: T) -> Result<CallToolResult, ErrorData> {
 }
 
 fn ok_text(text: impl Into<String>) -> Result<CallToolResult, ErrorData> {
-    Ok(CallToolResult::success(vec![ContentBlock::text(text.into())]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(
+        text.into(),
+    )]))
 }
 
 /// A request that's well-formed but didn't succeed for a reason the caller
@@ -139,7 +141,9 @@ impl BtmuxMcpServer {
         ok_json(serde_json::json!({"id": id, "name": name}))
     }
 
-    #[tool(description = "Create a new window in a session, optionally with a name and starting cwd.")]
+    #[tool(
+        description = "Create a new window in a session, optionally with a name and starting cwd."
+    )]
     async fn create_window(
         &self,
         Parameters(CreateWindowParams {
@@ -216,7 +220,9 @@ impl BtmuxMcpServer {
         ok_text("ok")
     }
 
-    #[tool(description = "Close the active window of a session. Fails if it's the session's last window.")]
+    #[tool(
+        description = "Close the active window of a session. Fails if it's the session's last window."
+    )]
     async fn close_window(
         &self,
         Parameters(SessionRefParams { session_id }): Parameters<SessionRefParams>,
@@ -301,7 +307,9 @@ impl BtmuxMcpServer {
         }): Parameters<RunCommandParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let pane_id = parse_uuid(&pane_id, "pane_id")?;
-        match super::run_command::run_command(&self.state, pane_id, &command, idle_ms, timeout_ms).await {
+        match super::run_command::run_command(&self.state, pane_id, &command, idle_ms, timeout_ms)
+            .await
+        {
             Ok(outcome) => ok_json(serde_json::json!({
                 "output": outcome.output,
                 "timed_out": outcome.timed_out,

@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useStore, PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette } from '../lib/chrome-colors';
-import type { NotificationLevel } from '../protocol/messages';
+import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { Theme } from '../state/types';
 import { SysStatBar } from './SysStatBar';
 
@@ -15,6 +15,7 @@ function prefixLabel(prefix: string): string {
 
 interface Props {
   sessionId: string;
+  send: (msg: ClientMessage) => void;
 }
 
 function notificationColor(level: NotificationLevel, theme: Theme | null): string {
@@ -105,7 +106,7 @@ function Arrow({
   );
 }
 
-export function StatusBar({ sessionId }: Props) {
+export function StatusBar({ sessionId, send }: Props) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
   const prefixActive = useStore((s) => s.prefixActive);
@@ -133,6 +134,16 @@ export function StatusBar({ sessionId }: Props) {
   const firstWindowActive = session.active_window === 0;
 
   const segPadY = 0;
+
+  // Clicking a window must both switch the backend's active window (the URL
+  // alone doesn't — SessionView only sends switch_window on first mount) and
+  // navigate, mirroring WindowGrid/SessionSwitcher.
+  const goToWindow = (index: number, name: string) => {
+    if (index !== session.active_window) {
+      send({ type: 'switch_window', session_id: session.id, index });
+    }
+    navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(name)}`);
+  };
 
   return (
     <div
@@ -189,7 +200,7 @@ export function StatusBar({ sessionId }: Props) {
           <span
             onClick={(e) => {
               e.stopPropagation();
-              navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(w.name)}`);
+              goToWindow(i, w.name);
             }}
             style={{
               color: notificationColor(winLevel, config?.theme ?? null),
@@ -230,7 +241,7 @@ export function StatusBar({ sessionId }: Props) {
         return (
           <div
             key={w.id}
-            onClick={() => navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(w.name)}`)}
+            onClick={() => goToWindow(i, w.name)}
             style={{
               display: 'flex',
               alignItems: 'center',

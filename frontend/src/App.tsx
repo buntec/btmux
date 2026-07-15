@@ -222,7 +222,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         <SessionSwitcher send={send} />
       </div>
       {/* No status bar on the landing page (it has its own full-height chrome). */}
-      {!onLanding && <StatusBar sessionId={activeSessionId ?? ''} />}
+      {!onLanding && <StatusBar sessionId={activeSessionId ?? ''} send={send} />}
     </div>
   );
 }

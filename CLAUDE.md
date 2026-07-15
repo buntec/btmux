@@ -20,6 +20,7 @@ The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 - `just build` — production build: frontend → `frontend/dist`, then `cargo build --release`.
 - `just run` — release binary serving the built frontend.
 - `just install` — production build + `cargo install --path .`
+- `just fmt` (alias `just format`) — format the whole codebase (`cargo fmt` + prettier). **Always run this before committing.**
 
 There is **no test suite**. `cargo check`, `cargo clippy`, and `tsc --noEmit` are the only automated verification.
 

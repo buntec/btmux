@@ -3,6 +3,7 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { Overlay, PickerItem } from '../state/types';
 import { paneIdsInOrder } from '../state/layout';
+import { sortWindows } from '../state/windowMru';
 import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from './useFontLoader';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
@@ -153,11 +154,12 @@ function dispatch(
   onSwitchToSession: (sessionName: string) => void,
 ) {
   if (!binds.has(e.key) && e.key >= '0' && e.key <= '9') {
-    send({
-      type: 'switch_window',
-      session_id: sessionId,
-      index: parseInt(e.key, 10),
-    });
+    // The digit is a *display* position; map it to the backend window index so
+    // the hotkey matches the (possibly sorted) status-bar numbering.
+    const target = windowIndexAtDisplayPos(sessionId, parseInt(e.key, 10));
+    if (target !== null) {
+      send({ type: 'switch_window', session_id: sessionId, index: target });
+    }
     return;
   }
 
@@ -237,12 +239,18 @@ function runAction(
     case 'new-window':
       send({ type: 'create_window', session_id: sessionId });
       break;
-    case 'next-window':
-      send({ type: 'switch_window', session_id: sessionId, index: -1 });
+    case 'next-window': {
+      // Next in *display* order (wraps). Resolve to a backend index so the cycle
+      // follows the status-bar order rather than the server's creation order.
+      const target = windowIndexAtDisplayDelta(sessionId, 1);
+      if (target !== null) send({ type: 'switch_window', session_id: sessionId, index: target });
       break;
-    case 'prev-window':
-      send({ type: 'switch_window', session_id: sessionId, index: -2 });
+    }
+    case 'prev-window': {
+      const target = windowIndexAtDisplayDelta(sessionId, -1);
+      if (target !== null) send({ type: 'switch_window', session_id: sessionId, index: target });
       break;
+    }
     case 'rename-window': {
       const win = session?.windows[session.active_window];
       openOverlay({
@@ -410,6 +418,39 @@ function showPaneNumbers() {
 function hidePaneNumbers() {
   clearTimeout(paneNumbersTimer);
   useStore.getState().setPaneNumbersVisible(false);
+}
+
+/**
+ * Resolve a *display* window position (the number shown in the status bar,
+ * which follows `window_sort`) to the backend window index used by
+ * `switch_window`. Returns null when the position is out of range.
+ */
+function windowIndexAtDisplayPos(sessionId: string, displayPos: number): number | null {
+  const store = useStore.getState();
+  const session = store.getSession(sessionId);
+  if (!session) return null;
+  const ordered = sortWindows(session.windows, store.config?.window_sort ?? 'created');
+  return ordered[displayPos]?.index ?? null;
+}
+
+/**
+ * Resolve the backend window index `delta` steps from the active window in
+ * *display* order, wrapping around. Used by next/prev-window so cycling follows
+ * the status-bar order rather than the server's creation order. Returns null if
+ * the session has no windows.
+ */
+function windowIndexAtDisplayDelta(sessionId: string, delta: number): number | null {
+  const store = useStore.getState();
+  const session = store.getSession(sessionId);
+  if (!session) return null;
+  const ordered = sortWindows(session.windows, store.config?.window_sort ?? 'created');
+  const n = ordered.length;
+  if (n === 0) return null;
+  // Find where the active window currently sits in the display order.
+  const activePos = ordered.findIndex((o) => o.index === session.active_window);
+  const from = activePos === -1 ? 0 : activePos;
+  const nextPos = (((from + delta) % n) + n) % n;
+  return ordered[nextPos]?.index ?? null;
 }
 
 /**

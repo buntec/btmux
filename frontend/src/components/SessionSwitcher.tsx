@@ -7,6 +7,7 @@ import { computeRectsAndDividers } from '../state/layout';
 import { SessionState } from '../state/types';
 import { MirrorPane } from './MirrorPane';
 import { sortSessions } from '../state/sessionMru';
+import { sortWindows } from '../state/windowMru';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -16,10 +17,12 @@ interface Props {
 // empty override map suffices for every computeRectsAndDividers call.
 const EMPTY_RATIOS: Map<string, number> = new Map();
 
-/** A flat, keyboard-navigable row in the switcher tree. */
+/** A flat, keyboard-navigable row in the switcher tree. `windowIndex` is the
+ *  backend index (for switch_window / preview lookup); `displayIndex` is its
+ *  position in the sorted display order (the number badge). */
 type Row =
   | { kind: 'session'; sessionId: string; expanded: boolean }
-  | { kind: 'window'; sessionId: string; windowId: string; windowIndex: number };
+  | { kind: 'window'; sessionId: string; windowId: string; windowIndex: number; displayIndex: number };
 
 /**
  * The session/window switcher (prefix + s). A centered modal with a session→window
@@ -81,29 +84,35 @@ export function SessionSwitcher({ send }: Props) {
     () => sortSessions(allSessions, config?.session_sort ?? 'created'),
     [allSessions, config?.session_sort],
   );
+  const windowSort = config?.window_sort ?? 'created';
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     for (const sess of sortedSessions) {
+      // Windows in display order (`window_sort`); each carries its backend index
+      // (for switch_window/preview) while its sorted position is the number badge.
+      const ordered = sortWindows(sess.windows, windowSort).map(({ win, index }, displayIndex) => ({
+        win,
+        windowIndex: index,
+        displayIndex,
+      }));
       // A session shows if it matches by name, or if any of its windows match.
       // While filtering, matching sessions auto-expand so the matches are visible.
       const sessMatch = !query || sess.name.toLowerCase().includes(query);
       const matchingWindows = query
-        ? sess.windows
-            .map((win, windowIndex) => ({ win, windowIndex }))
-            .filter(({ win }) => sessMatch || win.name.toLowerCase().includes(query))
-        : sess.windows.map((win, windowIndex) => ({ win, windowIndex }));
+        ? ordered.filter(({ win }) => sessMatch || win.name.toLowerCase().includes(query))
+        : ordered;
       if (query && !sessMatch && matchingWindows.length === 0) continue;
 
       const isExpanded = query ? true : expanded.has(sess.id);
       out.push({ kind: 'session', sessionId: sess.id, expanded: isExpanded });
       if (isExpanded) {
-        for (const { win, windowIndex } of matchingWindows) {
-          out.push({ kind: 'window', sessionId: sess.id, windowId: win.id, windowIndex });
+        for (const { win, windowIndex, displayIndex } of matchingWindows) {
+          out.push({ kind: 'window', sessionId: sess.id, windowId: win.id, windowIndex, displayIndex });
         }
       }
     }
     return out;
-  }, [sortedSessions, expanded, query]);
+  }, [sortedSessions, expanded, query, windowSort]);
 
   const sessionById = useMemo(() => new Map(allSessions.map((s) => [s.id, s])), [allSessions]);
 
@@ -169,9 +178,11 @@ export function SessionSwitcher({ send }: Props) {
   }, [previewWindow]);
 
   const previewSession = selected ? (sessionById.get(selected.sessionId) ?? null) : null;
+  // Number shown in the preview header — the *display* position (matches the tree
+  // badge), not the backend index, so it stays consistent under a window sort.
   const previewWindowIndex =
     previewSession && debouncedPreviewWindow
-      ? previewSession.windows.findIndex((w) => w.id === debouncedPreviewWindow.id)
+      ? sortWindows(previewSession.windows, windowSort).findIndex((o) => o.win.id === debouncedPreviewWindow.id)
       : -1;
 
   const cancel = () => {
@@ -509,7 +520,7 @@ export function SessionSwitcher({ send }: Props) {
                       fontWeight: 800,
                     }}
                   >
-                    {row.windowIndex}
+                    {row.displayIndex}
                   </span>
                   {win.name}
                   {isActiveWin && <span style={{ color: isSelected ? c.accentInk : c.accent }}>*</span>}

@@ -1,16 +1,20 @@
-import { SessionState, TreeNode } from './types';
+import { SessionState, TreeNode, WindowSort } from './types';
+import { sortWindows } from './windowMru';
 
 export function buildTreeNodes(
   allSessions: SessionState[],
   currentSessionId: string | null,
+  windowSort: WindowSort | string = 'created',
   currentWindowIndex?: number,
 ): TreeNode[] {
   const nodes: TreeNode[] = [];
   for (const sess of allSessions) {
     const sessActive = sess.id === currentSessionId;
     nodes.push({ kind: 'session', id: sess.id, name: sess.name });
-    for (let wi = 0; wi < sess.windows.length; wi++) {
-      const win = sess.windows[wi];
+    // Windows are shown in the configured display order; each carries its stable
+    // backend index (for switch_window) plus its display position (the number
+    // shown and the hotkey), so both stay consistent with the ordering.
+    sortWindows(sess.windows, windowSort).forEach(({ win, index: wi }, displayIndex) => {
       const winActive = sessActive && wi === (currentWindowIndex ?? sess.active_window);
       nodes.push({
         kind: 'window',
@@ -19,6 +23,7 @@ export function buildTreeNodes(
         sessionName: sess.name,
         name: win.name,
         index: wi,
+        displayIndex,
         active: winActive,
       });
       for (let pi = 0; pi < win.panes.length; pi++) {
@@ -35,7 +40,7 @@ export function buildTreeNodes(
           cwd: pane.cwd ?? null,
         });
       }
-    }
+    });
   }
   return nodes;
 }

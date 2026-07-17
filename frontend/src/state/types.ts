@@ -101,6 +101,8 @@ export interface Theme {
 
 export type SessionSort = 'created' | 'mru' | 'alphabetical';
 
+export type WindowSort = 'created' | 'mru' | 'alphabetical';
+
 export interface FontEntry {
   family: string;
   weight_min: number;
@@ -122,6 +124,8 @@ export interface ClientConfig {
   wallpaper_blur: number | null;
   wallpaper_saturate: number | null;
   session_sort: SessionSort;
+  /** Sort order for the window list (status bar, choose-tree, switcher). */
+  window_sort: WindowSort;
   /** How many recently-viewed windows the window-grid (prefix + w) shows. */
   window_grid_count: number;
   version: string;
@@ -147,7 +151,10 @@ export type TreeNode =
       sessionId: string;
       sessionName: string;
       name: string;
+      /** Backend index (position in `session.windows`) — the `switch_window` index. */
       index: number;
+      /** Position in the sorted display order — the number shown and the hotkey. */
+      displayIndex: number;
       active: boolean;
     }
   | {

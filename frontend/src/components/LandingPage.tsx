@@ -103,7 +103,7 @@ export function LandingPage({ send, currentSessionId }: Props) {
   const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
 
   const sortedSessions = sortSessions(allSessions, config?.session_sort ?? 'created');
-  const allNodes = buildTreeNodes(sortedSessions, currentSessionId);
+  const allNodes = buildTreeNodes(sortedSessions, currentSessionId, config?.window_sort ?? 'created');
   // tmux-style session numbers: a session's position in the (sorted) list. The
   // number is shown on each session row, and a bare digit 0-9 jumps to it (see
   // onKeyDown). Numbers track the displayed order, so they follow session_sort.
@@ -423,7 +423,7 @@ export function LandingPage({ send, currentSessionId }: Props) {
           } else if (node.kind === 'window') {
             indent = 16;
             const arrow = expandedWindows.has(node.id) ? '▾' : '▸';
-            prefix = `${arrow} ${node.index}: `;
+            prefix = `${arrow} ${node.displayIndex}: `;
             label = node.name + (node.active ? ' *' : '');
             color = node.active ? winFg : fg;
           } else {

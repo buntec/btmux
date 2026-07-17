@@ -65,6 +65,21 @@ pub enum SessionSort {
     Alphabetical,
 }
 
+/// Sort order for a session's window list (status bar, choose-tree, switcher).
+/// Purely a display order: the backend still stores windows in creation order,
+/// but the frontend renders — and renumbers — them per this setting.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum WindowSort {
+    /// Windows appear in creation order (default).
+    #[default]
+    Created,
+    /// Most recently visited window appears first.
+    Mru,
+    /// Windows sorted alphabetically by name.
+    Alphabetical,
+}
+
 /// Log level configuration. Both fields accept standard tracing directives
 /// (`error`, `warn`, `info`, `debug`, `trace`) or full `EnvFilter` syntax.
 #[derive(Deserialize, Clone, Debug)]
@@ -126,6 +141,9 @@ pub struct FileConfig {
     /// Sort order for the session list on the landing page.
     #[serde(rename = "session-sort", default)]
     pub session_sort: SessionSort,
+    /// Sort order for the window list (status bar, choose-tree, switcher).
+    #[serde(rename = "window-sort", default)]
+    pub window_sort: WindowSort,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 6.
     #[serde(rename = "window-grid-count")]
@@ -156,6 +174,7 @@ impl Default for FileConfig {
             wallpaper_blur: None,
             wallpaper_saturate: None,
             session_sort: SessionSort::default(),
+            window_sort: WindowSort::default(),
             window_grid_count: None,
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -515,6 +534,8 @@ pub struct ClientConfig {
     pub wallpaper_saturate: Option<f32>,
     /// Sort order for the session list on the landing page.
     pub session_sort: SessionSort,
+    /// Sort order for the window list (status bar, choose-tree, switcher).
+    pub window_sort: WindowSort,
     /// How many recently-viewed windows the window-grid (`prefix + w`) shows.
     pub window_grid_count: u32,
     /// btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
@@ -770,6 +791,13 @@ pub fn generate_config_toml() -> String {
 # "alphabetical" = sorted by name.
 # session-sort = "created"
 
+# Sort order for the window list (status bar, choose-tree, switcher). Windows
+# are renumbered to match the displayed order, so the prefix+0-9 hotkeys and
+# next/prev-window follow what you see.
+# "created" = creation order (default), "mru" = most recently visited first,
+# "alphabetical" = sorted by name.
+# window-sort = "created"
+
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
 # window-grid-count = 6
@@ -935,6 +963,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_blur,
         wallpaper_saturate,
         session_sort: file.session_sort.clone(),
+        window_sort: file.window_sort.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(6),
         version: VERSION.to_string(),
         color_schemes: list_color_schemes(),

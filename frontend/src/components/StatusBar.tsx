@@ -1,10 +1,36 @@
+import { useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette } from '../lib/chrome-colors';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { Theme } from '../state/types';
+import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { SysStatBar } from './SysStatBar';
+
+/**
+ * Subscribe to window-MRU changes so an `mru` window sort re-orders the always-
+ * visible status bar the instant the active window changes (the order lives in
+ * localStorage, which isn't reactive; `recordWindowMruVisit` dispatches a
+ * same-tab event). Returns a bump counter used only to force a re-render.
+ */
+function useWindowMruTick(): number {
+  return useSyncExternalStore(
+    (cb) => {
+      window.addEventListener(WINDOW_MRU_EVENT, cb);
+      return () => window.removeEventListener(WINDOW_MRU_EVENT, cb);
+    },
+    () => mruTick,
+  );
+}
+// A monotonic counter bumped on each MRU change; getSnapshot must return a
+// stable value between changes, so we can't read localStorage directly here.
+let mruTick = 0;
+if (typeof window !== 'undefined') {
+  window.addEventListener(WINDOW_MRU_EVENT, () => {
+    mruTick += 1;
+  });
+}
 
 function prefixLabel(prefix: string): string {
   const parts = prefix.split('-');
@@ -112,6 +138,8 @@ export function StatusBar({ sessionId, send }: Props) {
   const prefixActive = useStore((s) => s.prefixActive);
   const notifications = useStore((s) => s.notifications);
   const navigate = useNavigate();
+  // Re-render when the window MRU changes so an `mru` sort re-orders live.
+  useWindowMruTick();
 
   // Chrome is compact relative to the terminal font (the design's bar/font ratio),
   // clamped so it stays legible at tiny sizes and doesn't dominate at huge ones.
@@ -127,11 +155,15 @@ export function StatusBar({ sessionId, send }: Props) {
   const activeWindow = session.windows[session.active_window];
   const paneCount = activeWindow?.panes.length ?? 0;
   const activeZoomed = !!activeWindow?.zoomed_pane;
-  // Seamless powerline: when the first window is the active one, its segment
-  // sits directly after the session segment, so the session→window chevron fills
-  // into the active-window color (no bar-background gap). Otherwise a plain
-  // accent triangle trails into the bar.
-  const firstWindowActive = session.active_window === 0;
+  // Windows are shown in the configured display order; each keeps its backend
+  // index (the switch_window index) while its display position doubles as the
+  // shown number and prefix+digit hotkey — see useKeybindings.
+  const orderedWindows = sortWindows(session.windows, config?.window_sort ?? 'created');
+  // Seamless powerline: when the active window sits first in the *displayed*
+  // order, its segment sits directly after the session segment, so the
+  // session→window chevron fills into the active-window color (no bar-background
+  // gap). Otherwise a plain accent triangle trails into the bar.
+  const firstWindowActive = orderedWindows[0]?.index === session.active_window;
 
   const segPadY = 0;
 
@@ -188,9 +220,10 @@ export function StatusBar({ sessionId, send }: Props) {
       </div>
       <Arrow color={c.accent} size={barH} fill={firstWindowActive ? c.titleActiveBg : undefined} />
 
-      {/* Windows */}
-      {session.windows.map((w, i) => {
-        const isActive = i === session.active_window;
+      {/* Windows (in display order; `index` is the backend switch index, the
+          array position is the shown number + prefix+digit hotkey). */}
+      {orderedWindows.map(({ win: w, index }, displayIndex) => {
+        const isActive = index === session.active_window;
         const winLevel = windowNotificationLevel(
           w.panes.map((p) => p.id),
           notifications,
@@ -200,7 +233,7 @@ export function StatusBar({ sessionId, send }: Props) {
           <span
             onClick={(e) => {
               e.stopPropagation();
-              goToWindow(i, w.name);
+              goToWindow(index, w.name);
             }}
             style={{
               color: notificationColor(winLevel, config?.theme ?? null),
@@ -228,7 +261,7 @@ export function StatusBar({ sessionId, send }: Props) {
                   fontWeight: 700,
                 }}
               >
-                <span style={{ color: c.accent }}>{i}</span>
+                <span style={{ color: c.accent }}>{displayIndex}</span>
                 <span>{w.name}</span>
                 <span style={{ color: c.accent }}>*</span>
                 {zoomGlyph}
@@ -241,7 +274,7 @@ export function StatusBar({ sessionId, send }: Props) {
         return (
           <div
             key={w.id}
-            onClick={() => goToWindow(i, w.name)}
+            onClick={() => goToWindow(index, w.name)}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -252,7 +285,7 @@ export function StatusBar({ sessionId, send }: Props) {
               cursor: 'pointer',
             }}
           >
-            <span style={{ color: c.fgDim }}>{i}</span>
+            <span style={{ color: c.fgDim }}>{displayIndex}</span>
             <span>{w.name}</span>
             {zoomGlyph}
             {dot}

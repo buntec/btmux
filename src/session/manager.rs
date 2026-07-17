@@ -577,9 +577,10 @@ impl SessionManager {
     /// Create one session per git repo in `layouts` (produced by
     /// `git::discover_repo_layouts`, which does the blocking filesystem/`git`
     /// work off the lock). Each repo becomes a session named after its directory,
-    /// with one window per worktree branch (the first worktree is the initial
-    /// window, the rest are added windows). Repos whose sanitized name already
-    /// matches an existing session are skipped, so re-running is idempotent.
+    /// with one window per worktree, named after the worktree's folder (the
+    /// first worktree is the initial window, the rest are added windows). Repos
+    /// whose sanitized name already matches an existing session are skipped, so
+    /// re-running is idempotent.
     pub async fn create_sessions_from_git_repos(&mut self, layouts: Vec<RepoLayout>) {
         for layout in layouts {
             if self.sessions.iter().any(|s| s.name == layout.name) {
@@ -604,29 +605,29 @@ impl SessionManager {
                 .await;
             tracing::info!("created session '{}' ({})", layout.name, session_id);
 
-            for (branch, path) in extra {
-                self.create_window_named(session_id, Some(branch.clone()), Some(path.clone()))
+            for (window_name, path) in extra {
+                self.create_window_named(session_id, Some(window_name.clone()), Some(path.clone()))
                     .await;
             }
         }
     }
 
     /// Add a window for each worktree in `layout` to the session `session_id`,
-    /// skipping any worktree whose sanitized branch name already exists as a
+    /// skipping any worktree whose sanitized folder name already exists as a
     /// window name in that session.
     pub async fn add_worktree_windows(&mut self, session_id: Uuid, layout: RepoLayout) {
-        for (branch, path) in layout.windows {
+        for (window_name, path) in layout.windows {
             let already_exists = self
                 .sessions
                 .iter()
                 .find(|s| s.id == session_id)
-                .map(|s| s.windows.iter().any(|w| w.name == branch))
+                .map(|s| s.windows.iter().any(|w| w.name == window_name))
                 .unwrap_or(false);
             if already_exists {
-                tracing::info!("window '{}' already exists, skipping", branch);
+                tracing::info!("window '{}' already exists, skipping", window_name);
                 continue;
             }
-            self.create_window_named(session_id, Some(branch), Some(path))
+            self.create_window_named(session_id, Some(window_name), Some(path))
                 .await;
         }
     }

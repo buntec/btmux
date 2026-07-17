@@ -13,7 +13,7 @@ pub struct Worktree {
 pub struct RepoLayout {
     /// Sanitized repo directory name → session name.
     pub name: String,
-    /// One window per worktree branch: (sanitized branch name, worktree path).
+    /// One window per worktree: (sanitized worktree folder name, worktree path).
     /// Empty when the repo has no named worktree branches (detached/bare); the
     /// caller then makes a single window at `root`.
     pub windows: Vec<(String, PathBuf)>,
@@ -70,7 +70,18 @@ fn repo_layout_for(repo: PathBuf) -> RepoLayout {
     let windows = match list_worktrees(&repo) {
         Ok(wts) => wts
             .into_iter()
-            .filter_map(|wt| wt.branch.map(|b| (sanitize_name(&b), wt.path)))
+            .filter_map(|wt| {
+                // Skip the bare repo entry and detached-HEAD worktrees (no
+                // branch), matching the previous behavior; name the window
+                // after the folder the worktree lives in, not the branch.
+                wt.branch?;
+                let name = wt
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(sanitize_name)?;
+                Some((name, wt.path))
+            })
             .collect(),
         Err(e) => {
             tracing::warn!("{}: git worktree list failed: {}", name, e);

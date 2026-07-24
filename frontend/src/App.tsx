@@ -19,6 +19,7 @@ import {
   PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC,
   PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
 } from './lib/terminalFxShaders';
+import { pumpRenders } from './lib/pumpRenders';
 
 // Must match the ramp shaders' own rampSeconds constants in terminalFxShaders.ts.
 const PIX_RAMP_IN_MS = 250;
@@ -30,26 +31,8 @@ function setPanesPostProcess(shader: string | null): void {
   }
 }
 
-// ghostty-web only repaints on its own event-driven wake points (PTY writes,
-// cursor blink, etc.) — an idle terminal wouldn't otherwise animate a
-// u_time-driven post-process shader like our pixelate ramps, so we have to
-// keep asking every pane to render for the ramp's duration. Returns a cancel
-// function, usable directly as a useEffect cleanup.
-function pumpPaneRenders(durationMs: number, onDone?: () => void): () => void {
-  let rafId = 0;
-  const start = performance.now();
-  const tick = () => {
-    for (const term of useStore.getState().terminals.values()) {
-      term.renderer?.requestRender?.();
-    }
-    if (performance.now() - start < durationMs) {
-      rafId = requestAnimationFrame(tick);
-    } else {
-      onDone?.();
-    }
-  };
-  rafId = requestAnimationFrame(tick);
-  return () => cancelAnimationFrame(rafId);
+function allPaneRenderers() {
+  return Array.from(useStore.getState().terminals.values(), (term) => term.renderer);
 }
 
 /**
@@ -75,12 +58,12 @@ function usePanePixelateOverlay(pixActive: boolean, animations: boolean): void {
     if (pixActive && !prevActive.current) {
       setPanesPostProcess(PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC);
       prevActive.current = pixActive;
-      return pumpPaneRenders(PIX_RAMP_IN_MS);
+      return pumpRenders(allPaneRenderers, PIX_RAMP_IN_MS);
     }
     if (!pixActive && prevActive.current) {
       setPanesPostProcess(PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC);
       prevActive.current = pixActive;
-      return pumpPaneRenders(PIX_RAMP_OUT_MS, () => setPanesPostProcess(null));
+      return pumpRenders(allPaneRenderers, PIX_RAMP_OUT_MS, () => setPanesPostProcess(null));
     }
     prevActive.current = pixActive;
   }, [pixActive, animations]);

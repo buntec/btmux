@@ -6,34 +6,19 @@ import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { PaneTitleBar } from './PaneTitleBar';
 import { withAlpha } from '../lib/chrome-colors';
-import {
-  SCANLINE_POSTPROCESS_FRAGMENT_SRC,
-  VIGNETTE_POSTPROCESS_FRAGMENT_SRC,
-  DITHER_POSTPROCESS_FRAGMENT_SRC,
-  CHROMATIC_ABERRATION_POSTPROCESS_FRAGMENT_SRC,
-  PIXELATE_POSTPROCESS_FRAGMENT_SRC,
-} from '../lib/terminalFxShaders';
+import { BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC } from '../lib/terminalFxShaders';
+import { pumpRenders } from '../lib/pumpRenders';
 
-// Spike: efecto.app/fx-style WebGL post-processing, applied only to the
-// active pane so it's easy to eyeball against an untouched neighbor. Not a
-// real feature yet. Uses ghostty-web's native setPostProcessShader hook
-// (same-context composite pass) — see terminalFxShaders.ts. An earlier
-// version used an external cross-context canvas-copy overlay (canvasFx.ts,
-// now unused) that measurably stalled typing; this hook was added to
-// ghostty-web specifically to avoid that. Findings from the old spike, left
-// here since they explain *why* this hook exists: an independent WebGL2
-// context running full-speed with no source copy ('ghost' mode) was
-// perfectly responsive; the same context doing a texImage2D copy of the
-// live, continuously-rendering source canvas every frame ('passthrough'
-// mode) reproduced the typing slowdown. Root cause: copying a live,
-// separately-rendering WebGL2 canvas into a texture in a *different*
-// context forces cross-context GPU sync, which throttles the source
-// context's own draw throughput while it's also actively rendering (i.e.
-// exactly while you're typing). Not a resolution, fps, or shader-complexity
-// problem — all of those were ruled out first.
-const PROTOTYPE_FX_ON_ACTIVE_PANE = true;
-// Swap this while spiking through the newly-ported vfx-js effects.
-const PROTOTYPE_FX_SHADER = SCANLINE_POSTPROCESS_FRAGMENT_SRC;
+// Duration of the navigate-to glitch-reveal flash (see the effect below).
+// Must be >= BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC's own settle time
+// (~350ms, see enterSpeed there) so the pump doesn't stop before the
+// shader's decay finishes playing out. Uses ghostty-web's native
+// setPostProcessShader hook (same-context composite pass, no cross-context
+// canvas copy) — an earlier external-overlay prototype (canvasFx.ts,
+// removed) copied the live canvas into a second WebGL context every frame
+// and measurably stalled typing; this hook was added to ghostty-web
+// specifically to avoid that class of bug.
+const NAVIGATE_TO_GLITCH_MS = 400;
 
 interface Props {
   sessionId: string;
@@ -355,19 +340,30 @@ export function TerminalPane({
     }
   }, [visible]);
 
-  // Spike: install the scanline post-process shader on the active pane only,
-  // so it's easy to eyeball against an untouched neighbor. Runs inside
-  // ghostty-web's own WebGL context (see the import comment above) — no
-  // extra DOM node, no cross-context canvas copy.
+  // Briefly glitch-reveal a pane when it *gains* active status while
+  // visible — pane-to-pane navigation (prefix+arrow, click), and also a
+  // window/session switch (whose newly-active pane transitions visible+
+  // active in the same update, so it reads as "revealing" the pane you
+  // switched to). Runs inside ghostty-web's own WebGL context
+  // (setPostProcessShader) — no extra DOM node, no cross-context canvas
+  // copy. The shader's own animation needs continuous frames the terminal
+  // wouldn't otherwise paint while idle, hence the pump — see pumpRenders.ts.
+  const prevIsActiveForGlitch = useRef(isActive);
   useEffect(() => {
-    if (!PROTOTYPE_FX_ON_ACTIVE_PANE) return;
+    const wasActive = prevIsActiveForGlitch.current;
+    prevIsActiveForGlitch.current = isActive;
+    const animations = config?.animations ?? true;
+    if (wasActive || !isActive || !visible || !animations) return;
+
     const term = termRef.current;
-    if (!term || !isActive || !visible) return;
-    term.renderer?.setPostProcessShader?.(PROTOTYPE_FX_SHADER);
-    return () => {
-      term.renderer?.setPostProcessShader?.(null);
-    };
-  }, [isActive, visible, termOptions]);
+    if (!term) return;
+    term.renderer?.setPostProcessShader?.(BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC);
+    return pumpRenders(
+      () => [term.renderer],
+      NAVIGATE_TO_GLITCH_MS,
+      () => term.renderer?.setPostProcessShader?.(null),
+    );
+  }, [isActive, visible, config?.animations]);
 
   // Hide cursor on inactive panes by blending it into the background.
   // term.options.theme is unsupported after open(); go directly to the renderer.

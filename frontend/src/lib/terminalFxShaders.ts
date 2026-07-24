@@ -158,6 +158,186 @@ export const PIXELATE_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
   }
 `;
 
+// vfx-js GlitchEffect defaults: speed 1, intensity 1. CRT-style chromatic
+// glitch: periodic scanline-band RGB shift/aberration driven by u_time.
+// Note its own alpha behavior, kept as-is: fragColor.a is derived from
+// output brightness (smoothstep of max channel), not the scene's source
+// alpha — dim/background areas fade toward transparent (letting CSS behind
+// the canvas show through) while bright glitch content stays opaque. This
+// is a deliberate part of the look, not a bug we introduced (unlike the
+// earlier accidental "force alpha=1" mistake in an early scanline draft).
+export const GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
+  precision highp float;
+  in vec2 v_uv;
+  out vec4 fragColor;
+  uniform sampler2D u_scene;
+  uniform float u_time;
+
+  // Transparent outside the frame — used for jitter/shift reads, which can
+  // sample slightly past the edge.
+  vec4 readTex(vec2 c) {
+    if (c.x < 0.0 || c.x > 1.0 || c.y < 0.0 || c.y > 1.0) return vec4(0.0);
+    return texture(u_scene, c);
+  }
+
+  float nn(float y, float t) {
+    float n = (
+      sin(y * .07 + t * 8. + sin(y * .5 + t * 10.)) +
+      sin(y * .7 + t * 2. + sin(y * .3 + t * 8.)) * .7 +
+      sin(y * 1.1 + t * 2.8) * .4
+    );
+    n += sin(y * 124. + t * 100.7) * sin(y * 877. - t * 38.8) * .3;
+    return n;
+  }
+
+  void main() {
+    // Toned down from vfx-js's default (1.0) — at full strength this reads
+    // as a heavy CRT-glitch effect; for a quick pane-navigation flash a
+    // softer touch reads better.
+    const float intensity = 0.35;
+    vec2 uv = v_uv;
+    vec4 color = readTex(uv);
+
+    float t = mod(u_time, 3.14 * 10.);
+    float v = fract(sin(t * 2.) * 700.);
+
+    if (abs(nn(uv.y, t)) < 1.2) {
+      v *= 0.01;
+    }
+
+    vec2 focus = vec2(0.5);
+    float d = v * 0.6 * intensity;
+    vec2 ruv = focus + (uv - focus) * (1. - d);
+    vec2 guv = focus + (uv - focus) * (1. - 2. * d);
+    vec2 buv = focus + (uv - focus) * (1. - 3. * d);
+
+    if (v > 0.1) {
+      float y = floor(uv.y * 13. * sin(35. * t)) + 1.;
+      if (sin(36. * y * v) > 0.9) {
+        ruv.x = uv.x + sin(76. * y) * 0.1 * intensity;
+        guv.x = uv.x + sin(34. * y) * 0.1 * intensity;
+        buv.x = uv.x + sin(59. * y) * 0.1 * intensity;
+      }
+
+      v = pow(v * 1.5, 2.) * 0.15 * intensity;
+      color.rgb *= 0.3;
+      color.r += readTex(vec2(uv.x + sin(t * 123.45) * v, uv.y)).r;
+      color.g += readTex(vec2(uv.x + sin(t * 157.67) * v, uv.y)).g;
+      color.b += readTex(vec2(uv.x + sin(t * 143.67) * v, uv.y)).b;
+    }
+
+    // Unbounded (no edge-transparency check) — matches vfx-js's original,
+    // which uses plain texture() here rather than readTex.
+    if (abs(nn(uv.y, t)) > 1.1) {
+      color.r = color.r * 0.5 + color.r * texture(u_scene, ruv).r;
+      color.g = color.g * 0.5 + color.g * texture(u_scene, guv).g;
+      color.b = color.b * 0.5 + color.b * texture(u_scene, buv).b;
+      color *= 2.;
+    }
+
+    fragColor = color;
+    fragColor.a = smoothstep(0.0, 0.8, max(color.r, max(color.g, color.b)));
+  }
+`;
+
+/**
+ * Ported from vfx-js's "block glitch transition" example
+ * (https://amagi.dev/vfx-js/examples/#block-glitch-transition,
+ * packages/examples/works/block-glitch-transition.html, MIT). There it's a
+ * scroll-triggered reveal driven by an `enterTime` uniform (elapsed seconds
+ * since an IntersectionObserver fired) plus mouse proximity; multi-scale
+ * noise picks blocks to displace, with the displacement magnitude decaying
+ * from large to none as enterTime grows — chunky/glitchy at first, settling
+ * to a clean view. u_time ("seconds since installed") is exactly that
+ * enterTime, so it maps directly onto our contract with no extra plumbing;
+ * we just install this on the pane we're transitioning away from and let it
+ * play once.
+ *
+ * Adapted, not a literal port:
+ *  - Dropped `mouse`/`offset` (proximity-based extra glitching, and DOM
+ *    positioning) — no cursor-tracking or per-element offset concept here.
+ *  - u_time is compressed (see ENTER_SPEED) so the original's 1.5s settle
+ *    plays out over a couple hundred ms — right for a quick pane-transition
+ *    flash, not a slow scroll reveal.
+ *  - Fixed a channel bug: the original reads `.rrra` at each displaced
+ *    UV — i.e. every output channel (R/G/B) comes from the *source's red
+ *    channel only*, at three different offsets. That's a deliberate
+ *    monochrome-red-ghost look for the demo's photos, but on typical
+ *    terminal palettes (heavy cyan/green/white, often low red) it reads as
+ *    dim/washed out. This version samples each output channel from the
+ *    *matching* source channel instead — real RGB chromatic aberration.
+ */
+export const BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
+  precision highp float;
+  in vec2 v_uv;
+  out vec4 fragColor;
+  uniform sampler2D u_scene;
+  uniform vec2 u_resolution;
+  uniform float u_time;
+
+  vec4 readTex(vec2 uv) {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
+    return texture(u_scene, uv);
+  }
+
+  float rnd(vec3 p) {
+    return fract(sin(dot(p, vec3(892., 982., 48.))) * 4928.);
+  }
+
+  float noise(vec3 p) {
+    vec3 pi = floor(p);
+    vec3 pf = fract(p);
+    vec2 d = vec2(1, 0);
+    float r1 = mix(
+      mix(rnd(pi), rnd(pi + d.xyy), pf.x),
+      mix(rnd(pi + d.yxy), rnd(pi + d.xxy), pf.x),
+      pf.y
+    );
+    float r2 = mix(
+      mix(rnd(pi + d.yyx), rnd(pi + d.xyx), pf.x),
+      mix(rnd(pi + d.yxx), rnd(pi + d.xxx), pf.x),
+      pf.y
+    );
+    return mix(r1, r2, pf.z);
+  }
+
+  void main() {
+    // Compresses the original's 1.5s settle-time to ~350ms of real time.
+    const float enterSpeed = 1.5 / 0.35;
+
+    vec2 uv = v_uv;
+    vec2 p = uv * 2.0 - 1.0;
+    p.x *= u_resolution.x / u_resolution.y;
+
+    float t = clamp(u_time * enterSpeed, 0.0, 1.5);
+    float enter = mix(exp(t * -2.0) * 3.0, 0.0, t / 1.5);
+    float level = smoothstep(0.0, 0.2, t);
+
+    vec2 move = vec2(0.0);
+    vec2 block = vec2(0.3, 0.7);
+
+    for (int i = 0; i < 3; i++) {
+      float fi = float(i);
+      vec2 off = vec2(sin(fi * 94.0), sin(fi * 42.0)) * 0.5 + fi;
+      vec2 p2 = floor((p - off) * block) / block + off;
+      float n = noise(vec3(p2 * 3.0, fi * 7.0 + u_time * 0.3));
+      if (n > 0.5) {
+        float a = floor(n * 30.0 + fi * 9.0) * 0.5 * 3.141593;
+        move = vec2(sin(a), cos(a) * 0.1) * enter * 0.07;
+      }
+      block = block.yx * 3.5;
+    }
+
+    vec4 cr = readTex(uv + move);
+    vec4 cg = readTex(uv + move * 1.2);
+    vec4 cb = readTex(uv + move * 1.4);
+    vec4 c = vec4(cr.r, cg.g, cb.b, (cr.a + cg.a + cb.a) / 3.0);
+
+    fragColor = c * level;
+    fragColor.rgb *= 1.0 + length(move) * 3.0;
+  }
+`;
+
 /**
  * Per-pane privacy-pixelate overlay (App.tsx's usePanePixelateOverlay),
  * replacing the old whole-stage SVG CSS filter (pix-filter.ts, removed).

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './state/store';
 import { useControlSocket } from './hooks/useControlSocket';
@@ -16,75 +16,86 @@ import { ClientMessage } from './protocol/messages';
 import { useFontLoader, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from './hooks/useFontLoader';
 import { applyThemeVars } from './lib/apply-theme-vars';
 import {
-  setPixBlock,
-  animatePix,
-  PIX_MIN_BLOCK,
-  PIX_MAX_BLOCK,
-  PIX_RAMP_IN_MS,
-  PIX_RAMP_OUT_MS,
-  PIX_BRIGHTNESS,
-} from './lib/pix-filter';
+  PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC,
+  PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
+} from './lib/terminalFxShaders';
 
-/**
- * Wraps SessionPool in an absolutely-positioned stage div. When the session
- * switcher or help overlay opens, the stage gets the btm-pix SVG filter applied
- * (with the block size ramped up via animatePix); on close it ramps back down.
- * The overlays themselves sit above this div (higher z-index) and are not pixelated.
- */
-function PixStage({ send }: { send: (msg: ClientMessage) => void }) {
-  const switcherOpen = useStore((s) => s.switcherOpen);
-  const overlay = useStore((s) => s.overlay);
-  const config = useStore((s) => s.config);
-  const animations = config?.animations ?? true;
+// Must match the ramp shaders' own rampSeconds constants in terminalFxShaders.ts.
+const PIX_RAMP_IN_MS = 250;
+const PIX_RAMP_OUT_MS = 150;
 
-  // Whether an overlay that triggers pixelation is currently open.
-  const pixActive = switcherOpen || overlay?.mode === 'keys';
-  // filterOn trails pixActive: it goes true immediately on open, but stays true
-  // until the ramp-down animation finishes so the filter is still applied while
-  // the block size animates back to near-zero.
-  const filterOn = usePixFilter(pixActive, animations);
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        filter: filterOn ? `url(#btm-pix) brightness(${PIX_BRIGHTNESS})` : 'none',
-      }}
-    >
-      <SessionPool send={send} />
-    </div>
-  );
+function setPanesPostProcess(shader: string | null): void {
+  for (const term of useStore.getState().terminals.values()) {
+    term.renderer?.setPostProcessShader?.(shader);
+  }
 }
 
-function usePixFilter(pixActive: boolean, animations: boolean): boolean {
-  const [filterOn, setFilterOn] = useState(false);
+// ghostty-web only repaints on its own event-driven wake points (PTY writes,
+// cursor blink, etc.) — an idle terminal wouldn't otherwise animate a
+// u_time-driven post-process shader like our pixelate ramps, so we have to
+// keep asking every pane to render for the ramp's duration. Returns a cancel
+// function, usable directly as a useEffect cleanup.
+function pumpPaneRenders(durationMs: number, onDone?: () => void): () => void {
+  let rafId = 0;
+  const start = performance.now();
+  const tick = () => {
+    for (const term of useStore.getState().terminals.values()) {
+      term.renderer?.requestRender?.();
+    }
+    if (performance.now() - start < durationMs) {
+      rafId = requestAnimationFrame(tick);
+    } else {
+      onDone?.();
+    }
+  };
+  rafId = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(rafId);
+}
+
+/**
+ * Applies the WebGL pixelate post-process shader (terminalFxShaders.ts) to
+ * every mounted pane while the session switcher or help overlay is open —
+ * the privacy-blur backdrop for those overlays. Replaces an earlier whole-stage
+ * SVG CSS filter that pixelated the entire SessionPool DOM subtree in one
+ * shot; this instead asks each pane's own ghostty-web WebGL context to
+ * pixelate its own content. Trade-off: title bars/borders/dividers (separate
+ * DOM/React elements outside any pane's WebGL context) are no longer
+ * pixelated, only terminal cell content is — accepted in favor of dropping
+ * the SVG filter's hackiness.
+ */
+function usePanePixelateOverlay(pixActive: boolean, animations: boolean): void {
   const prevActive = useRef(false);
 
   useEffect(() => {
     if (!animations) {
-      setFilterOn(false);
+      setPanesPostProcess(null);
       prevActive.current = false;
       return;
     }
     if (pixActive && !prevActive.current) {
-      setPixBlock(PIX_MIN_BLOCK);
-      setFilterOn(true);
-      animatePix(PIX_MIN_BLOCK, PIX_MAX_BLOCK, PIX_RAMP_IN_MS);
-    } else if (!pixActive && prevActive.current) {
-      animatePix(PIX_MAX_BLOCK, PIX_MIN_BLOCK, PIX_RAMP_OUT_MS, () => setFilterOn(false));
+      setPanesPostProcess(PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC);
+      prevActive.current = pixActive;
+      return pumpPaneRenders(PIX_RAMP_IN_MS);
+    }
+    if (!pixActive && prevActive.current) {
+      setPanesPostProcess(PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC);
+      prevActive.current = pixActive;
+      return pumpPaneRenders(PIX_RAMP_OUT_MS, () => setPanesPostProcess(null));
     }
     prevActive.current = pixActive;
   }, [pixActive, animations]);
-
-  return filterOn;
 }
 
 function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
+  const switcherOpen = useStore((s) => s.switcherOpen);
+  const overlay = useStore((s) => s.overlay);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Privacy-pixelate every pane while the session switcher or help overlay is open.
+  usePanePixelateOverlay(switcherOpen || overlay?.mode === 'keys', config?.animations ?? true);
 
   // Expose the router's navigate to code outside <BrowserRouter> (the control
   // socket's OS-notification onclick) so clicking a notification jumps to the pane.
@@ -179,28 +190,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         />
       )}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        {/* Hidden SVG filter for pixelation effect (switcher/help backdrop). */}
-        <svg aria-hidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
-          <defs>
-            {/* x/y/width/height hard-crop the filter region to exactly the target
-                element's box — the SVG default (-10%..120%) otherwise lets the
-                dilate/tile bleed past the box, showing up under the status bar. */}
-            <filter id="btm-pix" x="0" y="0" width="100%" height="100%" colorInterpolationFilters="sRGB">
-              <feFlood id="btm-pix-flood" x="5" y="5" width="2" height="2" />
-              <feComposite id="btm-pix-cell" width="12" height="12" />
-              <feTile result="a" />
-              <feComposite in="SourceGraphic" in2="a" operator="in" />
-              <feMorphology id="btm-pix-morph" operator="dilate" radius="6" />
-            </filter>
-          </defs>
-        </svg>
-        {/* A filtered element's own overflow doesn't clip its own filter output —
-            only an ANCESTOR's overflow does. This wrapper exists solely so the
-            pixelation filter's bleed is clipped instead of showing past the pane
-            region into the status bar below. */}
-        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-          <PixStage send={send} />
-        </div>
+        <SessionPool send={send} />
         <Routes>
           <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
           <Route path="/s/:sessionName" element={<SessionView send={send} />} />

@@ -613,7 +613,7 @@
 
     "get-stream": ["get-stream@9.0.1", "", { "dependencies": { "@sec-ant/readable-stream": "^0.4.1", "is-stream": "^4.0.1" } }, "sha512-kVCxPF3vQM/N0B1PmoqVUqgHP+EeVjmZSQn+1oCRPxd2P21P2F19lIgbR3HBosbB1PUhOAoctJnfEn2GbN2eZA=="],
 
-    "ghostty-web": ["ghostty-web@github:buntec/ghostty-web#8d0b4d2", {}, "buntec-ghostty-web-8d0b4d2", "sha512-ctbQe7k9Wdvi5JsSk6G9cAN/e6mmZAfidPDTmiaObPcMW7HvvYkKXXkcJVC1TU7By3eaLGNnJ/4PRegJUUYviw=="],
+    "ghostty-web": ["ghostty-web@github:buntec/ghostty-web#18c1916", {}, "buntec-ghostty-web-18c1916"],
 
     "glob-parent": ["glob-parent@5.1.2", "", { "dependencies": { "is-glob": "^4.0.1" } }, "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow=="],
 

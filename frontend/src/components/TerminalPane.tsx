@@ -6,6 +6,34 @@ import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { PaneTitleBar } from './PaneTitleBar';
 import { withAlpha } from '../lib/chrome-colors';
+import {
+  SCANLINE_POSTPROCESS_FRAGMENT_SRC,
+  VIGNETTE_POSTPROCESS_FRAGMENT_SRC,
+  DITHER_POSTPROCESS_FRAGMENT_SRC,
+  CHROMATIC_ABERRATION_POSTPROCESS_FRAGMENT_SRC,
+  PIXELATE_POSTPROCESS_FRAGMENT_SRC,
+} from '../lib/terminalFxShaders';
+
+// Spike: efecto.app/fx-style WebGL post-processing, applied only to the
+// active pane so it's easy to eyeball against an untouched neighbor. Not a
+// real feature yet. Uses ghostty-web's native setPostProcessShader hook
+// (same-context composite pass) — see terminalFxShaders.ts. An earlier
+// version used an external cross-context canvas-copy overlay (canvasFx.ts,
+// now unused) that measurably stalled typing; this hook was added to
+// ghostty-web specifically to avoid that. Findings from the old spike, left
+// here since they explain *why* this hook exists: an independent WebGL2
+// context running full-speed with no source copy ('ghost' mode) was
+// perfectly responsive; the same context doing a texImage2D copy of the
+// live, continuously-rendering source canvas every frame ('passthrough'
+// mode) reproduced the typing slowdown. Root cause: copying a live,
+// separately-rendering WebGL2 canvas into a texture in a *different*
+// context forces cross-context GPU sync, which throttles the source
+// context's own draw throughput while it's also actively rendering (i.e.
+// exactly while you're typing). Not a resolution, fps, or shader-complexity
+// problem — all of those were ruled out first.
+const PROTOTYPE_FX_ON_ACTIVE_PANE = true;
+// Swap this while spiking through the newly-ported vfx-js effects.
+const PROTOTYPE_FX_SHADER = SCANLINE_POSTPROCESS_FRAGMENT_SRC;
 
 interface Props {
   sessionId: string;
@@ -326,6 +354,20 @@ export function TerminalPane({
       term.suspend();
     }
   }, [visible]);
+
+  // Spike: install the scanline post-process shader on the active pane only,
+  // so it's easy to eyeball against an untouched neighbor. Runs inside
+  // ghostty-web's own WebGL context (see the import comment above) — no
+  // extra DOM node, no cross-context canvas copy.
+  useEffect(() => {
+    if (!PROTOTYPE_FX_ON_ACTIVE_PANE) return;
+    const term = termRef.current;
+    if (!term || !isActive || !visible) return;
+    term.renderer?.setPostProcessShader?.(PROTOTYPE_FX_SHADER);
+    return () => {
+      term.renderer?.setPostProcessShader?.(null);
+    };
+  }, [isActive, visible, termOptions]);
 
   // Hide cursor on inactive panes by blending it into the background.
   // term.options.theme is unsupported after open(); go directly to the renderer.

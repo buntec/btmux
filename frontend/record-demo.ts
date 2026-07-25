@@ -77,13 +77,8 @@ async function main() {
   try {
     // ── 1. Landing page ──────────────────────────────────────────────────────
     console.log('Navigating to btmux…');
-    await page.goto(URL, { waitUntil: 'networkidle' });
+    await page.goto(URL + '/s/kauz', { waitUntil: 'networkidle' });
     await page.waitForTimeout(1200);
-
-    // Press Enter to open the first (default) session.
-    await page.keyboard.press('Enter');
-    await waitForTerminal(page);
-    await page.waitForTimeout(1500); // let the terminal paint
 
     // ── 2. Type a command in the first pane ──────────────────────────────────
     console.log('Typing in first pane…');
@@ -94,11 +89,11 @@ async function main() {
 
     // ── 3. Split vertical (prefix + %) ───────────────────────────────────────
     console.log('Splitting vertically…');
-    await prefix(page, 'Shift+5'); // % key
+    await prefix(page, '%');
     await waitForTerminal(page);
     await page.waitForTimeout(1000);
 
-    await typeSlowly(page, 'ls -la');
+    await typeSlowly(page, 'exa -la');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(900);
 
@@ -108,7 +103,7 @@ async function main() {
     await waitForTerminal(page);
     await page.waitForTimeout(1000);
 
-    await typeSlowly(page, 'htop', 40);
+    await typeSlowly(page, 'git status', 40);
     await page.keyboard.press('Enter');
     await page.waitForTimeout(1400);
 
@@ -132,6 +127,10 @@ async function main() {
     console.log('Renaming window…');
     await prefix(page, 'Comma');
     await page.waitForTimeout(500);
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Delete');
     await typeSlowly(page, 'demo', 80);
     await page.keyboard.press('Enter');
     await page.waitForTimeout(800);

@@ -19,6 +19,7 @@ import {
   PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC,
   PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
 } from './lib/terminalFxShaders';
+import { baseShaderSrc } from './lib/baseShader';
 import { pumpRenders } from './lib/pumpRenders';
 
 // Must match the ramp shaders' own rampSeconds constants in terminalFxShaders.ts.
@@ -51,7 +52,7 @@ function usePanePixelateOverlay(pixActive: boolean, animations: boolean): void {
 
   useEffect(() => {
     if (!animations) {
-      setPanesPostProcess(null);
+      setPanesPostProcess(baseShaderSrc());
       prevActive.current = false;
       return;
     }
@@ -63,7 +64,9 @@ function usePanePixelateOverlay(pixActive: boolean, animations: boolean): void {
     if (!pixActive && prevActive.current) {
       setPanesPostProcess(PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC);
       prevActive.current = pixActive;
-      return pumpRenders(allPaneRenderers, PIX_RAMP_OUT_MS, () => setPanesPostProcess(null));
+      // Hand the post-process slot back to the configured persistent effect
+      // (`shader = "..."`), which is null when none is set.
+      return pumpRenders(allPaneRenderers, PIX_RAMP_OUT_MS, () => setPanesPostProcess(baseShaderSrc()));
     }
     prevActive.current = pixActive;
   }, [pixActive, animations]);

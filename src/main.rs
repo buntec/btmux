@@ -135,8 +135,6 @@ async fn main() {
         .or_else(|| std::env::var("SHELL").ok().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| "/bin/bash".to_string());
 
-    let client_config = config::resolve_binds(&file_config);
-
     // PTY reader threads report a pane's id here when its shell exits (EOF). The
     // drain task below removes the pane and broadcasts the new state to all tabs.
     let (exit_tx, exit_rx) = tokio::sync::mpsc::unbounded_channel::<uuid::Uuid>();
@@ -145,7 +143,7 @@ async fn main() {
     let (meta_tx, meta_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let state: AppState = Arc::new(RwLock::new(SessionManager::new(
         shell,
-        client_config,
+        file_config,
         exit_tx,
         meta_tx,
         args.port,
@@ -343,13 +341,13 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
         }
     };
 
-    let client_config = config::resolve_binds(&file_config);
     let json = {
         let mut mgr = state.write().await;
         if let Some(shell) = file_config.shell.clone() {
             mgr.set_shell(shell);
         }
-        mgr.set_config(client_config.clone());
+        // Also drops any session-only overrides picked from the command palette.
+        let client_config = mgr.set_file_config(file_config).clone();
         serde_json::to_string(&ServerMessage::Config {
             config: Box::new(client_config),
         })

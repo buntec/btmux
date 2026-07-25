@@ -6,13 +6,20 @@ use super::{
     layout::{Layout, LayoutPreset},
     Pane, PaneSnapshot, Session, SessionSummary, Window,
 };
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
 use crate::pty::PtyHandle;
 
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     shell: String,
+    /// The config as last read from disk. Kept so a session-only override can be
+    /// re-layered onto it without re-reading the file.
+    file_config: FileConfig,
+    /// Session-only overrides from the command palette's pickers, dropped on
+    /// every config-file reload. Never written to disk.
+    overrides: ConfigUpdate,
+    /// `file_config` + `overrides`, resolved — this is what the browser sees.
     config: ClientConfig,
     events: broadcast::Sender<String>,
     exit_tx: mpsc::UnboundedSender<Uuid>,
@@ -41,15 +48,18 @@ pub struct WindowSnapshot {
 impl SessionManager {
     pub fn new(
         shell: String,
-        config: ClientConfig,
+        file_config: FileConfig,
         exit_tx: mpsc::UnboundedSender<Uuid>,
         meta_tx: mpsc::UnboundedSender<()>,
         port: u16,
     ) -> Self {
         let (events, _) = broadcast::channel::<String>(64);
+        let config = crate::config::resolve_binds(&file_config);
         Self {
             sessions: Vec::new(),
             shell,
+            file_config,
+            overrides: ConfigUpdate::default(),
             config,
             events,
             exit_tx,
@@ -66,8 +76,24 @@ impl SessionManager {
         &self.config
     }
 
-    pub fn set_config(&mut self, config: ClientConfig) {
-        self.config = config;
+    /// Install a freshly-read config file. Session-only overrides are **dropped**:
+    /// the file is the source of truth, so a reload is the point where whatever
+    /// was tried out from the command palette goes away.
+    pub fn set_file_config(&mut self, file_config: FileConfig) -> &ClientConfig {
+        self.file_config = file_config;
+        self.overrides = ConfigUpdate::default();
+        self.config = crate::config::resolve_binds(&self.file_config);
+        &self.config
+    }
+
+    /// Apply a config change from the command palette's pickers. It is layered
+    /// over the on-disk config in memory only — nothing is written to
+    /// config.toml, and it lasts until the next restart or config reload. To
+    /// keep a setting the user edits config.toml themselves.
+    pub fn apply_config_override(&mut self, update: &ConfigUpdate) -> &ClientConfig {
+        self.overrides.merge(update);
+        self.config = crate::config::resolve_with_overrides(&self.file_config, &self.overrides);
+        &self.config
     }
 
     pub fn set_shell(&mut self, shell: String) {

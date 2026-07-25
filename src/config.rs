@@ -138,6 +138,16 @@ pub struct FileConfig {
     /// Defaults to 1.0 (no desaturation).
     #[serde(rename = "wallpaper-saturate")]
     pub wallpaper_saturate: Option<f32>,
+    /// Name of a persistent WebGL post-process effect applied to every pane
+    /// (`scanline`, `vignette`, …). The effect registry lives in the frontend
+    /// (`terminalFxShaders.ts`) — this is passed through untouched, and an
+    /// unknown name simply renders no effect.
+    pub shader: Option<String>,
+    /// Name of the one-shot effect played on the pane you switch to
+    /// (`chromatic-aberration`, `block-glitch`, `pixelate`, `none`). Unset uses
+    /// the frontend's default; like `shader`, the registry lives there.
+    #[serde(rename = "pane-switch-shader")]
+    pub pane_switch_shader: Option<String>,
     /// Sort order for the session list on the landing page.
     #[serde(rename = "session-sort", default)]
     pub session_sort: SessionSort,
@@ -173,6 +183,8 @@ impl Default for FileConfig {
             wallpaper_opacity: None,
             wallpaper_blur: None,
             wallpaper_saturate: None,
+            shader: None,
+            pane_switch_shader: None,
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
             window_grid_count: None,
@@ -434,19 +446,41 @@ fn default_commands() -> Vec<Command> {
         Command {
             id: "choose-colors".to_string(),
             label: "colors: choose scheme".to_string(),
-            description: "Pick a color scheme from ~/.config/btmux/colors/.".to_string(),
+            description: "Pick a color scheme from ~/.config/btmux/colors/. \
+                Applies until restart or config reload."
+                .to_string(),
             confirm: None,
         },
         Command {
             id: "choose-font".to_string(),
             label: "font: choose family".to_string(),
-            description: "Pick a font from the bundled families.".to_string(),
+            description: "Pick a font from the bundled families. \
+                Applies until restart or config reload."
+                .to_string(),
             confirm: None,
         },
         Command {
             id: "choose-font-weight".to_string(),
             label: "font: choose weight".to_string(),
-            description: "Pick a font weight for the current font.".to_string(),
+            description: "Pick a font weight for the current font. \
+                Applies until restart or config reload."
+                .to_string(),
+            confirm: None,
+        },
+        Command {
+            id: "choose-shader".to_string(),
+            label: "shader: choose effect".to_string(),
+            description: "Pick a WebGL post-process effect applied to every pane. \
+                Applies until restart or config reload."
+                .to_string(),
+            confirm: None,
+        },
+        Command {
+            id: "choose-pane-switch-shader".to_string(),
+            label: "shader: choose pane-switch effect".to_string(),
+            description: "Pick the flash played on the pane you switch to. \
+                Applies until restart or config reload."
+                .to_string(),
             confirm: None,
         },
     ]
@@ -532,6 +566,12 @@ pub struct ClientConfig {
     pub wallpaper_blur: Option<f32>,
     /// Saturation multiplier for the wallpaper: 0.0 = grayscale, 1.0 = normal.
     pub wallpaper_saturate: Option<f32>,
+    /// Name of the persistent post-process shader effect applied to every pane,
+    /// or `null` for none. Resolved to GLSL by the frontend's effect registry.
+    pub shader: Option<String>,
+    /// Name of the one-shot effect played on the pane you switch to, or `null`
+    /// to use the frontend's default.
+    pub pane_switch_shader: Option<String>,
     /// Sort order for the session list on the landing page.
     pub session_sort: SessionSort,
     /// Sort order for the window list (status bar, choose-tree, switcher).
@@ -786,6 +826,18 @@ pub fn generate_config_toml() -> String {
 # Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
 # wallpaper-saturate = 1.0
 
+# Persistent WebGL post-process effect applied to every pane (webgl renderer
+# only). Pick one interactively with the `shader: choose effect` command
+# (prefix + :). Unset = no effect.
+# shader = "scanline"   # scanline | vignette | dither | chromatic-aberration
+#                       # | pixelate | glitch
+
+# One-shot effect flashed on the pane you switch to (prefix + arrow, click,
+# window/session switch). Also pickable with `shader: choose pane-switch
+# effect`. Disabled entirely when `animations = false`.
+# pane-switch-shader = "chromatic-aberration"   # chromatic-aberration (default)
+#                       # | block-glitch | pixelate | none
+
 # Sort order for the session list on the landing page.
 # "created" = creation order (default), "mru" = most recently visited first,
 # "alphabetical" = sorted by name.
@@ -962,6 +1014,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_opacity,
         wallpaper_blur,
         wallpaper_saturate,
+        shader: file.shader.clone(),
+        pane_switch_shader: file.pane_switch_shader.clone(),
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(6),
@@ -979,54 +1033,71 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     }
 }
 
-/// A partial config update request from the browser.
-#[derive(Deserialize, Debug)]
+/// A partial config change requested from the browser's command-palette
+/// pickers, and — accumulated across requests — the session-only override layer
+/// itself (`SessionManager::apply_config_override`). An absent field means
+/// "leave as configured"; an empty string clears that setting.
+///
+/// These are **never written to disk**: the config file stays whatever the user
+/// wrote, and the overrides live only until btmux restarts or the config file is
+/// reloaded (which drops them, see `SessionManager::set_file_config`).
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct ConfigUpdate {
     pub colors: Option<String>,
     pub font_family: Option<String>,
     pub font_weight: Option<u16>,
+    /// Post-process effect name; the empty string clears it.
+    pub shader: Option<String>,
+    /// Pane-switch effect name; the empty string falls back to the default.
+    pub pane_switch_shader: Option<String>,
 }
 
-/// Apply a partial config update to the config file on disk. Reads the file as
-/// raw TOML, patches the relevant keys, and writes it back. The file-watcher
-/// then triggers the normal reload path.
-pub fn apply_config_update(update: &ConfigUpdate) -> Result<(), String> {
-    let path = config_path().ok_or("cannot resolve config path")?;
-    let contents = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Table = contents.parse::<toml::Table>().map_err(|e| e.to_string())?;
-
-    if let Some(colors) = &update.colors {
-        if colors.is_empty() {
-            doc.remove("colors");
-        } else {
-            doc.insert("colors".to_string(), toml::Value::String(colors.clone()));
+impl ConfigUpdate {
+    /// Fold a newer update into this one: every field the newer update sets wins,
+    /// the rest are kept.
+    pub fn merge(&mut self, other: &ConfigUpdate) {
+        if other.colors.is_some() {
+            self.colors = other.colors.clone();
         }
-        // Remove inline [theme] when switching to a named scheme.
-        doc.remove("theme");
-    }
-
-    if update.font_family.is_some() || update.font_weight.is_some() {
-        let terminal = doc
-            .entry("terminal")
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-            .as_table_mut()
-            .ok_or("[terminal] is not a table")?;
-
-        if let Some(family) = &update.font_family {
-            terminal.insert(
-                "font-family".to_string(),
-                toml::Value::String(family.clone()),
-            );
+        if other.font_family.is_some() {
+            self.font_family = other.font_family.clone();
         }
-        if let Some(weight) = update.font_weight {
-            terminal.insert(
-                "font-weight".to_string(),
-                toml::Value::Integer(weight as i64),
-            );
+        if other.font_weight.is_some() {
+            self.font_weight = other.font_weight;
+        }
+        if other.shader.is_some() {
+            self.shader = other.shader.clone();
+        }
+        if other.pane_switch_shader.is_some() {
+            self.pane_switch_shader = other.pane_switch_shader.clone();
         }
     }
+}
 
-    let output = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
-    std::fs::write(&path, output).map_err(|e| e.to_string())?;
-    Ok(())
+/// Resolve the browser-facing config from the on-disk config with the
+/// session-only overrides layered on top.
+pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> ClientConfig {
+    let mut file = file.clone();
+
+    if let Some(colors) = &overrides.colors {
+        file.colors = Some(colors.clone()).filter(|c| !c.is_empty());
+        // An inline [theme] outranks `colors`, so picking a scheme (or "none")
+        // has to drop it — otherwise the picker would appear to do nothing for
+        // anyone with an inline palette.
+        file.theme = None;
+    }
+    if let Some(family) = &overrides.font_family {
+        file.terminal.font_family = Some(family.clone());
+    }
+    if let Some(weight) = overrides.font_weight {
+        file.terminal.font_weight = Some(weight);
+    }
+    if let Some(shader) = &overrides.shader {
+        file.shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    }
+    if let Some(shader) = &overrides.pane_switch_shader {
+        file.pane_switch_shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    }
+
+    resolve_binds(&file)
 }

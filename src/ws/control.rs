@@ -102,17 +102,18 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) {
         return;
     }
 
+    // Command-palette settings (color scheme, font, shader) are session-only:
+    // they're layered over the on-disk config in memory and broadcast to every
+    // tab, but config.toml is left untouched, so they last until btmux restarts
+    // or the config file is reloaded.
     if let ClientMessage::UpdateConfig { update } = &cmd {
-        if let Err(e) = crate::config::apply_config_update(update) {
-            tracing::error!("config update failed: {}", e);
-            let toast_json = serde_json::to_string(&ServerMessage::Toast {
-                message: format!("Config update failed: {e}"),
-                level: ToastLevel::Error,
-            })
-            .unwrap();
-            let mgr = state.read().await;
-            let _ = mgr.events().send(toast_json);
-        }
+        let mut mgr = state.write().await;
+        let config = mgr.apply_config_override(update).clone();
+        let json = serde_json::to_string(&ServerMessage::Config {
+            config: Box::new(config),
+        })
+        .unwrap();
+        let _ = mgr.events().send(json);
         return;
     }
 

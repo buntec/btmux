@@ -5,6 +5,7 @@ import { ClientMessage } from '../protocol/messages';
 import { Bind, ClientConfig } from '../state/types';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
 import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../hooks/useFontLoader';
+import { paneSwitchPickerItems, shaderPickerItems } from '../hooks/useKeybindings';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -48,7 +49,15 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
   },
   {
     title: 'General',
-    actions: ['command-palette', 'list-keys', 'choose-colors', 'choose-font', 'choose-font-weight'],
+    actions: [
+      'command-palette',
+      'list-keys',
+      'choose-colors',
+      'choose-font',
+      'choose-font-weight',
+      'choose-shader',
+      'choose-pane-switch-shader',
+    ],
   },
 ];
 
@@ -163,6 +172,24 @@ export function Overlay({ sessionId, send, config }: Props) {
           const [family] = id.split(':');
           send({ type: 'update_config', update: { font_family: family } });
         },
+      });
+      return true;
+    }
+    if (cmdId === 'choose-shader') {
+      setOverlay({
+        mode: 'picker',
+        title: 'Shader effect',
+        items: shaderPickerItems(config?.shader ?? null),
+        onSelect: (id) => send({ type: 'update_config', update: { shader: id } }),
+      });
+      return true;
+    }
+    if (cmdId === 'choose-pane-switch-shader') {
+      setOverlay({
+        mode: 'picker',
+        title: 'Pane-switch effect',
+        items: paneSwitchPickerItems(config?.pane_switch_shader ?? null),
+        onSelect: (id) => send({ type: 'update_config', update: { pane_switch_shader: id } }),
       });
       return true;
     }

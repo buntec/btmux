@@ -395,3 +395,161 @@ export const PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
     fragColor = texture(u_scene, clamp(cell, 0.0, 1.0));
   }
 `;
+
+/**
+ * Pane-switch flash: the CHROMATIC_ABERRATION effect above, but with its
+ * intensity driven by a short attack/decay envelope on u_time instead of held
+ * constant — the RGB split snaps in as the pane gains focus and decays back to
+ * a clean image. Everything else (the mirrored edge sampling, the radial
+ * `pow(l, power)` falloff that keeps the center sharp and smears the corners)
+ * is vfx-js's ChromaticEffect unchanged.
+ *
+ * `peak` is in vfx-js intensity units but is much *lower* than its 0.3 default
+ * (which the steady-state effect above uses). The split grows with `pow(l,
+ * power)` where l is the aspect-corrected distance from the center, so on a
+ * wide pane the corners sit at l² ≈ 5 and the shift there is ~15x what the
+ * number suggests: at 0.3 the edge text is smeared unreadable. Chosen by
+ * rendering the envelope's peak frame over a mock terminal at 0.03 / 0.06 /
+ * 0.12 / 0.25 / 0.5 — 0.1 fringes the edges clearly while every line stays
+ * legible, which is what you want from something that flashes on every
+ * navigation.
+ */
+export const CHROMATIC_FLASH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
+  precision highp float;
+  in vec2 v_uv;
+  out vec4 fragColor;
+  uniform sampler2D u_scene;
+  uniform vec2 u_resolution;
+  uniform float u_time;
+
+  vec4 mirrorTex(vec2 uv) {
+    vec2 uv2 = 1.0 - abs(1.0 - mod(uv, 2.0));
+    return texture(u_scene, uv2);
+  }
+
+  void main() {
+    const float attackSeconds = 0.06;
+    const float decaySeconds = 0.24;
+    const float peak = 0.3;
+    const float power = 2.0;
+
+    float env = u_time < attackSeconds
+      ? u_time / attackSeconds
+      : 1.0 - clamp((u_time - attackSeconds) / decaySeconds, 0.0, 1.0);
+    env = env * env * (3.0 - 2.0 * env); // ease both the attack and the decay
+    float intensity = peak * env;
+
+    float aspect = u_resolution.x / u_resolution.y;
+    vec2 p = v_uv * 2.0 - 1.0;
+    p.x *= aspect;
+
+    float l = length(p);
+    float d = pow(l, power) * (intensity * 0.1);
+
+    vec2 uvR = (v_uv - 0.5) / (1.0 + d * 1.0) + 0.5;
+    vec2 uvG = (v_uv - 0.5) / (1.0 + d * 2.0) + 0.5;
+    vec2 uvB = (v_uv - 0.5) / (1.0 + d * 3.0) + 0.5;
+
+    vec4 cr = mirrorTex(uvR);
+    vec4 cg = mirrorTex(uvG);
+    vec4 cb = mirrorTex(uvB);
+
+    fragColor = vec4(cr.r, cg.g, cb.b, (cr.a + cg.a + cb.a) / 3.0);
+  }
+`;
+
+/**
+ * A one-shot effect played on the pane you just navigated to, selectable from
+ * the command palette (`shader: choose pane-switch effect`) and persisted as
+ * `pane-switch-shader = "<id>"` in config.toml.
+ *
+ * Each entry plays from u_time = 0 and is expected to have settled to a clean
+ * image by `durationMs`, at which point TerminalPane stops pumping frames and
+ * hands the post-process slot back to the persistent effect (SHADER_EFFECTS).
+ * A shader that never settles would freeze mid-effect on the pane, so
+ * durationMs must cover the shader's own timeline.
+ */
+export interface PaneSwitchEffect {
+  id: string;
+  label: string;
+  /** GLSL, or null for the "(none)" entry — nothing is installed at all. */
+  src: string | null;
+  durationMs: number;
+}
+
+/** Used when `pane_switch_shader` is unset or names an unknown effect. */
+export const DEFAULT_PANE_SWITCH_EFFECT_ID = 'chromatic-aberration';
+
+export const PANE_SWITCH_EFFECTS: PaneSwitchEffect[] = [
+  { id: 'none', label: '(none)', src: null, durationMs: 0 },
+  {
+    id: 'chromatic-aberration',
+    label: 'chromatic aberration (RGB split flash)',
+    src: CHROMATIC_FLASH_POSTPROCESS_FRAGMENT_SRC,
+    // attackSeconds + decaySeconds, rounded up.
+    durationMs: 320,
+  },
+  {
+    id: 'block-glitch',
+    label: 'block glitch (displaced blocks)',
+    src: BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC,
+    // >= the shader's own ~350ms settle time (see its enterSpeed).
+    durationMs: 400,
+  },
+  {
+    id: 'pixelate',
+    label: 'pixelate (unblock reveal)',
+    src: PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
+    // Matches its rampSeconds; also the privacy overlay's ramp-out shader.
+    durationMs: 150,
+  },
+];
+
+/** Resolve a configured `pane_switch_shader` id, falling back to the default. */
+export function findPaneSwitchEffect(id: string | null | undefined): PaneSwitchEffect {
+  return (
+    PANE_SWITCH_EFFECTS.find((e) => e.id === id) ??
+    PANE_SWITCH_EFFECTS.find((e) => e.id === DEFAULT_PANE_SWITCH_EFFECT_ID)!
+  );
+}
+
+/**
+ * A steady-state effect selectable from the command palette
+ * (`shader: choose effect`) and persisted as `shader = "<id>"` in config.toml.
+ * The backend stores the id verbatim — this registry is the only place ids are
+ * defined, so an unknown id resolves to `null` (no effect).
+ *
+ * The transition shaders above (block-glitch, pixelate ramp in/out) are
+ * deliberately absent: each plays once from u_time = 0 and then settles, so as
+ * a persistent effect they'd render nothing.
+ */
+export interface ShaderEffect {
+  id: string;
+  label: string;
+  src: string;
+  /**
+   * Whether the shader is u_time-driven and therefore needs a continuous
+   * render pump (see pumpRenders) to animate on an idle terminal.
+   */
+  animated: boolean;
+}
+
+export const SHADER_EFFECTS: ShaderEffect[] = [
+  { id: 'scanline', label: 'scanline (CRT lines + flicker)', src: SCANLINE_POSTPROCESS_FRAGMENT_SRC, animated: true },
+  { id: 'vignette', label: 'vignette (darkened edges)', src: VIGNETTE_POSTPROCESS_FRAGMENT_SRC, animated: false },
+  { id: 'dither', label: 'dither (bayer16, 3 levels)', src: DITHER_POSTPROCESS_FRAGMENT_SRC, animated: false },
+  {
+    id: 'chromatic-aberration',
+    label: 'chromatic aberration (RGB split)',
+    src: CHROMATIC_ABERRATION_POSTPROCESS_FRAGMENT_SRC,
+    animated: false,
+  },
+  { id: 'pixelate', label: 'pixelate (10px blocks)', src: PIXELATE_POSTPROCESS_FRAGMENT_SRC, animated: false },
+  { id: 'glitch', label: 'glitch (animated CRT glitch)', src: GLITCH_POSTPROCESS_FRAGMENT_SRC, animated: true },
+];
+
+/** Resolve a configured `shader` id to its effect, or null when unset/unknown. */
+export function findShaderEffect(id: string | null | undefined): ShaderEffect | null {
+  if (!id) return null;
+  return SHADER_EFFECTS.find((e) => e.id === id) ?? null;
+}

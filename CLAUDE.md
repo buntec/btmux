@@ -109,9 +109,37 @@ captures keys in the capture phase, and on the second keystroke either sends a
 (command palette), or `confirm`. While an overlay is open the keybinding hook
 early-returns so typing goes to the overlay, not the terminal.
 
+**Post-process shaders:** panes render through ghostty-web's
+`renderer.setPostProcessShader` hook (WebGL only). `terminalFxShaders.ts` holds
+every fragment shader plus two registries the frontend owns end-to-end — the
+backend only stores the chosen id (`shader` / `pane-switch-shader`), and an
+unknown id falls back:
+
+- `SHADER_EFFECTS` — *steady-state* effects (`shader: choose effect`). The
+  configured one is the **base state** of a pane's single post-process slot.
+- `PANE_SWITCH_EFFECTS` — *one-shot* effects played on the pane you switch to
+  (`shader: choose pane-switch effect`, default a chromatic-aberration flash).
+  Each carries a `durationMs` that must cover its own timeline, since that's how
+  long `TerminalPane` pumps frames before restoring the base effect.
+
+Transient users of the slot (the pane-switch effect, `App.tsx`'s privacy
+pixelate) must hand it back via `baseShaderSrc()` (`lib/baseShader.ts`) rather
+than `null`. Any `u_time`-driven shader also needs `pumpRenders` — an idle
+terminal paints no frames, so animated effects freeze without one.
+
 **Live config reload:** `main.rs` watches the config file's *parent dir* with
 `notify` (to catch editors' atomic rename-on-save), debounces, re-resolves, and
 broadcasts a new `Config`. A parse error logs and **keeps the last good config**.
+
+**Session-only overrides:** the palette's settings pickers (color scheme, font
+family/weight, shader) send `update_config` and **never touch config.toml** —
+`SessionManager` keeps the last-loaded `FileConfig` plus an accumulated
+`ConfigUpdate` override layer, and `resolve_with_overrides` re-resolves the
+`ClientConfig` from the two on every change. The overrides are for trying
+settings out: they're dropped on restart and by `set_file_config`, i.e. on *any*
+config-file reload. Persisting a setting is the user's job, by editing
+config.toml. Anything added to the pickers therefore needs a field in
+`ConfigUpdate::merge` and `resolve_with_overrides`, not a file writer.
 
 ## Asset embedding
 

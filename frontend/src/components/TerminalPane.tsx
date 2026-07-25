@@ -6,19 +6,9 @@ import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { PaneTitleBar } from './PaneTitleBar';
 import { withAlpha } from '../lib/chrome-colors';
-import { BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC } from '../lib/terminalFxShaders';
+import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders';
+import { baseShaderSrc } from '../lib/baseShader';
 import { pumpRenders } from '../lib/pumpRenders';
-
-// Duration of the navigate-to glitch-reveal flash (see the effect below).
-// Must be >= BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC's own settle time
-// (~350ms, see enterSpeed there) so the pump doesn't stop before the
-// shader's decay finishes playing out. Uses ghostty-web's native
-// setPostProcessShader hook (same-context composite pass, no cross-context
-// canvas copy) — an earlier external-overlay prototype (canvasFx.ts,
-// removed) copied the live canvas into a second WebGL context every frame
-// and measurably stalled typing; this hook was added to ghostty-web
-// specifically to avoid that class of bug.
-const NAVIGATE_TO_GLITCH_MS = 400;
 
 interface Props {
   sessionId: string;
@@ -340,30 +330,59 @@ export function TerminalPane({
     }
   }, [visible]);
 
-  // Briefly glitch-reveal a pane when it *gains* active status while
+  // The persistent post-process effect chosen with `shader: choose effect`
+  // (config `shader = "..."`). It is the *base* state of this pane's
+  // post-process slot: the transient effects below (and the privacy pixelate
+  // in App.tsx) temporarily take the slot over and restore this on the way
+  // out, hence baseShaderSrc rather than a plain `null`. Re-runs on
+  // termOptions because a config reload rebuilds the Terminal, which drops
+  // whatever shader was installed on the old renderer.
+  const shaderId = config?.shader ?? null;
+  useEffect(() => {
+    termRef.current?.renderer?.setPostProcessShader?.(findShaderEffect(shaderId)?.src ?? null);
+  }, [shaderId, termOptions]);
+
+  // u_time-driven effects only animate while frames keep coming, and an idle
+  // terminal paints none — so a visible pane with an animated base effect
+  // needs a permanent render pump (Infinity: cancelled by the cleanup, never
+  // by timeout). Hidden panes are suspended, and `animations = false` opts out
+  // of motion entirely; both leave the effect installed but frozen.
+  const baseShaderAnimated = findShaderEffect(shaderId)?.animated ?? false;
+  const pumpBaseShader = baseShaderAnimated && visible && (config?.animations ?? true);
+  useEffect(() => {
+    if (!pumpBaseShader) return;
+    return pumpRenders(() => [termRef.current?.renderer], Infinity);
+  }, [pumpBaseShader, termOptions]);
+
+  // Play the one-shot pane-switch effect (`pane-switch-shader`, by default a
+  // chromatic-aberration flash) when this pane *gains* active status while
   // visible — pane-to-pane navigation (prefix+arrow, click), and also a
   // window/session switch (whose newly-active pane transitions visible+
   // active in the same update, so it reads as "revealing" the pane you
   // switched to). Runs inside ghostty-web's own WebGL context
-  // (setPostProcessShader) — no extra DOM node, no cross-context canvas
-  // copy. The shader's own animation needs continuous frames the terminal
-  // wouldn't otherwise paint while idle, hence the pump — see pumpRenders.ts.
-  const prevIsActiveForGlitch = useRef(isActive);
+  // (setPostProcessShader) — no extra DOM node, no cross-context canvas copy.
+  // An earlier external-overlay prototype (canvasFx.ts, removed) copied the
+  // live canvas into a second WebGL context every frame and measurably stalled
+  // typing; this hook was added to ghostty-web to avoid that class of bug. The
+  // effect's own animation needs continuous frames the terminal wouldn't
+  // otherwise paint while idle, hence the pump — see pumpRenders.ts.
+  const paneSwitchEffect = findPaneSwitchEffect(config?.pane_switch_shader);
+  const prevIsActiveForSwitchFx = useRef(isActive);
   useEffect(() => {
-    const wasActive = prevIsActiveForGlitch.current;
-    prevIsActiveForGlitch.current = isActive;
+    const wasActive = prevIsActiveForSwitchFx.current;
+    prevIsActiveForSwitchFx.current = isActive;
     const animations = config?.animations ?? true;
     if (wasActive || !isActive || !visible || !animations) return;
 
     const term = termRef.current;
-    if (!term) return;
-    term.renderer?.setPostProcessShader?.(BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC);
+    if (!term || !paneSwitchEffect.src) return;
+    term.renderer?.setPostProcessShader?.(paneSwitchEffect.src);
     return pumpRenders(
       () => [term.renderer],
-      NAVIGATE_TO_GLITCH_MS,
-      () => term.renderer?.setPostProcessShader?.(null),
+      paneSwitchEffect.durationMs,
+      () => term.renderer?.setPostProcessShader?.(baseShaderSrc()),
     );
-  }, [isActive, visible, config?.animations]);
+  }, [isActive, visible, config?.animations, paneSwitchEffect]);
 
   // Hide cursor on inactive panes by blending it into the background.
   // term.options.theme is unsupported after open(); go directly to the renderer.

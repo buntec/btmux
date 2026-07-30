@@ -366,7 +366,17 @@ export function TerminalPane({
   // typing; this hook was added to ghostty-web to avoid that class of bug. The
   // effect's own animation needs continuous frames the terminal wouldn't
   // otherwise paint while idle, hence the pump — see pumpRenders.ts.
-  const paneSwitchEffect = findPaneSwitchEffect(config?.pane_switch_shader);
+  const paneSwitchShaderId = config?.pane_switch_shader ?? null;
+  const paneSwitchIntensity = config?.pane_switch_intensity ?? 1;
+  const paneSwitchDuration = config?.pane_switch_duration ?? 1;
+  // Memoized so identity is stable across renders that don't touch these three
+  // config values — the effect below fires on *identity* change, and building
+  // a fresh object (findPaneSwitchEffect regenerates GLSL from the intensity/
+  // duration multipliers) on every render would replay the flash constantly.
+  const paneSwitchEffect = useMemo(
+    () => findPaneSwitchEffect(paneSwitchShaderId, paneSwitchIntensity, paneSwitchDuration),
+    [paneSwitchShaderId, paneSwitchIntensity, paneSwitchDuration],
+  );
   const prevIsActiveForSwitchFx = useRef(isActive);
   useEffect(() => {
     const wasActive = prevIsActiveForSwitchFx.current;

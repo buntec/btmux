@@ -266,8 +266,18 @@ export const GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
  *    terminal palettes (heavy cyan/green/white, often low red) it reads as
  *    dim/washed out. This version samples each output channel from the
  *    *matching* source channel instead — real RGB chromatic aberration.
+ *
+ * `intensity`/`duration` are the resolved `pane-switch-intensity` /
+ * `pane-switch-duration` multipliers, baked into the block-displacement
+ * magnitude and settle speed respectively (see chromaticFlashSrc above for
+ * why this has to be string interpolation rather than a uniform).
  */
-export const BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
+function blockGlitchSrc(intensity: number, duration: number): string {
+  // Compresses the original's 1.5s settle-time to ~350ms of real time at
+  // duration = 1.0; scales linearly with the duration multiplier.
+  const enterSpeed = 1.5 / (0.35 * duration);
+  const moveScale = 0.07 * intensity;
+  return `#version 300 es
   precision highp float;
   in vec2 v_uv;
   out vec4 fragColor;
@@ -302,8 +312,7 @@ export const BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
   }
 
   void main() {
-    // Compresses the original's 1.5s settle-time to ~350ms of real time.
-    const float enterSpeed = 1.5 / 0.35;
+    const float enterSpeed = ${enterSpeed.toFixed(6)};
 
     vec2 uv = v_uv;
     vec2 p = uv * 2.0 - 1.0;
@@ -323,7 +332,7 @@ export const BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
       float n = noise(vec3(p2 * 3.0, fi * 7.0 + u_time * 0.3));
       if (n > 0.5) {
         float a = floor(n * 30.0 + fi * 9.0) * 0.5 * 3.141593;
-        move = vec2(sin(a), cos(a) * 0.1) * enter * 0.07;
+        move = vec2(sin(a), cos(a) * 0.1) * enter * ${moveScale.toFixed(6)};
       }
       block = block.yx * 3.5;
     }
@@ -337,6 +346,7 @@ export const BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
     fragColor.rgb *= 1.0 + length(move) * 3.0;
   }
 `;
+}
 
 /**
  * Per-pane privacy-pixelate overlay (App.tsx's usePanePixelateOverlay),
@@ -397,6 +407,38 @@ export const PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
 `;
 
 /**
+ * Parametrized variant of PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC used by
+ * the pane-switch effect registry below, where `intensity`/`duration` are the
+ * resolved `pane-switch-intensity` / `pane-switch-duration` multipliers
+ * (baked into maxSizePx and rampSeconds). The privacy overlay keeps using the
+ * fixed const above — its ramp isn't user-configurable.
+ */
+function pixelateRampOutSrc(intensity: number, duration: number): string {
+  const rampSeconds = 0.15 * duration;
+  const maxSizePx = 16.0 * intensity;
+  return `#version 300 es
+  precision highp float;
+  in vec2 v_uv;
+  out vec4 fragColor;
+  uniform sampler2D u_scene;
+  uniform vec2 u_resolution;
+  uniform float u_time;
+
+  void main() {
+    const float rampSeconds = ${rampSeconds.toFixed(6)};
+    const float maxSizePx = ${maxSizePx.toFixed(6)};
+    float t = clamp(u_time / rampSeconds, 0.0, 1.0);
+    t = 1.0 - pow(1.0 - t, 3.0);
+    float sizePx = max(1.0, mix(maxSizePx, 1.0, t));
+
+    vec2 cellUv = sizePx / u_resolution;
+    vec2 cell = (floor(v_uv / cellUv) + 0.5) * cellUv;
+    fragColor = texture(u_scene, clamp(cell, 0.0, 1.0));
+  }
+`;
+}
+
+/**
  * Pane-switch flash: the CHROMATIC_ABERRATION effect above, but with its
  * intensity driven by a short attack/decay envelope on u_time instead of held
  * constant — the RGB split snaps in as the pane gains focus and decays back to
@@ -405,7 +447,8 @@ export const PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
  * is vfx-js's ChromaticEffect unchanged.
  *
  * `peak` is in vfx-js intensity units but is much *lower* than its 0.3 default
- * (which the steady-state effect above uses). The split grows with `pow(l,
+ * (which the steady-state effect above uses) — 0.3 is the value at the
+ * *intensity multiplier's* default of 1.0. The split grows with `pow(l,
  * power)` where l is the aspect-corrected distance from the center, so on a
  * wide pane the corners sit at l² ≈ 5 and the shift there is ~15x what the
  * number suggests: at 0.3 the edge text is smeared unreadable. Chosen by
@@ -413,8 +456,18 @@ export const PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
  * 0.12 / 0.25 / 0.5 — 0.1 fringes the edges clearly while every line stays
  * legible, which is what you want from something that flashes on every
  * navigation.
+ *
+ * `intensity`/`duration` are the resolved `pane-switch-intensity` /
+ * `pane-switch-duration` multipliers (see config.rs) baked straight into the
+ * GLSL constants — ghostty-web's setPostProcessShader takes only a source
+ * string, with no custom-uniform mechanism, so this is the only way to make
+ * the effect's numbers configurable.
  */
-export const CHROMATIC_FLASH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
+function chromaticFlashSrc(intensity: number, duration: number): string {
+  const attackSeconds = 0.06 * duration;
+  const decaySeconds = 0.24 * duration;
+  const peak = 0.3 * intensity;
+  return `#version 300 es
   precision highp float;
   in vec2 v_uv;
   out vec4 fragColor;
@@ -428,9 +481,9 @@ export const CHROMATIC_FLASH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
   }
 
   void main() {
-    const float attackSeconds = 0.06;
-    const float decaySeconds = 0.24;
-    const float peak = 0.3;
+    const float attackSeconds = ${attackSeconds.toFixed(6)};
+    const float decaySeconds = ${decaySeconds.toFixed(6)};
+    const float peak = ${peak.toFixed(6)};
     const float power = 2.0;
 
     float env = u_time < attackSeconds
@@ -457,17 +510,23 @@ export const CHROMATIC_FLASH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
     fragColor = vec4(cr.r, cg.g, cb.b, (cr.a + cg.a + cb.a) / 3.0);
   }
 `;
+}
 
 /**
  * A one-shot effect played on the pane you just navigated to, selectable from
  * the command palette (`shader: choose pane-switch effect`) and persisted as
- * `pane-switch-shader = "<id>"` in config.toml.
+ * `pane-switch-shader = "<id>"` in config.toml. Its numbers are scaled by
+ * `pane-switch-intensity` / `pane-switch-duration` (also config.toml-only —
+ * both are continuous multipliers, not a discrete registry, so they don't
+ * fit the picker pattern the id itself uses).
  *
  * Each entry plays from u_time = 0 and is expected to have settled to a clean
  * image by `durationMs`, at which point TerminalPane stops pumping frames and
  * hands the post-process slot back to the persistent effect (SHADER_EFFECTS).
  * A shader that never settles would freeze mid-effect on the pane, so
- * durationMs must cover the shader's own timeline.
+ * durationMs must cover the shader's own timeline — it scales with the
+ * duration multiplier right alongside the GLSL constants that drive it, so
+ * the two never drift apart.
  */
 export interface PaneSwitchEffect {
   id: string;
@@ -477,40 +536,71 @@ export interface PaneSwitchEffect {
   durationMs: number;
 }
 
+/** id/label only, for the picker — see buildPaneSwitchEffect for the GLSL. */
+interface PaneSwitchEffectEntry {
+  id: string;
+  label: string;
+  build: (intensity: number, duration: number) => { src: string | null; durationMs: number };
+}
+
 /** Used when `pane_switch_shader` is unset or names an unknown effect. */
 export const DEFAULT_PANE_SWITCH_EFFECT_ID = 'chromatic-aberration';
 
-export const PANE_SWITCH_EFFECTS: PaneSwitchEffect[] = [
-  { id: 'none', label: '(none)', src: null, durationMs: 0 },
+const PANE_SWITCH_EFFECT_ENTRIES: PaneSwitchEffectEntry[] = [
+  {
+    id: 'none',
+    label: '(none)',
+    build: () => ({ src: null, durationMs: 0 }),
+  },
   {
     id: 'chromatic-aberration',
     label: 'chromatic aberration (RGB split flash)',
-    src: CHROMATIC_FLASH_POSTPROCESS_FRAGMENT_SRC,
-    // attackSeconds + decaySeconds, rounded up.
-    durationMs: 320,
+    build: (intensity, duration) => ({
+      src: chromaticFlashSrc(intensity, duration),
+      // attackSeconds + decaySeconds, rounded up.
+      durationMs: Math.ceil(320 * duration),
+    }),
   },
   {
     id: 'block-glitch',
     label: 'block glitch (displaced blocks)',
-    src: BLOCK_GLITCH_POSTPROCESS_FRAGMENT_SRC,
-    // >= the shader's own ~350ms settle time (see its enterSpeed).
-    durationMs: 400,
+    build: (intensity, duration) => ({
+      src: blockGlitchSrc(intensity, duration),
+      // >= the shader's own ~350ms settle time (see its enterSpeed).
+      durationMs: Math.ceil(400 * duration),
+    }),
   },
   {
     id: 'pixelate',
     label: 'pixelate (unblock reveal)',
-    src: PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
-    // Matches its rampSeconds; also the privacy overlay's ramp-out shader.
-    durationMs: 150,
+    build: (intensity, duration) => ({
+      src: pixelateRampOutSrc(intensity, duration),
+      // Matches its rampSeconds.
+      durationMs: Math.ceil(150 * duration),
+    }),
   },
 ];
 
-/** Resolve a configured `pane_switch_shader` id, falling back to the default. */
-export function findPaneSwitchEffect(id: string | null | undefined): PaneSwitchEffect {
-  return (
-    PANE_SWITCH_EFFECTS.find((e) => e.id === id) ??
-    PANE_SWITCH_EFFECTS.find((e) => e.id === DEFAULT_PANE_SWITCH_EFFECT_ID)!
-  );
+/** id/label rows for the `shader: choose pane-switch effect` picker. */
+export const PANE_SWITCH_EFFECTS: { id: string; label: string }[] = PANE_SWITCH_EFFECT_ENTRIES.map(({ id, label }) => ({
+  id,
+  label,
+}));
+
+/**
+ * Resolve a configured `pane_switch_shader` id (falling back to the default)
+ * and build its GLSL for the given intensity/duration multipliers (1.0 =
+ * each effect's own default). Rebuilds the shader source on every call —
+ * callers that install it as a WebGL post-process effect on every render
+ * should memoize on (id, intensity, duration) to avoid needless recompiles
+ * and, since a fresh object compares unequal by reference, spurious re-fires
+ * of effects driven by this object's identity.
+ */
+export function findPaneSwitchEffect(id: string | null | undefined, intensity = 1, duration = 1): PaneSwitchEffect {
+  const entry =
+    PANE_SWITCH_EFFECT_ENTRIES.find((e) => e.id === id) ??
+    PANE_SWITCH_EFFECT_ENTRIES.find((e) => e.id === DEFAULT_PANE_SWITCH_EFFECT_ID)!;
+  return { id: entry.id, label: entry.label, ...entry.build(intensity, duration) };
 }
 
 /**

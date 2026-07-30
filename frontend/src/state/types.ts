@@ -130,6 +130,10 @@ export interface ClientConfig {
    * Null means unset — the frontend's DEFAULT_PANE_SWITCH_EFFECT_ID applies.
    */
   pane_switch_shader: string | null;
+  /** Intensity multiplier for the pane-switch effect (1.0 = default strength). */
+  pane_switch_intensity: number;
+  /** Duration multiplier for the pane-switch effect (1.0 = default duration). */
+  pane_switch_duration: number;
   session_sort: SessionSort;
   /** Sort order for the window list (status bar, choose-tree, switcher). */
   window_sort: WindowSort;

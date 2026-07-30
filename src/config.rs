@@ -148,6 +148,15 @@ pub struct FileConfig {
     /// the frontend's default; like `shader`, the registry lives there.
     #[serde(rename = "pane-switch-shader")]
     pub pane_switch_shader: Option<String>,
+    /// Intensity multiplier for the pane-switch effect (RGB-split amount, block
+    /// displacement, pixelation size, depending on the effect). 1.0 = the
+    /// effect's own default strength, 0.0 = imperceptible. Clamped to 0.0–3.0.
+    #[serde(rename = "pane-switch-intensity")]
+    pub pane_switch_intensity: Option<f32>,
+    /// Duration multiplier for the pane-switch effect's playback time. 1.0 =
+    /// the effect's own default duration. Clamped to 0.1–5.0.
+    #[serde(rename = "pane-switch-duration")]
+    pub pane_switch_duration: Option<f32>,
     /// Sort order for the session list on the landing page.
     #[serde(rename = "session-sort", default)]
     pub session_sort: SessionSort,
@@ -185,6 +194,8 @@ impl Default for FileConfig {
             wallpaper_saturate: None,
             shader: None,
             pane_switch_shader: None,
+            pane_switch_intensity: None,
+            pane_switch_duration: None,
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
             window_grid_count: None,
@@ -572,6 +583,12 @@ pub struct ClientConfig {
     /// Name of the one-shot effect played on the pane you switch to, or `null`
     /// to use the frontend's default.
     pub pane_switch_shader: Option<String>,
+    /// Resolved intensity multiplier for the pane-switch effect (default 1.0,
+    /// clamped 0.0–3.0). The frontend bakes this into the effect's shader.
+    pub pane_switch_intensity: f32,
+    /// Resolved duration multiplier for the pane-switch effect (default 1.0,
+    /// clamped 0.1–5.0).
+    pub pane_switch_duration: f32,
     /// Sort order for the session list on the landing page.
     pub session_sort: SessionSort,
     /// Sort order for the window list (status bar, choose-tree, switcher).
@@ -838,6 +855,15 @@ pub fn generate_config_toml() -> String {
 # pane-switch-shader = "chromatic-aberration"   # chromatic-aberration (default)
 #                       # | block-glitch | pixelate | none
 
+# Intensity multiplier for the pane-switch effect (RGB-split amount, block
+# displacement, pixelation size — meaning depends on the effect). 1.0 = the
+# effect's own default strength, 0.0 = imperceptible. Clamped to 0.0-3.0.
+# pane-switch-intensity = 1.0
+
+# Duration multiplier for the pane-switch effect's playback time. 1.0 = the
+# effect's own default duration. Clamped to 0.1-5.0.
+# pane-switch-duration = 1.0
+
 # Sort order for the session list on the landing page.
 # "created" = creation order (default), "mru" = most recently visited first,
 # "alphabetical" = sorted by name.
@@ -972,6 +998,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     } else {
         None
     };
+    let pane_switch_intensity = file.pane_switch_intensity.unwrap_or(1.0).clamp(0.0, 3.0);
+    let pane_switch_duration = file.pane_switch_duration.unwrap_or(1.0).clamp(0.1, 5.0);
 
     // Inline [theme] takes priority; fall back to `colors` scheme file.
     let theme = file.theme.as_ref().map(BaseTheme::to_theme).or_else(|| {
@@ -1016,6 +1044,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_saturate,
         shader: file.shader.clone(),
         pane_switch_shader: file.pane_switch_shader.clone(),
+        pane_switch_intensity,
+        pane_switch_duration,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(6),

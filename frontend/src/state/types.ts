@@ -120,9 +120,13 @@ export interface ClientConfig {
   /** Whether panes render a per-pane title bar. */
   show_pane_titles: boolean;
   wallpaper: string | null;
+  /** App-level procedural WebGL wallpaper id, or null for none. */
+  wallpaper_shader: string | null;
   wallpaper_opacity: number | null;
   wallpaper_blur: number | null;
   wallpaper_saturate: number | null;
+  wallpaper_speed: number;
+  wallpaper_seed: string;
   /** Persistent post-process effect id (see SHADER_EFFECTS), or null for none. */
   shader: string | null;
   /**

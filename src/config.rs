@@ -126,6 +126,9 @@ pub struct FileConfig {
     pub show_pane_titles: bool,
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
+    /// Name of a procedural WebGL background displayed behind the app.
+    #[serde(rename = "wallpaper-shader")]
+    pub wallpaper_shader: Option<String>,
     /// How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
     /// Defaults to 0.1 when a wallpaper URL is set.
     #[serde(rename = "wallpaper-opacity")]
@@ -138,6 +141,12 @@ pub struct FileConfig {
     /// Defaults to 1.0 (no desaturation).
     #[serde(rename = "wallpaper-saturate")]
     pub wallpaper_saturate: Option<f32>,
+    /// Animation speed multiplier for a procedural wallpaper.
+    #[serde(rename = "wallpaper-speed")]
+    pub wallpaper_speed: Option<f32>,
+    /// Deterministic seed used to vary procedural wallpaper colors and form.
+    #[serde(rename = "wallpaper-seed")]
+    pub wallpaper_seed: Option<String>,
     /// Name of a persistent WebGL post-process effect applied to every pane
     /// (`scanline`, `vignette`, …). The effect registry lives in the frontend
     /// (`terminalFxShaders.ts`) — this is passed through untouched, and an
@@ -189,9 +198,12 @@ impl Default for FileConfig {
             animations: true,
             show_pane_titles: true,
             wallpaper: None,
+            wallpaper_shader: None,
             wallpaper_opacity: None,
             wallpaper_blur: None,
             wallpaper_saturate: None,
+            wallpaper_speed: None,
+            wallpaper_seed: None,
             shader: None,
             pane_switch_shader: None,
             pane_switch_intensity: None,
@@ -566,6 +578,8 @@ pub struct ClientConfig {
     /// URL of a background image displayed behind all terminal panes, or `null`.
     /// When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
     pub wallpaper: Option<String>,
+    /// Name of the procedural WebGL wallpaper rendered by the frontend.
+    pub wallpaper_shader: Option<String>,
     /// The resolved absolute path to a local wallpaper file, if any. Not sent to
     /// the browser — used by the `/wallpaper` route to serve the file.
     #[serde(skip)]
@@ -577,6 +591,10 @@ pub struct ClientConfig {
     pub wallpaper_blur: Option<f32>,
     /// Saturation multiplier for the wallpaper: 0.0 = grayscale, 1.0 = normal.
     pub wallpaper_saturate: Option<f32>,
+    /// Animation speed multiplier for the procedural wallpaper.
+    pub wallpaper_speed: f32,
+    /// Deterministic seed used to vary procedural wallpaper colors and form.
+    pub wallpaper_seed: String,
     /// Name of the persistent post-process shader effect applied to every pane,
     /// or `null` for none. Resolved to GLSL by the frontend's effect registry.
     pub shader: Option<String>,
@@ -836,12 +854,18 @@ pub fn generate_config_toml() -> String {
 # Accepts a URL or a local file path (absolute or ~/relative).
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
+# Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
+# wallpaper-shader = "voronoi"   # plasma | voronoi
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = 0.1
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
 # wallpaper-blur = 0.0
 # Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
 # wallpaper-saturate = 1.0
+# Procedural wallpaper animation speed. 0 = frozen, 1 = normal.
+# wallpaper-speed = 1.0
+# Deterministic seed for procedural wallpaper colors and form.
+# wallpaper-seed = "btmux"
 
 # Persistent WebGL post-process effect applied to every pane (webgl renderer
 # only). Pick one interactively with the `shader: choose effect` command
@@ -983,23 +1007,29 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         }
     }
 
-    let wallpaper_opacity = if file.wallpaper.is_some() {
+    let has_wallpaper = file.wallpaper.is_some() || file.wallpaper_shader.is_some();
+    let wallpaper_opacity = if has_wallpaper {
         Some(file.wallpaper_opacity.unwrap_or(0.1).clamp(0.0, 1.0))
     } else {
         None
     };
-    let wallpaper_blur = if file.wallpaper.is_some() {
+    let wallpaper_blur = if has_wallpaper {
         Some(file.wallpaper_blur.unwrap_or(0.0).max(0.0))
     } else {
         None
     };
-    let wallpaper_saturate = if file.wallpaper.is_some() {
+    let wallpaper_saturate = if has_wallpaper {
         Some(file.wallpaper_saturate.unwrap_or(1.0).clamp(0.0, 1.0))
     } else {
         None
     };
     let pane_switch_intensity = file.pane_switch_intensity.unwrap_or(1.0).clamp(0.0, 3.0);
     let pane_switch_duration = file.pane_switch_duration.unwrap_or(1.0).clamp(0.1, 5.0);
+    let wallpaper_speed = file.wallpaper_speed.unwrap_or(1.0).clamp(0.0, 5.0);
+    let wallpaper_seed = file
+        .wallpaper_seed
+        .clone()
+        .unwrap_or_else(|| "btmux".to_string());
 
     // Inline [theme] takes priority; fall back to `colors` scheme file.
     let theme = file.theme.as_ref().map(BaseTheme::to_theme).or_else(|| {
@@ -1038,10 +1068,13 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
         wallpaper: wallpaper_url,
+        wallpaper_shader: file.wallpaper_shader.clone(),
         wallpaper_path,
         wallpaper_opacity,
         wallpaper_blur,
         wallpaper_saturate,
+        wallpaper_speed,
+        wallpaper_seed,
         shader: file.shader.clone(),
         pane_switch_shader: file.pane_switch_shader.clone(),
         pane_switch_intensity,

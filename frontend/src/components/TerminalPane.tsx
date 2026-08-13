@@ -303,7 +303,7 @@ export function TerminalPane({
       observer.disconnect();
       ws?.close();
       term.dispose();
-      if (registry?.get(paneId) === term) registry.delete(paneId);
+      if (registry && registry.get(paneId) === term) registry.delete(paneId);
       useStore.getState().unregisterTerminal(paneId, term);
       termRef.current = null;
       wsRef.current = null;

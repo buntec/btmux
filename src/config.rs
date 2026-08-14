@@ -56,10 +56,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionSort {
-    /// Sessions appear in creation order (default).
-    #[default]
+    /// Sessions appear in creation order.
     Created,
-    /// Most recently visited session appears first.
+    /// Most recently visited session appears first (default).
+    #[default]
     Mru,
     /// Sessions sorted alphabetically by name.
     Alphabetical,
@@ -71,12 +71,12 @@ pub enum SessionSort {
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum WindowSort {
-    /// Windows appear in creation order (default).
-    #[default]
+    /// Windows appear in creation order.
     Created,
     /// Most recently visited window appears first.
     Mru,
-    /// Windows sorted alphabetically by name.
+    /// Windows sorted alphabetically by name (default).
+    #[default]
     Alphabetical,
 }
 
@@ -121,8 +121,8 @@ pub struct FileConfig {
     #[serde(default = "default_true")]
     pub animations: bool,
     /// Show a per-pane title bar (shell/title, cwd, dimensions, zoom tag) above
-    /// each pane. Defaults to true; set to false for borderless bare panes.
-    #[serde(rename = "show-pane-titles", default = "default_true")]
+    /// each pane. Defaults to false; set to true to show pane metadata.
+    #[serde(rename = "show-pane-titles")]
     pub show_pane_titles: bool,
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
@@ -196,21 +196,21 @@ impl Default for FileConfig {
             shell: None,
             vi_mode: false,
             animations: true,
-            show_pane_titles: true,
+            show_pane_titles: false,
             wallpaper: None,
-            wallpaper_shader: None,
-            wallpaper_opacity: None,
-            wallpaper_blur: None,
-            wallpaper_saturate: None,
-            wallpaper_speed: None,
-            wallpaper_seed: None,
+            wallpaper_shader: Some("plasma".to_string()),
+            wallpaper_opacity: Some(0.2),
+            wallpaper_blur: Some(0.0),
+            wallpaper_saturate: Some(0.2),
+            wallpaper_speed: Some(1.0),
+            wallpaper_seed: Some("axu".to_string()),
             shader: None,
             pane_switch_shader: None,
-            pane_switch_intensity: None,
-            pane_switch_duration: None,
+            pane_switch_intensity: Some(0.25),
+            pane_switch_duration: Some(0.5),
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
-            window_grid_count: None,
+            window_grid_count: Some(4),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
             theme: None,
@@ -259,7 +259,7 @@ impl Default for TerminalOptions {
             renderer: Some("webgl".to_string()),
             cursor_blink: Some(true),
             cursor_style: Some("bar".to_string()),
-            scrollback: Some(10000),
+            scrollback: Some(100000),
             font_size: Some(18.0),
             font_family: Some("Geist Mono".to_string()),
             font_weight: Some(400),
@@ -847,25 +847,25 @@ pub fn generate_config_toml() -> String {
 # animations = true
 
 # Show a per-pane title bar (shell/title, working directory, dimensions, zoom
-# tag) above each pane. Set to false for borderless bare panes.
-# show-pane-titles = true
+# tag) above each pane. Disabled by default.
+# show-pane-titles = false
 
 # Background wallpaper image displayed behind all terminal panes.
 # Accepts a URL or a local file path (absolute or ~/relative).
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
 # Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "voronoi"   # plasma | voronoi
+# wallpaper-shader = "plasma"   # plasma | voronoi
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
-# wallpaper-opacity = 0.1
+# wallpaper-opacity = 0.2
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
 # wallpaper-blur = 0.0
 # Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
-# wallpaper-saturate = 1.0
+# wallpaper-saturate = 0.2
 # Procedural wallpaper animation speed. 0 = frozen, 1 = normal.
 # wallpaper-speed = 1.0
 # Deterministic seed for procedural wallpaper colors and form.
-# wallpaper-seed = "btmux"
+# wallpaper-seed = "axu"
 
 # Persistent WebGL post-process effect applied to every pane (webgl renderer
 # only). Pick one interactively with the `shader: choose effect` command
@@ -882,27 +882,27 @@ pub fn generate_config_toml() -> String {
 # Intensity multiplier for the pane-switch effect (RGB-split amount, block
 # displacement, pixelation size — meaning depends on the effect). 1.0 = the
 # effect's own default strength, 0.0 = imperceptible. Clamped to 0.0-3.0.
-# pane-switch-intensity = 1.0
+# pane-switch-intensity = 0.25
 
 # Duration multiplier for the pane-switch effect's playback time. 1.0 = the
 # effect's own default duration. Clamped to 0.1-5.0.
-# pane-switch-duration = 1.0
+# pane-switch-duration = 0.5
 
 # Sort order for the session list on the landing page.
-# "created" = creation order (default), "mru" = most recently visited first,
+# "created" = creation order, "mru" = most recently visited first (default),
 # "alphabetical" = sorted by name.
-# session-sort = "created"
+# session-sort = "mru"
 
 # Sort order for the window list (status bar, choose-tree, switcher). Windows
 # are renumbered to match the displayed order, so the prefix+0-9 hotkeys and
 # next/prev-window follow what you see.
-# "created" = creation order (default), "mru" = most recently visited first,
-# "alphabetical" = sorted by name.
-# window-sort = "created"
+# "created" = creation order, "mru" = most recently visited first,
+# "alphabetical" = sorted by name (default).
+# window-sort = "alphabetical"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
-# window-grid-count = 6
+# window-grid-count = 4
 
 # Per-action key overrides. Uncomment a line to rebind that action.
 # [keys]
@@ -913,7 +913,7 @@ pub fn generate_config_toml() -> String {
 # renderer = "webgl"        # "canvas" | "webgl" (default; falls back to canvas)
 # cursor-blink = true
 # cursor-style = "bar"      # "block" | "underline" | "bar"
-# scrollback = 10000
+# scrollback = 100000
 # font-size = 18.0
 # font-family = "Geist Mono"        # bundled: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", "Geist Mono", "Departure Mono"
 # font-weight = 400           # bold = font-weight + 200 (capped at 900)
@@ -1163,4 +1163,33 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
 
     resolve_binds(&file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_config_uses_built_in_defaults() {
+        let config: FileConfig = toml::from_str("").expect("empty config should parse");
+        let resolved = resolve_binds(&config);
+
+        assert!(!config.vi_mode);
+        assert_eq!(config.prefix, None);
+        assert_eq!(config.shell, None);
+        assert!(config.animations);
+        assert!(!resolved.show_pane_titles);
+        assert_eq!(resolved.wallpaper_shader.as_deref(), Some("plasma"));
+        assert_eq!(resolved.wallpaper_opacity, Some(0.2));
+        assert_eq!(resolved.wallpaper_saturate, Some(0.2));
+        assert_eq!(resolved.wallpaper_blur, Some(0.0));
+        assert_eq!(resolved.wallpaper_speed, 1.0);
+        assert_eq!(resolved.wallpaper_seed, "axu");
+        assert_eq!(resolved.window_grid_count, 4);
+        assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
+        assert_eq!(resolved.session_sort, SessionSort::Mru);
+        assert_eq!(resolved.pane_switch_intensity, 0.25);
+        assert_eq!(resolved.pane_switch_duration, 0.5);
+        assert_eq!(resolved.terminal.scrollback, Some(100_000));
+    }
 }

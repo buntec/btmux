@@ -10,6 +10,7 @@ import { Overlay } from './components/Overlay';
 import { WindowGrid } from './components/WindowGrid';
 import { SessionSwitcher } from './components/SessionSwitcher';
 import { ConnectionBanner } from './components/ConnectionBanner';
+import { ShaderWallpaper } from './components/ShaderWallpaper';
 import { Toaster } from './components/ui/sonner';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
@@ -148,9 +149,12 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   }, [activeSessionId]);
 
   const wallpaper = config?.wallpaper ?? null;
+  const wallpaperShader = config?.wallpaper_shader ?? null;
   const wallpaperOpacity = config?.wallpaper_opacity ?? 1;
   const wallpaperBlur = config?.wallpaper_blur ?? 0;
   const wallpaperSaturate = config?.wallpaper_saturate ?? 1;
+  const wallpaperSpeed = config?.wallpaper_speed ?? 1;
+  const wallpaperSeed = config?.wallpaper_seed ?? 'btmux';
 
   // Layout: a flex column owning the viewport. The pane region (flex:1) holds the
   // persistent SessionPool underneath, the route content (LandingPage or the
@@ -160,7 +164,17 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   // the keep-alive pool persists across session switches.
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      {wallpaper && (
+      {wallpaperShader ? (
+        <ShaderWallpaper
+          shaderId={wallpaperShader}
+          opacity={wallpaperOpacity}
+          blur={wallpaperBlur}
+          saturate={wallpaperSaturate}
+          speed={wallpaperSpeed}
+          animated={(config?.animations ?? true) && wallpaperSpeed > 0}
+          seed={wallpaperSeed}
+        />
+      ) : wallpaper ? (
         <div
           style={{
             position: 'fixed',
@@ -174,7 +188,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
             pointerEvents: 'none',
           }}
         />
-      )}
+      ) : null}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <SessionPool send={send} />
         <Routes>

@@ -11,6 +11,7 @@ import { WindowGrid } from './components/WindowGrid';
 import { SessionSwitcher } from './components/SessionSwitcher';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { ShaderWallpaper } from './components/ShaderWallpaper';
+import { ConfigPage } from './components/ConfigPage';
 import { Toaster } from './components/ui/sonner';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
@@ -126,6 +127,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   // so the landing page can still highlight/anchor to it. SessionPool derives the
   // same active id independently from useLocation.
   const onLanding = location.pathname === '/';
+  const onConfig = location.pathname === '/config';
   const activeSessionId = currentSessionName
     ? (allSessions.find((s) => s.name === currentSessionName)?.id ?? null)
     : null;
@@ -190,29 +192,32 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         />
       ) : null}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        <SessionPool send={send} />
+        {!onConfig && <SessionPool send={send} />}
         <Routes>
           <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
+          <Route path="/config" element={config ? <ConfigPage config={config} send={send} /> : null} />
           <Route path="/s/:sessionName" element={<SessionView send={send} />} />
           <Route path="/s/:sessionName/w/:windowName" element={<SessionView send={send} />} />
         </Routes>
         {/* Single Overlay for both landing and session views. On landing,
             activeSessionId is null, so anchor to the last-visited session (its
             prompts — rename/new — target that session; new-session ignores it). */}
-        <Overlay
-          sessionId={activeSessionId ?? currentSessionId ?? allSessions[0]?.id ?? ''}
-          send={send}
-          config={config}
-        />
+        {!onConfig && (
+          <Overlay
+            sessionId={activeSessionId ?? currentSessionId ?? allSessions[0]?.id ?? ''}
+            send={send}
+            config={config}
+          />
+        )}
         {/* Live window-grid thumbnails (prefix + w). Sits above the pane region
             like the Overlay; mounts lazily on first open and stays warm. */}
-        <WindowGrid send={send} />
+        {!onConfig && <WindowGrid send={send} />}
         {/* Session/window switcher modal (prefix + s). Also above the pane region;
             lazily mounted on first open and kept warm like the grid. */}
-        <SessionSwitcher send={send} />
+        {!onConfig && <SessionSwitcher send={send} />}
       </div>
       {/* No status bar on the landing page (it has its own full-height chrome). */}
-      {!onLanding && <StatusBar sessionId={activeSessionId ?? ''} send={send} />}
+      {!onLanding && !onConfig && <StatusBar sessionId={activeSessionId ?? ''} send={send} />}
     </div>
   );
 }

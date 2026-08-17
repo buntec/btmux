@@ -32,8 +32,19 @@ export type ClientMessage =
         colors?: string;
         font_family?: string;
         font_weight?: number;
+        font_size?: number;
+        animations?: boolean;
+        wallpaper?: string;
+        wallpaper_shader?: string;
+        wallpaper_opacity?: number;
+        wallpaper_blur?: number;
+        wallpaper_saturate?: number;
+        wallpaper_speed?: number;
+        wallpaper_seed?: string;
         shader?: string;
         pane_switch_shader?: string;
+        pane_switch_intensity?: number;
+        pane_switch_duration?: number;
       };
     }
   | { type: 'write_pane_input'; session_id: string; pane_id: string; text: string };

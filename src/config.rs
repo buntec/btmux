@@ -1014,7 +1014,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         None
     };
     let wallpaper_blur = if has_wallpaper {
-        Some(file.wallpaper_blur.unwrap_or(0.0).max(0.0))
+        Some(file.wallpaper_blur.unwrap_or(0.0).clamp(0.0, 50.0))
     } else {
         None
     };
@@ -1025,7 +1025,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     };
     let pane_switch_intensity = file.pane_switch_intensity.unwrap_or(1.0).clamp(0.0, 3.0);
     let pane_switch_duration = file.pane_switch_duration.unwrap_or(1.0).clamp(0.1, 5.0);
-    let wallpaper_speed = file.wallpaper_speed.unwrap_or(1.0).clamp(0.0, 5.0);
+    let wallpaper_speed = file.wallpaper_speed.unwrap_or(1.0).clamp(0.0, 10.0);
     let wallpaper_seed = file
         .wallpaper_seed
         .clone()
@@ -1109,10 +1109,21 @@ pub struct ConfigUpdate {
     pub colors: Option<String>,
     pub font_family: Option<String>,
     pub font_weight: Option<u16>,
+    pub font_size: Option<f32>,
+    pub animations: Option<bool>,
+    pub wallpaper: Option<String>,
+    pub wallpaper_shader: Option<String>,
+    pub wallpaper_opacity: Option<f32>,
+    pub wallpaper_blur: Option<f32>,
+    pub wallpaper_saturate: Option<f32>,
+    pub wallpaper_speed: Option<f32>,
+    pub wallpaper_seed: Option<String>,
     /// Post-process effect name; the empty string clears it.
     pub shader: Option<String>,
     /// Pane-switch effect name; the empty string falls back to the default.
     pub pane_switch_shader: Option<String>,
+    pub pane_switch_intensity: Option<f32>,
+    pub pane_switch_duration: Option<f32>,
 }
 
 impl ConfigUpdate {
@@ -1128,11 +1139,44 @@ impl ConfigUpdate {
         if other.font_weight.is_some() {
             self.font_weight = other.font_weight;
         }
+        if other.font_size.is_some() {
+            self.font_size = other.font_size;
+        }
+        if other.animations.is_some() {
+            self.animations = other.animations;
+        }
+        if other.wallpaper.is_some() {
+            self.wallpaper = other.wallpaper.clone();
+        }
+        if other.wallpaper_shader.is_some() {
+            self.wallpaper_shader = other.wallpaper_shader.clone();
+        }
+        if other.wallpaper_opacity.is_some() {
+            self.wallpaper_opacity = other.wallpaper_opacity;
+        }
+        if other.wallpaper_blur.is_some() {
+            self.wallpaper_blur = other.wallpaper_blur;
+        }
+        if other.wallpaper_saturate.is_some() {
+            self.wallpaper_saturate = other.wallpaper_saturate;
+        }
+        if other.wallpaper_speed.is_some() {
+            self.wallpaper_speed = other.wallpaper_speed;
+        }
+        if other.wallpaper_seed.is_some() {
+            self.wallpaper_seed = other.wallpaper_seed.clone();
+        }
         if other.shader.is_some() {
             self.shader = other.shader.clone();
         }
         if other.pane_switch_shader.is_some() {
             self.pane_switch_shader = other.pane_switch_shader.clone();
+        }
+        if other.pane_switch_intensity.is_some() {
+            self.pane_switch_intensity = other.pane_switch_intensity;
+        }
+        if other.pane_switch_duration.is_some() {
+            self.pane_switch_duration = other.pane_switch_duration;
         }
     }
 }
@@ -1155,11 +1199,44 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     if let Some(weight) = overrides.font_weight {
         file.terminal.font_weight = Some(weight);
     }
+    if let Some(size) = overrides.font_size {
+        file.terminal.font_size = Some(size.clamp(6.0, 72.0));
+    }
+    if let Some(animations) = overrides.animations {
+        file.animations = animations;
+    }
+    if let Some(wallpaper) = &overrides.wallpaper {
+        file.wallpaper = Some(wallpaper.clone()).filter(|s| !s.is_empty());
+    }
+    if let Some(shader) = &overrides.wallpaper_shader {
+        file.wallpaper_shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    }
+    if let Some(opacity) = overrides.wallpaper_opacity {
+        file.wallpaper_opacity = Some(opacity.clamp(0.0, 1.0));
+    }
+    if let Some(blur) = overrides.wallpaper_blur {
+        file.wallpaper_blur = Some(blur.clamp(0.0, 50.0));
+    }
+    if let Some(saturate) = overrides.wallpaper_saturate {
+        file.wallpaper_saturate = Some(saturate.clamp(0.0, 1.0));
+    }
+    if let Some(speed) = overrides.wallpaper_speed {
+        file.wallpaper_speed = Some(speed.clamp(0.0, 10.0));
+    }
+    if let Some(seed) = &overrides.wallpaper_seed {
+        file.wallpaper_seed = Some(seed.clone());
+    }
     if let Some(shader) = &overrides.shader {
         file.shader = Some(shader.clone()).filter(|s| !s.is_empty());
     }
     if let Some(shader) = &overrides.pane_switch_shader {
         file.pane_switch_shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    }
+    if let Some(intensity) = overrides.pane_switch_intensity {
+        file.pane_switch_intensity = Some(intensity.clamp(0.0, 3.0));
+    }
+    if let Some(duration) = overrides.pane_switch_duration {
+        file.pane_switch_duration = Some(duration.clamp(0.1, 5.0));
     }
 
     resolve_binds(&file)
@@ -1191,5 +1268,58 @@ mod tests {
         assert_eq!(resolved.pane_switch_intensity, 0.25);
         assert_eq!(resolved.pane_switch_duration, 0.5);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
+    }
+
+    #[test]
+    fn styling_overrides_are_session_only_and_fully_resolved() {
+        let file = FileConfig::default();
+        let resolved = resolve_with_overrides(
+            &file,
+            &ConfigUpdate {
+                colors: Some(String::new()),
+                font_family: Some("Departure Mono".to_string()),
+                font_weight: Some(400),
+                font_size: Some(21.0),
+                animations: Some(false),
+                wallpaper: Some("https://example.com/wallpaper.png".to_string()),
+                wallpaper_shader: Some(String::new()),
+                wallpaper_opacity: Some(0.65),
+                wallpaper_blur: Some(8.0),
+                wallpaper_saturate: Some(0.75),
+                wallpaper_speed: Some(0.5),
+                wallpaper_seed: Some("preview".to_string()),
+                shader: Some("vignette".to_string()),
+                pane_switch_shader: Some("pixelate".to_string()),
+                pane_switch_intensity: Some(1.5),
+                pane_switch_duration: Some(2.0),
+            },
+        );
+
+        assert_eq!(resolved.active_color_scheme, None);
+        assert_eq!(
+            resolved.terminal.font_family.as_deref(),
+            Some("Departure Mono")
+        );
+        assert_eq!(resolved.terminal.font_weight, Some(400));
+        assert_eq!(resolved.terminal.font_size, Some(21.0));
+        assert!(!resolved.animations);
+        assert_eq!(
+            resolved.wallpaper.as_deref(),
+            Some("https://example.com/wallpaper.png")
+        );
+        assert_eq!(resolved.wallpaper_shader, None);
+        assert_eq!(resolved.wallpaper_opacity, Some(0.65));
+        assert_eq!(resolved.wallpaper_blur, Some(8.0));
+        assert_eq!(resolved.wallpaper_saturate, Some(0.75));
+        assert_eq!(resolved.wallpaper_speed, 0.5);
+        assert_eq!(resolved.wallpaper_seed, "preview");
+        assert_eq!(resolved.shader.as_deref(), Some("vignette"));
+        assert_eq!(resolved.pane_switch_shader.as_deref(), Some("pixelate"));
+        assert_eq!(resolved.pane_switch_intensity, 1.5);
+        assert_eq!(resolved.pane_switch_duration, 2.0);
+
+        assert_eq!(file.wallpaper_shader.as_deref(), Some("plasma"));
+        assert_eq!(file.terminal.font_size, Some(18.0));
+        assert!(file.animations);
     }
 }

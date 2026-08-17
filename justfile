@@ -52,6 +52,11 @@ setup:
     cd frontend && bun install
     cargo fetch
 
+# Refresh the vendored Radiant shader catalog at the revision pinned by the script.
+# Pass a local checkout to avoid downloading: just sync-radiant /path/to/radiant
+sync-radiant source="":
+    node scripts/sync-radiant.mjs {{source}}
+
 # Clean build artifacts
 clean:
     cargo clean

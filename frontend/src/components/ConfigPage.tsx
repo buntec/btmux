@@ -6,7 +6,7 @@ import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
 import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../hooks/useFontLoader';
 import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
-import { WALLPAPER_SHADERS } from '../lib/wallpaperShaders';
+import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { TerminalShaderPreview } from './TerminalShaderPreview';
 import { Button } from './ui/button';
@@ -36,6 +36,8 @@ type Draft = {
   wallpaperSaturate: number;
   wallpaperSpeed: number;
   wallpaperSeed: string;
+  wallpaperFollowsMouse: boolean;
+  wallpaperFollowsKeyboard: boolean;
   shader: string;
   paneSwitchShader: string;
   paneSwitchIntensity: number;
@@ -94,11 +96,7 @@ function randomItem(words: string[]): string {
 }
 
 function generateWallpaperSeed(): string {
-  return [
-    randomItem(SEED_ADJECTIVES),
-    randomItem(SEED_NOUNS),
-    randomItem(SEED_ENDINGS),
-  ].join('-');
+  return [randomItem(SEED_ADJECTIVES), randomItem(SEED_NOUNS), randomItem(SEED_ENDINGS)].join('-');
 }
 
 function initialDraft(config: ClientConfig): Draft {
@@ -115,6 +113,8 @@ function initialDraft(config: ClientConfig): Draft {
     wallpaperSaturate: config.wallpaper_saturate ?? 1,
     wallpaperSpeed: config.wallpaper_speed,
     wallpaperSeed: config.wallpaper_seed,
+    wallpaperFollowsMouse: config.wallpaper_shader_follows_mouse_cursor,
+    wallpaperFollowsKeyboard: config.wallpaper_shader_follows_keyboard_input,
     shader: config.shader ?? '',
     paneSwitchShader: config.pane_switch_shader ?? '',
     paneSwitchIntensity: config.pane_switch_intensity,
@@ -138,6 +138,8 @@ function toToml(draft: Draft): string {
     `wallpaper-saturate = ${draft.wallpaperSaturate.toFixed(2)}`,
     `wallpaper-speed = ${draft.wallpaperSpeed.toFixed(2)}`,
     `wallpaper-seed = ${quote(draft.wallpaperSeed)}`,
+    `wallpaper-shader-follows-mouse-cursor = ${draft.wallpaperFollowsMouse}`,
+    `wallpaper-shader-follows-keyboard-input = ${draft.wallpaperFollowsKeyboard}`,
     draft.shader ? `shader = ${quote(draft.shader)}` : null,
     draft.paneSwitchShader ? `pane-switch-shader = ${quote(draft.paneSwitchShader)}` : null,
     `pane-switch-intensity = ${draft.paneSwitchIntensity.toFixed(2)}`,
@@ -237,13 +239,25 @@ export function ConfigPage({ config, send }: Props) {
                     <FieldLabel htmlFor="wallpaper-shader">Procedural shader</FieldLabel>
                     <Select
                       value={draft.wallpaperShader || 'none'}
-                      onValueChange={(value) => update('wallpaperShader', value === 'none' ? '' : value, { wallpaper_shader: value === 'none' ? '' : value })}
+                      onValueChange={(value) =>
+                        update('wallpaperShader', value === 'none' ? '' : value, {
+                          wallpaper_shader: value === 'none' ? '' : value,
+                        })
+                      }
                     >
-                      <SelectTrigger id="wallpaper-shader" className="w-full"><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectGroup>
-                        <SelectItem value="none">None</SelectItem>
-                        {WALLPAPER_SHADERS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
-                      </SelectGroup></SelectContent>
+                      <SelectTrigger id="wallpaper-shader" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="none">None</SelectItem>
+                          {WALLPAPER_SHADERS.map((item) => (
+                            <SelectItem key={item.id} value={item.id}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
                     </Select>
                   </Field>
                   <Field>
@@ -256,10 +270,38 @@ export function ConfigPage({ config, send }: Props) {
                       placeholder="https://… or ~/Pictures/wallpaper.png"
                     />
                   </Field>
-                  <RangeField label="Opacity" value={draft.wallpaperOpacity} min={0} max={1} step={0.01} onChange={(value) => update('wallpaperOpacity', value, { wallpaper_opacity: value })} />
-                  <RangeField label="Blur" value={draft.wallpaperBlur} min={0} max={50} step={1} onChange={(value) => update('wallpaperBlur', value, { wallpaper_blur: value })} />
-                  <RangeField label="Saturation" value={draft.wallpaperSaturate} min={0} max={1} step={0.01} onChange={(value) => update('wallpaperSaturate', value, { wallpaper_saturate: value })} />
-                  <RangeField label="Animation speed" value={draft.wallpaperSpeed} min={0} max={10} step={0.05} onChange={(value) => update('wallpaperSpeed', value, { wallpaper_speed: value })} />
+                  <RangeField
+                    label="Opacity"
+                    value={draft.wallpaperOpacity}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onChange={(value) => update('wallpaperOpacity', value, { wallpaper_opacity: value })}
+                  />
+                  <RangeField
+                    label="Blur"
+                    value={draft.wallpaperBlur}
+                    min={0}
+                    max={50}
+                    step={1}
+                    onChange={(value) => update('wallpaperBlur', value, { wallpaper_blur: value })}
+                  />
+                  <RangeField
+                    label="Saturation"
+                    value={draft.wallpaperSaturate}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onChange={(value) => update('wallpaperSaturate', value, { wallpaper_saturate: value })}
+                  />
+                  <RangeField
+                    label="Animation speed"
+                    value={draft.wallpaperSpeed}
+                    min={0}
+                    max={10}
+                    step={0.05}
+                    onChange={(value) => update('wallpaperSpeed', value, { wallpaper_speed: value })}
+                  />
                   <Field>
                     <FieldLabel htmlFor="wallpaper-seed">Seed</FieldLabel>
                     <div className="flex items-center gap-2">
@@ -283,6 +325,30 @@ export function ConfigPage({ config, send }: Props) {
                       </Button>
                     </div>
                   </Field>
+                  <Field orientation="horizontal">
+                    <FieldContent>
+                      <FieldLabel htmlFor="wallpaper-follows-mouse">Follow mouse cursor</FieldLabel>
+                    </FieldContent>
+                    <Switch
+                      id="wallpaper-follows-mouse"
+                      checked={draft.wallpaperFollowsMouse}
+                      onCheckedChange={(value) =>
+                        update('wallpaperFollowsMouse', value, { wallpaper_shader_follows_mouse_cursor: value })
+                      }
+                    />
+                  </Field>
+                  <Field orientation="horizontal">
+                    <FieldContent>
+                      <FieldLabel htmlFor="wallpaper-follows-keyboard">Follow keyboard input</FieldLabel>
+                    </FieldContent>
+                    <Switch
+                      id="wallpaper-follows-keyboard"
+                      checked={draft.wallpaperFollowsKeyboard}
+                      onCheckedChange={(value) =>
+                        update('wallpaperFollowsKeyboard', value, { wallpaper_shader_follows_keyboard_input: value })
+                      }
+                    />
+                  </Field>
                 </FieldGroup>
               </FieldSet>
             </FieldGroup>
@@ -292,12 +358,25 @@ export function ConfigPage({ config, send }: Props) {
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="color-scheme">Color scheme</FieldLabel>
-                <Select value={draft.colors || 'none'} onValueChange={(value) => update('colors', value === 'none' ? '' : value, { colors: value === 'none' ? '' : value })}>
-                  <SelectTrigger id="color-scheme" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>
-                    <SelectItem value="none">Built-in default</SelectItem>
-                    {config.color_schemes.map((scheme) => <SelectItem key={scheme} value={scheme}>{scheme}</SelectItem>)}
-                  </SelectGroup></SelectContent>
+                <Select
+                  value={draft.colors || 'none'}
+                  onValueChange={(value) =>
+                    update('colors', value === 'none' ? '' : value, { colors: value === 'none' ? '' : value })
+                  }
+                >
+                  <SelectTrigger id="color-scheme" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">Built-in default</SelectItem>
+                      {config.color_schemes.map((scheme) => (
+                        <SelectItem key={scheme} value={scheme}>
+                          {scheme}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
                 </Select>
               </Field>
               <Field>
@@ -314,19 +393,45 @@ export function ConfigPage({ config, send }: Props) {
                     send({ type: 'update_config', update: { font_family: value, font_weight: nextWeight } });
                   }}
                 >
-                  <SelectTrigger id="font-family" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>
-                    {config.fonts.map((item) => <SelectItem key={item.family} value={item.family}>{item.family}</SelectItem>)}
-                  </SelectGroup></SelectContent>
+                  <SelectTrigger id="font-family" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {config.fonts.map((item) => (
+                        <SelectItem key={item.family} value={item.family}>
+                          {item.family}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
                 </Select>
               </Field>
-              <RangeField label="Font size" value={draft.fontSize} min={8} max={36} step={1} onChange={(value) => update('fontSize', value, { font_size: value })} />
-              <RangeField label="Font weight" value={draft.fontWeight} min={weightMin} max={weightMax} step={100} onChange={(value) => update('fontWeight', value, { font_weight: value })} />
+              <RangeField
+                label="Font size"
+                value={draft.fontSize}
+                min={8}
+                max={36}
+                step={1}
+                onChange={(value) => update('fontSize', value, { font_size: value })}
+              />
+              <RangeField
+                label="Font weight"
+                value={draft.fontWeight}
+                min={weightMin}
+                max={weightMax}
+                step={100}
+                onChange={(value) => update('fontWeight', value, { font_weight: value })}
+              />
               <Field orientation="horizontal">
                 <FieldContent>
                   <FieldLabel htmlFor="animations">Animations</FieldLabel>
                 </FieldContent>
-                <Switch id="animations" checked={draft.animations} onCheckedChange={(value) => update('animations', value, { animations: value })} />
+                <Switch
+                  id="animations"
+                  checked={draft.animations}
+                  onCheckedChange={(value) => update('animations', value, { animations: value })}
+                />
               </Field>
             </FieldGroup>
           </TabsContent>
@@ -335,12 +440,25 @@ export function ConfigPage({ config, send }: Props) {
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="shader">Terminal shader</FieldLabel>
-                <Select value={draft.shader || 'none'} onValueChange={(value) => update('shader', value === 'none' ? '' : value, { shader: value === 'none' ? '' : value })}>
-                  <SelectTrigger id="shader" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>
-                    <SelectItem value="none">None</SelectItem>
-                    {SHADER_EFFECTS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
-                  </SelectGroup></SelectContent>
+                <Select
+                  value={draft.shader || 'none'}
+                  onValueChange={(value) =>
+                    update('shader', value === 'none' ? '' : value, { shader: value === 'none' ? '' : value })
+                  }
+                >
+                  <SelectTrigger id="shader" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">None</SelectItem>
+                      {SHADER_EFFECTS.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
                 </Select>
               </Field>
               <Field>
@@ -354,11 +472,19 @@ export function ConfigPage({ config, send }: Props) {
                     setPaneSwitchPreviewKey((key) => key + 1);
                   }}
                 >
-                  <SelectTrigger id="pane-switch-shader" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>
-                    <SelectItem value="default">Default</SelectItem>
-                    {PANE_SWITCH_EFFECTS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
-                  </SelectGroup></SelectContent>
+                  <SelectTrigger id="pane-switch-shader" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="default">Default</SelectItem>
+                      {PANE_SWITCH_EFFECTS.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
                 </Select>
               </Field>
               <RangeField

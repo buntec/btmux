@@ -41,6 +41,8 @@ export type ClientMessage =
         wallpaper_saturate?: number;
         wallpaper_speed?: number;
         wallpaper_seed?: string;
+        wallpaper_shader_follows_mouse_cursor?: boolean;
+        wallpaper_shader_follows_keyboard_input?: boolean;
         shader?: string;
         pane_switch_shader?: string;
         pane_switch_intensity?: number;

@@ -9,6 +9,7 @@ import { withAlpha } from '../lib/chrome-colors';
 import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders';
 import { baseShaderSrc } from '../lib/baseShader';
 import { pumpRenders } from '../lib/pumpRenders';
+import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 
 interface Props {
   sessionId: string;
@@ -284,6 +285,12 @@ export function TerminalPane({
           term.onData((data: string) => {
             if (ws!.readyState === WebSocket.OPEN) ws!.send(data);
             if (term.viewportY !== 0) term.scrollToBottom();
+            const rect = container.getBoundingClientRect();
+            const cursor = term.buffer.active;
+            announceWallpaperKeyboardCursor(
+              rect.left + ((cursor.cursorX + 0.5) / Math.max(1, term.cols)) * rect.width,
+              rect.top + ((cursor.cursorY + 0.5) / Math.max(1, term.rows)) * rect.height,
+            );
           });
 
           term.onResize(({ cols, rows }: { cols: number; rows: number }) => {

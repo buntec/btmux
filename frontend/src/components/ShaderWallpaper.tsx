@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { randomizeWallpaper } from '../lib/wallpaperRandom';
 import { findWallpaperShader } from '../lib/wallpaperShaders';
+import { findRadiantShader } from '../lib/wallpaperCatalog';
+import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
 
 const VERTEX_SRC = `#version 300 es
 void main() {
@@ -55,9 +57,21 @@ interface ShaderWallpaperProps {
   speed: number;
   animated: boolean;
   seed: string;
+  followsMouseCursor: boolean;
+  followsKeyboardInput: boolean;
 }
 
-export function ShaderWallpaper({ shaderId, opacity, blur, saturate, speed, animated, seed }: ShaderWallpaperProps) {
+function NativeShaderWallpaper({
+  shaderId,
+  opacity,
+  blur,
+  saturate,
+  speed,
+  animated,
+  seed,
+  followsMouseCursor,
+  followsKeyboardInput,
+}: ShaderWallpaperProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [contextGeneration, setContextGeneration] = useState(0);
   const effect = findWallpaperShader(shaderId);
@@ -105,10 +119,32 @@ export function ShaderWallpaper({ shaderId, opacity, blur, saturate, speed, anim
     const color3 = gl.getUniformLocation(program, 'u_color3');
     const random1 = gl.getUniformLocation(program, 'u_random1');
     const random2 = gl.getUniformLocation(program, 'u_random2');
+    const pointer = gl.getUniformLocation(program, 'u_pointer');
+    const pointerActive = gl.getUniformLocation(program, 'u_pointer_active');
     const randomized = randomizeWallpaper(shaderId, seed);
     const startedAt = performance.now();
     let rafId = 0;
     let disposed = false;
+    let pointerX = -1;
+    let pointerY = -1;
+    let pointerIsActive = false;
+
+    const setPointer = (clientX: number, clientY: number) => {
+      const rect = canvas.getBoundingClientRect();
+      pointerX = ((clientX - rect.left) / rect.width) * canvas.width;
+      pointerY = (1 - (clientY - rect.top) / rect.height) * canvas.height;
+      pointerIsActive = true;
+      if (!animated) draw(performance.now());
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (followsMouseCursor) setPointer(event.clientX, event.clientY);
+    };
+    const handleKeyboardCursor = (event: Event) => {
+      if (!followsKeyboardInput) return;
+      const { x, y } = (event as CustomEvent<WallpaperKeyboardCursorDetail>).detail;
+      setPointer(x, y);
+    };
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -133,6 +169,8 @@ export function ShaderWallpaper({ shaderId, opacity, blur, saturate, speed, anim
       gl.uniform3fv(color3, randomized.colors[2]);
       gl.uniform4fv(random1, randomized.values.slice(0, 4));
       gl.uniform4fv(random2, randomized.values.slice(4, 8));
+      gl.uniform2f(pointer, pointerX, pointerY);
+      gl.uniform1f(pointerActive, pointerIsActive ? 1 : 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
 
@@ -157,6 +195,8 @@ export function ShaderWallpaper({ shaderId, opacity, blur, saturate, speed, anim
     };
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('resize', handleResize);
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    window.addEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
     start();
 
     return () => {
@@ -164,11 +204,13 @@ export function ShaderWallpaper({ shaderId, opacity, blur, saturate, speed, anim
       cancelAnimationFrame(rafId);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
       canvas.removeEventListener('webglcontextlost', handleContextLost);
       canvas.removeEventListener('webglcontextrestored', handleContextRestored);
       gl.deleteProgram(program);
     };
-  }, [effect, shaderId, speed, animated, seed, contextGeneration]);
+  }, [effect, shaderId, speed, animated, seed, followsMouseCursor, followsKeyboardInput, contextGeneration]);
 
   if (!effect) return null;
 
@@ -187,5 +229,90 @@ export function ShaderWallpaper({ shaderId, opacity, blur, saturate, speed, anim
         pointerEvents: 'none',
       }}
     />
+  );
+}
+
+function RadiantShaderWallpaper({
+  shaderId,
+  opacity,
+  blur,
+  saturate,
+  speed,
+  animated,
+  seed,
+  followsMouseCursor,
+  followsKeyboardInput,
+}: ShaderWallpaperProps) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const shader = findRadiantShader(shaderId);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe || !shader) return;
+
+    const postRuntime = () => iframe.contentWindow?.postMessage({ type: 'btmux-runtime', animated, speed }, '*');
+    const postPointer = (clientX: number, clientY: number) => {
+      const rect = iframe.getBoundingClientRect();
+      iframe.contentWindow?.postMessage(
+        {
+          type: 'btmux-pointer',
+          x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+          y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
+          active: true,
+        },
+        '*',
+      );
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      if (followsMouseCursor) postPointer(event.clientX, event.clientY);
+    };
+    const handleKeyboardCursor = (event: Event) => {
+      if (!followsKeyboardInput) return;
+      const { x, y } = (event as CustomEvent<WallpaperKeyboardCursorDetail>).detail;
+      postPointer(x, y);
+    };
+
+    iframe.addEventListener('load', postRuntime);
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    window.addEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
+    postRuntime();
+    if (!followsMouseCursor && !followsKeyboardInput) {
+      iframe.contentWindow?.postMessage({ type: 'btmux-pointer', active: false }, '*');
+    }
+    return () => {
+      iframe.removeEventListener('load', postRuntime);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
+    };
+  }, [shader, speed, animated, followsMouseCursor, followsKeyboardInput]);
+
+  if (!shader) return null;
+  return (
+    <iframe
+      ref={iframeRef}
+      src={`/radiant/${shader.file}?seed=${encodeURIComponent(seed)}`}
+      title={shader.title}
+      aria-hidden="true"
+      sandbox="allow-scripts"
+      style={{
+        position: 'fixed',
+        border: 0,
+        inset: blur > 0 ? `${-blur * 2}px` : 0,
+        width: blur > 0 ? `calc(100% + ${blur * 4}px)` : '100%',
+        height: blur > 0 ? `calc(100% + ${blur * 4}px)` : '100%',
+        opacity,
+        filter: `blur(${blur}px) saturate(${saturate})`,
+        zIndex: -1,
+        pointerEvents: 'none',
+      }}
+    />
+  );
+}
+
+export function ShaderWallpaper(props: ShaderWallpaperProps) {
+  return findRadiantShader(props.shaderId) ? (
+    <RadiantShaderWallpaper {...props} />
+  ) : (
+    <NativeShaderWallpaper {...props} />
   );
 }

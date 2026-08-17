@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { ArrowLeft, Check, Clipboard, Dices, Play, RotateCcw, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -19,6 +19,7 @@ import { Slider } from './ui/slider';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Textarea } from './ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 interface Props {
   config: ClientConfig;
@@ -48,6 +49,21 @@ type Draft = {
 
 type DraftKey = keyof Draft;
 type ConfigUpdate = Extract<ClientMessage, { type: 'update_config' }>['update'];
+
+function IconAction({ label, children, disabled, ...props }: ComponentProps<typeof Button> & { label: string }) {
+  const button = (
+    <Button {...props} size="icon" disabled={disabled} aria-label={label}>
+      {children}
+    </Button>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{disabled ? <span className="inline-flex">{button}</span> : button}</TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 const SEED_ADJECTIVES = [
   'ancient',
@@ -321,23 +337,20 @@ export function ConfigPage({ config, send }: Props) {
               <ArrowLeft />
             </Button>
             <div className="hidden min-w-0 sm:block">
-              <h1 className="truncate text-base font-semibold">Appearance config</h1>
+              <h1 className="truncate text-base font-semibold">Appearance</h1>
               <p className="truncate text-xs text-muted-foreground">Live session preview</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button onClick={apply} disabled={dirty.size === 0}>
-              <Upload data-icon="inline-start" />
-              Apply to current session
-            </Button>
-            <Button variant="outline" onClick={reset}>
-              <RotateCcw data-icon="inline-start" />
-              Reset
-            </Button>
-            <Button onClick={copy}>
-              {copied ? <Check data-icon="inline-start" /> : <Clipboard data-icon="inline-start" />}
-              {copied ? 'Copied' : 'Copy settings to clipboard'}
-            </Button>
+            <IconAction label="Apply to current session" onClick={apply} disabled={dirty.size === 0}>
+              <Upload />
+            </IconAction>
+            <IconAction label="Reset" variant="outline" onClick={reset}>
+              <RotateCcw />
+            </IconAction>
+            <IconAction label="Copy settings to clipboard" onClick={copy}>
+              {copied ? <Check /> : <Clipboard />}
+            </IconAction>
           </div>
         </div>
       </header>

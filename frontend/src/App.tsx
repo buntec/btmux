@@ -13,6 +13,7 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { ShaderWallpaper } from './components/ShaderWallpaper';
 import { ConfigPage } from './components/ConfigPage';
 import { Toaster } from './components/ui/sonner';
+import { TooltipProvider } from './components/ui/tooltip';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from './hooks/useFontLoader';
@@ -284,9 +285,11 @@ export function App() {
 
   return (
     <BrowserRouter>
-      <ConnectionBanner />
-      <Toaster position="top-right" />
-      <AppInner send={send} />
+      <TooltipProvider>
+        <ConnectionBanner />
+        <Toaster position="top-right" />
+        <AppInner send={send} />
+      </TooltipProvider>
     </BrowserRouter>
   );
 }

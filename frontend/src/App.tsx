@@ -196,7 +196,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         />
       ) : null}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        {!onConfig && <SessionPool send={send} />}
+        <SessionPool send={send} />
         <Routes>
           <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
           <Route path="/config" element={config ? <ConfigPage config={config} send={send} /> : null} />

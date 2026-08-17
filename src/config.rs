@@ -633,6 +633,9 @@ pub struct ClientConfig {
     pub version: String,
     /// Available color scheme names from `~/.config/btmux/colors/`.
     pub color_schemes: Vec<String>,
+    /// Resolved themes for locally previewing available color schemes in the
+    /// browser without applying a session-only override.
+    pub color_scheme_themes: BTreeMap<String, Theme>,
     /// Currently active color scheme name (from `colors` in config.toml), or null.
     pub active_color_scheme: Option<String>,
     /// Bundled font families with their available weight ranges.
@@ -1074,6 +1077,12 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         other => (other.clone(), None),
     };
 
+    let color_schemes = list_color_schemes();
+    let color_scheme_themes = color_schemes
+        .iter()
+        .filter_map(|name| load_color_scheme(name).map(|base| (name.clone(), base.to_theme())))
+        .collect();
+
     ClientConfig {
         prefix: file
             .prefix
@@ -1104,7 +1113,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         window_sort: file.window_sort.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(6),
         version: VERSION.to_string(),
-        color_schemes: list_color_schemes(),
+        color_schemes,
+        color_scheme_themes,
         active_color_scheme: file.colors.clone(),
         fonts: BUNDLED_FONTS
             .iter()

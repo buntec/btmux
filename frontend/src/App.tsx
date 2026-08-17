@@ -168,33 +168,34 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   // the keep-alive pool persists across session switches.
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      {wallpaperShader ? (
-        <ShaderWallpaper
-          shaderId={wallpaperShader}
-          opacity={wallpaperOpacity}
-          blur={wallpaperBlur}
-          saturate={wallpaperSaturate}
-          speed={wallpaperSpeed}
-          animated={(config?.animations ?? true) && wallpaperSpeed > 0}
-          seed={wallpaperSeed}
-          followsMouseCursor={wallpaperFollowsMouse}
-          followsKeyboardInput={wallpaperFollowsKeyboard}
-        />
-      ) : wallpaper ? (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundImage: `url(${wallpaper})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            opacity: wallpaperOpacity,
-            filter: `blur(${wallpaperBlur}px) saturate(${wallpaperSaturate})`,
-            zIndex: -1,
-            pointerEvents: 'none',
-          }}
-        />
-      ) : null}
+      {!onConfig &&
+        (wallpaperShader ? (
+          <ShaderWallpaper
+            shaderId={wallpaperShader}
+            opacity={wallpaperOpacity}
+            blur={wallpaperBlur}
+            saturate={wallpaperSaturate}
+            speed={wallpaperSpeed}
+            animated={(config?.animations ?? true) && wallpaperSpeed > 0}
+            seed={wallpaperSeed}
+            followsMouseCursor={wallpaperFollowsMouse}
+            followsKeyboardInput={wallpaperFollowsKeyboard}
+          />
+        ) : wallpaper ? (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundImage: `url(${wallpaper})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              opacity: wallpaperOpacity,
+              filter: `blur(${wallpaperBlur}px) saturate(${wallpaperSaturate})`,
+              zIndex: -1,
+              pointerEvents: 'none',
+            }}
+          />
+        ) : null)}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <SessionPool send={send} />
         <Routes>

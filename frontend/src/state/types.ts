@@ -148,6 +148,8 @@ export interface ClientConfig {
   version: string;
   /** Available color scheme names from ~/.config/btmux/colors/. */
   color_schemes: string[];
+  /** Resolved themes used for local color-scheme previews on /config. */
+  color_scheme_themes: Record<string, Theme>;
   /** Currently active color scheme name, or null. */
   active_color_scheme: string | null;
   /** Bundled font families with weight ranges. */

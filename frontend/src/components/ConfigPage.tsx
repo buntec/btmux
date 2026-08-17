@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Check, Clipboard, Dices, Play, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Check, Clipboard, Dices, Play, RotateCcw, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { ClientMessage } from '../protocol/messages';
@@ -9,6 +9,7 @@ import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { useStore } from '../state/store';
+import { ShaderWallpaper } from './ShaderWallpaper';
 import { TerminalShaderPreview } from './TerminalShaderPreview';
 import { Button } from './ui/button';
 import { Field, FieldContent, FieldGroup, FieldLabel, FieldLegend, FieldSet } from './ui/field';
@@ -44,6 +45,9 @@ type Draft = {
   paneSwitchIntensity: number;
   paneSwitchDuration: number;
 };
+
+type DraftKey = keyof Draft;
+type ConfigUpdate = Extract<ClientMessage, { type: 'update_config' }>['update'];
 
 const SEED_ADJECTIVES = [
   'ancient',
@@ -154,6 +158,39 @@ function toToml(draft: Draft): string {
   return lines.filter((line) => line !== null).join('\n');
 }
 
+function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
+  const update: ConfigUpdate = {};
+  if (dirty.has('colors')) update.colors = draft.colors;
+  if (dirty.has('fontFamily')) update.font_family = draft.fontFamily;
+  if (dirty.has('fontWeight')) update.font_weight = draft.fontWeight;
+  if (dirty.has('fontSize')) update.font_size = draft.fontSize;
+  if (dirty.has('animations')) update.animations = draft.animations;
+  if (dirty.has('wallpaper')) update.wallpaper = draft.wallpaper;
+  if (dirty.has('wallpaperShader')) update.wallpaper_shader = draft.wallpaperShader;
+  if (dirty.has('wallpaperOpacity')) update.wallpaper_opacity = draft.wallpaperOpacity;
+  if (dirty.has('wallpaperBlur')) update.wallpaper_blur = draft.wallpaperBlur;
+  if (dirty.has('wallpaperSaturate')) update.wallpaper_saturate = draft.wallpaperSaturate;
+  if (dirty.has('wallpaperSpeed')) update.wallpaper_speed = draft.wallpaperSpeed;
+  if (dirty.has('wallpaperSeed')) update.wallpaper_seed = draft.wallpaperSeed;
+  if (dirty.has('wallpaperFollowsMouse')) {
+    update.wallpaper_shader_follows_mouse_cursor = draft.wallpaperFollowsMouse;
+  }
+  if (dirty.has('wallpaperFollowsKeyboard')) {
+    update.wallpaper_shader_follows_keyboard_input = draft.wallpaperFollowsKeyboard;
+  }
+  if (dirty.has('shader')) update.shader = draft.shader;
+  if (dirty.has('paneSwitchShader')) update.pane_switch_shader = draft.paneSwitchShader;
+  if (dirty.has('paneSwitchIntensity')) update.pane_switch_intensity = draft.paneSwitchIntensity;
+  if (dirty.has('paneSwitchDuration')) update.pane_switch_duration = draft.paneSwitchDuration;
+  return update;
+}
+
+function previewTheme(config: ClientConfig, draft: Draft, colorSchemeTouched: boolean) {
+  if (!colorSchemeTouched) return config.theme ?? DEFAULT_THEME;
+  if (!draft.colors) return DEFAULT_THEME;
+  return config.color_scheme_themes[draft.colors] ?? DEFAULT_THEME;
+}
+
 function RangeField({
   label,
   value,
@@ -184,21 +221,34 @@ export function ConfigPage({ config, send }: Props) {
   const navigate = useNavigate();
   const allSessions = useStore((state) => state.allSessions);
   const [draft, setDraft] = useState(() => initialDraft(config));
+  const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
+  const [colorSchemeTouched, setColorSchemeTouched] = useState(false);
   const [copied, setCopied] = useState(false);
   const [paneSwitchPreviewKey, setPaneSwitchPreviewKey] = useState(0);
   const toml = useMemo(() => toToml(draft), [draft]);
+  const theme = useMemo(() => previewTheme(config, draft, colorSchemeTouched), [config, draft, colorSchemeTouched]);
 
   // Config broadcasts are authoritative. This also refreshes the local draft
   // after reset, when the server replaces session-only overrides with the
   // values resolved from config.toml and built-in defaults.
   useEffect(() => {
     setDraft(initialDraft(config));
+    setDirty(new Set());
+    setColorSchemeTouched(false);
     setPaneSwitchPreviewKey((key) => key + 1);
   }, [config]);
 
-  const update = <K extends keyof Draft>(key: K, value: Draft[K], wire: Record<string, unknown>) => {
+  const update = <K extends DraftKey>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
-    send({ type: 'update_config', update: wire });
+    setDirty((current) => new Set(current).add(key));
+  };
+
+  const apply = () => {
+    const update = toConfigUpdate(draft, dirty);
+    if (Object.keys(update).length === 0) return;
+    send({ type: 'update_config', update });
+    setDirty(new Set());
+    toast.success('Settings applied to the current session');
   };
 
   const copy = async () => {
@@ -210,12 +260,41 @@ export function ConfigPage({ config, send }: Props) {
 
   const reset = () => {
     send({ type: 'reset_config' });
+    setDirty(new Set());
     toast.success('Settings reset to config.toml and defaults');
   };
 
   const font = config.fonts.find((item) => item.family === draft.fontFamily);
   const weightMin = font?.weight_min ?? 100;
   const weightMax = font?.weight_max ?? 900;
+  const previewWallpaper = draft.wallpaperShader ? (
+    <ShaderWallpaper
+      shaderId={draft.wallpaperShader}
+      opacity={draft.wallpaperOpacity}
+      blur={draft.wallpaperBlur}
+      saturate={draft.wallpaperSaturate}
+      speed={draft.wallpaperSpeed}
+      animated={draft.animations && draft.wallpaperSpeed > 0}
+      seed={draft.wallpaperSeed}
+      followsMouseCursor={draft.wallpaperFollowsMouse}
+      followsKeyboardInput={draft.wallpaperFollowsKeyboard}
+    />
+  ) : draft.wallpaper ? (
+    <div
+      aria-hidden="true"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundImage: `url(${draft.wallpaper})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        opacity: draft.wallpaperOpacity,
+        filter: `blur(${draft.wallpaperBlur}px) saturate(${draft.wallpaperSaturate})`,
+        zIndex: -1,
+        pointerEvents: 'none',
+      }}
+    />
+  ) : null;
 
   const goBack = () => {
     const lastSessionName = sessionStorage.getItem('btmux-last-session');
@@ -234,6 +313,7 @@ export function ConfigPage({ config, send }: Props) {
 
   return (
     <main className="relative h-full overflow-y-auto bg-transparent text-foreground">
+      {previewWallpaper}
       <header className="sticky top-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-8">
           <div className="flex min-w-0 items-center gap-3">
@@ -246,6 +326,10 @@ export function ConfigPage({ config, send }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button onClick={apply} disabled={dirty.size === 0}>
+              <Upload data-icon="inline-start" />
+              Apply to current session
+            </Button>
             <Button variant="outline" onClick={reset}>
               <RotateCcw data-icon="inline-start" />
               Reset
@@ -275,11 +359,7 @@ export function ConfigPage({ config, send }: Props) {
                     <FieldLabel htmlFor="wallpaper-shader">Procedural shader</FieldLabel>
                     <Select
                       value={draft.wallpaperShader || 'none'}
-                      onValueChange={(value) =>
-                        update('wallpaperShader', value === 'none' ? '' : value, {
-                          wallpaper_shader: value === 'none' ? '' : value,
-                        })
-                      }
+                      onValueChange={(value) => update('wallpaperShader', value === 'none' ? '' : value)}
                     >
                       <SelectTrigger id="wallpaper-shader" className="w-full">
                         <SelectValue />
@@ -301,8 +381,7 @@ export function ConfigPage({ config, send }: Props) {
                     <Input
                       id="wallpaper-url"
                       value={draft.wallpaper}
-                      onChange={(event) => setDraft((current) => ({ ...current, wallpaper: event.target.value }))}
-                      onBlur={() => send({ type: 'update_config', update: { wallpaper: draft.wallpaper } })}
+                      onChange={(event) => update('wallpaper', event.target.value)}
                       placeholder="https://… or ~/Pictures/wallpaper.png"
                     />
                   </Field>
@@ -312,7 +391,7 @@ export function ConfigPage({ config, send }: Props) {
                     min={0}
                     max={1}
                     step={0.01}
-                    onChange={(value) => update('wallpaperOpacity', value, { wallpaper_opacity: value })}
+                    onChange={(value) => update('wallpaperOpacity', value)}
                   />
                   <RangeField
                     label="Blur"
@@ -320,7 +399,7 @@ export function ConfigPage({ config, send }: Props) {
                     min={0}
                     max={50}
                     step={1}
-                    onChange={(value) => update('wallpaperBlur', value, { wallpaper_blur: value })}
+                    onChange={(value) => update('wallpaperBlur', value)}
                   />
                   <RangeField
                     label="Saturation"
@@ -328,7 +407,7 @@ export function ConfigPage({ config, send }: Props) {
                     min={0}
                     max={1}
                     step={0.01}
-                    onChange={(value) => update('wallpaperSaturate', value, { wallpaper_saturate: value })}
+                    onChange={(value) => update('wallpaperSaturate', value)}
                   />
                   <RangeField
                     label="Animation speed"
@@ -336,7 +415,7 @@ export function ConfigPage({ config, send }: Props) {
                     min={0}
                     max={10}
                     step={0.05}
-                    onChange={(value) => update('wallpaperSpeed', value, { wallpaper_speed: value })}
+                    onChange={(value) => update('wallpaperSpeed', value)}
                   />
                   <Field>
                     <FieldLabel htmlFor="wallpaper-seed">Seed</FieldLabel>
@@ -345,15 +424,14 @@ export function ConfigPage({ config, send }: Props) {
                         id="wallpaper-seed"
                         className="min-w-0"
                         value={draft.wallpaperSeed}
-                        onChange={(event) => setDraft((current) => ({ ...current, wallpaperSeed: event.target.value }))}
-                        onBlur={() => send({ type: 'update_config', update: { wallpaper_seed: draft.wallpaperSeed } })}
+                        onChange={(event) => update('wallpaperSeed', event.target.value)}
                       />
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => {
                           const seed = generateWallpaperSeed();
-                          update('wallpaperSeed', seed, { wallpaper_seed: seed });
+                          update('wallpaperSeed', seed);
                         }}
                       >
                         <Dices data-icon="inline-start" />
@@ -368,9 +446,7 @@ export function ConfigPage({ config, send }: Props) {
                     <Switch
                       id="wallpaper-follows-mouse"
                       checked={draft.wallpaperFollowsMouse}
-                      onCheckedChange={(value) =>
-                        update('wallpaperFollowsMouse', value, { wallpaper_shader_follows_mouse_cursor: value })
-                      }
+                      onCheckedChange={(value) => update('wallpaperFollowsMouse', value)}
                     />
                   </Field>
                   <Field orientation="horizontal">
@@ -380,9 +456,7 @@ export function ConfigPage({ config, send }: Props) {
                     <Switch
                       id="wallpaper-follows-keyboard"
                       checked={draft.wallpaperFollowsKeyboard}
-                      onCheckedChange={(value) =>
-                        update('wallpaperFollowsKeyboard', value, { wallpaper_shader_follows_keyboard_input: value })
-                      }
+                      onCheckedChange={(value) => update('wallpaperFollowsKeyboard', value)}
                     />
                   </Field>
                 </FieldGroup>
@@ -396,9 +470,10 @@ export function ConfigPage({ config, send }: Props) {
                 <FieldLabel htmlFor="color-scheme">Color scheme</FieldLabel>
                 <Select
                   value={draft.colors || 'none'}
-                  onValueChange={(value) =>
-                    update('colors', value === 'none' ? '' : value, { colors: value === 'none' ? '' : value })
-                  }
+                  onValueChange={(value) => {
+                    setColorSchemeTouched(true);
+                    update('colors', value === 'none' ? '' : value);
+                  }}
                 >
                   <SelectTrigger id="color-scheme" className="w-full">
                     <SelectValue />
@@ -425,8 +500,8 @@ export function ConfigPage({ config, send }: Props) {
                       nextFont?.weight_max ?? 900,
                       Math.max(nextFont?.weight_min ?? 100, draft.fontWeight),
                     );
-                    setDraft((current) => ({ ...current, fontFamily: value, fontWeight: nextWeight }));
-                    send({ type: 'update_config', update: { font_family: value, font_weight: nextWeight } });
+                    update('fontFamily', value);
+                    update('fontWeight', nextWeight);
                   }}
                 >
                   <SelectTrigger id="font-family" className="w-full">
@@ -449,7 +524,7 @@ export function ConfigPage({ config, send }: Props) {
                 min={8}
                 max={36}
                 step={1}
-                onChange={(value) => update('fontSize', value, { font_size: value })}
+                onChange={(value) => update('fontSize', value)}
               />
               <RangeField
                 label="Font weight"
@@ -457,7 +532,7 @@ export function ConfigPage({ config, send }: Props) {
                 min={weightMin}
                 max={weightMax}
                 step={100}
-                onChange={(value) => update('fontWeight', value, { font_weight: value })}
+                onChange={(value) => update('fontWeight', value)}
               />
               <Field orientation="horizontal">
                 <FieldContent>
@@ -466,7 +541,7 @@ export function ConfigPage({ config, send }: Props) {
                 <Switch
                   id="animations"
                   checked={draft.animations}
-                  onCheckedChange={(value) => update('animations', value, { animations: value })}
+                  onCheckedChange={(value) => update('animations', value)}
                 />
               </Field>
             </FieldGroup>
@@ -478,9 +553,7 @@ export function ConfigPage({ config, send }: Props) {
                 <FieldLabel htmlFor="shader">Terminal shader</FieldLabel>
                 <Select
                   value={draft.shader || 'none'}
-                  onValueChange={(value) =>
-                    update('shader', value === 'none' ? '' : value, { shader: value === 'none' ? '' : value })
-                  }
+                  onValueChange={(value) => update('shader', value === 'none' ? '' : value)}
                 >
                   <SelectTrigger id="shader" className="w-full">
                     <SelectValue />
@@ -502,9 +575,7 @@ export function ConfigPage({ config, send }: Props) {
                 <Select
                   value={draft.paneSwitchShader || 'default'}
                   onValueChange={(value) => {
-                    update('paneSwitchShader', value === 'default' ? '' : value, {
-                      pane_switch_shader: value === 'default' ? '' : value,
-                    });
+                    update('paneSwitchShader', value === 'default' ? '' : value);
                     setPaneSwitchPreviewKey((key) => key + 1);
                   }}
                 >
@@ -530,7 +601,7 @@ export function ConfigPage({ config, send }: Props) {
                 max={3}
                 step={0.05}
                 onChange={(value) => {
-                  update('paneSwitchIntensity', value, { pane_switch_intensity: value });
+                  update('paneSwitchIntensity', value);
                   setPaneSwitchPreviewKey((key) => key + 1);
                 }}
               />
@@ -541,7 +612,7 @@ export function ConfigPage({ config, send }: Props) {
                 max={5}
                 step={0.05}
                 onChange={(value) => {
-                  update('paneSwitchDuration', value, { pane_switch_duration: value });
+                  update('paneSwitchDuration', value);
                   setPaneSwitchPreviewKey((key) => key + 1);
                 }}
               />
@@ -573,7 +644,7 @@ export function ConfigPage({ config, send }: Props) {
                 paneSwitchIntensity={draft.paneSwitchIntensity}
                 paneSwitchDuration={draft.paneSwitchDuration}
                 paneSwitchPreviewKey={paneSwitchPreviewKey}
-                theme={config.theme ?? DEFAULT_THEME}
+                theme={theme}
                 fontFamily={draft.fontFamily}
                 fontWeight={draft.fontWeight}
                 fontSize={draft.fontSize}

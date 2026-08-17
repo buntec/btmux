@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ArrowLeft, Check, Clipboard, Dices, Play } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Check, Clipboard, Dices, Play, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { ClientMessage } from '../protocol/messages';
@@ -188,6 +188,14 @@ export function ConfigPage({ config, send }: Props) {
   const [paneSwitchPreviewKey, setPaneSwitchPreviewKey] = useState(0);
   const toml = useMemo(() => toToml(draft), [draft]);
 
+  // Config broadcasts are authoritative. This also refreshes the local draft
+  // after reset, when the server replaces session-only overrides with the
+  // values resolved from config.toml and built-in defaults.
+  useEffect(() => {
+    setDraft(initialDraft(config));
+    setPaneSwitchPreviewKey((key) => key + 1);
+  }, [config]);
+
   const update = <K extends keyof Draft>(key: K, value: Draft[K], wire: Record<string, unknown>) => {
     setDraft((current) => ({ ...current, [key]: value }));
     send({ type: 'update_config', update: wire });
@@ -198,6 +206,11 @@ export function ConfigPage({ config, send }: Props) {
     setCopied(true);
     toast.success('Settings copied to clipboard');
     window.setTimeout(() => setCopied(false), 1600);
+  };
+
+  const reset = () => {
+    send({ type: 'reset_config' });
+    toast.success('Settings reset to config.toml and defaults');
   };
 
   const font = config.fonts.find((item) => item.family === draft.fontFamily);
@@ -232,10 +245,16 @@ export function ConfigPage({ config, send }: Props) {
               <p className="truncate text-xs text-muted-foreground">Live session preview</p>
             </div>
           </div>
-          <Button onClick={copy}>
-            {copied ? <Check data-icon="inline-start" /> : <Clipboard data-icon="inline-start" />}
-            {copied ? 'Copied' : 'Copy settings to clipboard'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={reset}>
+              <RotateCcw data-icon="inline-start" />
+              Reset
+            </Button>
+            <Button onClick={copy}>
+              {copied ? <Check data-icon="inline-start" /> : <Clipboard data-icon="inline-start" />}
+              {copied ? 'Copied' : 'Copy settings to clipboard'}
+            </Button>
+          </div>
         </div>
       </header>
 

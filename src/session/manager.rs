@@ -96,6 +96,14 @@ impl SessionManager {
         &self.config
     }
 
+    /// Drop all session-only config overrides and restore the config resolved
+    /// from the last-loaded config file (including built-in defaults).
+    pub fn reset_config_overrides(&mut self) -> &ClientConfig {
+        self.overrides = ConfigUpdate::default();
+        self.config = crate::config::resolve_binds(&self.file_config);
+        &self.config
+    }
+
     pub fn set_shell(&mut self, shell: String) {
         self.shell = shell;
     }

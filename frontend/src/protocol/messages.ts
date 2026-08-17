@@ -49,6 +49,7 @@ export type ClientMessage =
         pane_switch_duration?: number;
       };
     }
+  | { type: 'reset_config' }
   | { type: 'write_pane_input'; session_id: string; pane_id: string; text: string };
 
 export interface ServerStateMessage {

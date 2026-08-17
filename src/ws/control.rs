@@ -117,6 +117,17 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) {
         return;
     }
 
+    if let ClientMessage::ResetConfig = &cmd {
+        let mut mgr = state.write().await;
+        let config = mgr.reset_config_overrides().clone();
+        let json = serde_json::to_string(&ServerMessage::Config {
+            config: Box::new(config),
+        })
+        .unwrap();
+        let _ = mgr.events().send(json);
+        return;
+    }
+
     let mut mgr = state.write().await;
     match cmd {
         ClientMessage::Split {
@@ -166,6 +177,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) {
         // Handled (and returned) above, before this write lock.
         ClientMessage::RunCommand { .. }
         | ClientMessage::UpdateConfig { .. }
+        | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. } => unreachable!(),
     }
 
@@ -330,6 +342,7 @@ enum ClientMessage {
     UpdateConfig {
         update: crate::config::ConfigUpdate,
     },
+    ResetConfig,
 }
 
 #[derive(Serialize)]

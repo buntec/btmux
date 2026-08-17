@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { randomizeRadiantParams, randomizeWallpaper } from '../lib/wallpaperRandom';
+import { randomizeRadiantColor, randomizeRadiantParams, randomizeWallpaper } from '../lib/wallpaperRandom';
 import { findWallpaperShader } from '../lib/wallpaperShaders';
 import { findRadiantShader } from '../lib/wallpaperCatalog';
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
@@ -304,6 +304,7 @@ function RadiantShaderWallpaper({
   }, [shader, speed, animated, seed, followsMouseCursor, followsKeyboardInput]);
 
   if (!shader) return null;
+  const randomizedColor = randomizeRadiantColor(shader.id, seed);
   const bleed = blur * 2;
   return (
     <div
@@ -313,6 +314,7 @@ function RadiantShaderWallpaper({
         inset: blur > 0 ? `${-bleed}px` : 0,
         opacity,
         filter: `blur(${blur}px) saturate(${saturate})`,
+        isolation: 'isolate',
         zIndex: -1,
         pointerEvents: 'none',
       }}
@@ -330,6 +332,17 @@ function RadiantShaderWallpaper({
           height: `${100 * RADIANT_RENDER_SCALE}%`,
           transform: `scale(${1 / RADIANT_RENDER_SCALE})`,
           transformOrigin: 'top left',
+          pointerEvents: 'none',
+        }}
+      />
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          backgroundColor: randomizedColor.cssColor,
+          mixBlendMode: 'color',
+          zIndex: 1,
           pointerEvents: 'none',
         }}
       />

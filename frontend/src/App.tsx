@@ -157,6 +157,8 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const wallpaperSaturate = config?.wallpaper_saturate ?? 1;
   const wallpaperSpeed = config?.wallpaper_speed ?? 1;
   const wallpaperSeed = config?.wallpaper_seed ?? 'btmux';
+  const wallpaperFollowsMouse = config?.wallpaper_shader_follows_mouse_cursor ?? true;
+  const wallpaperFollowsKeyboard = config?.wallpaper_shader_follows_keyboard_input ?? true;
 
   // Layout: a flex column owning the viewport. The pane region (flex:1) holds the
   // persistent SessionPool underneath, the route content (LandingPage or the
@@ -175,6 +177,8 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           speed={wallpaperSpeed}
           animated={(config?.animations ?? true) && wallpaperSpeed > 0}
           seed={wallpaperSeed}
+          followsMouseCursor={wallpaperFollowsMouse}
+          followsKeyboardInput={wallpaperFollowsKeyboard}
         />
       ) : wallpaper ? (
         <div

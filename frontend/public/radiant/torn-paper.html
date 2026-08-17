@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Torn Paper</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  .label {
+    position: fixed;
+    top: 20px;
+    left: 24px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: rgba(200, 149, 108, 0.5);
+    z-index: 10;
+    pointer-events: none;
+    user-select: none;
+  }
+</style>
+<style>.label{display:none!important}</style>
+<script>
+(function(){
+  var nativeRaf=window.requestAnimationFrame.bind(window), enabled=true, speed=1, epoch=performance.now(), virtualEpoch=epoch, pending=null;
+  var seed=new URLSearchParams(location.search).get('seed')||'btmux', hash=2166136261;
+  for(var i=0;i<seed.length;i++){hash^=seed.charCodeAt(i);hash=Math.imul(hash,16777619)}
+  Math.random=function(){hash+=0x6D2B79F5;var t=hash;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296};
+  window.requestAnimationFrame=function(callback){if(!enabled){pending=callback;return 0}return nativeRaf(function(now){if(enabled)callback(virtualEpoch+(now-epoch)*speed);else pending=callback})};
+  addEventListener('message',function(event){var data=event.data;if(!data)return;
+    if(data.type==='btmux-runtime'){virtualEpoch+=(performance.now()-epoch)*speed;epoch=performance.now();var wasEnabled=enabled;enabled=data.animated;speed=data.speed;if(enabled&&!wasEnabled&&pending){var callback=pending;pending=null;window.requestAnimationFrame(callback)}return}
+    if(data.type!=='btmux-pointer')return;
+    var canvas=document.querySelector('canvas');if(!canvas)return;
+    if(!data.active){canvas.dispatchEvent(new MouseEvent('mouseleave'));return}
+    var rect=canvas.getBoundingClientRect();canvas.dispatchEvent(new MouseEvent('mousemove',{clientX:rect.left+data.x*rect.width,clientY:rect.top+data.y*rect.height,bubbles:true}));
+  });
+})();
+</script>
+</head>
+<body>
+<div class="label">Torn Paper</div>
+<canvas id="canvas"></canvas>
+<script>
+// ─────────────────────────────────────────────
+// Torn Paper — Paper tearing apart to reveal warm light beneath
+// ─────────────────────────────────────────────
+(function () {
+  var canvas = document.getElementById('canvas');
+  var prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var urlParams = new URLSearchParams(window.location.search);
+  var pixelScale = parseFloat(urlParams.get('p')) || 1;
+
+  var gl = canvas.getContext('webgl', { alpha: true, antialias: false, preserveDrawingBuffer: false });
+  if (!gl) return;
+
+  // Tunable parameters
+  var TEAR_SPEED = 1.0;
+  var GLOW_INTENSITY = 1.0;
+
+  var vertSrc = [
+    'attribute vec2 a_pos;',
+    'void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }'
+  ].join('\n');
+
+  var fragSrc = [
+    'precision highp float;',
+    'uniform float u_time;',
+    'uniform vec2 u_res;',
+    'uniform float u_tearSpeed;',
+    'uniform float u_glowIntensity;',
+    'uniform vec2 u_mouse;',
+    '',
+    '#define PI 3.14159265359',
+    '#define CYCLE_DURATION 7.0',
+    '',
+    '// ── Hash functions ──',
+    'float hash(vec2 p) {',
+    '  vec3 p3 = fract(vec3(p.xyx) * 0.1031);',
+    '  p3 += dot(p3, p3.yzx + 33.33);',
+    '  return fract((p3.x + p3.y) * p3.z);',
+    '}',
+    '',
+    'vec2 hash2(vec2 p) {',
+    '  vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));',
+    '  p3 += dot(p3, p3.yzx + 33.33);',
+    '  return fract((p3.xx + p3.yz) * p3.zy);',
+    '}',
+    '',
+    '// ── Smooth value noise ──',
+    'float vnoise(vec2 p) {',
+    '  vec2 i = floor(p);',
+    '  vec2 f = fract(p);',
+    '  f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);',
+    '  return mix(',
+    '    mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),',
+    '    mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),',
+    '    f.y',
+    '  );',
+    '}',
+    '',
+    '// ── FBM — fractal Brownian motion ──',
+    'float fbm(vec2 p, int octaves) {',
+    '  float v = 0.0, a = 0.5;',
+    '  mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);',
+    '  for (int i = 0; i < 8; i++) {',
+    '    if (i >= octaves) break;',
+    '    v += a * vnoise(p);',
+    '    p = rot * p * 2.1 + vec2(1.7, 9.2);',
+    '    a *= 0.5;',
+    '  }',
+    '  return v;',
+    '}',
+    '',
+    '// ── High-detail FBM for fibrous tear edges ──',
+    'float fibrousFbm(vec2 p) {',
+    '  float v = 0.0, a = 0.5;',
+    '  mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);',
+    '  for (int i = 0; i < 7; i++) {',
+    '    v += a * vnoise(p);',
+    '    p = rot * p * 2.0 + vec2(3.1, 7.4);',
+    '    a *= 0.52;',
+    '  }',
+    '  return v;',
+    '}',
+    '',
+    '// ── Phase calculation ──',
+    '// Returns: x = phase (0-1 within current phase)',
+    '//          y = phase index (0=calm, 1=tear, 2=open, 3=reform)',
+    'vec2 getPhase(float t, float speed) {',
+    '  float cycle = CYCLE_DURATION / speed;',
+    '  float lt = mod(t, cycle);',
+    '  float norm = lt / cycle;',
+    '',
+    '  // Phase durations as fractions: calm 1.5/7, tear 1.5/7, open 2/7, reform 2/7',
+    '  float p0 = 1.5 / 7.0;',        // calm
+    '  float p1 = p0 + 1.5 / 7.0;',   // tear
+    '  float p2 = p1 + 2.0 / 7.0;',   // open
+    '  float p3 = 1.0;',               // reform
+    '',
+    '  if (norm < p0) return vec2(norm / p0, 0.0);',
+    '  if (norm < p1) return vec2((norm - p0) / (p1 - p0), 1.0);',
+    '  if (norm < p2) return vec2((norm - p1) / (p2 - p1), 2.0);',
+    '  return vec2((norm - p2) / (p3 - p2), 3.0);',
+    '}',
+    '',
+    '// ── Easing functions ──',
+    'float easeInQuad(float t) { return t * t; }',
+    'float easeOutCubic(float t) { float f = t - 1.0; return f * f * f + 1.0; }',
+    'float easeInOutCubic(float t) {',
+    '  return t < 0.5 ? 4.0 * t * t * t : 1.0 - pow(-2.0 * t + 2.0, 3.0) / 2.0;',
+    '}',
+    '',
+    '// ── Tear line distance ──',
+    '// Returns signed distance from the tear line (negative = one side, positive = other)',
+    'float tearLine(vec2 uv, float tearProgress, float cycleIndex) {',
+    '  // Impact point varies per cycle',
+    '  vec2 rnd = hash2(vec2(cycleIndex * 17.31, cycleIndex * 43.71));',
+    '  vec2 impactPoint = vec2(rnd.x * 0.6 - 0.3, rnd.y * 0.4 - 0.2);',
+    '',
+    '  // Direction of tear — mostly horizontal with slight angle',
+    '  float tearAngle = (rnd.x - 0.5) * 0.5;',
+    '  vec2 tearDir = normalize(vec2(cos(tearAngle), sin(tearAngle * 0.3)));',
+    '',
+    '  // Rotate UV relative to impact point',
+    '  vec2 relUV = uv - impactPoint;',
+    '',
+    '  // Primary tear axis — a wavy line perpendicular to tear direction',
+    '  float along = dot(relUV, tearDir);',
+    '  float perp = dot(relUV, vec2(-tearDir.y, tearDir.x));',
+    '',
+    '  // Fibrous, rough edge using multi-octave noise',
+    '  float roughness = fibrousFbm(vec2(along * 8.0 + cycleIndex * 7.0, perp * 3.0)) * 0.12;',
+    '  roughness += fibrousFbm(vec2(along * 22.0 + cycleIndex * 13.0, perp * 8.0)) * 0.04;',
+    '  roughness += vnoise(vec2(along * 50.0 + cycleIndex * 19.0, perp * 15.0)) * 0.015;',
+    '',
+    '  // The tear line itself',
+    '  float line = perp + roughness - 0.01;',
+    '',
+    '  return line;',
+    '}',
+    '',
+    '// ── Tear gap width based on progress and position ──',
+    'float tearGap(vec2 uv, float tearProgress, float cycleIndex) {',
+    '  vec2 rnd = hash2(vec2(cycleIndex * 17.31, cycleIndex * 43.71));',
+    '  vec2 impactPoint = vec2(rnd.x * 0.6 - 0.3, rnd.y * 0.4 - 0.2);',
+    '  float tearAngle = (rnd.x - 0.5) * 0.5;',
+    '  vec2 tearDir = normalize(vec2(cos(tearAngle), sin(tearAngle * 0.3)));',
+    '',
+    '  vec2 relUV = uv - impactPoint;',
+    '  float along = dot(relUV, tearDir);',
+    '  float distFromImpact = length(relUV);',
+    '',
+    '  // Tear propagates outward from impact',
+    '  float propagation = tearProgress * 2.5;',
+    '  float reachFactor = smoothstep(propagation, propagation - 0.4, distFromImpact);',
+    '',
+    '  // Gap gets wider near the center, narrower at the propagation front',
+    '  float gapWidth = reachFactor * tearProgress * 0.18;',
+    '  gapWidth *= smoothstep(0.0, 0.3, tearProgress);',
+    '',
+    '  // Slightly wider at center of tear',
+    '  float centerBoost = 1.0 - smoothstep(0.0, 0.8, distFromImpact);',
+    '  gapWidth *= 1.0 + centerBoost * 0.5;',
+    '',
+    '  return gapWidth;',
+    '}',
+    '',
+    '// ── Paper surface texture ──',
+    'vec3 paperSurface(vec2 uv, float t) {',
+    '  // Base cream/off-white',
+    '  vec3 paperBase = vec3(0.88, 0.85, 0.80);',
+    '',
+    '  // Subtle grain texture',
+    '  float grain1 = vnoise(uv * 40.0) * 0.04;',
+    '  float grain2 = vnoise(uv * 80.0 + vec2(5.5, 3.3)) * 0.02;',
+    '  float grain3 = vnoise(uv * 160.0 + vec2(11.1, 7.7)) * 0.01;',
+    '  float grain = grain1 + grain2 + grain3;',
+    '',
+    '  // Fiber direction — subtle streaks',
+    '  float fiber = vnoise(vec2(uv.x * 3.0, uv.y * 60.0)) * 0.015;',
+    '  fiber += vnoise(vec2(uv.x * 5.0, uv.y * 100.0 + 33.0)) * 0.008;',
+    '',
+    '  // Warm/cool variation across surface',
+    '  float warmPatch = fbm(uv * 2.5, 3);',
+    '  vec3 warmTint = mix(vec3(0.88, 0.85, 0.80), vec3(0.90, 0.86, 0.78), warmPatch);',
+    '',
+    '  vec3 col = warmTint - grain - fiber;',
+    '',
+    '  // Very subtle shadow variation — like slightly crumpled paper',
+    '  float crumple = fbm(uv * 5.0 + t * 0.003, 4);',
+    '  col *= 0.95 + crumple * 0.1;',
+    '',
+    '  // Slight darkening at edges — old paper feel',
+    '  float edgeDark = smoothstep(0.4, 1.1, length(uv * 0.8));',
+    '  col -= edgeDark * 0.06;',
+    '',
+    '  return col;',
+    '}',
+    '',
+    '// ── Glow underneath — living plasma nebula ──',
+    'vec3 underGlow(vec2 uv, float t, float intensity) {',
+    '  // Deep background — rich dark purple-black',
+    '  vec3 deep = vec3(0.04, 0.01, 0.06);',
+    '',
+    '  // ── Domain-warped FBM for flowing plasma ──',
+    '  // First warp layer — slow, large-scale flow',
+    '  vec2 warp1 = vec2(',
+    '    fbm(uv * 2.0 + vec2(t * 0.06, t * 0.04), 4),',
+    '    fbm(uv * 2.0 + vec2(t * 0.05 + 5.2, t * 0.03 + 1.3), 4)',
+    '  );',
+    '  // Second warp layer — feeds back into itself for organic swirl',
+    '  vec2 warp2 = vec2(',
+    '    fbm(uv * 3.0 + warp1 * 1.8 + vec2(t * 0.04 + 1.7, 0.0), 4),',
+    '    fbm(uv * 3.0 + warp1 * 1.8 + vec2(0.0, t * 0.035 + 9.2), 4)',
+    '  );',
+    '  // Final warped coordinate',
+    '  float plasma = fbm(uv * 2.5 + warp2 * 1.5, 5);',
+    '',
+    '  // ── Color palette — deep purples, hot pinks, amber golds ──',
+    '  // Map plasma value to a rich multi-stop gradient',
+    '  vec3 c1 = vec3(0.12, 0.02, 0.18);',  // deep indigo
+    '  vec3 c2 = vec3(0.55, 0.05, 0.45);',  // magenta
+    '  vec3 c3 = vec3(0.95, 0.25, 0.35);',  // hot pink
+    '  vec3 c4 = vec3(1.0, 0.60, 0.12);',   // amber gold
+    '  vec3 c5 = vec3(1.0, 0.90, 0.50);',   // bright gold
+    '  float p = clamp(plasma, 0.0, 1.0);',
+    '  vec3 nebula = p < 0.25 ? mix(c1, c2, p / 0.25)',
+    '    : p < 0.5 ? mix(c2, c3, (p - 0.25) / 0.25)',
+    '    : p < 0.75 ? mix(c3, c4, (p - 0.5) / 0.25)',
+    '    : mix(c4, c5, (p - 0.75) / 0.25);',
+    '',
+    '  // ── Flowing veins / rivers of light ──',
+    '  // Use ridged noise: take abs of centered noise for vein-like shapes',
+    '  vec2 veinUV = uv * 5.0 + warp1 * 2.0 + vec2(t * 0.07, -t * 0.05);',
+    '  float vein = fbm(veinUV, 5);',
+    '  vein = 1.0 - abs(vein * 2.0 - 1.0);',       // ridge fold
+    '  vein = pow(vein, 4.0);',                       // sharpen into bright veins
+    '  // Second vein layer at different scale/angle',
+    '  vec2 veinUV2 = uv * 8.0 + warp2 * 1.5 + vec2(-t * 0.05, t * 0.06);',
+    '  float vein2 = fbm(veinUV2, 4);',
+    '  vein2 = 1.0 - abs(vein2 * 2.0 - 1.0);',
+    '  vein2 = pow(vein2, 5.0);',
+    '  // Color veins — hot pinks and amber',
+    '  vec3 veinCol = vec3(1.0, 0.45, 0.6) * vein * 0.7',
+    '               + vec3(1.0, 0.7, 0.2) * vein2 * 0.5;',
+    '',
+    '  // ── Sparkle / star points ──',
+    '  // High-frequency noise field, thresholded for bright dots',
+    '  vec2 sparkleUV = uv * 25.0 + vec2(t * 0.1, -t * 0.08);',
+    '  float sparkleNoise = vnoise(sparkleUV);',
+    '  // Animate twinkle per-cell using the cell position',
+    '  vec2 sparkleCell = floor(sparkleUV);',
+    '  float twinklePhase = hash(sparkleCell) * 6.28;',
+    '  float twinkle = sin(t * (1.5 + hash(sparkleCell + 0.5) * 3.0) + twinklePhase);',
+    '  twinkle = twinkle * 0.5 + 0.5;',  // remap to 0-1
+    '  // Only the brightest noise peaks become sparkles',
+    '  float sparkle = smoothstep(0.78, 0.92, sparkleNoise) * twinkle;',
+    '  sparkle = pow(sparkle, 2.0) * 1.5;',
+    '  vec3 sparkleCol = mix(vec3(1.0, 0.85, 0.95), vec3(1.0, 0.95, 0.7), hash(sparkleCell + 1.0));',
+    '',
+    '  // ── Animated glow centers for depth ──',
+    '  vec2 glowUV = uv + vec2(sin(t * 0.15) * 0.12, cos(t * 0.12) * 0.1);',
+    '  float g1 = exp(-dot(glowUV, glowUV) * 1.5);',
+    '  vec2 g2uv = glowUV - vec2(0.25 + sin(t * 0.1) * 0.05, -0.2);',
+    '  float g2 = exp(-dot(g2uv, g2uv) * 2.2);',
+    '  vec2 g3uv = glowUV + vec2(0.3, 0.25 + cos(t * 0.08) * 0.05);',
+    '  float g3 = exp(-dot(g3uv, g3uv) * 2.8);',
+    '  // Glow colors: amber core, magenta side, purple fill',
+    '  vec3 glowCenters = vec3(1.0, 0.6, 0.15) * g1 * 0.5',
+    '                   + vec3(0.75, 0.15, 0.55) * g2 * 0.4',
+    '                   + vec3(0.4, 0.1, 0.5) * g3 * 0.3;',
+    '',
+    '  // ── Pulsating energy ──',
+    '  float pulse = sin(t * 0.8) * 0.1 + sin(t * 1.3 + 1.5) * 0.06;',
+    '  pulse += sin(t * 0.3) * 0.04;',
+    '',
+    '  // ── Combine all layers ──',
+    '  vec3 glow = deep;',
+    '  glow += nebula * 0.7;',          // domain-warped plasma base
+    '  glow += glowCenters;',           // soft glowing hotspots
+    '  glow += veinCol * intensity;',   // flowing veins of light
+    '  glow += sparkleCol * sparkle * intensity;',  // twinkling stars
+    '  glow *= (1.0 + pulse) * intensity;',
+    '',
+    '  return glow;',
+    '}',
+    '',
+    '// ── Edge glow — light leaking from tear edges ──',
+    'vec3 edgeGlow(float tearDist, float gapWidth, float tearProgress, float intensity) {',
+    '  float absDist = abs(tearDist);',
+    '',
+    '  // Inner glow — bright white-amber right at the edge',
+    '  float innerGlow = smoothstep(gapWidth * 0.8, 0.0, absDist);',
+    '  innerGlow = pow(innerGlow, 1.5);',
+    '  vec3 inner = vec3(1.0, 0.85, 0.6) * innerGlow * 1.2;',
+    '',
+    '  // Mid glow — warm amber bleed into paper',
+    '  float midGlow = smoothstep(gapWidth * 2.5, gapWidth * 0.3, absDist);',
+    '  midGlow = pow(midGlow, 2.0);',
+    '  vec3 mid = vec3(0.8, 0.4, 0.15) * midGlow * 0.6;',
+    '',
+    '  // Outer glow — subtle purple-warm far bleed',
+    '  float outerGlow = smoothstep(gapWidth * 5.0, gapWidth, absDist);',
+    '  outerGlow = pow(outerGlow, 3.0);',
+    '  vec3 outer = vec3(0.5, 0.15, 0.3) * outerGlow * 0.25;',
+    '',
+    '  return (inner + mid + outer) * tearProgress * intensity;',
+    '}',
+    '',
+    '// ── Paper curl effect near tear edges ──',
+    'vec3 paperCurl(vec3 paperCol, float tearDist, float gapWidth, float tearProgress) {',
+    '  float absDist = abs(tearDist);',
+    '  float curlZone = smoothstep(gapWidth * 3.0, gapWidth * 0.5, absDist);',
+    '',
+    '  // Curl creates a shadow on one side, highlight on the other',
+    '  float side = sign(tearDist);',
+    '  float shadow = curlZone * smoothstep(gapWidth * 2.0, gapWidth * 0.8, absDist) * 0.3;',
+    '  float highlight = curlZone * smoothstep(gapWidth * 1.5, gapWidth * 0.6, absDist) * 0.15;',
+    '',
+    '  // Shadow on the underside of curl',
+    '  paperCol -= shadow * (0.5 + 0.5 * side) * tearProgress;',
+    '  // Highlight on the top of curl',
+    '  paperCol += highlight * (0.5 - 0.5 * side) * tearProgress;',
+    '',
+    '  // Warm light illuminating the curled edge from below',
+    '  float warmLight = curlZone * tearProgress * 0.2;',
+    '  paperCol += vec3(0.15, 0.06, 0.02) * warmLight;',
+    '',
+    '  return paperCol;',
+    '}',
+    '',
+    'void main() {',
+    '  vec2 uv = (gl_FragCoord.xy - u_res * 0.5) / min(u_res.x, u_res.y);',
+    '  // Mouse parallax — inverted, per-layer depth',
+    '  vec2 mouseShift = vec2(0.0);',
+    '  if (u_mouse.x > 0.0) {',
+    '    mouseShift = -((u_mouse / u_res) - 0.5) * 0.15;',
+    '  }',
+    '  float t = u_time;',
+    '  float speed = u_tearSpeed;',
+    '  float glowInt = u_glowIntensity;',
+    '',
+    '  // ── Determine animation phase ──',
+    '  float cycle = CYCLE_DURATION / speed;',
+    '  float cycleIndex = floor(t / cycle);',
+    '  vec2 phase = getPhase(t, speed);',
+    '  float phaseT = phase.x;',
+    '  float phaseId = phase.y;',
+    '',
+    '  // ── Calculate tear progress (0 = no tear, 1 = fully open) ──',
+    '  float tearProgress = 0.0;',
+    '  if (phaseId < 0.5) {',
+    '    // Calm — no tear, but subtle breathing',
+    '    tearProgress = 0.0;',
+    '  } else if (phaseId < 1.5) {',
+    '    // Tear phase — accelerating crack propagation',
+    '    tearProgress = easeInQuad(phaseT);',
+    '  } else if (phaseId < 2.5) {',
+    '    // Open — fully torn, slight settling',
+    '    tearProgress = 1.0;',
+    '  } else {',
+    '    // Reform — paper slides back together',
+    '    tearProgress = 1.0 - easeInOutCubic(phaseT);',
+    '  }',
+    '',
+    '  // ── Tear geometry ──',
+    '  float tearDist = tearLine(uv, tearProgress, cycleIndex);',
+    '  float gapWidth = tearGap(uv, tearProgress, cycleIndex);',
+    '',
+    '  // Is this pixel in the gap?',
+    '  float inGap = smoothstep(gapWidth * 0.5 + 0.003, gapWidth * 0.5 - 0.003, abs(tearDist));',
+    '  inGap *= step(0.01, tearProgress);',
+    '',
+    '  // ── Compute paper separation offset ──',
+    '  float separationAmount = tearProgress * 0.03;',
+    '  float side = sign(tearDist);',
+    '  vec2 paperOffset = vec2(0.0);',
+    '',
+    '  // During open phase, add slight extra separation and settle',
+    '  if (phaseId > 1.5 && phaseId < 2.5) {',
+    '    float settle = sin(phaseT * PI) * 0.005;',
+    '    separationAmount += settle;',
+    '  }',
+    '',
+    '  // Get the tear direction for this cycle to offset paper correctly',
+    '  vec2 rnd = hash2(vec2(cycleIndex * 17.31, cycleIndex * 43.71));',
+    '  float tearAngle = (rnd.x - 0.5) * 0.5;',
+    '  vec2 tearPerp = vec2(-sin(tearAngle * 0.3), cos(tearAngle * 0.3));',
+    '  paperOffset = tearPerp * side * separationAmount;',
+    '',
+    '  // ── Render paper surface with offset ──',
+    '  vec3 paper = paperSurface(uv + paperOffset, t);',
+    '',
+    '  // ── Apply curl effect ──',
+    '  paper = paperCurl(paper, tearDist, max(gapWidth, 0.01), tearProgress);',
+    '',
+    '  // ── Render the glow underneath (parallax — deeper layer shifts more) ──',
+    '  vec3 glow = underGlow(uv + mouseShift * 2.0, t, glowInt);',
+    '',
+    '  // ── Edge glow bleeding onto paper ──',
+    '  vec3 eGlow = edgeGlow(tearDist, max(gapWidth, 0.005), tearProgress, glowInt);',
+    '',
+    '  // ── Composite: paper on top, glow visible through gap ──',
+    '  vec3 col = mix(paper + eGlow, glow, inGap);',
+    '',
+    '  // ── During calm phase, add very subtle hint of something beneath ──',
+    '  if (phaseId < 0.5) {',
+    '    float breathe = sin(phaseT * PI * 2.0) * 0.02 + 0.01;',
+    '    float centerGlow = exp(-dot(uv, uv) * 4.0);',
+    '    col += vec3(0.15, 0.06, 0.08) * centerGlow * breathe * glowInt;',
+    '',
+    '    // Subtle creak — paper shifts very slightly',
+    '    float creak = sin(phaseT * PI) * 0.003;',
+    '    col = paperSurface(uv + vec2(creak, 0.0), t);',
+    '    col += vec3(0.15, 0.06, 0.08) * centerGlow * breathe * glowInt;',
+    '  }',
+    '',
+    '  // ── Crack formation hint just before tear ──',
+    '  if (phaseId < 0.5 && phaseT > 0.7) {',
+    '    float crackHint = (phaseT - 0.7) / 0.3;',
+    '    crackHint = easeInQuad(crackHint);',
+    '    float crackLine = tearLine(uv, 0.01, cycleIndex);',
+    '    float crackVis = smoothstep(0.008, 0.0, abs(crackLine)) * crackHint * 0.3;',
+    '    col -= crackVis * 0.15;',
+    '    // Hint of light through crack',
+    '    col += vec3(0.4, 0.15, 0.1) * crackVis * glowInt;',
+    '  }',
+    '',
+    '  // ── Vignette ──',
+    '  float vig = length(uv * vec2(0.8, 0.9));',
+    '  float vignette = 1.0 - smoothstep(0.5, 1.3, vig);',
+    '  vignette = vignette * 0.8 + 0.2;',
+    '  col *= vignette;',
+    '',
+    '  // ── Film grain ──',
+    '  float filmGrain = (hash(gl_FragCoord.xy + fract(t * 43.0) * 1000.0) - 0.5) * 0.025;',
+    '  col += filmGrain;',
+    '',
+    '  // ── Tone mapping ──',
+    '  col = max(col, vec3(0.0));',
+    '  // Subtle warm shadows',
+    '  float lum = dot(col, vec3(0.299, 0.587, 0.114));',
+    '  col = mix(col, col * vec3(1.05, 0.95, 0.9), smoothstep(0.1, 0.0, lum) * 0.3);',
+    '',
+    '  gl_FragColor = vec4(col, 1.0);',
+    '}'
+  ].join('\n');
+
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error('Shader compile error:', gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+
+  var prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error('Program link error:', gl.getProgramInfoLog(prog));
+  }
+  gl.useProgram(prog);
+
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  var aPos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  var uTime = gl.getUniformLocation(prog, 'u_time');
+  var uRes = gl.getUniformLocation(prog, 'u_res');
+  var uTearSpeed = gl.getUniformLocation(prog, 'u_tearSpeed');
+  var uGlowIntensity = gl.getUniformLocation(prog, 'u_glowIntensity');
+  var uMouse = gl.getUniformLocation(prog, 'u_mouse');
+  var mouseXVal = -1, mouseYVal = -1;
+
+  canvas.addEventListener('mousemove', function(e) {
+    mouseXVal = e.clientX * dpr;
+    mouseYVal = (canvas.clientHeight - e.clientY) * dpr;
+  });
+  canvas.addEventListener('mouseleave', function() {
+    mouseXVal = -1; mouseYVal = -1;
+  });
+  canvas.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    var t = e.touches[0];
+    mouseXVal = t.clientX * dpr;
+    mouseYVal = (canvas.clientHeight - t.clientY) * dpr;
+  }, { passive: false });
+  canvas.addEventListener('touchmove', function(e) {
+    e.preventDefault();
+    var t = e.touches[0];
+    mouseXVal = t.clientX * dpr;
+    mouseYVal = (canvas.clientHeight - t.clientY) * dpr;
+  }, { passive: false });
+  canvas.addEventListener('touchend', function() {
+    mouseXVal = -1; mouseYVal = -1;
+  });
+
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var needsResize = true;
+
+  function resize() {
+    needsResize = false;
+    var scale = 1.0 / pixelScale;
+    var w = Math.round(canvas.clientWidth * dpr * scale);
+    var h = Math.round(canvas.clientHeight * dpr * scale);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      gl.viewport(0, 0, w, h);
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+    }
+  }
+
+  var running = true;
+
+  function render(now) {
+    if (!running) { requestAnimationFrame(render); return; }
+    if (needsResize) resize();
+    gl.uniform1f(uTime, prefersReduced ? 0.0 : now * 0.001);
+    gl.uniform1f(uTearSpeed, TEAR_SPEED);
+    gl.uniform1f(uGlowIntensity, GLOW_INTENSITY);
+    gl.uniform2f(uMouse, mouseXVal, mouseYVal);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    requestAnimationFrame(render);
+  }
+
+  window.addEventListener('resize', function () {
+    needsResize = true;
+  });
+
+  resize();
+
+  requestAnimationFrame(render);
+
+  // ── Pause when offscreen ──
+  document.addEventListener('visibilitychange', function () {
+    running = !document.hidden;
+  });
+
+  if (typeof IntersectionObserver !== 'undefined') {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        running = entry.isIntersecting && !document.hidden;
+      });
+    }, { threshold: 0.1 });
+    observer.observe(canvas);
+  }
+
+  // ── PostMessage API for parameter control ──
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.type === 'param') {
+      switch (e.data.name) {
+        case 'TEAR_SPEED': TEAR_SPEED = e.data.value; break;
+        case 'GLOW_INTENSITY': GLOW_INTENSITY = e.data.value; break;
+      }
+    }
+  });
+})();
+</script>
+</body>
+</html>

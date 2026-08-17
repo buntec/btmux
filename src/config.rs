@@ -147,6 +147,12 @@ pub struct FileConfig {
     /// Deterministic seed used to vary procedural wallpaper colors and form.
     #[serde(rename = "wallpaper-seed")]
     pub wallpaper_seed: Option<String>,
+    /// Let procedural wallpapers react to pointer movement over the app.
+    #[serde(rename = "wallpaper-shader-follows-mouse-cursor")]
+    pub wallpaper_shader_follows_mouse_cursor: bool,
+    /// Let procedural wallpapers react to the active terminal's text cursor.
+    #[serde(rename = "wallpaper-shader-follows-keyboard-input")]
+    pub wallpaper_shader_follows_keyboard_input: bool,
     /// Name of a persistent WebGL post-process effect applied to every pane
     /// (`scanline`, `vignette`, …). The effect registry lives in the frontend
     /// (`terminalFxShaders.ts`) — this is passed through untouched, and an
@@ -198,12 +204,14 @@ impl Default for FileConfig {
             animations: true,
             show_pane_titles: false,
             wallpaper: None,
-            wallpaper_shader: Some("plasma".to_string()),
+            wallpaper_shader: Some("radiant:moire-interference".to_string()),
             wallpaper_opacity: Some(0.2),
             wallpaper_blur: Some(0.0),
             wallpaper_saturate: Some(0.2),
             wallpaper_speed: Some(1.0),
             wallpaper_seed: Some("axu".to_string()),
+            wallpaper_shader_follows_mouse_cursor: true,
+            wallpaper_shader_follows_keyboard_input: true,
             shader: None,
             pane_switch_shader: None,
             pane_switch_intensity: Some(0.25),
@@ -595,6 +603,8 @@ pub struct ClientConfig {
     pub wallpaper_speed: f32,
     /// Deterministic seed used to vary procedural wallpaper colors and form.
     pub wallpaper_seed: String,
+    pub wallpaper_shader_follows_mouse_cursor: bool,
+    pub wallpaper_shader_follows_keyboard_input: bool,
     /// Name of the persistent post-process shader effect applied to every pane,
     /// or `null` for none. Resolved to GLSL by the frontend's effect registry.
     pub shader: Option<String>,
@@ -855,7 +865,7 @@ pub fn generate_config_toml() -> String {
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
 # Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "plasma"   # plasma | voronoi
+# wallpaper-shader = "radiant:moire-interference"   # or btmux:plasma | btmux:voronoi
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = 0.2
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
@@ -866,6 +876,9 @@ pub fn generate_config_toml() -> String {
 # wallpaper-speed = 1.0
 # Deterministic seed for procedural wallpaper colors and form.
 # wallpaper-seed = "axu"
+# Let the shader react to pointer movement and to the active terminal cursor.
+# wallpaper-shader-follows-mouse-cursor = true
+# wallpaper-shader-follows-keyboard-input = true
 
 # Persistent WebGL post-process effect applied to every pane (webgl renderer
 # only). Pick one interactively with the `shader: choose effect` command
@@ -1075,6 +1088,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_saturate,
         wallpaper_speed,
         wallpaper_seed,
+        wallpaper_shader_follows_mouse_cursor: file.wallpaper_shader_follows_mouse_cursor,
+        wallpaper_shader_follows_keyboard_input: file.wallpaper_shader_follows_keyboard_input,
         shader: file.shader.clone(),
         pane_switch_shader: file.pane_switch_shader.clone(),
         pane_switch_intensity,
@@ -1118,6 +1133,8 @@ pub struct ConfigUpdate {
     pub wallpaper_saturate: Option<f32>,
     pub wallpaper_speed: Option<f32>,
     pub wallpaper_seed: Option<String>,
+    pub wallpaper_shader_follows_mouse_cursor: Option<bool>,
+    pub wallpaper_shader_follows_keyboard_input: Option<bool>,
     /// Post-process effect name; the empty string clears it.
     pub shader: Option<String>,
     /// Pane-switch effect name; the empty string falls back to the default.
@@ -1165,6 +1182,14 @@ impl ConfigUpdate {
         }
         if other.wallpaper_seed.is_some() {
             self.wallpaper_seed = other.wallpaper_seed.clone();
+        }
+        if other.wallpaper_shader_follows_mouse_cursor.is_some() {
+            self.wallpaper_shader_follows_mouse_cursor =
+                other.wallpaper_shader_follows_mouse_cursor;
+        }
+        if other.wallpaper_shader_follows_keyboard_input.is_some() {
+            self.wallpaper_shader_follows_keyboard_input =
+                other.wallpaper_shader_follows_keyboard_input;
         }
         if other.shader.is_some() {
             self.shader = other.shader.clone();
@@ -1226,6 +1251,12 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     if let Some(seed) = &overrides.wallpaper_seed {
         file.wallpaper_seed = Some(seed.clone());
     }
+    if let Some(enabled) = overrides.wallpaper_shader_follows_mouse_cursor {
+        file.wallpaper_shader_follows_mouse_cursor = enabled;
+    }
+    if let Some(enabled) = overrides.wallpaper_shader_follows_keyboard_input {
+        file.wallpaper_shader_follows_keyboard_input = enabled;
+    }
     if let Some(shader) = &overrides.shader {
         file.shader = Some(shader.clone()).filter(|s| !s.is_empty());
     }
@@ -1256,12 +1287,17 @@ mod tests {
         assert_eq!(config.shell, None);
         assert!(config.animations);
         assert!(!resolved.show_pane_titles);
-        assert_eq!(resolved.wallpaper_shader.as_deref(), Some("plasma"));
+        assert_eq!(
+            resolved.wallpaper_shader.as_deref(),
+            Some("radiant:moire-interference")
+        );
         assert_eq!(resolved.wallpaper_opacity, Some(0.2));
         assert_eq!(resolved.wallpaper_saturate, Some(0.2));
         assert_eq!(resolved.wallpaper_blur, Some(0.0));
         assert_eq!(resolved.wallpaper_speed, 1.0);
         assert_eq!(resolved.wallpaper_seed, "axu");
+        assert!(resolved.wallpaper_shader_follows_mouse_cursor);
+        assert!(resolved.wallpaper_shader_follows_keyboard_input);
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
@@ -1288,6 +1324,8 @@ mod tests {
                 wallpaper_saturate: Some(0.75),
                 wallpaper_speed: Some(0.5),
                 wallpaper_seed: Some("preview".to_string()),
+                wallpaper_shader_follows_mouse_cursor: Some(false),
+                wallpaper_shader_follows_keyboard_input: Some(false),
                 shader: Some("vignette".to_string()),
                 pane_switch_shader: Some("pixelate".to_string()),
                 pane_switch_intensity: Some(1.5),
@@ -1313,12 +1351,17 @@ mod tests {
         assert_eq!(resolved.wallpaper_saturate, Some(0.75));
         assert_eq!(resolved.wallpaper_speed, 0.5);
         assert_eq!(resolved.wallpaper_seed, "preview");
+        assert!(!resolved.wallpaper_shader_follows_mouse_cursor);
+        assert!(!resolved.wallpaper_shader_follows_keyboard_input);
         assert_eq!(resolved.shader.as_deref(), Some("vignette"));
         assert_eq!(resolved.pane_switch_shader.as_deref(), Some("pixelate"));
         assert_eq!(resolved.pane_switch_intensity, 1.5);
         assert_eq!(resolved.pane_switch_duration, 2.0);
 
-        assert_eq!(file.wallpaper_shader.as_deref(), Some("plasma"));
+        assert_eq!(
+            file.wallpaper_shader.as_deref(),
+            Some("radiant:moire-interference")
+        );
         assert_eq!(file.terminal.font_size, Some(18.0));
         assert!(file.animations);
     }

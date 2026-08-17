@@ -127,6 +127,8 @@ export interface ClientConfig {
   wallpaper_saturate: number | null;
   wallpaper_speed: number;
   wallpaper_seed: string;
+  wallpaper_shader_follows_mouse_cursor: boolean;
+  wallpaper_shader_follows_keyboard_input: boolean;
   /** Persistent post-process effect id (see SHADER_EFFECTS), or null for none. */
   shader: string | null;
   /**

@@ -22,7 +22,7 @@ dev-frontend:
 
 # Build everything for production (frontend assets are embedded into the binary)
 build:
-    cd frontend && bun run build
+    cd frontend && bun install && bun run build
     cargo build --release
 
 # Type-check the frontend without emitting

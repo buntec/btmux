@@ -117,7 +117,12 @@ function drawScene(
   y += lineHeight * 0.45;
   line([['ready', theme.green]]);
   ctx.fillStyle = theme.cursor;
-  ctx.fillRect(x + ctx.measureText('ready').width + 3, y - lineHeight - textSize + 2, Math.max(7, textSize * 0.55), textSize);
+  ctx.fillRect(
+    x + ctx.measureText('ready').width + 3,
+    y - lineHeight - textSize + 2,
+    Math.max(7, textSize * 0.55),
+    textSize,
+  );
 }
 
 interface Props {
@@ -191,11 +196,14 @@ export function TerminalShaderPreview({
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
     const scene = document.createElement('canvas');
-    const uniforms = new Map<WebGLProgram, {
-      resolution: WebGLUniformLocation | null;
-      time: WebGLUniformLocation | null;
-      scene: WebGLUniformLocation | null;
-    }>();
+    const uniforms = new Map<
+      WebGLProgram,
+      {
+        resolution: WebGLUniformLocation | null;
+        time: WebGLUniformLocation | null;
+        scene: WebGLUniformLocation | null;
+      }
+    >();
     for (const program of [baseProgram, paneSwitchProgram]) {
       if (!program) continue;
       uniforms.set(program, {
@@ -219,11 +227,8 @@ export function TerminalShaderPreview({
       drawScene(scene, width, height, theme, fontFamily, fontWeight, fontSize, dpr);
       gl.viewport(0, 0, width, height);
       const elapsed = now - startedAt;
-      const paneSwitchActive =
-        paneSwitchProgram !== null &&
-        elapsed <= paneSwitchEffect.durationMs;
-      const program: WebGLProgram =
-        paneSwitchActive && paneSwitchProgram ? paneSwitchProgram : baseProgram;
+      const paneSwitchActive = paneSwitchProgram !== null && elapsed <= paneSwitchEffect.durationMs;
+      const program: WebGLProgram = paneSwitchActive && paneSwitchProgram ? paneSwitchProgram : baseProgram;
       const locations = uniforms.get(program)!;
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);

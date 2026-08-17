@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { randomizeWallpaper } from '../lib/wallpaperRandom';
+import { randomizeRadiantParams, randomizeWallpaper } from '../lib/wallpaperRandom';
 import { findWallpaperShader } from '../lib/wallpaperShaders';
 import { findRadiantShader } from '../lib/wallpaperCatalog';
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
@@ -13,6 +13,14 @@ void main() {
   gl_Position = vec4(position * 2.0 - 1.0, 0.0, 1.0);
 }
 `;
+
+// Radiant wallpapers are decorative and several of them are deliberately
+// expensive full-screen shaders. Render their iframe at half size and let the
+// compositor upscale it: this quarters the fragment workload and, on a 2x
+// display, avoids asking the wallpaper for four physical pixels per CSS pixel.
+// Keeping this outside the vendored HTML makes the optimization apply uniformly
+// and survive `scripts/sync-radiant.mjs` refreshes.
+const RADIANT_RENDER_SCALE = 0.5;
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
@@ -251,6 +259,15 @@ function RadiantShaderWallpaper({
     if (!iframe || !shader) return;
 
     const postRuntime = () => iframe.contentWindow?.postMessage({ type: 'btmux-runtime', animated, speed }, '*');
+    const postParams = () => {
+      for (const param of randomizeRadiantParams(shader.id, seed, shader.params)) {
+        iframe.contentWindow?.postMessage({ type: 'param', ...param }, '*');
+      }
+    };
+    const handleLoad = () => {
+      postRuntime();
+      postParams();
+    };
     const postPointer = (clientX: number, clientY: number) => {
       const rect = iframe.getBoundingClientRect();
       iframe.contentWindow?.postMessage(
@@ -272,7 +289,7 @@ function RadiantShaderWallpaper({
       postPointer(x, y);
     };
 
-    iframe.addEventListener('load', postRuntime);
+    iframe.addEventListener('load', handleLoad);
     window.addEventListener('pointermove', handlePointerMove, { passive: true });
     window.addEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
     postRuntime();
@@ -280,32 +297,43 @@ function RadiantShaderWallpaper({
       iframe.contentWindow?.postMessage({ type: 'btmux-pointer', active: false }, '*');
     }
     return () => {
-      iframe.removeEventListener('load', postRuntime);
+      iframe.removeEventListener('load', handleLoad);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
     };
-  }, [shader, speed, animated, followsMouseCursor, followsKeyboardInput]);
+  }, [shader, speed, animated, seed, followsMouseCursor, followsKeyboardInput]);
 
   if (!shader) return null;
+  const bleed = blur * 2;
   return (
-    <iframe
-      ref={iframeRef}
-      src={`/radiant/${shader.file}?seed=${encodeURIComponent(seed)}`}
-      title={shader.title}
+    <div
       aria-hidden="true"
-      sandbox="allow-scripts"
       style={{
         position: 'fixed',
-        border: 0,
-        inset: blur > 0 ? `${-blur * 2}px` : 0,
-        width: blur > 0 ? `calc(100% + ${blur * 4}px)` : '100%',
-        height: blur > 0 ? `calc(100% + ${blur * 4}px)` : '100%',
+        inset: blur > 0 ? `${-bleed}px` : 0,
         opacity,
         filter: `blur(${blur}px) saturate(${saturate})`,
         zIndex: -1,
         pointerEvents: 'none',
       }}
-    />
+    >
+      <iframe
+        ref={iframeRef}
+        src={`/radiant/${shader.file}?seed=${encodeURIComponent(seed)}`}
+        title={shader.title}
+        sandbox="allow-scripts"
+        style={{
+          position: 'absolute',
+          border: 0,
+          inset: 0,
+          width: `${100 * RADIANT_RENDER_SCALE}%`,
+          height: `${100 * RADIANT_RENDER_SCALE}%`,
+          transform: `scale(${1 / RADIANT_RENDER_SCALE})`,
+          transformOrigin: 'top left',
+          pointerEvents: 'none',
+        }}
+      />
+    </div>
   );
 }
 

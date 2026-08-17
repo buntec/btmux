@@ -142,6 +142,11 @@ export function Overlay({ sessionId, send, config }: Props) {
   const activeOverlay = overlay ?? frozenOverlay.current!;
 
   const runCommand = (cmdId: string) => {
+    if (cmdId === 'open-config') {
+      setOverlay(null);
+      navigate('/config');
+      return true;
+    }
     if (cmdId === 'choose-colors') {
       const schemes = config?.color_schemes ?? [];
       const active = config?.active_color_scheme;

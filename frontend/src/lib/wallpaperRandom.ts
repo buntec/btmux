@@ -4,6 +4,13 @@ export interface WallpaperRandomization {
   values: [number, number, number, number, number, number, number, number];
 }
 
+export interface RadiantShaderParam {
+  readonly name: string;
+  readonly min?: number;
+  readonly max: number;
+  readonly step?: number;
+}
+
 function fnv1a(text: string): number {
   let hash = 0x811c9dc5;
   for (const byte of new TextEncoder().encode(text)) {
@@ -62,4 +69,29 @@ export function randomizeWallpaper(shaderId: string, seed: string): WallpaperRan
   ];
   const values = Array.from({ length: 8 }, () => random()) as WallpaperRandomization['values'];
   return { background, colors, values };
+}
+
+/**
+ * Pick a stable value from every position exposed by a Radiant parameter's
+ * range slider. Radiant has a handful of parameters without an explicit min;
+ * browsers give those range inputs a minimum of zero, so we do the same.
+ *
+ * Each parameter gets its own random stream. Adding or reordering catalog
+ * parameters therefore does not change the values of existing parameters.
+ */
+export function randomizeRadiantParams(
+  shaderId: string,
+  seed: string,
+  params: readonly RadiantShaderParam[],
+): ReadonlyArray<{ name: string; value: number }> {
+  return params.map((param) => {
+    const min = param.min ?? 0;
+    const step = param.step ?? 0.01;
+    const stepCount = Math.max(0, Math.floor((param.max - min) / step + 1e-9));
+    const random = mulberry32(fnv1a(`${shaderId}\0${seed}\0${param.name}`));
+    const stepIndex = Math.floor(random() * (stepCount + 1));
+    const value = Math.min(param.max, min + stepIndex * step);
+
+    return { name: param.name, value };
+  });
 }

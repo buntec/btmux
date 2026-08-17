@@ -8,6 +8,7 @@ import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../hooks/useFontLoader
 import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import { DEFAULT_THEME } from '../state/defaultTheme';
+import { useStore } from '../state/store';
 import { TerminalShaderPreview } from './TerminalShaderPreview';
 import { Button } from './ui/button';
 import { Field, FieldContent, FieldGroup, FieldLabel, FieldLegend, FieldSet } from './ui/field';
@@ -181,6 +182,7 @@ function RangeField({
 
 export function ConfigPage({ config, send }: Props) {
   const navigate = useNavigate();
+  const allSessions = useStore((state) => state.allSessions);
   const [draft, setDraft] = useState(() => initialDraft(config));
   const [copied, setCopied] = useState(false);
   const [paneSwitchPreviewKey, setPaneSwitchPreviewKey] = useState(0);
@@ -202,12 +204,27 @@ export function ConfigPage({ config, send }: Props) {
   const weightMin = font?.weight_min ?? 100;
   const weightMax = font?.weight_max ?? 900;
 
+  const goBack = () => {
+    const lastSessionName = sessionStorage.getItem('btmux-last-session');
+    const session = allSessions.find((item) => item.name === lastSessionName) ?? allSessions[0];
+    if (!session) {
+      navigate('/', { replace: true });
+      return;
+    }
+
+    const activeWindow = session.windows[session.active_window];
+    const target = activeWindow
+      ? `/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(activeWindow.name)}`
+      : `/s/${encodeURIComponent(session.name)}`;
+    navigate(target, { replace: true });
+  };
+
   return (
     <main className="relative h-full overflow-y-auto bg-transparent text-foreground">
       <header className="sticky top-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-8">
           <div className="flex min-w-0 items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate(-1)} aria-label="Go back" title="Go back">
+            <Button variant="ghost" size="icon" onClick={goBack} aria-label="Go back" title="Go back">
               <ArrowLeft />
             </Button>
             <div className="hidden min-w-0 sm:block">

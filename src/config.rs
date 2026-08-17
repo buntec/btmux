@@ -475,6 +475,12 @@ fn default_commands() -> Vec<Command> {
             confirm: Some("Kill ALL sessions and reset to one fresh session?".to_string()),
         },
         Command {
+            id: "open-config".to_string(),
+            label: "config: open appearance settings".to_string(),
+            description: "Open the appearance configuration view.".to_string(),
+            confirm: None,
+        },
+        Command {
             id: "choose-colors".to_string(),
             label: "colors: choose scheme".to_string(),
             description: "Pick a color scheme from ~/.config/btmux/colors/. \

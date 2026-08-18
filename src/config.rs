@@ -130,15 +130,15 @@ pub struct FileConfig {
     #[serde(rename = "wallpaper-shader")]
     pub wallpaper_shader: Option<String>,
     /// How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
-    /// Defaults to 0.1 when a wallpaper URL is set.
+    /// Defaults to 0.05 when a wallpaper is configured.
     #[serde(rename = "wallpaper-opacity")]
     pub wallpaper_opacity: Option<f32>,
     /// Gaussian blur radius in pixels applied to the wallpaper.
-    /// 0 = no blur (default), higher values = more blur.
+    /// 0 = no blur, higher values = more blur. Defaults to 2.0.
     #[serde(rename = "wallpaper-blur")]
     pub wallpaper_blur: Option<f32>,
     /// Saturation multiplier for the wallpaper: 0.0 = grayscale, 1.0 = normal.
-    /// Defaults to 1.0 (no desaturation).
+    /// Defaults to 0.0.
     #[serde(rename = "wallpaper-saturate")]
     pub wallpaper_saturate: Option<f32>,
     /// Animation speed multiplier for a procedural wallpaper.
@@ -204,12 +204,12 @@ impl Default for FileConfig {
             animations: true,
             show_pane_titles: false,
             wallpaper: None,
-            wallpaper_shader: Some("radiant:moire-interference".to_string()),
-            wallpaper_opacity: Some(0.2),
-            wallpaper_blur: Some(0.0),
-            wallpaper_saturate: Some(0.2),
-            wallpaper_speed: Some(1.0),
-            wallpaper_seed: Some("axu".to_string()),
+            wallpaper_shader: Some("radiant:sequin-wave".to_string()),
+            wallpaper_opacity: Some(0.05),
+            wallpaper_blur: Some(2.0),
+            wallpaper_saturate: Some(0.0),
+            wallpaper_speed: Some(0.5),
+            wallpaper_seed: Some("electric-badger-dream".to_string()),
             wallpaper_shader_follows_mouse_cursor: true,
             wallpaper_shader_follows_keyboard_input: true,
             shader: None,
@@ -874,17 +874,17 @@ pub fn generate_config_toml() -> String {
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
 # Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "radiant:moire-interference"   # or btmux:plasma | btmux:voronoi
+# wallpaper-shader = "radiant:sequin-wave"   # or btmux:plasma | btmux:voronoi
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
-# wallpaper-opacity = 0.2
+# wallpaper-opacity = 0.05
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
-# wallpaper-blur = 0.0
+# wallpaper-blur = 2.0
 # Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
-# wallpaper-saturate = 0.2
+# wallpaper-saturate = 0.0
 # Procedural wallpaper animation speed. 0 = frozen, 1 = normal.
-# wallpaper-speed = 1.0
+# wallpaper-speed = 0.5
 # Deterministic seed for procedural wallpaper colors and form.
-# wallpaper-seed = "axu"
+# wallpaper-seed = "electric-badger-dream"
 # Let the shader react to pointer movement and to the active terminal cursor.
 # wallpaper-shader-follows-mouse-cursor = true
 # wallpaper-shader-follows-keyboard-input = true
@@ -950,6 +950,7 @@ pub fn generate_config_toml() -> String {
 # Logging configuration. Both levels accept standard tracing directives:
 # "error", "warn", "info", "debug", "trace", or full EnvFilter syntax like
 # "btmux=debug,tower_http=info".
+# BTMUX_CONSOLE_LOG and BTMUX_FILE_LOG override these values when set.
 # [log]
 # console-level = "warn"    # stderr output (keep the terminal quiet)
 # file-level = "info"       # file output (~/.local/state/btmux/log/btmux.log.YYYY-MM-DD)
@@ -1031,27 +1032,27 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 
     let has_wallpaper = file.wallpaper.is_some() || file.wallpaper_shader.is_some();
     let wallpaper_opacity = if has_wallpaper {
-        Some(file.wallpaper_opacity.unwrap_or(0.1).clamp(0.0, 1.0))
+        Some(file.wallpaper_opacity.unwrap_or(0.05).clamp(0.0, 1.0))
     } else {
         None
     };
     let wallpaper_blur = if has_wallpaper {
-        Some(file.wallpaper_blur.unwrap_or(0.0).clamp(0.0, 50.0))
+        Some(file.wallpaper_blur.unwrap_or(2.0).clamp(0.0, 50.0))
     } else {
         None
     };
     let wallpaper_saturate = if has_wallpaper {
-        Some(file.wallpaper_saturate.unwrap_or(1.0).clamp(0.0, 1.0))
+        Some(file.wallpaper_saturate.unwrap_or(0.0).clamp(0.0, 1.0))
     } else {
         None
     };
     let pane_switch_intensity = file.pane_switch_intensity.unwrap_or(1.0).clamp(0.0, 3.0);
     let pane_switch_duration = file.pane_switch_duration.unwrap_or(1.0).clamp(0.1, 5.0);
-    let wallpaper_speed = file.wallpaper_speed.unwrap_or(1.0).clamp(0.0, 10.0);
+    let wallpaper_speed = file.wallpaper_speed.unwrap_or(0.5).clamp(0.0, 10.0);
     let wallpaper_seed = file
         .wallpaper_seed
         .clone()
-        .unwrap_or_else(|| "btmux".to_string());
+        .unwrap_or_else(|| "electric-badger-dream".to_string());
 
     // Inline [theme] takes priority; fall back to `colors` scheme file.
     let theme = file.theme.as_ref().map(BaseTheme::to_theme).or_else(|| {
@@ -1305,13 +1306,13 @@ mod tests {
         assert!(!resolved.show_pane_titles);
         assert_eq!(
             resolved.wallpaper_shader.as_deref(),
-            Some("radiant:moire-interference")
+            Some("radiant:sequin-wave")
         );
-        assert_eq!(resolved.wallpaper_opacity, Some(0.2));
-        assert_eq!(resolved.wallpaper_saturate, Some(0.2));
-        assert_eq!(resolved.wallpaper_blur, Some(0.0));
-        assert_eq!(resolved.wallpaper_speed, 1.0);
-        assert_eq!(resolved.wallpaper_seed, "axu");
+        assert_eq!(resolved.wallpaper_opacity, Some(0.05));
+        assert_eq!(resolved.wallpaper_saturate, Some(0.0));
+        assert_eq!(resolved.wallpaper_blur, Some(2.0));
+        assert_eq!(resolved.wallpaper_speed, 0.5);
+        assert_eq!(resolved.wallpaper_seed, "electric-badger-dream");
         assert!(resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(resolved.wallpaper_shader_follows_keyboard_input);
         assert_eq!(resolved.window_grid_count, 4);
@@ -1376,7 +1377,7 @@ mod tests {
 
         assert_eq!(
             file.wallpaper_shader.as_deref(),
-            Some("radiant:moire-interference")
+            Some("radiant:sequin-wave")
         );
         assert_eq!(file.terminal.font_size, Some(18.0));
         assert!(file.animations);

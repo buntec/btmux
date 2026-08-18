@@ -18,13 +18,21 @@
 <style>.label{display:none!important}</style>
 <script>
 (function(){
-  var nativeRaf=window.requestAnimationFrame.bind(window), enabled=true, speed=1, epoch=performance.now(), virtualEpoch=epoch, pending=null;
+  var nativeRaf=window.requestAnimationFrame.bind(window), enabled=true, speed=1, maxFps=30, epoch=performance.now(), virtualEpoch=epoch, pending=null, lastFrame=-Infinity;
   var seed=new URLSearchParams(location.search).get('seed')||'btmux', hash=2166136261;
   for(var i=0;i<seed.length;i++){hash^=seed.charCodeAt(i);hash=Math.imul(hash,16777619)}
   Math.random=function(){hash+=0x6D2B79F5;var t=hash;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296};
-  window.requestAnimationFrame=function(callback){if(!enabled){pending=callback;return 0}return nativeRaf(function(now){if(enabled)callback(virtualEpoch+(now-epoch)*speed);else pending=callback})};
+  window.requestAnimationFrame=function(callback){
+    if(!enabled){pending=callback;return 0}
+    function tick(now){
+      if(!enabled){pending=callback;return}
+      if(now-lastFrame<(1000/maxFps)-1){nativeRaf(tick);return}
+      lastFrame=now;callback(virtualEpoch+(now-epoch)*speed)
+    }
+    return nativeRaf(tick)
+  };
   addEventListener('message',function(event){var data=event.data;if(!data)return;
-    if(data.type==='btmux-runtime'){virtualEpoch+=(performance.now()-epoch)*speed;epoch=performance.now();var wasEnabled=enabled;enabled=data.animated;speed=data.speed;if(enabled&&!wasEnabled&&pending){var callback=pending;pending=null;window.requestAnimationFrame(callback)}return}
+    if(data.type==='btmux-runtime'){virtualEpoch+=(performance.now()-epoch)*speed;epoch=performance.now();var wasEnabled=enabled;enabled=data.animated;speed=data.speed;maxFps=Math.max(1,data.maxFps||30);if(enabled&&!wasEnabled&&pending){var callback=pending;pending=null;lastFrame=-Infinity;window.requestAnimationFrame(callback)}return}
     if(data.type!=='btmux-pointer')return;
     var canvas=document.querySelector('canvas');if(!canvas)return;
     if(!data.active){canvas.dispatchEvent(new MouseEvent('mouseleave'));return}

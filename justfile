@@ -6,9 +6,11 @@ default:
 # Vite (vite.config.ts) proxies /ws and /api here.
 dev_port := "8044"
 
-# Run both backend and frontend in dev mode
+# Run both backend and frontend in dev mode. Default backend logging to debug;
+# an explicitly exported BTMUX_*_LOG value still wins.
 dev:
-    bunx concurrently --names backend,frontend --prefix-colors blue,green \
+    BTMUX_CONSOLE_LOG="${BTMUX_CONSOLE_LOG:-debug}" BTMUX_FILE_LOG="${BTMUX_FILE_LOG:-debug}" \
+      bunx concurrently --names backend,frontend --prefix-colors blue,green \
         "cargo run -- --no-browser --port {{dev_port}}" \
         "cd frontend && bunx vite --open"
 

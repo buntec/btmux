@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './state/store';
 import { useControlSocket } from './hooks/useControlSocket';
@@ -29,20 +29,27 @@ import { pumpRenders } from './lib/pumpRenders';
 const PIX_RAMP_IN_MS = 250;
 const PIX_RAMP_OUT_MS = 150;
 
-function setPanesPostProcess(shader: string | null): void {
-  for (const term of useStore.getState().terminals.values()) {
-    term.renderer?.setPostProcessShader?.(shader);
-  }
+interface PaneRenderer {
+  setPostProcessShader?(shader: string | null): void;
+  requestRender?(): void;
 }
 
-function allPaneRenderers() {
-  return Array.from(useStore.getState().terminals.values(), (term) => term.renderer);
+function paneRenderers(paneIds: readonly string[]): PaneRenderer[] {
+  const terminals = useStore.getState().terminals;
+  return paneIds.flatMap((paneId) => {
+    const renderer = terminals.get(paneId)?.renderer;
+    return renderer ? [renderer] : [];
+  });
+}
+
+function setRenderersPostProcess(renderers: Iterable<PaneRenderer>, shader: string | null): void {
+  for (const renderer of renderers) renderer.setPostProcessShader?.(shader);
 }
 
 /**
- * Applies the WebGL pixelate post-process shader (terminalFxShaders.ts) to
- * every mounted pane while the session switcher or help overlay is open —
- * the privacy-blur backdrop for those overlays. Replaces an earlier whole-stage
+ * Applies the WebGL pixelate post-process shader (terminalFxShaders.ts) to the
+ * visible panes while the session switcher or help overlay is open — the
+ * privacy-blur backdrop for those overlays. Replaces an earlier whole-stage
  * SVG CSS filter that pixelated the entire SessionPool DOM subtree in one
  * shot; this instead asks each pane's own ghostty-web WebGL context to
  * pixelate its own content. Trade-off: title bars/borders/dividers (separate
@@ -50,29 +57,79 @@ function allPaneRenderers() {
  * pixelated, only terminal cell content is — accepted in favor of dropping
  * the SVG filter's hackiness.
  */
-function usePanePixelateOverlay(pixActive: boolean, animations: boolean): void {
+function usePanePixelateOverlay(pixActive: boolean, animations: boolean, visiblePaneIds: readonly string[]): void {
   const prevActive = useRef(false);
+  const visiblePaneIdsRef = useRef(visiblePaneIds);
+  const affectedRenderersRef = useRef<PaneRenderer[]>([]);
+  visiblePaneIdsRef.current = visiblePaneIds;
 
   useEffect(() => {
     if (!animations) {
-      setPanesPostProcess(baseShaderSrc());
+      setRenderersPostProcess(affectedRenderersRef.current, baseShaderSrc());
+      affectedRenderersRef.current = [];
       prevActive.current = false;
       return;
     }
     if (pixActive && !prevActive.current) {
-      setPanesPostProcess(PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC);
+      // Only the active window is visible behind the overlay. Hidden terminals
+      // in the cross-session/window keep-alive pools are suspended and should
+      // not compile or render a privacy shader they can never display.
+      setRenderersPostProcess(affectedRenderersRef.current, baseShaderSrc());
+      const affected = paneRenderers(visiblePaneIdsRef.current);
+      affectedRenderersRef.current = affected;
+      setRenderersPostProcess(affected, PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC);
       prevActive.current = pixActive;
-      return pumpRenders(allPaneRenderers, PIX_RAMP_IN_MS);
+      return pumpRenders(() => affected, PIX_RAMP_IN_MS);
     }
     if (!pixActive && prevActive.current) {
-      setPanesPostProcess(PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC);
+      // Restore exactly the renderers pixelated on entry. During a session
+      // selection the newly-visible pane is different and owns its own switch
+      // effect, while the old (now hidden) renderer still needs its base shader
+      // restored before it is shown again.
+      const affected = affectedRenderersRef.current;
+      setRenderersPostProcess(affected, PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC);
       prevActive.current = pixActive;
       // Hand the post-process slot back to the configured persistent effect
       // (`shader = "..."`), which is null when none is set.
-      return pumpRenders(allPaneRenderers, PIX_RAMP_OUT_MS, () => setPanesPostProcess(baseShaderSrc()));
+      return pumpRenders(
+        () => affected,
+        PIX_RAMP_OUT_MS,
+        () => {
+          setRenderersPostProcess(affected, baseShaderSrc());
+          if (affectedRenderersRef.current === affected) affectedRenderersRef.current = [];
+        },
+      );
     }
     prevActive.current = pixActive;
   }, [pixActive, animations]);
+}
+
+/**
+ * Keep decorative GPU work stopped while a route change mounts a session's
+ * terminals. The changed id makes this true during the transition render, so
+ * ShaderWallpaper can pause in a layout effect before TerminalPane's passive
+ * mount effects synchronously create their WebGL contexts. Two animation
+ * frames give those mounts and their first paint a chance to finish before the
+ * wallpaper resumes; a main-thread stall naturally delays both frames.
+ */
+function useSessionTransitionPause(activeSessionId: string | null): boolean {
+  const [settledSessionId, setSettledSessionId] = useState(activeSessionId);
+  const transitioning = activeSessionId !== settledSessionId;
+
+  useEffect(() => {
+    if (!transitioning) return;
+
+    let resumeRaf = 0;
+    const settleRaf = requestAnimationFrame(() => {
+      resumeRaf = requestAnimationFrame(() => setSettledSessionId(activeSessionId));
+    });
+    return () => {
+      cancelAnimationFrame(settleRaf);
+      cancelAnimationFrame(resumeRaf);
+    };
+  }, [activeSessionId, transitioning]);
+
+  return transitioning;
 }
 
 function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
@@ -82,9 +139,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const overlay = useStore((s) => s.overlay);
   const navigate = useNavigate();
   const location = useLocation();
-
-  // Privacy-pixelate every pane while the session switcher or help overlay is open.
-  usePanePixelateOverlay(switcherOpen || overlay?.mode === 'keys', config?.animations ?? true);
+  const privacyOverlayActive = switcherOpen || overlay?.mode === 'keys';
 
   // Expose the router's navigate to code outside <BrowserRouter> (the control
   // socket's OS-notification onclick) so clicking a notification jumps to the pane.
@@ -132,6 +187,15 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const activeSessionId = currentSessionName
     ? (allSessions.find((s) => s.name === currentSessionName)?.id ?? null)
     : null;
+  const sessionTransitionActive = useSessionTransitionPause(activeSessionId);
+  const activeSession = activeSessionId ? allSessions.find((session) => session.id === activeSessionId) : null;
+  const activeWindow = activeSession?.windows[activeSession.active_window];
+  const visiblePaneIds = activeWindow?.zoomed_pane
+    ? [activeWindow.zoomed_pane]
+    : (activeWindow?.panes.map((pane) => pane.id) ?? []);
+
+  // Privacy-pixelate only the panes actually visible behind the switcher/help.
+  usePanePixelateOverlay(privacyOverlayActive, config?.animations ?? true, visiblePaneIds);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
@@ -178,6 +242,10 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
             saturate={wallpaperSaturate}
             speed={wallpaperSpeed}
             animated={(config?.animations ?? true) && wallpaperSpeed > 0}
+            // Modal animations and first-time session mounts both compete with
+            // the wallpaper for GPU time. Keep it stopped until that foreground
+            // work has completed and the newly-visible terminals have painted.
+            paused={privacyOverlayActive || sessionTransitionActive}
             seed={wallpaperSeed}
             followsMouseCursor={wallpaperFollowsMouse}
             followsKeyboardInput={wallpaperFollowsKeyboard}

@@ -42,13 +42,25 @@ export function SessionPool({ send }: Props) {
   const [pool, setPool] = useState<string[]>(() => (activeSessionId ? [activeSessionId] : []));
 
   // Promote the active session to the front and evict beyond the cap. This is
-  // the only place the pool grows. Navigating to "/" leaves activeSessionId null
-  // and so leaves the pool as-is, which is what keeps choose-tree switch-backs
-  // instant. Evicting an id simply drops its SessionPane from the render below,
-  // which unmounts it and disposes its terminals + closes its sockets.
+  // the only place the pool grows. A never-seen session joins on the next frame:
+  // App has already told the wallpaper to pause in this commit, and yielding a
+  // frame lets the iframe receive that message before TerminalPane synchronously
+  // creates the new WebGL contexts. Already-warm sessions promote immediately.
+  // Navigating to "/" leaves activeSessionId null and so leaves the pool as-is.
+  // Evicting an id drops its SessionPane, disposing terminals and sockets.
   useEffect(() => {
     if (!activeSessionId) return;
-    setPool((prev) => [activeSessionId, ...prev.filter((id) => id !== activeSessionId)].slice(0, POOL_LIMIT));
+    const promote = (prev: string[]) => {
+      if (prev[0] === activeSessionId) return prev;
+      return [activeSessionId, ...prev.filter((id) => id !== activeSessionId)].slice(0, POOL_LIMIT);
+    };
+    if (pool.includes(activeSessionId)) {
+      setPool(promote);
+      return;
+    }
+
+    const mountRaf = requestAnimationFrame(() => setPool(promote));
+    return () => cancelAnimationFrame(mountRaf);
   }, [activeSessionId]);
 
   // Drop pool entries for sessions the server has killed, so a dead session

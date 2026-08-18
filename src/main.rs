@@ -30,9 +30,26 @@ use ws::control::ServerMessage;
 
 pub type AppState = Arc<RwLock<SessionManager>>;
 
+const CONSOLE_LOG_ENV: &str = "BTMUX_CONSOLE_LOG";
+const FILE_LOG_ENV: &str = "BTMUX_FILE_LOG";
+
+fn resolve_log_level(configured: &str, environment: Option<String>) -> String {
+    environment
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| configured.to_string())
+}
+
+fn log_directives(level: &str) -> String {
+    match level.trim() {
+        simple @ ("error" | "warn" | "info" | "debug" | "trace") => {
+            format!("off,btmux={simple}")
+        }
+        directives => format!("off,{directives}"),
+    }
+}
+
 fn make_filter(level: &str) -> EnvFilter {
-    EnvFilter::try_new(format!("off,btmux={level}"))
-        .unwrap_or_else(|_| EnvFilter::new("off,btmux=info"))
+    EnvFilter::try_new(log_directives(level)).unwrap_or_else(|_| EnvFilter::new("off,btmux=info"))
 }
 
 #[tokio::main]
@@ -45,8 +62,13 @@ async fn main() {
         .map(|c| c.log)
         .unwrap_or_default();
 
-    let console_filter = make_filter(&log_config.console_level);
-    let file_filter = make_filter(&log_config.file_level);
+    let console_level = resolve_log_level(
+        &log_config.console_level,
+        std::env::var(CONSOLE_LOG_ENV).ok(),
+    );
+    let file_level = resolve_log_level(&log_config.file_level, std::env::var(FILE_LOG_ENV).ok());
+    let console_filter = make_filter(&console_level);
+    let file_filter = make_filter(&file_level);
 
     let local_time = OffsetTime::new(
         UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC),
@@ -364,4 +386,28 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
     let _ = mgr.events().send(json);
     let _ = mgr.events().send(toast_json);
     tracing::info!("config reloaded from {}", path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{log_directives, resolve_log_level};
+
+    #[test]
+    fn environment_log_level_overrides_config_when_non_empty() {
+        assert_eq!(
+            resolve_log_level("warn", Some("debug".to_string())),
+            "debug"
+        );
+        assert_eq!(resolve_log_level("warn", Some("  ".to_string())), "warn");
+        assert_eq!(resolve_log_level("warn", None), "warn");
+    }
+
+    #[test]
+    fn simple_levels_target_btmux_and_full_directives_are_preserved() {
+        assert_eq!(log_directives("debug"), "off,btmux=debug");
+        assert_eq!(
+            log_directives("btmux=trace,tower_http=info"),
+            "off,btmux=trace,tower_http=info"
+        );
+    }
 }

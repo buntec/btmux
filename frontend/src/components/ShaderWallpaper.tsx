@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { randomizeRadiantColor, randomizeRadiantParams, randomizeWallpaper } from '../lib/wallpaperRandom';
 import { findWallpaperShader } from '../lib/wallpaperShaders';
 import { findRadiantShader } from '../lib/wallpaperCatalog';
@@ -14,13 +14,72 @@ void main() {
 }
 `;
 
-// Radiant wallpapers are decorative and several of them are deliberately
-// expensive full-screen shaders. Render their iframe at half size and let the
-// compositor upscale it: this quarters the fragment workload and, on a 2x
-// display, avoids asking the wallpaper for four physical pixels per CSS pixel.
-// Keeping this outside the vendored HTML makes the optimization apply uniformly
-// and survive `scripts/sync-radiant.mjs` refreshes.
-const RADIANT_RENDER_SCALE = 0.5;
+interface WallpaperBudget {
+  maxFps: number;
+  renderScale: number;
+}
+
+// Decorative rendering must leave headroom for latency-sensitive terminal
+// work. Start below display refresh/native resolution, then step down when the
+// main document sees sustained >50ms frames. Recovery is intentionally slower
+// than degradation so quality does not oscillate under marginal GPU load.
+const WALLPAPER_BUDGETS: readonly WallpaperBudget[] = [
+  { maxFps: 30, renderScale: 0.4 },
+  { maxFps: 24, renderScale: 0.3 },
+  { maxFps: 15, renderScale: 0.25 },
+];
+const BUDGET_SAMPLE_MS = 2000;
+const SLOW_FRAME_MS = 50;
+const SLOW_FRAMES_TO_DEGRADE = 3;
+const STABLE_WINDOWS_TO_RECOVER = 5;
+
+function useWallpaperBudget(monitor: boolean): WallpaperBudget {
+  const [level, setLevel] = useState(0);
+
+  useEffect(() => {
+    if (!monitor) return;
+
+    let rafId = 0;
+    let lastFrame = performance.now();
+    let windowStartedAt = lastFrame;
+    let slowFrames = 0;
+    let stableWindows = 0;
+
+    const sample = (now: number) => {
+      const frameDuration = now - lastFrame;
+      if (frameDuration > SLOW_FRAME_MS) {
+        // Weight a severe stall as several missed frames so a single long GPU
+        // block (such as WebGL context creation) lowers the budget immediately.
+        slowFrames += Math.min(SLOW_FRAMES_TO_DEGRADE, Math.max(1, Math.floor(frameDuration / SLOW_FRAME_MS)));
+      }
+      lastFrame = now;
+
+      if (now - windowStartedAt >= BUDGET_SAMPLE_MS) {
+        if (slowFrames >= SLOW_FRAMES_TO_DEGRADE) {
+          setLevel((current) => Math.min(current + 1, WALLPAPER_BUDGETS.length - 1));
+          stableWindows = 0;
+        } else if (slowFrames === 0) {
+          stableWindows += 1;
+          if (stableWindows >= STABLE_WINDOWS_TO_RECOVER) {
+            setLevel((current) => Math.max(0, current - 1));
+            stableWindows = 0;
+          }
+        } else {
+          stableWindows = 0;
+        }
+        slowFrames = 0;
+        windowStartedAt = now;
+      }
+
+      rafId = requestAnimationFrame(sample);
+    };
+
+    rafId = requestAnimationFrame(sample);
+    return () => cancelAnimationFrame(rafId);
+  }, [monitor]);
+
+  return WALLPAPER_BUDGETS[level];
+}
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
@@ -64,6 +123,7 @@ interface ShaderWallpaperProps {
   saturate: number;
   speed: number;
   animated: boolean;
+  paused?: boolean;
   seed: string;
   followsMouseCursor: boolean;
   followsKeyboardInput: boolean;
@@ -76,11 +136,16 @@ function NativeShaderWallpaper({
   saturate,
   speed,
   animated,
+  paused = false,
   seed,
   followsMouseCursor,
   followsKeyboardInput,
 }: ShaderWallpaperProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const budget = useWallpaperBudget(animated && !paused);
+  const setRuntimeRef = useRef<
+    ((animated: boolean, paused: boolean, maxFps: number, renderScale: number) => void) | null
+  >(null);
   const [contextGeneration, setContextGeneration] = useState(0);
   const effect = findWallpaperShader(shaderId);
 
@@ -133,6 +198,11 @@ function NativeShaderWallpaper({
     const startedAt = performance.now();
     let rafId = 0;
     let disposed = false;
+    let animationEnabled = animated;
+    let temporarilyPaused = paused;
+    let maxFps = budget.maxFps;
+    let renderScale = budget.renderScale;
+    let lastDrawAt = -Infinity;
     let pointerX = -1;
     let pointerY = -1;
     let pointerIsActive = false;
@@ -142,7 +212,7 @@ function NativeShaderWallpaper({
       pointerX = ((clientX - rect.left) / rect.width) * canvas.width;
       pointerY = (1 - (clientY - rect.top) / rect.height) * canvas.height;
       pointerIsActive = true;
-      if (!animated) draw(performance.now());
+      if (!animationEnabled && !temporarilyPaused) draw(performance.now());
     };
 
     const handlePointerMove = (event: PointerEvent) => {
@@ -156,8 +226,8 @@ function NativeShaderWallpaper({
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const width = Math.max(1, Math.round(canvas.clientWidth * dpr));
-      const height = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      const width = Math.max(1, Math.round(canvas.clientWidth * dpr * renderScale));
+      const height = Math.max(1, Math.round(canvas.clientHeight * dpr * renderScale));
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
@@ -183,23 +253,42 @@ function NativeShaderWallpaper({
     };
 
     const tick = (now: number) => {
-      draw(now);
-      if (animated && !document.hidden) rafId = requestAnimationFrame(tick);
+      if (now - lastDrawAt >= 1000 / maxFps - 1) {
+        draw(now);
+        lastDrawAt = now;
+      }
+      if (animationEnabled && !temporarilyPaused && !document.hidden) rafId = requestAnimationFrame(tick);
     };
 
     const start = () => {
       cancelAnimationFrame(rafId);
-      if (document.hidden) return;
-      if (animated) {
+      if (document.hidden || temporarilyPaused) return;
+      if (animationEnabled) {
         rafId = requestAnimationFrame(tick);
       } else {
         draw(performance.now());
       }
     };
+    setRuntimeRef.current = (nextAnimated, nextPaused, nextMaxFps, nextRenderScale) => {
+      if (
+        animationEnabled === nextAnimated &&
+        temporarilyPaused === nextPaused &&
+        maxFps === nextMaxFps &&
+        renderScale === nextRenderScale
+      ) {
+        return;
+      }
+      animationEnabled = nextAnimated;
+      temporarilyPaused = nextPaused;
+      maxFps = nextMaxFps;
+      renderScale = nextRenderScale;
+      lastDrawAt = -Infinity;
+      start();
+    };
 
     const handleVisibility = () => start();
     const handleResize = () => {
-      if (!animated) draw(performance.now());
+      if (!animationEnabled && !temporarilyPaused) draw(performance.now());
     };
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('resize', handleResize);
@@ -209,6 +298,7 @@ function NativeShaderWallpaper({
 
     return () => {
       disposed = true;
+      setRuntimeRef.current = null;
       cancelAnimationFrame(rafId);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('resize', handleResize);
@@ -218,7 +308,15 @@ function NativeShaderWallpaper({
       canvas.removeEventListener('webglcontextrestored', handleContextRestored);
       gl.deleteProgram(program);
     };
-  }, [effect, shaderId, speed, animated, seed, followsMouseCursor, followsKeyboardInput, contextGeneration]);
+  }, [effect, shaderId, speed, seed, followsMouseCursor, followsKeyboardInput, contextGeneration]);
+
+  // Pausing for a modal should stop/start the existing render loop, not tear
+  // down and recompile the native WebGL program at the exact moment the UI is
+  // trying to animate the overlay.
+  useLayoutEffect(
+    () => setRuntimeRef.current?.(animated, paused, budget.maxFps, budget.renderScale),
+    [animated, paused, budget],
+  );
 
   if (!effect) return null;
 
@@ -247,18 +345,34 @@ function RadiantShaderWallpaper({
   saturate,
   speed,
   animated,
+  paused = false,
   seed,
   followsMouseCursor,
   followsKeyboardInput,
 }: ShaderWallpaperProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const shader = findRadiantShader(shaderId);
+  const budget = useWallpaperBudget(animated && !paused);
+
+  // This must beat TerminalPane's passive mount effect during a session
+  // transition: WebGL context creation is synchronous and can otherwise queue
+  // behind an in-flight wallpaper frame before a normal effect gets to pause it.
+  useLayoutEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: 'btmux-runtime', animated: animated && !paused, speed, maxFps: budget.maxFps },
+      '*',
+    );
+  }, [animated, paused, speed, budget.maxFps]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !shader) return;
 
-    const postRuntime = () => iframe.contentWindow?.postMessage({ type: 'btmux-runtime', animated, speed }, '*');
+    const postRuntime = () =>
+      iframe.contentWindow?.postMessage(
+        { type: 'btmux-runtime', animated: animated && !paused, speed, maxFps: budget.maxFps },
+        '*',
+      );
     const postParams = () => {
       for (const param of randomizeRadiantParams(shader.id, seed, shader.params)) {
         iframe.contentWindow?.postMessage({ type: 'param', ...param }, '*');
@@ -301,7 +415,7 @@ function RadiantShaderWallpaper({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
     };
-  }, [shader, speed, animated, seed, followsMouseCursor, followsKeyboardInput]);
+  }, [shader, speed, animated, paused, seed, followsMouseCursor, followsKeyboardInput, budget.maxFps]);
 
   if (!shader) return null;
   const randomizedColor = randomizeRadiantColor(shader.id, seed);
@@ -328,9 +442,9 @@ function RadiantShaderWallpaper({
           position: 'absolute',
           border: 0,
           inset: 0,
-          width: `${100 * RADIANT_RENDER_SCALE}%`,
-          height: `${100 * RADIANT_RENDER_SCALE}%`,
-          transform: `scale(${1 / RADIANT_RENDER_SCALE})`,
+          width: `${100 * budget.renderScale}%`,
+          height: `${100 * budget.renderScale}%`,
+          transform: `scale(${1 / budget.renderScale})`,
           transformOrigin: 'top left',
           pointerEvents: 'none',
         }}

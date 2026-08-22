@@ -83,6 +83,11 @@ A default config file is created on first launch:
 All fields are optional and have sensible defaults.
 Config changes are picked up live.
 
+`colors` accepts either the name of a base16/base24 YAML file in
+`~/.config/btmux/colors/` or an `http://`/`https://` URL to one. YAML palettes
+may be at the top level or nested under `palette`; remote files are fetched
+when the config is loaded and reloaded.
+
 ## Automation and AI agents
 
 Everything below is served on the same host/port as the web UI (default

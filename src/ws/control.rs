@@ -107,8 +107,27 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) {
     // tab, but config.toml is left untouched, so they last until btmux restarts
     // or the config file is reloaded.
     if let ClientMessage::UpdateConfig { update } = &cmd {
+        let mut update = update.clone();
+        if let Some(colors) = update.colors.as_deref() {
+            if crate::config::is_color_scheme_url(colors) {
+                match crate::config::load_remote_color_scheme(colors).await {
+                    Ok(theme) => update.resolved_colors = Some(Box::new(theme)),
+                    Err(error) => {
+                        tracing::warn!("color scheme override failed: {error}");
+                        let toast_json = serde_json::to_string(&ServerMessage::Toast {
+                            message: format!("Color scheme error: {error}"),
+                            level: ToastLevel::Error,
+                        })
+                        .unwrap();
+                        let mgr = state.read().await;
+                        let _ = mgr.events().send(toast_json);
+                        return;
+                    }
+                }
+            }
+        }
         let mut mgr = state.write().await;
-        let config = mgr.apply_config_override(update).clone();
+        let config = mgr.apply_config_override(&update).clone();
         let json = serde_json::to_string(&ServerMessage::Config {
             config: Box::new(config),
         })

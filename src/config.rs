@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -189,8 +190,13 @@ pub struct FileConfig {
     /// Inline base16/base24 palette translated to an `ITheme` for the browser.
     pub theme: Option<BaseTheme>,
     /// Name of a color scheme file in `~/.config/btmux/colors/` (without extension).
-    /// Overridden by an inline `[theme]` if both are present.
+    /// May also be an HTTP(S) URL to a base16/base24 YAML file. Overridden by
+    /// an inline `[theme]` if both are present.
     pub colors: Option<String>,
+    /// Parsed palette for a remote `colors` URL. This is populated while the
+    /// config is loaded and is not read from or written to config.toml.
+    #[serde(skip)]
+    pub resolved_colors: Option<BaseTheme>,
     /// Logging configuration.
     pub log: LogConfig,
 }
@@ -223,6 +229,7 @@ impl Default for FileConfig {
             terminal: TerminalOptions::default(),
             theme: None,
             colors: None,
+            resolved_colors: None,
             log: LogConfig::default(),
         }
     }
@@ -718,16 +725,7 @@ pub fn load_color_scheme(name: &str) -> Option<BaseTheme> {
     };
 
     let contents = std::fs::read_to_string(&path).ok()?;
-    let doc: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(&contents).ok()?;
-
-    // Try top-level first, then under a "palette" key.
-    let palette = extract_palette(&doc).or_else(|| {
-        doc.get("palette")
-            .and_then(|v| {
-                serde_yaml::from_value::<HashMap<String, serde_yaml::Value>>(v.clone()).ok()
-            })
-            .and_then(|m| extract_palette(&m))
-    });
+    let palette = parse_color_scheme(&contents);
 
     if palette.is_none() {
         tracing::warn!(
@@ -736,6 +734,70 @@ pub fn load_color_scheme(name: &str) -> Option<BaseTheme> {
         );
     }
     palette
+}
+
+/// Whether `colors` should be interpreted as a remote HTTP(S) YAML source.
+pub fn is_color_scheme_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+/// Fetch and parse a remote base16/base24 color scheme YAML file.
+pub async fn load_remote_color_scheme(url: &str) -> Result<BaseTheme, String> {
+    let parsed_url = reqwest::Url::parse(url).map_err(|e| format!("invalid color URL: {e}"))?;
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err("color scheme URL must use http:// or https://".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent(format!("btmux/{}", VERSION))
+        .build()
+        .map_err(|e| format!("could not create HTTP client: {e}"))?;
+    let response = client
+        .get(parsed_url)
+        .send()
+        .await
+        .map_err(|e| format!("could not fetch color scheme: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("color scheme request failed: {e}"))?;
+    let contents = response
+        .text()
+        .await
+        .map_err(|e| format!("could not read color scheme response: {e}"))?;
+
+    parse_color_scheme(&contents)
+        .ok_or_else(|| "color scheme YAML does not contain base00–base0F".to_string())
+}
+
+/// Load the config file and resolve a remote `colors` URL, if configured.
+/// Keeping this separate from `load` preserves the synchronous config parser
+/// used by commands that only need to inspect scalar settings (such as the
+/// service installer).
+pub async fn load_with_colors(path: &std::path::Path) -> Result<FileConfig, String> {
+    let mut config = load(path)?;
+    if config.theme.is_none() {
+        if let Some(colors) = config.colors.as_deref() {
+            if is_color_scheme_url(colors) {
+                config.resolved_colors = Some(load_remote_color_scheme(colors).await?);
+            }
+        }
+    }
+    Ok(config)
+}
+
+/// Parse a color scheme YAML document. Palette keys may be at the top level or
+/// under a `palette` key, matching common base16/base24 scheme formats.
+fn parse_color_scheme(contents: &str) -> Option<BaseTheme> {
+    let doc: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(contents).ok()?;
+
+    // Try top-level first, then under a "palette" key.
+    extract_palette(&doc).or_else(|| {
+        doc.get("palette")
+            .and_then(|v| {
+                serde_yaml::from_value::<HashMap<String, serde_yaml::Value>>(v.clone()).ok()
+            })
+            .and_then(|m| extract_palette(&m))
+    })
 }
 
 /// Try to extract a BaseTheme from a flat map of string keys. Accepts values
@@ -955,9 +1017,11 @@ pub fn generate_config_toml() -> String {
 # console-level = "warn"    # stderr output (keep the terminal quiet)
 # file-level = "info"       # file output (~/.local/state/btmux/log/btmux.log.YYYY-MM-DD)
 
-# Color scheme from ~/.config/btmux/colors/<name>.yaml (base16/base24 YAML files).
+# Color scheme from ~/.config/btmux/colors/<name>.yaml (base16/base24 YAML files),
+# or a URL to a base16/base24 YAML file. A `palette` wrapper is supported.
 # An inline [theme] below overrides this.
 # colors = "catppuccin-mocha"
+# colors = "https://example.com/theme.yml"
 
 # Inline base16 color palette. Uncomment the entire [theme] block to activate.
 # [theme]
@@ -1054,12 +1118,16 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .clone()
         .unwrap_or_else(|| "electric-badger-dream".to_string());
 
-    // Inline [theme] takes priority; fall back to `colors` scheme file.
+    // Inline [theme] takes priority; fall back to a resolved remote palette or
+    // a local `colors` scheme file.
     let theme = file.theme.as_ref().map(BaseTheme::to_theme).or_else(|| {
-        file.colors
-            .as_deref()
-            .and_then(load_color_scheme)
-            .map(|bt| bt.to_theme())
+        file.colors.as_deref().and_then(|colors| {
+            if is_color_scheme_url(colors) {
+                file.resolved_colors.as_ref().map(BaseTheme::to_theme)
+            } else {
+                load_color_scheme(colors).map(|bt| bt.to_theme())
+            }
+        })
     });
 
     let (wallpaper_url, wallpaper_path) = match &file.wallpaper {
@@ -1078,11 +1146,22 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         other => (other.clone(), None),
     };
 
-    let color_schemes = list_color_schemes();
-    let color_scheme_themes = color_schemes
+    let mut color_schemes = list_color_schemes();
+    if let (Some(colors), Some(_)) = (&file.colors, &file.resolved_colors) {
+        if is_color_scheme_url(colors) && !color_schemes.contains(colors) {
+            color_schemes.push(colors.clone());
+        }
+    }
+    let mut color_scheme_themes: BTreeMap<String, Theme> = color_schemes
         .iter()
+        .filter(|name| !is_color_scheme_url(name))
         .filter_map(|name| load_color_scheme(name).map(|base| (name.clone(), base.to_theme())))
         .collect();
+    if let (Some(colors), Some(base)) = (&file.colors, &file.resolved_colors) {
+        if is_color_scheme_url(colors) {
+            color_scheme_themes.insert(colors.clone(), base.to_theme());
+        }
+    }
 
     ClientConfig {
         prefix: file
@@ -1139,6 +1218,10 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct ConfigUpdate {
     pub colors: Option<String>,
+    /// Parsed palette for a remote `colors` override. Filled by the WebSocket
+    /// handler after fetching; never accepted from the browser as JSON.
+    #[serde(skip)]
+    pub resolved_colors: Option<Box<BaseTheme>>,
     pub font_family: Option<String>,
     pub font_weight: Option<u16>,
     pub font_size: Option<f32>,
@@ -1166,6 +1249,7 @@ impl ConfigUpdate {
     pub fn merge(&mut self, other: &ConfigUpdate) {
         if other.colors.is_some() {
             self.colors = other.colors.clone();
+            self.resolved_colors = other.resolved_colors.clone();
         }
         if other.font_family.is_some() {
             self.font_family = other.font_family.clone();
@@ -1230,6 +1314,7 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
 
     if let Some(colors) = &overrides.colors {
         file.colors = Some(colors.clone()).filter(|c| !c.is_empty());
+        file.resolved_colors = overrides.resolved_colors.as_deref().cloned();
         // An inline [theme] outranks `colors`, so picking a scheme (or "none")
         // has to drop it — otherwise the picker would appear to do nothing for
         // anyone with an inline palette.
@@ -1294,6 +1379,61 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
 mod tests {
     use super::*;
 
+    const BASE24_YAML: &str = r##"
+system: "base24"
+palette:
+  base00: "#000000"
+  base01: "#111111"
+  base02: "#222222"
+  base03: "#333333"
+  base04: "#444444"
+  base05: "#555555"
+  base06: "#666666"
+  base07: "#777777"
+  base08: "#880000"
+  base09: "#990000"
+  base0A: "#aaaa00"
+  base0B: "#00bb00"
+  base0C: "#00cccc"
+  base0D: "#0000dd"
+  base0E: "#ee00ee"
+  base0F: "#ff00ff"
+  base10: "#101010"
+  base11: "#111111"
+  base12: "#ff1111"
+  base13: "#ffff13"
+  base14: "#14ff14"
+  base15: "#15ffff"
+  base16: "#1616ff"
+  base17: "#ff17ff"
+"##;
+
+    #[test]
+    fn parses_palette_wrapped_base24_yaml() {
+        let palette = parse_color_scheme(BASE24_YAML).expect("palette should parse");
+
+        assert!(palette.is_base24());
+        assert_eq!(palette.base0a, "#aaaa00");
+        assert_eq!(palette.to_theme().bright_red, "#ff1111");
+        assert_eq!(palette.to_theme().bright_white, "#777777");
+    }
+
+    #[test]
+    fn remote_color_scheme_is_used_as_the_active_theme() {
+        let url = "https://example.com/theme.yml";
+        let mut file = FileConfig::default();
+        file.colors = Some(url.to_string());
+        file.resolved_colors = Some(parse_color_scheme(BASE24_YAML).unwrap());
+
+        let resolved = resolve_binds(&file);
+
+        assert!(is_color_scheme_url(url));
+        assert_eq!(resolved.active_color_scheme.as_deref(), Some(url));
+        assert_eq!(resolved.theme.as_ref().unwrap().background, "#000000");
+        assert!(resolved.color_schemes.iter().any(|scheme| scheme == url));
+        assert!(resolved.color_scheme_themes.contains_key(url));
+    }
+
     #[test]
     fn empty_config_uses_built_in_defaults() {
         let config: FileConfig = toml::from_str("").expect("empty config should parse");
@@ -1330,6 +1470,7 @@ mod tests {
             &file,
             &ConfigUpdate {
                 colors: Some(String::new()),
+                resolved_colors: None,
                 font_family: Some("Departure Mono".to_string()),
                 font_weight: Some(400),
                 font_size: Some(21.0),

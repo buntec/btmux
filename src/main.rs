@@ -123,7 +123,7 @@ async fn main() {
 
     let config_path = config::config_path();
     let file_config = match &config_path {
-        Some(path) => match config::load(path) {
+        Some(path) => match config::load_with_colors(path).await {
             Ok(cfg) => {
                 if path.exists() {
                     tracing::info!("loaded config from {}", path.display());
@@ -348,7 +348,7 @@ fn spawn_pane_exit_handler(
 }
 
 async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
-    let file_config = match config::load(path) {
+    let file_config = match config::load_with_colors(path).await {
         Ok(cfg) => cfg,
         Err(e) => {
             tracing::error!("config reload failed: {} — keeping previous config", e);

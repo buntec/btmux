@@ -146,9 +146,9 @@ export interface ClientConfig {
   /** How many recently-viewed windows the window-grid (prefix + w) shows. */
   window_grid_count: number;
   version: string;
-  /** Available color scheme names from ~/.config/btmux/colors/. */
+  /** Available local color scheme names plus the active remote URL, if any. */
   color_schemes: string[];
-  /** Resolved themes used for local color-scheme previews on /config. */
+  /** Resolved themes used for local and remote color-scheme previews on /config. */
   color_scheme_themes: Record<string, Theme>;
   /** Currently active color scheme name, or null. */
   active_color_scheme: string | null;

@@ -83,7 +83,9 @@ so the same struct round-trips both ways. Unset fields serialize as `null`;
 `TerminalPane.tsx` omits them so ghostty-web's own default applies.
 
 `[theme]` is an inline base16 (`base00`–`base0F`) or base24 (adds `base10`–`base17`)
-palette. `BaseTheme::to_theme` translates it to ghostty-web's `ITheme` (fg/bg/cursor/
+palette. `colors` may instead name a local YAML palette or point to an HTTP(S) YAML
+file; both top-level and `palette`-wrapped documents are supported. `BaseTheme::to_theme`
+translates it to ghostty-web's `ITheme` (fg/bg/cursor/
 selection + 16 ANSI colors) using the canonical tinted-theming ANSI mapping. **base24
 is auto-detected by the presence of all of `base10`–`base17`** (all-or-nothing; a
 partial set falls back to base16); base24 then uses the dedicated bright slots

@@ -216,14 +216,16 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   }, [activeSessionId]);
 
   const wallpaper = config?.wallpaper ?? null;
-  const wallpaperShader = config?.wallpaper_shader ?? null;
-  const wallpaperOpacity = config?.wallpaper_opacity ?? 1;
+  // Preserve an explicitly disabled shader (`null`) after config loads while
+  // still showing the built-in default during the initial connection.
+  const wallpaperShader = config ? config.wallpaper_shader : 'radiant:aurora-curtain';
+  const wallpaperOpacity = config?.wallpaper_opacity ?? 0.1;
   const wallpaperBlur = config?.wallpaper_blur ?? 0;
-  const wallpaperSaturate = config?.wallpaper_saturate ?? 1;
-  const wallpaperSpeed = config?.wallpaper_speed ?? 1;
-  const wallpaperSeed = config?.wallpaper_seed ?? 'btmux';
+  const wallpaperSaturate = config?.wallpaper_saturate ?? 0.05;
+  const wallpaperSpeed = config?.wallpaper_speed ?? 0.2;
+  const wallpaperSeed = config?.wallpaper_seed ?? 'mellow-nebula-dream';
   const wallpaperFollowsMouse = config?.wallpaper_shader_follows_mouse_cursor ?? true;
-  const wallpaperFollowsKeyboard = config?.wallpaper_shader_follows_keyboard_input ?? true;
+  const wallpaperFollowsKeyboard = config?.wallpaper_shader_follows_keyboard_input ?? false;
 
   // Layout: a flex column owning the viewport. The pane region (flex:1) holds the
   // persistent SessionPool underneath, the route content (LandingPage or the

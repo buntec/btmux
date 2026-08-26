@@ -128,30 +128,35 @@ pub struct FileConfig {
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
     /// Name of a procedural WebGL background displayed behind the app.
+    /// Defaults to `radiant:aurora-curtain`.
     #[serde(rename = "wallpaper-shader")]
     pub wallpaper_shader: Option<String>,
     /// How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
-    /// Defaults to 0.05 when a wallpaper is configured.
+    /// Defaults to 0.10 when a wallpaper is configured.
     #[serde(rename = "wallpaper-opacity")]
     pub wallpaper_opacity: Option<f32>,
     /// Gaussian blur radius in pixels applied to the wallpaper.
-    /// 0 = no blur, higher values = more blur. Defaults to 2.0.
+    /// 0 = no blur, higher values = more blur. Defaults to 0.0.
     #[serde(rename = "wallpaper-blur")]
     pub wallpaper_blur: Option<f32>,
     /// Saturation multiplier for the wallpaper: 0.0 = grayscale, 1.0 = normal.
-    /// Defaults to 0.0.
+    /// Defaults to 0.05.
     #[serde(rename = "wallpaper-saturate")]
     pub wallpaper_saturate: Option<f32>,
     /// Animation speed multiplier for a procedural wallpaper.
+    /// Defaults to 0.20.
     #[serde(rename = "wallpaper-speed")]
     pub wallpaper_speed: Option<f32>,
     /// Deterministic seed used to vary procedural wallpaper colors and form.
+    /// Defaults to `mellow-nebula-dream`.
     #[serde(rename = "wallpaper-seed")]
     pub wallpaper_seed: Option<String>,
     /// Let procedural wallpapers react to pointer movement over the app.
+    /// Defaults to true.
     #[serde(rename = "wallpaper-shader-follows-mouse-cursor")]
     pub wallpaper_shader_follows_mouse_cursor: bool,
     /// Let procedural wallpapers react to the active terminal's text cursor.
+    /// Defaults to false.
     #[serde(rename = "wallpaper-shader-follows-keyboard-input")]
     pub wallpaper_shader_follows_keyboard_input: bool,
     /// Name of a persistent WebGL post-process effect applied to every pane
@@ -210,14 +215,14 @@ impl Default for FileConfig {
             animations: true,
             show_pane_titles: false,
             wallpaper: None,
-            wallpaper_shader: Some("radiant:sequin-wave".to_string()),
-            wallpaper_opacity: Some(0.05),
-            wallpaper_blur: Some(2.0),
-            wallpaper_saturate: Some(0.0),
-            wallpaper_speed: Some(0.5),
-            wallpaper_seed: Some("electric-badger-dream".to_string()),
+            wallpaper_shader: Some("radiant:aurora-curtain".to_string()),
+            wallpaper_opacity: Some(0.10),
+            wallpaper_blur: Some(0.0),
+            wallpaper_saturate: Some(0.05),
+            wallpaper_speed: Some(0.20),
+            wallpaper_seed: Some("mellow-nebula-dream".to_string()),
             wallpaper_shader_follows_mouse_cursor: true,
-            wallpaper_shader_follows_keyboard_input: true,
+            wallpaper_shader_follows_keyboard_input: false,
             shader: None,
             pane_switch_shader: None,
             pane_switch_intensity: Some(0.25),
@@ -936,20 +941,20 @@ pub fn generate_config_toml() -> String {
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
 # Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "radiant:sequin-wave"   # or btmux:plasma | btmux:voronoi
+# wallpaper-shader = "radiant:aurora-curtain"   # or btmux:plasma | btmux:voronoi
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
-# wallpaper-opacity = 0.05
+# wallpaper-opacity = 0.10
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
-# wallpaper-blur = 2.0
+# wallpaper-blur = 0.0
 # Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
-# wallpaper-saturate = 0.0
+# wallpaper-saturate = 0.05
 # Procedural wallpaper animation speed. 0 = frozen, 1 = normal.
-# wallpaper-speed = 0.5
+# wallpaper-speed = 0.20
 # Deterministic seed for procedural wallpaper colors and form.
-# wallpaper-seed = "electric-badger-dream"
+# wallpaper-seed = "mellow-nebula-dream"
 # Let the shader react to pointer movement and to the active terminal cursor.
 # wallpaper-shader-follows-mouse-cursor = true
-# wallpaper-shader-follows-keyboard-input = true
+# wallpaper-shader-follows-keyboard-input = false
 
 # Persistent WebGL post-process effect applied to every pane (webgl renderer
 # only). Pick one interactively with the `shader: choose effect` command
@@ -1096,27 +1101,27 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 
     let has_wallpaper = file.wallpaper.is_some() || file.wallpaper_shader.is_some();
     let wallpaper_opacity = if has_wallpaper {
-        Some(file.wallpaper_opacity.unwrap_or(0.05).clamp(0.0, 1.0))
+        Some(file.wallpaper_opacity.unwrap_or(0.10).clamp(0.0, 1.0))
     } else {
         None
     };
     let wallpaper_blur = if has_wallpaper {
-        Some(file.wallpaper_blur.unwrap_or(2.0).clamp(0.0, 50.0))
+        Some(file.wallpaper_blur.unwrap_or(0.0).clamp(0.0, 50.0))
     } else {
         None
     };
     let wallpaper_saturate = if has_wallpaper {
-        Some(file.wallpaper_saturate.unwrap_or(0.0).clamp(0.0, 1.0))
+        Some(file.wallpaper_saturate.unwrap_or(0.05).clamp(0.0, 1.0))
     } else {
         None
     };
     let pane_switch_intensity = file.pane_switch_intensity.unwrap_or(1.0).clamp(0.0, 3.0);
     let pane_switch_duration = file.pane_switch_duration.unwrap_or(1.0).clamp(0.1, 5.0);
-    let wallpaper_speed = file.wallpaper_speed.unwrap_or(0.5).clamp(0.0, 10.0);
+    let wallpaper_speed = file.wallpaper_speed.unwrap_or(0.20).clamp(0.0, 10.0);
     let wallpaper_seed = file
         .wallpaper_seed
         .clone()
-        .unwrap_or_else(|| "electric-badger-dream".to_string());
+        .unwrap_or_else(|| "mellow-nebula-dream".to_string());
 
     // Inline [theme] takes priority; fall back to a resolved remote palette or
     // a local `colors` scheme file.
@@ -1446,15 +1451,15 @@ palette:
         assert!(!resolved.show_pane_titles);
         assert_eq!(
             resolved.wallpaper_shader.as_deref(),
-            Some("radiant:sequin-wave")
+            Some("radiant:aurora-curtain")
         );
-        assert_eq!(resolved.wallpaper_opacity, Some(0.05));
-        assert_eq!(resolved.wallpaper_saturate, Some(0.0));
-        assert_eq!(resolved.wallpaper_blur, Some(2.0));
-        assert_eq!(resolved.wallpaper_speed, 0.5);
-        assert_eq!(resolved.wallpaper_seed, "electric-badger-dream");
+        assert_eq!(resolved.wallpaper_opacity, Some(0.10));
+        assert_eq!(resolved.wallpaper_saturate, Some(0.05));
+        assert_eq!(resolved.wallpaper_blur, Some(0.0));
+        assert_eq!(resolved.wallpaper_speed, 0.20);
+        assert_eq!(resolved.wallpaper_seed, "mellow-nebula-dream");
         assert!(resolved.wallpaper_shader_follows_mouse_cursor);
-        assert!(resolved.wallpaper_shader_follows_keyboard_input);
+        assert!(!resolved.wallpaper_shader_follows_keyboard_input);
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
@@ -1518,7 +1523,7 @@ palette:
 
         assert_eq!(
             file.wallpaper_shader.as_deref(),
-            Some("radiant:sequin-wave")
+            Some("radiant:aurora-curtain")
         );
         assert_eq!(file.terminal.font_size, Some(18.0));
         assert!(file.animations);

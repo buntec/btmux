@@ -6,6 +6,7 @@ import { DEFAULT_THEME } from '../state/defaultTheme';
 import { buildTreeNodes } from '../state/treeNodes';
 import { TreeNode } from '../state/types';
 import { recordSessionMruVisit, sortSessions } from '../state/sessionMru';
+import { getSessionSort, getTerminalFontSize, getWindowSort, MIN_FONT_SIZE } from '../state/configDefaults';
 
 export { recordSessionMruVisit as recordMruVisit };
 
@@ -100,10 +101,10 @@ export function LandingPage({ send, currentSessionId }: Props) {
   const config = useStore((s) => s.config);
   const setOverlay = useStore((s) => s.setOverlay);
   const navigate = useNavigate();
-  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const fontSize = getTerminalFontSize(config);
 
-  const sortedSessions = sortSessions(allSessions, config?.session_sort ?? 'created');
-  const allNodes = buildTreeNodes(sortedSessions, currentSessionId, config?.window_sort ?? 'created');
+  const sortedSessions = sortSessions(allSessions, getSessionSort(config));
+  const allNodes = buildTreeNodes(sortedSessions, currentSessionId, getWindowSort(config));
   // tmux-style session numbers: a session's position in the (sorted) list. The
   // number is shown on each session row, and a bare digit 0-9 jumps to it (see
   // onKeyDown). Numbers track the displayed order, so they follow session_sort.
@@ -366,8 +367,8 @@ export function LandingPage({ send, currentSessionId }: Props) {
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
         color: fg,
-        fontFamily: 'var(--btmux-font, monospace)',
-        fontWeight: 'var(--btmux-font-weight, 400)',
+        fontFamily: 'var(--btmux-font)',
+        fontWeight: 'var(--btmux-font-weight)',
         fontSize: `${fontSize}px`,
       }}
     >
@@ -383,7 +384,7 @@ export function LandingPage({ send, currentSessionId }: Props) {
         }}
       >
         <span>btmux{config?.version ? ` v${config.version}` : ''}</span>
-        <span style={{ color: dimFg, fontSize: `${Math.max(6, fontSize - 2)}px` }}>
+        <span style={{ color: dimFg, fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}>
           j/k ↑/↓ navigate · l/h →/← expand/collapse · enter select · (0-9)/(M-a…) jump · / search · n/c new · x kill
           {currentSessionId ? ' · esc back' : ''}
         </span>
@@ -471,7 +472,7 @@ export function LandingPage({ send, currentSessionId }: Props) {
           <span style={{ color: accentFg, marginRight: '8px' }}>/</span>
           <span>{searchQuery}</span>
           <span style={{ color: accentFg }}>▏</span>
-          <span style={{ marginLeft: 'auto', color: dimFg, fontSize: `${Math.max(6, fontSize - 2)}px` }}>
+          <span style={{ marginLeft: 'auto', color: dimFg, fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}>
             ↑/↓ C-n/C-p select · enter open · esc cancel
           </span>
         </div>

@@ -1,14 +1,11 @@
 import { useEffect } from 'react';
 import { useStore } from '../state/store';
-
-// Mirrors the backend's TerminalOptions::default() in src/config.rs — used only
-// before the control socket delivers the real config (config starts as `null`).
-export const DEFAULT_FONT_FAMILY = 'Geist Mono';
-export const DEFAULT_FONT_WEIGHT = 400;
+import { getTerminalFontFamily, getTerminalFontWeight } from '../state/configDefaults';
 
 export function useFontLoader() {
-  const fontFamily = useStore((s) => s.config?.terminal?.fontFamily) ?? DEFAULT_FONT_FAMILY;
-  const fontWeight = useStore((s) => s.config?.terminal?.fontWeight) ?? DEFAULT_FONT_WEIGHT;
+  const config = useStore((s) => s.config);
+  const fontFamily = getTerminalFontFamily(config);
+  const fontWeight = getTerminalFontWeight(config);
   const showToast = useStore((s) => s.showToast);
 
   useEffect(() => {

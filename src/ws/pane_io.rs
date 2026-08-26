@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{config, AppState};
 
 #[derive(Deserialize)]
 pub struct PaneParams {
@@ -41,8 +41,8 @@ pub async fn handle(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let cols = params.cols.unwrap_or(80);
-    let rows = params.rows.unwrap_or(24);
+    let cols = params.cols.unwrap_or(config::DEFAULT_PTY_COLS);
+    let rows = params.rows.unwrap_or(config::DEFAULT_PTY_ROWS);
     let mirror = is_truthy(&params.mirror);
 
     ws.on_upgrade(move |socket| handle_socket(socket, pane_id, cols, rows, mirror, state))

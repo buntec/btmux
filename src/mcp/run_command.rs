@@ -3,12 +3,10 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{config, AppState};
 
 const DEFAULT_IDLE_MS: u64 = 400;
 const DEFAULT_TIMEOUT_MS: u64 = 15_000;
-const DEFAULT_COLS: u16 = 80;
-const DEFAULT_ROWS: u16 = 24;
 
 pub struct RunCommandOutcome {
     pub output: String,
@@ -43,7 +41,8 @@ pub async fn run_command(
         let Some(pane) = mgr.find_pane_mut(pane_id) else {
             return Err(format!("pane {pane_id} not found"));
         };
-        pane.pty.ensure_spawned(DEFAULT_COLS, DEFAULT_ROWS);
+        pane.pty
+            .ensure_spawned(config::DEFAULT_PTY_COLS, config::DEFAULT_PTY_ROWS);
         let (rx, _snapshot) = pane.pty.subscribe_and_get_scrollback();
         let mut line = command.as_bytes().to_vec();
         line.push(b'\r');

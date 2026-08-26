@@ -323,7 +323,7 @@ fn uninstall_macos() {
 }
 
 /// The shell to bake into the plist, using the same fallback chain as the
-/// server: CLI `--shell` > config.toml `shell` > $SHELL > /bin/bash.
+/// server: CLI `--shell` > config.toml `shell` > $SHELL > the configured default.
 fn resolve_shell(args: &CliArgs) -> String {
     args.shell
         .clone()
@@ -333,7 +333,7 @@ fn resolve_shell(args: &CliArgs) -> String {
                 .and_then(|c| c.shell)
         })
         .or_else(|| std::env::var("SHELL").ok().filter(|s| !s.is_empty()))
-        .unwrap_or_else(|| "/bin/bash".to_string())
+        .unwrap_or_else(|| crate::config::DEFAULT_SHELL.to_string())
 }
 
 /// Build the LaunchAgent plist. `RunAtLoad` starts it now and at login;

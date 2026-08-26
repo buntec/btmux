@@ -325,7 +325,7 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
                   border: `2px solid ${accent}`,
                   borderRadius: '8px',
                   padding: '0.1em 0.4em',
-                  fontFamily: 'var(--btmux-font, monospace)',
+                  fontFamily: 'var(--btmux-font)',
                   fontWeight: 'bold',
                   // Scale the digit with the pane, clamped so tiny panes stay legible.
                   fontSize: 'clamp(1.5rem, 8vmin, 6rem)',

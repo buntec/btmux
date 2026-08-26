@@ -7,6 +7,7 @@ import { getWindowMruOrder } from '../state/windowMru';
 import { computeRectsAndDividers } from '../state/layout';
 import { LayoutNode } from '../state/types';
 import { MirrorPane } from './MirrorPane';
+import { getWindowGridCount } from '../state/configDefaults';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -84,7 +85,7 @@ export function WindowGrid({ send }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const limit = config?.window_grid_count ?? 6;
+  const limit = getWindowGridCount(config);
   // Recompute entries while open (MRU is stable then — we don't record visits
   // from inside the grid). Keep the last entries while closed so a re-open before
   // the next render still has content. Snapshot on the open transition.
@@ -245,8 +246,8 @@ export function WindowGrid({ send }: Props) {
         outline: 'none',
         zIndex: 30,
         boxSizing: 'border-box',
-        fontFamily: 'var(--btmux-font, monospace)',
-        fontWeight: 'var(--btmux-font-weight, 400)',
+        fontFamily: 'var(--btmux-font)',
+        fontWeight: 'var(--btmux-font-weight)',
       }}
     >
       {entries.length === 0 && <div style={{ color: dimFg, padding: '16px' }}>No windows.</div>}

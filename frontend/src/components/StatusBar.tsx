@@ -7,6 +7,7 @@ import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { Theme } from '../state/types';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { SysStatBar } from './SysStatBar';
+import { getAnimations, getTerminalFontSize, getWindowSort } from '../state/configDefaults';
 
 /**
  * Subscribe to window-MRU changes so an `mru` window sort re-orders the always-
@@ -143,7 +144,7 @@ export function StatusBar({ sessionId, send }: Props) {
 
   // Chrome is compact relative to the terminal font (the design's bar/font ratio),
   // clamped so it stays legible at tiny sizes and doesn't dominate at huge ones.
-  const termFont = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const termFont = getTerminalFontSize(config);
   const font = Math.max(10, Math.min(17, Math.round(termFont * 0.68)));
   const barH = Math.round(font * 2.15);
 
@@ -151,14 +152,14 @@ export function StatusBar({ sessionId, send }: Props) {
   if (!session) return null;
 
   const c = chromePalette(config?.theme ?? null);
-  const animations = config?.animations ?? true;
+  const animations = getAnimations(config);
   const activeWindow = session.windows[session.active_window];
   const paneCount = activeWindow?.panes.length ?? 0;
   const activeZoomed = !!activeWindow?.zoomed_pane;
   // Windows are shown in the configured display order; each keeps its backend
   // index (the switch_window index) while its display position doubles as the
   // shown number and prefix+digit hotkey — see useKeybindings.
-  const orderedWindows = sortWindows(session.windows, config?.window_sort ?? 'created');
+  const orderedWindows = sortWindows(session.windows, getWindowSort(config));
   // Seamless powerline: when the active window sits first in the *displayed*
   // order, its segment sits directly after the session segment, so the
   // session→window chevron fills into the active-window color (no bar-background
@@ -186,8 +187,8 @@ export function StatusBar({ sessionId, send }: Props) {
         background: c.barBg,
         color: c.fg,
         fontSize: `${font}px`,
-        fontFamily: 'var(--btmux-font, monospace)',
-        fontWeight: 'var(--btmux-font-weight, 400)',
+        fontFamily: 'var(--btmux-font)',
+        fontWeight: 'var(--btmux-font-weight)',
         borderTop: `1px solid ${c.border}`,
         overflow: 'hidden',
         whiteSpace: 'nowrap',

@@ -4,8 +4,15 @@ import { ClientMessage } from '../protocol/messages';
 import { Overlay, PickerItem } from '../state/types';
 import { paneIdsInOrder } from '../state/layout';
 import { sortWindows } from '../state/windowMru';
-import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from './useFontLoader';
 import { PANE_SWITCH_EFFECTS, SHADER_EFFECTS, findPaneSwitchEffect } from '../lib/terminalFxShaders';
+import {
+  getFontWeightRange,
+  getPrefix,
+  getTerminalFontFamily,
+  getTerminalFontWeight,
+  getWindowSort,
+  FONT_WEIGHT_STEP,
+} from '../state/configDefaults';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -67,7 +74,7 @@ export function useKeybindings(
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const timeoutRef = useRef<number>(0);
 
-  const prefix = useMemo(() => parsePrefix(config?.prefix ?? 'C-b'), [config?.prefix]);
+  const prefix = useMemo(() => parsePrefix(getPrefix(config)), [config?.prefix]);
   const binds = useMemo(() => {
     const map = new Map<string, string>();
     for (const b of config?.binds ?? []) map.set(b.key, b.action);
@@ -379,8 +386,8 @@ function runAction(
     }
     case 'choose-font': {
       const fonts = store.config?.fonts ?? [];
-      const currentFamily = store.config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
-      const currentWeight = store.config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
+      const currentFamily = getTerminalFontFamily(store.config);
+      const currentWeight = getTerminalFontWeight(store.config);
       const items: PickerItem[] = fonts.map((f) => ({
         id: `${f.family}:${f.weight_min}`,
         label: `${f.family} (${f.weight_min}–${f.weight_max})`,
@@ -399,13 +406,11 @@ function runAction(
     }
     case 'choose-font-weight': {
       const fonts = store.config?.fonts ?? [];
-      const currentFamily = store.config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
-      const currentWeight = store.config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
-      const fontInfo = fonts.find((f) => f.family === currentFamily);
-      const min = fontInfo?.weight_min ?? 100;
-      const max = fontInfo?.weight_max ?? 900;
+      const currentFamily = getTerminalFontFamily(store.config);
+      const currentWeight = getTerminalFontWeight(store.config);
+      const { min, max } = getFontWeightRange(fonts, currentFamily);
       const weights: PickerItem[] = [];
-      for (let w = min; w <= max; w += 100) {
+      for (let w = min; w <= max; w += FONT_WEIGHT_STEP) {
         weights.push({ id: String(w), label: String(w), active: w === currentWeight });
       }
       openOverlay({
@@ -471,7 +476,7 @@ function windowIndexAtDisplayPos(sessionId: string, displayPos: number): number 
   const store = useStore.getState();
   const session = store.getSession(sessionId);
   if (!session) return null;
-  const ordered = sortWindows(session.windows, store.config?.window_sort ?? 'created');
+  const ordered = sortWindows(session.windows, getWindowSort(store.config));
   return ordered[displayPos]?.index ?? null;
 }
 
@@ -485,7 +490,7 @@ function windowIndexAtDisplayDelta(sessionId: string, delta: number): number | n
   const store = useStore.getState();
   const session = store.getSession(sessionId);
   if (!session) return null;
-  const ordered = sortWindows(session.windows, store.config?.window_sort ?? 'created');
+  const ordered = sortWindows(session.windows, getWindowSort(store.config));
   const n = ordered.length;
   if (n === 0) return null;
   // Find where the active window currently sits in the display order.

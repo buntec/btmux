@@ -4,8 +4,17 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { Bind, ClientConfig } from '../state/types';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../hooks/useFontLoader';
 import { paneSwitchPickerItems, shaderPickerItems } from '../hooks/useKeybindings';
+import {
+  getAnimations,
+  getFontWeightRange,
+  getPrefix,
+  getTerminalFontFamily,
+  getTerminalFontSize,
+  getTerminalFontWeight,
+  FONT_WEIGHT_STEP,
+  MIN_FONT_SIZE,
+} from '../state/configDefaults';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -85,7 +94,7 @@ interface Props {
 export function Overlay({ sessionId, send, config }: Props) {
   const overlay = useStore((s) => s.overlay);
   const setOverlay = useStore((s) => s.setOverlay);
-  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const fontSize = getTerminalFontSize(config);
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const focusRef = useRef<HTMLDivElement>(null);
@@ -163,8 +172,8 @@ export function Overlay({ sessionId, send, config }: Props) {
     }
     if (cmdId === 'choose-font') {
       const fonts = config?.fonts ?? [];
-      const currentFamily = config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
-      const currentWeight = config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
+      const currentFamily = getTerminalFontFamily(config);
+      const currentWeight = getTerminalFontWeight(config);
       setOverlay({
         mode: 'picker',
         title: `Font (current: ${currentFamily} @ ${currentWeight})`,
@@ -200,13 +209,11 @@ export function Overlay({ sessionId, send, config }: Props) {
     }
     if (cmdId === 'choose-font-weight') {
       const fonts = config?.fonts ?? [];
-      const currentFamily = config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
-      const currentWeight = config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT;
-      const fontInfo = fonts.find((f) => f.family === currentFamily);
-      const min = fontInfo?.weight_min ?? 100;
-      const max = fontInfo?.weight_max ?? 900;
+      const currentFamily = getTerminalFontFamily(config);
+      const currentWeight = getTerminalFontWeight(config);
+      const { min, max } = getFontWeightRange(fonts, currentFamily);
       const weights: { id: string; label: string; active: boolean }[] = [];
-      for (let w = min; w <= max; w += 100) {
+      for (let w = min; w <= max; w += FONT_WEIGHT_STEP) {
         weights.push({ id: String(w), label: String(w), active: w === currentWeight });
       }
       setOverlay({
@@ -363,8 +370,8 @@ export function Overlay({ sessionId, send, config }: Props) {
   const fg = c.fg;
   const accent = c.accent;
   const dimFg = c.fgDim;
-  const hintFont = `${Math.max(6, fontSize - 2)}px`;
-  const animations = config?.animations ?? true;
+  const hintFont = `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px`;
+  const animations = getAnimations(config);
 
   // The keybinding-help overlay is a centered modal (backdrop + panel); every
   // other overlay mode is a bottom-anchored sheet.
@@ -389,8 +396,8 @@ export function Overlay({ sessionId, send, config }: Props) {
           // Above the session switcher / window grid (zIndex 30) so the
           // keybinding-help modal isn't stuck behind their blurred backdrop.
           zIndex: 40,
-          fontFamily: 'var(--btmux-font, monospace)',
-          fontWeight: 'var(--btmux-font-weight, 400)',
+          fontFamily: 'var(--btmux-font)',
+          fontWeight: 'var(--btmux-font-weight)',
           fontSize: `${fontSize}px`,
           animation: animations ? (closing ? 'btm-fade-out .16s ease forwards' : 'btm-fade .15s ease') : undefined,
         }}
@@ -425,7 +432,7 @@ export function Overlay({ sessionId, send, config }: Props) {
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: c.fgDim, fontSize: hintFont }}>
               prefix
-              <span style={{ ...keycapStyle(c), fontSize: hintFont }}>{config?.prefix ?? 'C-b'}</span>
+              <span style={{ ...keycapStyle(c), fontSize: hintFont }}>{getPrefix(config)}</span>
               then…
             </span>
             <span style={{ flex: 1 }} />
@@ -472,8 +479,8 @@ export function Overlay({ sessionId, send, config }: Props) {
         color: fg,
         borderTop: `1px solid ${c.border}`,
         boxShadow: `0 -14px 40px ${withAlpha(c.bodyBg, 0.4)}`,
-        fontFamily: 'var(--btmux-font, monospace)',
-        fontWeight: 'var(--btmux-font-weight, 400)',
+        fontFamily: 'var(--btmux-font)',
+        fontWeight: 'var(--btmux-font-weight)',
         fontSize: `${fontSize}px`,
         // Above the session switcher / window grid (zIndex 30) — a confirm/prompt
         // sheet opened from within either (e.g. killing a session) must render on
@@ -495,8 +502,8 @@ export function Overlay({ sessionId, send, config }: Props) {
               border: 'none',
               outline: 'none',
               color: fg,
-              fontFamily: 'var(--btmux-font, monospace)',
-              fontWeight: 'var(--btmux-font-weight, 400)',
+              fontFamily: 'var(--btmux-font)',
+              fontWeight: 'var(--btmux-font-weight)',
               fontSize: `${fontSize}px`,
             }}
           />
@@ -512,7 +519,7 @@ export function Overlay({ sessionId, send, config }: Props) {
           <div
             style={{
               padding: '9px 14px 4px',
-              fontSize: `${Math.max(6, fontSize - 3)}px`,
+              fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 3)}px`,
               letterSpacing: '.12em',
               textTransform: 'uppercase',
               color: c.fgDim,
@@ -597,7 +604,7 @@ export function Overlay({ sessionId, send, config }: Props) {
           >
             <span
               style={{
-                fontSize: `${Math.max(6, fontSize - 3)}px`,
+                fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 3)}px`,
                 letterSpacing: '.12em',
                 textTransform: 'uppercase',
                 color: c.fgDim,

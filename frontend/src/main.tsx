@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { init } from 'ghostty-web';
 import { App } from './App';
 import { DEFAULT_THEME } from './state/defaultTheme';
+import { CONFIG_DEFAULTS } from './state/configDefaults';
 import './fonts.css';
 import './index.css';
 import '@fontsource/jetbrains-mono/100.css';
@@ -53,6 +54,12 @@ import '@fontsource/cascadia-code/400-italic.css';
 import '@fontsource/cascadia-code/500-italic.css';
 import '@fontsource/cascadia-code/600-italic.css';
 import '@fontsource/cascadia-code/700-italic.css';
+
+// Set the same typography defaults used by terminal and chrome components
+// before React mounts, so CSS custom-property fallbacks do not become a second
+// source of configuration defaults during startup.
+document.documentElement.style.setProperty('--btmux-font', `"${CONFIG_DEFAULTS.terminal.fontFamily}", monospace`);
+document.documentElement.style.setProperty('--btmux-font-weight', String(CONFIG_DEFAULTS.terminal.fontWeight));
 
 const cachedTheme = (() => {
   try {

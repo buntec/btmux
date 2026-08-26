@@ -10,6 +10,16 @@ import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders
 import { baseShaderSrc } from '../lib/baseShader';
 import { pumpRenders } from '../lib/pumpRenders';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
+import {
+  CONFIG_DEFAULTS,
+  getAnimations,
+  getPaneSwitchDuration,
+  getPaneSwitchIntensity,
+  getShowPaneTitles,
+  getTerminalFontFamily,
+  getTerminalFontSize,
+  getTerminalFontWeight,
+} from '../state/configDefaults';
 
 interface Props {
   sessionId: string;
@@ -42,27 +52,24 @@ interface Props {
 }
 
 const FONT_FALLBACK = 'Symbols Nerd Font Mono, Menlo, Monaco, monospace';
-const MIN_FONT_SIZE = 6;
-const MAX_FONT_SIZE = 72;
 // ghostty-web's `scrollback` option feeds the WASM core's `max_scrollback`,
 // which is a BYTE budget (see the conversion in buildTerminalOptions). This is
 // the assumed average bytes-per-line used to turn the configured line count
 // into that budget; upstream Ghostty defaults to ~1 KB/line (10 MB / 10000).
 const SCROLLBACK_BYTES_PER_LINE = 1000;
 
-function buildFontFamily(configured: string | null | undefined): string {
-  const base = configured ?? 'monospace';
-  return `${base}, ${FONT_FALLBACK}`;
+function buildFontFamily(configured: string): string {
+  return `${configured}, ${FONT_FALLBACK}`;
 }
 
 export function buildTerminalOptions(config: ClientConfig | null): ConstructorParameters<typeof Terminal>[0] | null {
   if (!config) return null;
   const t = config.terminal;
   const opts: ConstructorParameters<typeof Terminal>[0] = {
-    fontSize: Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, t?.fontSize ?? 14)),
-    fontFamily: buildFontFamily(t?.fontFamily),
+    fontSize: getTerminalFontSize(config),
+    fontFamily: buildFontFamily(getTerminalFontFamily(config)),
     theme: config?.theme ?? DEFAULT_THEME,
-    cursorBlink: t?.cursorBlink ?? true,
+    cursorBlink: t?.cursorBlink ?? CONFIG_DEFAULTS.terminal.cursorBlink,
   };
   // Experimental WebGL backend (ghostty-web fork); falls back to Canvas2D if
   // WebGL2 init fails. Omitted when unset so ghostty-web's canvas default applies.
@@ -150,7 +157,7 @@ export function TerminalPane({
     // DOM text is rendered, causing the first Terminal to use a fallback/synthesized
     // weight until a config change forces a rebuild.
     let fontAbort = false;
-    const weight = termOptions.fontWeight ?? 400;
+    const weight = termOptions.fontWeight ?? CONFIG_DEFAULTS.terminal.fontWeight;
     const boldWeight = Math.min(weight + 200, 900);
     const size = termOptions.fontSize!;
     const family = termOptions.fontFamily!;
@@ -356,7 +363,7 @@ export function TerminalPane({
   // by timeout). Hidden panes are suspended, and `animations = false` opts out
   // of motion entirely; both leave the effect installed but frozen.
   const baseShaderAnimated = findShaderEffect(shaderId)?.animated ?? false;
-  const pumpBaseShader = baseShaderAnimated && visible && (config?.animations ?? true);
+  const pumpBaseShader = baseShaderAnimated && visible && getAnimations(config);
   useEffect(() => {
     if (!pumpBaseShader) return;
     return pumpRenders(() => [termRef.current?.renderer], Infinity);
@@ -375,8 +382,8 @@ export function TerminalPane({
   // effect's own animation needs continuous frames the terminal wouldn't
   // otherwise paint while idle, hence the pump — see pumpRenders.ts.
   const paneSwitchShaderId = config?.pane_switch_shader ?? null;
-  const paneSwitchIntensity = config?.pane_switch_intensity ?? 1;
-  const paneSwitchDuration = config?.pane_switch_duration ?? 1;
+  const paneSwitchIntensity = getPaneSwitchIntensity(config);
+  const paneSwitchDuration = getPaneSwitchDuration(config);
   // Memoized so identity is stable across renders that don't touch these three
   // config values — the effect below fires on *identity* change, and building
   // a fresh object (findPaneSwitchEffect regenerates GLSL from the intensity/
@@ -389,7 +396,7 @@ export function TerminalPane({
   useEffect(() => {
     const wasActive = prevIsActiveForSwitchFx.current;
     prevIsActiveForSwitchFx.current = isActive;
-    const animations = config?.animations ?? true;
+    const animations = getAnimations(config);
     if (wasActive || !isActive || !visible || !animations) return;
 
     const term = termRef.current;
@@ -459,9 +466,9 @@ export function TerminalPane({
   const borderInactive = config?.theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
   const borderZoomed = config?.theme?.magenta ?? DEFAULT_THEME.magenta;
   const borderColor = isZoomed ? borderZoomed : isActive ? borderActive : borderInactive;
-  const animations = config?.animations ?? true;
-  const showTitle = config?.show_pane_titles ?? true;
-  const termFont = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const animations = getAnimations(config);
+  const showTitle = getShowPaneTitles(config);
+  const termFont = getTerminalFontSize(config);
   const notification = useStore((s) => s.notifications.get(paneId));
   const notifColor = notification ? notificationColorFor(notification.level, config?.theme ?? null) : null;
 

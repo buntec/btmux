@@ -15,8 +15,21 @@ import { ConfigPage } from './components/ConfigPage';
 import { Toaster } from './components/ui/sonner';
 import { TooltipProvider } from './components/ui/tooltip';
 import { DEFAULT_THEME } from './state/defaultTheme';
+import {
+  getAnimations,
+  getTerminalFontFamily,
+  getTerminalFontWeight,
+  getWallpaperBlur,
+  getWallpaperFollowsKeyboard,
+  getWallpaperFollowsMouse,
+  getWallpaperOpacity,
+  getWallpaperSaturate,
+  getWallpaperSeed,
+  getWallpaperShader,
+  getWallpaperSpeed,
+} from './state/configDefaults';
 import { ClientMessage } from './protocol/messages';
-import { useFontLoader, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from './hooks/useFontLoader';
+import { useFontLoader } from './hooks/useFontLoader';
 import { applyThemeVars } from './lib/apply-theme-vars';
 import {
   PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC,
@@ -195,7 +208,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
     : (activeWindow?.panes.map((pane) => pane.id) ?? []);
 
   // Privacy-pixelate only the panes actually visible behind the switcher/help.
-  usePanePixelateOverlay(privacyOverlayActive, config?.animations ?? true, visiblePaneIds);
+  usePanePixelateOverlay(privacyOverlayActive, getAnimations(config), visiblePaneIds);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
@@ -218,14 +231,14 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const wallpaper = config?.wallpaper ?? null;
   // Preserve an explicitly disabled shader (`null`) after config loads while
   // still showing the built-in default during the initial connection.
-  const wallpaperShader = config ? config.wallpaper_shader : 'radiant:aurora-curtain';
-  const wallpaperOpacity = config?.wallpaper_opacity ?? 0.1;
-  const wallpaperBlur = config?.wallpaper_blur ?? 0;
-  const wallpaperSaturate = config?.wallpaper_saturate ?? 0.05;
-  const wallpaperSpeed = config?.wallpaper_speed ?? 0.2;
-  const wallpaperSeed = config?.wallpaper_seed ?? 'mellow-nebula-dream';
-  const wallpaperFollowsMouse = config?.wallpaper_shader_follows_mouse_cursor ?? true;
-  const wallpaperFollowsKeyboard = config?.wallpaper_shader_follows_keyboard_input ?? false;
+  const wallpaperShader = getWallpaperShader(config);
+  const wallpaperOpacity = getWallpaperOpacity(config);
+  const wallpaperBlur = getWallpaperBlur(config);
+  const wallpaperSaturate = getWallpaperSaturate(config);
+  const wallpaperSpeed = getWallpaperSpeed(config);
+  const wallpaperSeed = getWallpaperSeed(config);
+  const wallpaperFollowsMouse = getWallpaperFollowsMouse(config);
+  const wallpaperFollowsKeyboard = getWallpaperFollowsKeyboard(config);
 
   // Layout: a flex column owning the viewport. The pane region (flex:1) holds the
   // persistent SessionPool underneath, the route content (LandingPage or the
@@ -243,7 +256,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
             blur={wallpaperBlur}
             saturate={wallpaperSaturate}
             speed={wallpaperSpeed}
-            animated={(config?.animations ?? true) && wallpaperSpeed > 0}
+            animated={getAnimations(config) && wallpaperSpeed > 0}
             // Modal animations and first-time session mounts both compete with
             // the wallpaper for GPU time. Keep it stopped until that foreground
             // work has completed and the newly-visible terminals have painted.
@@ -305,8 +318,8 @@ export function App() {
   useFontLoader();
 
   useEffect(() => {
-    const family = config?.terminal?.fontFamily ?? DEFAULT_FONT_FAMILY;
-    const weight = String(config?.terminal?.fontWeight ?? DEFAULT_FONT_WEIGHT);
+    const family = getTerminalFontFamily(config);
+    const weight = String(getTerminalFontWeight(config));
     document.documentElement.style.setProperty('--btmux-font', `"${family}", monospace`);
     document.documentElement.style.setProperty('--btmux-font-weight', weight);
   }, [config?.terminal?.fontFamily, config?.terminal?.fontWeight]);
@@ -337,8 +350,8 @@ export function App() {
           alignItems: 'center',
           justifyContent: 'center',
           color: fg,
-          fontFamily: 'var(--btmux-font, monospace)',
-          fontWeight: 'var(--btmux-font-weight, 400)',
+          fontFamily: 'var(--btmux-font)',
+          fontWeight: 'var(--btmux-font-weight)',
           fontSize: '13px',
         }}
       >

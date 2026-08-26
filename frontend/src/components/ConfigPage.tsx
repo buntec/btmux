@@ -4,10 +4,24 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
-import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../hooks/useFontLoader';
 import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import { DEFAULT_THEME } from '../state/defaultTheme';
+import {
+  getFontWeightRange,
+  getPaneSwitchDuration,
+  getPaneSwitchIntensity,
+  getTerminalFontFamily,
+  getTerminalFontSize,
+  getTerminalFontWeight,
+  getWallpaperBlur,
+  getWallpaperFollowsKeyboard,
+  getWallpaperFollowsMouse,
+  getWallpaperOpacity,
+  getWallpaperSaturate,
+  getWallpaperSeed,
+  getWallpaperSpeed,
+} from '../state/configDefaults';
 import { useStore } from '../state/store';
 import { ShaderWallpaper } from './ShaderWallpaper';
 import { TerminalShaderPreview } from './TerminalShaderPreview';
@@ -123,23 +137,23 @@ function generateWallpaperSeed(): string {
 function initialDraft(config: ClientConfig): Draft {
   return {
     colors: config.active_color_scheme ?? '',
-    fontFamily: config.terminal.fontFamily ?? DEFAULT_FONT_FAMILY,
-    fontWeight: config.terminal.fontWeight ?? DEFAULT_FONT_WEIGHT,
-    fontSize: config.terminal.fontSize ?? 18,
+    fontFamily: getTerminalFontFamily(config),
+    fontWeight: getTerminalFontWeight(config),
+    fontSize: getTerminalFontSize(config),
     animations: config.animations,
     wallpaper: config.wallpaper ?? '',
     wallpaperShader: config.wallpaper_shader ?? '',
-    wallpaperOpacity: config.wallpaper_opacity ?? 0.1,
-    wallpaperBlur: config.wallpaper_blur ?? 0,
-    wallpaperSaturate: config.wallpaper_saturate ?? 0.05,
-    wallpaperSpeed: config.wallpaper_speed,
-    wallpaperSeed: config.wallpaper_seed,
-    wallpaperFollowsMouse: config.wallpaper_shader_follows_mouse_cursor,
-    wallpaperFollowsKeyboard: config.wallpaper_shader_follows_keyboard_input,
+    wallpaperOpacity: getWallpaperOpacity(config),
+    wallpaperBlur: getWallpaperBlur(config),
+    wallpaperSaturate: getWallpaperSaturate(config),
+    wallpaperSpeed: getWallpaperSpeed(config),
+    wallpaperSeed: getWallpaperSeed(config),
+    wallpaperFollowsMouse: getWallpaperFollowsMouse(config),
+    wallpaperFollowsKeyboard: getWallpaperFollowsKeyboard(config),
     shader: config.shader ?? '',
     paneSwitchShader: config.pane_switch_shader ?? '',
-    paneSwitchIntensity: config.pane_switch_intensity,
-    paneSwitchDuration: config.pane_switch_duration,
+    paneSwitchIntensity: getPaneSwitchIntensity(config),
+    paneSwitchDuration: getPaneSwitchDuration(config),
   };
 }
 
@@ -280,9 +294,7 @@ export function ConfigPage({ config, send }: Props) {
     toast.success('Settings reset to config.toml and defaults');
   };
 
-  const font = config.fonts.find((item) => item.family === draft.fontFamily);
-  const weightMin = font?.weight_min ?? 100;
-  const weightMax = font?.weight_max ?? 900;
+  const { min: weightMin, max: weightMax } = getFontWeightRange(config.fonts, draft.fontFamily);
   const previewWallpaper = draft.wallpaperShader ? (
     <ShaderWallpaper
       shaderId={draft.wallpaperShader}
@@ -508,11 +520,8 @@ export function ConfigPage({ config, send }: Props) {
                 <Select
                   value={draft.fontFamily}
                   onValueChange={(value) => {
-                    const nextFont = config.fonts.find((item) => item.family === value);
-                    const nextWeight = Math.min(
-                      nextFont?.weight_max ?? 900,
-                      Math.max(nextFont?.weight_min ?? 100, draft.fontWeight),
-                    );
+                    const { min, max } = getFontWeightRange(config.fonts, value);
+                    const nextWeight = Math.min(max, Math.max(min, draft.fontWeight));
                     update('fontFamily', value);
                     update('fontWeight', nextWeight);
                   }}

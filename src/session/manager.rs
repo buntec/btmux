@@ -109,7 +109,10 @@ impl SessionManager {
     }
 
     fn scrollback_lines(&self) -> u32 {
-        self.config.terminal.scrollback.unwrap_or(10_000)
+        self.config
+            .terminal
+            .scrollback
+            .unwrap_or(crate::config::DEFAULT_SCROLLBACK_LINES)
     }
 
     pub async fn create_session(&mut self, name: Option<String>) -> Uuid {

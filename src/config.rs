@@ -5,6 +5,42 @@ use std::time::Duration;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_HOST: &str = "127.0.0.1";
+pub const DEFAULT_PORT: u16 = 8004;
+pub const DEFAULT_SHELL: &str = "/bin/bash";
+pub const DEFAULT_PTY_COLS: u16 = 80;
+pub const DEFAULT_PTY_ROWS: u16 = 24;
+
+pub const DEFAULT_PREFIX: &str = "C-b";
+pub const DEFAULT_VI_MODE: bool = false;
+pub const DEFAULT_ANIMATIONS: bool = true;
+pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
+pub const DEFAULT_WALLPAPER_SHADER: &str = "radiant:aurora-curtain";
+pub const DEFAULT_WALLPAPER_OPACITY: f32 = 0.10;
+pub const DEFAULT_WALLPAPER_BLUR: f32 = 0.0;
+pub const DEFAULT_WALLPAPER_SATURATE: f32 = 0.05;
+pub const DEFAULT_WALLPAPER_SPEED: f32 = 0.20;
+pub const DEFAULT_WALLPAPER_SEED: &str = "mellow-nebula-dream";
+pub const DEFAULT_WALLPAPER_FOLLOWS_MOUSE: bool = true;
+pub const DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD: bool = false;
+pub const DEFAULT_PANE_SWITCH_INTENSITY: f32 = 0.25;
+pub const DEFAULT_PANE_SWITCH_DURATION: f32 = 0.5;
+pub const DEFAULT_WINDOW_GRID_COUNT: u32 = 4;
+
+pub const DEFAULT_SCROLLBACK_LINES: u32 = 100_000;
+pub const DEFAULT_RENDERER: &str = "webgl";
+pub const DEFAULT_CURSOR_BLINK: bool = true;
+pub const DEFAULT_CURSOR_STYLE: &str = "bar";
+pub const DEFAULT_FONT_SIZE: f32 = 18.0;
+pub const DEFAULT_FONT_FAMILY: &str = "Geist Mono";
+pub const DEFAULT_FONT_WEIGHT: u16 = 400;
+pub const DEFAULT_SCROLL_SENSITIVITY: f32 = 5.0;
+pub const MIN_FONT_SIZE: f32 = 6.0;
+pub const MAX_FONT_SIZE: f32 = 72.0;
+
+pub const DEFAULT_CONSOLE_LOG: &str = "warn";
+pub const DEFAULT_FILE_LOG: &str = "info";
+
 /// Command-line arguments. These take precedence over the file config where they overlap.
 #[derive(Parser, Clone)]
 #[command(name = "btmux", about = "Browser-based tmux")]
@@ -12,10 +48,10 @@ pub struct CliArgs {
     #[command(subcommand)]
     pub command: Option<SubCommand>,
 
-    #[arg(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = DEFAULT_HOST)]
     pub host: String,
 
-    #[arg(short, long, default_value_t = 8004)]
+    #[arg(short, long, default_value_t = DEFAULT_PORT)]
     pub port: u16,
 
     /// Shell to spawn. Overrides `shell` in config.toml when passed explicitly.
@@ -97,8 +133,8 @@ pub struct LogConfig {
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            console_level: "warn".to_string(),
-            file_level: "info".to_string(),
+            console_level: DEFAULT_CONSOLE_LOG.to_string(),
+            file_level: DEFAULT_FILE_LOG.to_string(),
         }
     }
 }
@@ -119,7 +155,6 @@ pub struct FileConfig {
     pub vi_mode: bool,
     /// Enable CSS animations/transitions in the browser (e.g. border highlight
     /// when switching panes). Set to false to disable all animated effects.
-    #[serde(default = "default_true")]
     pub animations: bool,
     /// Show a per-pane title bar (shell/title, cwd, dimensions, zoom tag) above
     /// each pane. Defaults to false; set to true to show pane metadata.
@@ -211,25 +246,25 @@ impl Default for FileConfig {
         Self {
             prefix: None,
             shell: None,
-            vi_mode: false,
-            animations: true,
-            show_pane_titles: false,
+            vi_mode: DEFAULT_VI_MODE,
+            animations: DEFAULT_ANIMATIONS,
+            show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
             wallpaper: None,
-            wallpaper_shader: Some("radiant:aurora-curtain".to_string()),
-            wallpaper_opacity: Some(0.10),
-            wallpaper_blur: Some(0.0),
-            wallpaper_saturate: Some(0.05),
-            wallpaper_speed: Some(0.20),
-            wallpaper_seed: Some("mellow-nebula-dream".to_string()),
-            wallpaper_shader_follows_mouse_cursor: true,
-            wallpaper_shader_follows_keyboard_input: false,
+            wallpaper_shader: Some(DEFAULT_WALLPAPER_SHADER.to_string()),
+            wallpaper_opacity: Some(DEFAULT_WALLPAPER_OPACITY),
+            wallpaper_blur: Some(DEFAULT_WALLPAPER_BLUR),
+            wallpaper_saturate: Some(DEFAULT_WALLPAPER_SATURATE),
+            wallpaper_speed: Some(DEFAULT_WALLPAPER_SPEED),
+            wallpaper_seed: Some(DEFAULT_WALLPAPER_SEED.to_string()),
+            wallpaper_shader_follows_mouse_cursor: DEFAULT_WALLPAPER_FOLLOWS_MOUSE,
+            wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
             shader: None,
             pane_switch_shader: None,
-            pane_switch_intensity: Some(0.25),
-            pane_switch_duration: Some(0.5),
+            pane_switch_intensity: Some(DEFAULT_PANE_SWITCH_INTENSITY),
+            pane_switch_duration: Some(DEFAULT_PANE_SWITCH_DURATION),
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
-            window_grid_count: Some(4),
+            window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
             theme: None,
@@ -238,10 +273,6 @@ impl Default for FileConfig {
             log: LogConfig::default(),
         }
     }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// Mirror of ghostty-web's `ITerminalOptions`, minus the runtime/internal fields
@@ -276,18 +307,18 @@ pub struct TerminalOptions {
 impl Default for TerminalOptions {
     fn default() -> Self {
         Self {
-            renderer: Some("webgl".to_string()),
-            cursor_blink: Some(true),
-            cursor_style: Some("bar".to_string()),
-            scrollback: Some(100000),
-            font_size: Some(18.0),
-            font_family: Some("Geist Mono".to_string()),
-            font_weight: Some(400),
+            renderer: Some(DEFAULT_RENDERER.to_string()),
+            cursor_blink: Some(DEFAULT_CURSOR_BLINK),
+            cursor_style: Some(DEFAULT_CURSOR_STYLE.to_string()),
+            scrollback: Some(DEFAULT_SCROLLBACK_LINES),
+            font_size: Some(DEFAULT_FONT_SIZE),
+            font_family: Some(DEFAULT_FONT_FAMILY.to_string()),
+            font_weight: Some(DEFAULT_FONT_WEIGHT),
             allow_transparency: None,
             convert_eol: None,
             disable_stdin: None,
             smooth_scroll_duration: None,
-            scroll_sensitivity: Some(5.0),
+            scroll_sensitivity: Some(DEFAULT_SCROLL_SENSITIVITY),
         }
     }
 }
@@ -629,10 +660,10 @@ pub struct ClientConfig {
     /// Name of the one-shot effect played on the pane you switch to, or `null`
     /// to use the frontend's default.
     pub pane_switch_shader: Option<String>,
-    /// Resolved intensity multiplier for the pane-switch effect (default 1.0,
+    /// Resolved intensity multiplier for the pane-switch effect (default 0.25,
     /// clamped 0.0–3.0). The frontend bakes this into the effect's shader.
     pub pane_switch_intensity: f32,
-    /// Resolved duration multiplier for the pane-switch effect (default 1.0,
+    /// Resolved duration multiplier for the pane-switch effect (default 0.5,
     /// clamped 0.1–5.0).
     pub pane_switch_duration: f32,
     /// Sort order for the session list on the landing page.
@@ -653,8 +684,6 @@ pub struct ClientConfig {
     /// Bundled font families with their available weight ranges.
     pub fonts: Vec<FontEntry>,
 }
-
-pub const DEFAULT_PREFIX: &str = "C-b";
 
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
@@ -918,43 +947,43 @@ pub fn generate_config_toml() -> String {
 # Prefix key (tmux-style). Modifiers: C- (ctrl), M- (alt), S- (shift).
 # prefix = "{DEFAULT_PREFIX}"
 
-# Shell to spawn in new panes. Defaults to $SHELL / /bin/bash.
-# shell = "/bin/bash"
+# Shell to spawn in new panes. Defaults to $SHELL / {DEFAULT_SHELL}.
+# shell = "{DEFAULT_SHELL}"
 
 # Enable vi-style navigation after the prefix:
 #   h/l  → navigate panes left/right (alongside arrow keys)
 #   j/k  → cycle sessions next/prev  (alongside ) and ()
 # The default `l → last-window` binding is dropped because `l` becomes
 # navigate-right; rebind it via `[keys]` if you need it.
-# vi-mode = false
+# vi-mode = {DEFAULT_VI_MODE}
 
 # Enable CSS animations/transitions in the browser (e.g. border highlight when
 # switching panes). Set to false to disable all animated effects.
-# animations = true
+# animations = {DEFAULT_ANIMATIONS}
 
 # Show a per-pane title bar (shell/title, working directory, dimensions, zoom
 # tag) above each pane. Disabled by default.
-# show-pane-titles = false
+# show-pane-titles = {DEFAULT_SHOW_PANE_TITLES}
 
 # Background wallpaper image displayed behind all terminal panes.
 # Accepts a URL or a local file path (absolute or ~/relative).
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
 # Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "radiant:aurora-curtain"   # or btmux:plasma | btmux:voronoi
+# wallpaper-shader = "{DEFAULT_WALLPAPER_SHADER}"   # or btmux:plasma | btmux:voronoi
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
-# wallpaper-opacity = 0.10
+# wallpaper-opacity = {DEFAULT_WALLPAPER_OPACITY:.2}
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
-# wallpaper-blur = 0.0
+# wallpaper-blur = {DEFAULT_WALLPAPER_BLUR:.1}
 # Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
-# wallpaper-saturate = 0.05
+# wallpaper-saturate = {DEFAULT_WALLPAPER_SATURATE:.2}
 # Procedural wallpaper animation speed. 0 = frozen, 1 = normal.
-# wallpaper-speed = 0.20
+# wallpaper-speed = {DEFAULT_WALLPAPER_SPEED:.2}
 # Deterministic seed for procedural wallpaper colors and form.
-# wallpaper-seed = "mellow-nebula-dream"
+# wallpaper-seed = "{DEFAULT_WALLPAPER_SEED}"
 # Let the shader react to pointer movement and to the active terminal cursor.
-# wallpaper-shader-follows-mouse-cursor = true
-# wallpaper-shader-follows-keyboard-input = false
+# wallpaper-shader-follows-mouse-cursor = {DEFAULT_WALLPAPER_FOLLOWS_MOUSE}
+# wallpaper-shader-follows-keyboard-input = {DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD}
 
 # Persistent WebGL post-process effect applied to every pane (webgl renderer
 # only). Pick one interactively with the `shader: choose effect` command
@@ -971,11 +1000,11 @@ pub fn generate_config_toml() -> String {
 # Intensity multiplier for the pane-switch effect (RGB-split amount, block
 # displacement, pixelation size — meaning depends on the effect). 1.0 = the
 # effect's own default strength, 0.0 = imperceptible. Clamped to 0.0-3.0.
-# pane-switch-intensity = 0.25
+# pane-switch-intensity = {DEFAULT_PANE_SWITCH_INTENSITY:.2}
 
 # Duration multiplier for the pane-switch effect's playback time. 1.0 = the
 # effect's own default duration. Clamped to 0.1-5.0.
-# pane-switch-duration = 0.5
+# pane-switch-duration = {DEFAULT_PANE_SWITCH_DURATION:.1}
 
 # Sort order for the session list on the landing page.
 # "created" = creation order, "mru" = most recently visited first (default),
@@ -991,7 +1020,7 @@ pub fn generate_config_toml() -> String {
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
-# window-grid-count = 4
+# window-grid-count = {DEFAULT_WINDOW_GRID_COUNT}
 
 # Per-action key overrides. Uncomment a line to rebind that action.
 # [keys]
@@ -999,28 +1028,28 @@ pub fn generate_config_toml() -> String {
 # ghostty-web terminal options. All are optional; absent fields use btmux's
 # built-in defaults shown below.
 # [terminal]
-# renderer = "webgl"        # "canvas" | "webgl" (default; falls back to canvas)
-# cursor-blink = true
-# cursor-style = "bar"      # "block" | "underline" | "bar"
-# scrollback = 100000
-# font-size = 18.0
-# font-family = "Geist Mono"        # bundled: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", "Geist Mono", "Departure Mono"
-# font-weight = 400           # bold = font-weight + 200 (capped at 900)
+# renderer = "{DEFAULT_RENDERER}"        # "canvas" | "webgl" (default; falls back to canvas)
+# cursor-blink = {DEFAULT_CURSOR_BLINK}
+# cursor-style = "{DEFAULT_CURSOR_STYLE}"      # "block" | "underline" | "bar"
+# scrollback = {DEFAULT_SCROLLBACK_LINES}
+# font-size = {DEFAULT_FONT_SIZE:.1}
+# font-family = "{DEFAULT_FONT_FAMILY}"        # bundled: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", "Geist Mono", "Departure Mono"
+# font-weight = {DEFAULT_FONT_WEIGHT}           # bold = font-weight + 200 (capped at 900)
 #                              # bundled weight ranges: JetBrains Mono 100-800, Fira Code 300-700,
 #                              # Source Code Pro 200-900, Cascadia Code 200-700, Geist Mono 400-700, Departure Mono 400
 # allow-transparency = false
 # convert-eol = false
 # disable-stdin = false
 # smooth-scroll-duration = 0.0
-# scroll-sensitivity = 5.0   # wheel/trackpad scroll-speed multiplier (>1 = faster)
+# scroll-sensitivity = {DEFAULT_SCROLL_SENSITIVITY:.1}   # wheel/trackpad scroll-speed multiplier (>1 = faster)
 
 # Logging configuration. Both levels accept standard tracing directives:
 # "error", "warn", "info", "debug", "trace", or full EnvFilter syntax like
 # "btmux=debug,tower_http=info".
 # BTMUX_CONSOLE_LOG and BTMUX_FILE_LOG override these values when set.
 # [log]
-# console-level = "warn"    # stderr output (keep the terminal quiet)
-# file-level = "info"       # file output (~/.local/state/btmux/log/btmux.log.YYYY-MM-DD)
+# console-level = "{DEFAULT_CONSOLE_LOG}"    # stderr output (keep the terminal quiet)
+# file-level = "{DEFAULT_FILE_LOG}"       # file output (~/.local/state/btmux/log/btmux.log.YYYY-MM-DD)
 
 # Color scheme from ~/.config/btmux/colors/<name>.yaml (base16/base24 YAML files),
 # or a URL to a base16/base24 YAML file. A `palette` wrapper is supported.
@@ -1101,27 +1130,48 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 
     let has_wallpaper = file.wallpaper.is_some() || file.wallpaper_shader.is_some();
     let wallpaper_opacity = if has_wallpaper {
-        Some(file.wallpaper_opacity.unwrap_or(0.10).clamp(0.0, 1.0))
+        Some(
+            file.wallpaper_opacity
+                .unwrap_or(DEFAULT_WALLPAPER_OPACITY)
+                .clamp(0.0, 1.0),
+        )
     } else {
         None
     };
     let wallpaper_blur = if has_wallpaper {
-        Some(file.wallpaper_blur.unwrap_or(0.0).clamp(0.0, 50.0))
+        Some(
+            file.wallpaper_blur
+                .unwrap_or(DEFAULT_WALLPAPER_BLUR)
+                .clamp(0.0, 50.0),
+        )
     } else {
         None
     };
     let wallpaper_saturate = if has_wallpaper {
-        Some(file.wallpaper_saturate.unwrap_or(0.05).clamp(0.0, 1.0))
+        Some(
+            file.wallpaper_saturate
+                .unwrap_or(DEFAULT_WALLPAPER_SATURATE)
+                .clamp(0.0, 1.0),
+        )
     } else {
         None
     };
-    let pane_switch_intensity = file.pane_switch_intensity.unwrap_or(1.0).clamp(0.0, 3.0);
-    let pane_switch_duration = file.pane_switch_duration.unwrap_or(1.0).clamp(0.1, 5.0);
-    let wallpaper_speed = file.wallpaper_speed.unwrap_or(0.20).clamp(0.0, 10.0);
+    let pane_switch_intensity = file
+        .pane_switch_intensity
+        .unwrap_or(DEFAULT_PANE_SWITCH_INTENSITY)
+        .clamp(0.0, 3.0);
+    let pane_switch_duration = file
+        .pane_switch_duration
+        .unwrap_or(DEFAULT_PANE_SWITCH_DURATION)
+        .clamp(0.1, 5.0);
+    let wallpaper_speed = file
+        .wallpaper_speed
+        .unwrap_or(DEFAULT_WALLPAPER_SPEED)
+        .clamp(0.0, 10.0);
     let wallpaper_seed = file
         .wallpaper_seed
         .clone()
-        .unwrap_or_else(|| "mellow-nebula-dream".to_string());
+        .unwrap_or_else(|| DEFAULT_WALLPAPER_SEED.to_string());
 
     // Inline [theme] takes priority; fall back to a resolved remote palette or
     // a local `colors` scheme file.
@@ -1196,7 +1246,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         pane_switch_duration,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
-        window_grid_count: file.window_grid_count.unwrap_or(6),
+        window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
         color_schemes,
         color_scheme_themes,
@@ -1332,7 +1382,7 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
         file.terminal.font_weight = Some(weight);
     }
     if let Some(size) = overrides.font_size {
-        file.terminal.font_size = Some(size.clamp(6.0, 72.0));
+        file.terminal.font_size = Some(size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE));
     }
     if let Some(animations) = overrides.animations {
         file.animations = animations;

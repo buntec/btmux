@@ -8,6 +8,7 @@ import { SessionState } from '../state/types';
 import { MirrorPane } from './MirrorPane';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
+import { getAnimations, getSessionSort, getTerminalFontSize, getWindowSort } from '../state/configDefaults';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -81,10 +82,10 @@ export function SessionSwitcher({ send }: Props) {
 
   const query = filterQuery.trim().toLowerCase();
   const sortedSessions = useMemo(
-    () => sortSessions(allSessions, config?.session_sort ?? 'created'),
+    () => sortSessions(allSessions, getSessionSort(config)),
     [allSessions, config?.session_sort],
   );
-  const windowSort = config?.window_sort ?? 'created';
+  const windowSort = getWindowSort(config);
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     for (const sess of sortedSessions) {
@@ -197,7 +198,7 @@ export function SessionSwitcher({ send }: Props) {
         }, 0);
       }
     };
-    if (!(config?.animations ?? true)) {
+    if (!getAnimations(config)) {
       doClose();
       return;
     }
@@ -363,9 +364,9 @@ export function SessionSwitcher({ send }: Props) {
   if (!mountedOnce.current) return null;
 
   const c = chromePalette(config?.theme ?? null);
-  const termFont = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const termFont = getTerminalFontSize(config);
   const font = Math.max(11, Math.min(15, Math.round(termFont * 0.72)));
-  const animations = config?.animations ?? true;
+  const animations = getAnimations(config);
 
   return (
     <div
@@ -394,8 +395,8 @@ export function SessionSwitcher({ send }: Props) {
         WebkitBackdropFilter: 'blur(3px)',
         outline: 'none',
         zIndex: 30,
-        fontFamily: 'var(--btmux-font, monospace)',
-        fontWeight: 'var(--btmux-font-weight, 400)',
+        fontFamily: 'var(--btmux-font)',
+        fontWeight: 'var(--btmux-font-weight)',
         fontSize: `${font}px`,
         animation: animations ? (closing ? 'btm-fade-out .16s ease forwards' : 'btm-fade .15s ease') : undefined,
       }}

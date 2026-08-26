@@ -10,6 +10,7 @@ import { GitModeHeader } from './files/GitModeHeader';
 import { GitStatus, computeGitItems } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
 import { getParent } from '@/lib/utils';
+import { getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
 import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import type {
   FileEntry,
@@ -50,7 +51,7 @@ interface FileBrowserOverlayProps {
 export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: FileBrowserOverlayProps) {
   const { send: fileSend } = useFileSocket();
   const config = useStore((s) => s.config);
-  const fontSize = Math.max(6, Math.min(72, config?.terminal?.fontSize ?? 14));
+  const fontSize = getTerminalFontSize(config);
   const currentPath = useFileStore((s) => s.currentPath);
   const entries = useFileStore((s) => s.entries);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
@@ -902,8 +903,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       className="absolute inset-0 flex flex-col bg-background outline-none overflow-hidden"
       style={{
         fontSize: `${fontSize}px`,
-        fontFamily: 'var(--btmux-font, monospace)',
-        fontWeight: 'var(--btmux-font-weight, 400)',
+        fontFamily: 'var(--btmux-font)',
+        fontWeight: 'var(--btmux-font-weight)',
       }}
       onMouseDown={() => {
         if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
@@ -967,7 +968,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       {/* Footer */}
       <div
         className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
-        style={{ fontSize: `${Math.max(6, fontSize - 2)}px` }}
+        style={{ fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}
       >
         {pendingRename ? (
           <span className="flex items-center gap-2 text-foreground w-full">

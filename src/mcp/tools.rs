@@ -271,7 +271,10 @@ impl BtmuxMcpServer {
             return tool_error(format!("pane {pane_id} not found"));
         };
         let newly_spawned = !pane.pty.is_spawned();
-        pane.pty.ensure_spawned(80, 24);
+        pane.pty.ensure_spawned(
+            crate::config::DEFAULT_PTY_COLS,
+            crate::config::DEFAULT_PTY_ROWS,
+        );
         let _ = pane.pty.input_tx.send(text.into_bytes());
         ok_json(serde_json::json!({"newly_spawned": newly_spawned}))
     }
@@ -288,7 +291,10 @@ impl BtmuxMcpServer {
         let Some(pane) = mgr.find_pane_mut(pane_id) else {
             return tool_error(format!("pane {pane_id} not found"));
         };
-        pane.pty.ensure_spawned(80, 24);
+        pane.pty.ensure_spawned(
+            crate::config::DEFAULT_PTY_COLS,
+            crate::config::DEFAULT_PTY_ROWS,
+        );
         let (_rx, scrollback) = pane.pty.subscribe_and_get_scrollback();
         let cleaned = strip_ansi_escapes::strip(&scrollback);
         ok_text(String::from_utf8_lossy(&cleaned).into_owned())

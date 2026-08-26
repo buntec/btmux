@@ -8,10 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::AppState;
-
-const DEFAULT_COLS: u16 = 80;
-const DEFAULT_ROWS: u16 = 24;
+use crate::{config, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -53,8 +50,8 @@ async fn api_pane_input(
     };
     let newly_spawned = !pane.pty.is_spawned();
     pane.pty.ensure_spawned(
-        body.cols.unwrap_or(DEFAULT_COLS),
-        body.rows.unwrap_or(DEFAULT_ROWS),
+        body.cols.unwrap_or(config::DEFAULT_PTY_COLS),
+        body.rows.unwrap_or(config::DEFAULT_PTY_ROWS),
     );
     let _ = pane.pty.input_tx.send(body.text.into_bytes());
 
@@ -81,8 +78,8 @@ async fn api_pane_output(
         return StatusCode::NOT_FOUND.into_response();
     };
     pane.pty.ensure_spawned(
-        query.cols.unwrap_or(DEFAULT_COLS),
-        query.rows.unwrap_or(DEFAULT_ROWS),
+        query.cols.unwrap_or(config::DEFAULT_PTY_COLS),
+        query.rows.unwrap_or(config::DEFAULT_PTY_ROWS),
     );
     let (_rx, scrollback) = pane.pty.subscribe_and_get_scrollback();
 

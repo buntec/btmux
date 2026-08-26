@@ -149,13 +149,14 @@ async fn main() {
         }
     };
 
-    // CLI `--shell` wins over config.toml `shell`, which wins over $SHELL, then /bin/bash.
+    // CLI `--shell` wins over config.toml `shell`, which wins over $SHELL, then
+    // the configured default shell.
     let shell = args
         .shell
         .clone()
         .or_else(|| file_config.shell.clone())
         .or_else(|| std::env::var("SHELL").ok().filter(|s| !s.is_empty()))
-        .unwrap_or_else(|| "/bin/bash".to_string());
+        .unwrap_or_else(|| config::DEFAULT_SHELL.to_string());
 
     // PTY reader threads report a pane's id here when its shell exits (EOF). The
     // drain task below removes the pane and broadcasts the new state to all tabs.

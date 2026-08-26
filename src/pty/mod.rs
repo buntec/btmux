@@ -208,7 +208,10 @@ impl PtyHandle {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());
-        cmd.env("BTMUX_API_URL", format!("http://127.0.0.1:{}", self.port));
+        cmd.env(
+            "BTMUX_API_URL",
+            format!("http://{}:{}", crate::config::DEFAULT_HOST, self.port),
+        );
         if std::env::var_os("LANG").is_none() {
             cmd.env("LANG", "en_US.UTF-8");
         }

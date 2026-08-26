@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { buildTerminalOptions } from './TerminalPane';
+import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../state/configDefaults';
 
 interface Props {
   paneId: string;
@@ -72,7 +73,7 @@ export function MirrorPane({ paneId, visible }: Props) {
     // cols/rows in the query only matter if this mirror is the very first attach
     // to a never-spawned pane (spawns the shell at this size); a real viewer will
     // resize it on switch. The backend never resizes the PTY for a mirror.
-    const url = `${protocol}//${window.location.host}/ws/pane/${paneId}?mirror=1&cols=80&rows=24`;
+    const url = `${protocol}//${window.location.host}/ws/pane/${paneId}?mirror=1&cols=${DEFAULT_PTY_COLS}&rows=${DEFAULT_PTY_ROWS}`;
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
 

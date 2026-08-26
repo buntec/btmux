@@ -71,6 +71,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const store = useFileStore;
   const initialized = useRef(false);
   const gitPreviewGenRef = useRef(0);
+  const filePreviewGenRef = useRef(0);
   const [sidebarWidth, setSidebarWidth] = useState(288);
   const dragging = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
@@ -103,6 +104,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const navigate = useCallback(
     async (path: string, focusTarget?: string) => {
+      // Invalidate any file preview request from the directory we are leaving.
+      filePreviewGenRef.current += 1;
       store.getState().setIsLoading(true);
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
@@ -131,7 +134,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const selectFile = useCallback(
     async (path: string, _isDir: boolean) => {
       if (store.getState().selectedFile === path && store.getState().fileContent !== null) return;
+      const previewGen = ++filePreviewGenRef.current;
       store.getState().setSelectedFile(path);
+      // Do not let the previous file's MIME type determine the new preview
+      // while its content is being fetched (e.g. a PDF -> .tex transition).
+      store.getState().setFileContent(null);
       store.getState().setDirectoryTree(null);
       const ext = path.split('.').pop()?.toLowerCase() || '';
       if (MEDIA_EXTENSIONS.has(ext)) {
@@ -147,7 +154,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
       try {
         const resp = await fileSend('read_file', { root: currentPath, path });
-        store.getState().setFileContent(resp.payload as unknown as FileContent);
+        // Focus can move again before the request completes. Only the latest
+        // request may update the preview.
+        if (filePreviewGenRef.current === previewGen && store.getState().selectedFile === path) {
+          store.getState().setFileContent(resp.payload as unknown as FileContent);
+        }
       } catch (e) {
         console.error('read_file failed:', e);
       }
@@ -157,6 +168,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const selectDir = useCallback(
     async (path: string, depth?: number) => {
+      filePreviewGenRef.current += 1;
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
       const resolvedDepth = depth ?? store.getState().treeDepth;

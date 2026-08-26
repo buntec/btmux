@@ -136,7 +136,7 @@ export function FilePreview() {
     return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading...</div>;
   }
 
-  if (!selectedFile || !fileContent) {
+  if (!selectedFile || !fileContent || fileContent.path !== selectedFile) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">Select a file to preview</div>
     );

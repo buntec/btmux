@@ -23,6 +23,10 @@ Why run another app when your browser is already running?
 - REST API and MCP server for scripted/AI-agent control
 - Claude Code hook integration (pane notifications for Stop, permission requests, etc.)
 
+## Demo
+
+https://github.com/buntec/btmux/raw/refs/heads/main/demo.mp4
+
 ## Installation
 
 ### One-liner (macOS and Linux)

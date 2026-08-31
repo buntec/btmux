@@ -25,7 +25,7 @@ Why run another app when your browser is already running?
 
 ## Demo
 
-https://github.com/buntec/btmux/raw/refs/heads/main/demo.mp4
+https://github.com/user-attachments/assets/269ac39a-9bb4-4f06-8ccd-ae81b3d4fb31
 
 ## Installation
 

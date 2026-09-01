@@ -406,7 +406,7 @@ export function Overlay({ sessionId, send, config }: Props) {
       >
         <div
           style={{
-            width: '840px',
+            width: '1200px',
             maxWidth: '94%',
             maxHeight: '88%',
             overflow: 'auto',
@@ -440,7 +440,7 @@ export function Overlay({ sessionId, send, config }: Props) {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
               gap: '18px 34px',
               padding: '18px 22px 22px',
             }}

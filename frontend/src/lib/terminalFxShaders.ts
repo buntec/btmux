@@ -544,7 +544,7 @@ interface PaneSwitchEffectEntry {
 }
 
 /** Used when `pane_switch_shader` is unset or names an unknown effect. */
-export const DEFAULT_PANE_SWITCH_EFFECT_ID = 'chromatic-aberration';
+export const DEFAULT_PANE_SWITCH_EFFECT_ID = 'none';
 
 const PANE_SWITCH_EFFECT_ENTRIES: PaneSwitchEffectEntry[] = [
   {

@@ -359,7 +359,7 @@ enum ClientMessage {
         session_id: Uuid,
     },
     UpdateConfig {
-        update: crate::config::ConfigUpdate,
+        update: Box<crate::config::ConfigUpdate>,
     },
     ResetConfig,
 }

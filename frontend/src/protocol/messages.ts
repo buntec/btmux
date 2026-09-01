@@ -44,6 +44,7 @@ export type ClientMessage =
         wallpaper_shader_follows_mouse_cursor?: boolean;
         wallpaper_shader_follows_keyboard_input?: boolean;
         shader?: string;
+        session_view_shader?: string;
         pane_switch_shader?: string;
         pane_switch_intensity?: number;
         pane_switch_duration?: number;

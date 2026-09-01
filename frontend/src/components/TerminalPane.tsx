@@ -369,8 +369,8 @@ export function TerminalPane({
     return pumpRenders(() => [termRef.current?.renderer], Infinity);
   }, [pumpBaseShader, termOptions]);
 
-  // Play the one-shot pane-switch effect (`pane-switch-shader`, by default a
-  // chromatic-aberration flash) when this pane *gains* active status while
+  // Play the configured one-shot pane-switch effect (`pane-switch-shader`, off
+  // by default) when this pane *gains* active status while
   // visible — pane-to-pane navigation (prefix+arrow, click), and also a
   // window/session switch (whose newly-active pane transitions visible+
   // active in the same update, so it reads as "revealing" the pane you

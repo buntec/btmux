@@ -34,6 +34,7 @@ import { applyThemeVars } from './lib/apply-theme-vars';
 import {
   PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC,
   PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
+  findShaderEffect,
 } from './lib/terminalFxShaders';
 import { baseShaderSrc } from './lib/baseShader';
 import { pumpRenders } from './lib/pumpRenders';
@@ -61,8 +62,8 @@ function setRenderersPostProcess(renderers: Iterable<PaneRenderer>, shader: stri
 
 /**
  * Applies the WebGL pixelate post-process shader (terminalFxShaders.ts) to the
- * visible panes while the session switcher or help overlay is open — the
- * privacy-blur backdrop for those overlays. Replaces an earlier whole-stage
+ * visible panes while the help overlay is open — its privacy backdrop.
+ * Replaces an earlier whole-stage
  * SVG CSS filter that pixelated the entire SessionPool DOM subtree in one
  * shot; this instead asks each pane's own ghostty-web WebGL context to
  * pixelate its own content. Trade-off: title bars/borders/dividers (separate
@@ -102,19 +103,50 @@ function usePanePixelateOverlay(pixActive: boolean, animations: boolean, visible
       const affected = affectedRenderersRef.current;
       setRenderersPostProcess(affected, PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC);
       prevActive.current = pixActive;
-      // Hand the post-process slot back to the configured persistent effect
-      // (`shader = "..."`), which is null when none is set.
+      // Hand the post-process slot back to the session-switcher effect when
+      // that modal is still open, otherwise to the persistent terminal effect.
       return pumpRenders(
         () => affected,
         PIX_RAMP_OUT_MS,
         () => {
-          setRenderersPostProcess(affected, baseShaderSrc());
+          const state = useStore.getState();
+          const restored = state.switcherOpen
+            ? (findShaderEffect(state.config?.session_view_shader)?.src ?? baseShaderSrc())
+            : baseShaderSrc();
+          setRenderersPostProcess(affected, restored);
           if (affectedRenderersRef.current === affected) affectedRenderersRef.current = [];
         },
       );
     }
     prevActive.current = pixActive;
   }, [pixActive, animations]);
+}
+
+/** Temporarily replaces the visible panes' base shader while `prefix + s` is open. */
+function useSessionViewShader(
+  active: boolean,
+  shaderId: string | null | undefined,
+  animations: boolean,
+  visiblePaneIds: readonly string[],
+): void {
+  const visiblePaneIdsRef = useRef(visiblePaneIds);
+  visiblePaneIdsRef.current = visiblePaneIds;
+  const effect = findShaderEffect(shaderId);
+
+  useEffect(() => {
+    if (!active || !effect) return;
+
+    const affected = paneRenderers(visiblePaneIdsRef.current);
+    setRenderersPostProcess(affected, effect.src);
+    for (const renderer of affected) renderer.requestRender?.();
+    const stopPump = effect.animated && animations ? pumpRenders(() => affected, Infinity) : undefined;
+
+    return () => {
+      stopPump?.();
+      setRenderersPostProcess(affected, baseShaderSrc());
+      for (const renderer of affected) renderer.requestRender?.();
+    };
+  }, [active, effect?.src, effect?.animated, animations]);
 }
 
 /**
@@ -152,7 +184,8 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const overlay = useStore((s) => s.overlay);
   const navigate = useNavigate();
   const location = useLocation();
-  const privacyOverlayActive = switcherOpen || overlay?.mode === 'keys';
+  const helpOverlayActive = overlay?.mode === 'keys';
+  const modalOverlayActive = switcherOpen || helpOverlayActive;
 
   // Expose the router's navigate to code outside <BrowserRouter> (the control
   // socket's OS-notification onclick) so clicking a notification jumps to the pane.
@@ -207,8 +240,14 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
     ? [activeWindow.zoomed_pane]
     : (activeWindow?.panes.map((pane) => pane.id) ?? []);
 
-  // Privacy-pixelate only the panes actually visible behind the switcher/help.
-  usePanePixelateOverlay(privacyOverlayActive, getAnimations(config), visiblePaneIds);
+  // Apply transient shaders only to panes actually visible behind each modal.
+  useSessionViewShader(
+    switcherOpen && !helpOverlayActive,
+    config?.session_view_shader,
+    getAnimations(config),
+    visiblePaneIds,
+  );
+  usePanePixelateOverlay(helpOverlayActive, getAnimations(config), visiblePaneIds);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
@@ -260,7 +299,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
             // Modal animations and first-time session mounts both compete with
             // the wallpaper for GPU time. Keep it stopped until that foreground
             // work has completed and the newly-visible terminals have painted.
-            paused={privacyOverlayActive || sessionTransitionActive}
+            paused={modalOverlayActive || sessionTransitionActive}
             seed={wallpaperSeed}
             followsMouseCursor={wallpaperFollowsMouse}
             followsKeyboardInput={wallpaperFollowsKeyboard}

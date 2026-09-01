@@ -32,8 +32,9 @@ export function shaderPickerItems(activeId: string | null): PickerItem[] {
 /**
  * Picker rows for `shader: choose pane-switch effect`. Unlike the persistent
  * effect above, "(none)" is a registry entry with its own id rather than the
- * empty string — an unset `pane_switch_shader` means "the default effect", so
- * turning the flash off has to be expressible.
+ * empty string — an unset `pane_switch_shader` means the default effect. The
+ * default is currently "none", while keeping it as a registry entry lets an
+ * explicit `none` remain a stable config-file value.
  */
 export function paneSwitchPickerItems(configured: string | null): PickerItem[] {
   const active = findPaneSwitchEffect(configured);

@@ -199,6 +199,11 @@ pub struct FileConfig {
     /// (`terminalFxShaders.ts`) — this is passed through untouched, and an
     /// unknown name simply renders no effect.
     pub shader: Option<String>,
+    /// Name of the steady-state WebGL post-process effect applied to visible
+    /// panes behind the session switcher (`prefix + s`). Unset means no
+    /// switcher-specific effect; the pane's persistent shader remains active.
+    #[serde(rename = "session-view-shader")]
+    pub session_view_shader: Option<String>,
     /// Name of the one-shot effect played on the pane you switch to
     /// (`chromatic-aberration`, `block-glitch`, `pixelate`, `none`). Unset uses
     /// the frontend's default; like `shader`, the registry lives there.
@@ -259,6 +264,7 @@ impl Default for FileConfig {
             wallpaper_shader_follows_mouse_cursor: DEFAULT_WALLPAPER_FOLLOWS_MOUSE,
             wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
             shader: None,
+            session_view_shader: None,
             pane_switch_shader: None,
             pane_switch_intensity: Some(DEFAULT_PANE_SWITCH_INTENSITY),
             pane_switch_duration: Some(DEFAULT_PANE_SWITCH_DURATION),
@@ -657,6 +663,9 @@ pub struct ClientConfig {
     /// Name of the persistent post-process shader effect applied to every pane,
     /// or `null` for none. Resolved to GLSL by the frontend's effect registry.
     pub shader: Option<String>,
+    /// Name of the steady-state post-process effect applied to panes behind the
+    /// session switcher, or `null` to leave their persistent shader untouched.
+    pub session_view_shader: Option<String>,
     /// Name of the one-shot effect played on the pane you switch to, or `null`
     /// to use the frontend's default.
     pub pane_switch_shader: Option<String>,
@@ -991,11 +1000,16 @@ pub fn generate_config_toml() -> String {
 # shader = "scanline"   # scanline | vignette | dither | chromatic-aberration
 #                       # | pixelate | glitch
 
+# Steady-state WebGL effect applied to the terminal panes behind the session
+# switcher (prefix + s). Uses the same effects as `shader`; unset = no extra
+# effect, so the pane's persistent shader remains visible.
+# session-view-shader = "vignette"
+
 # One-shot effect flashed on the pane you switch to (prefix + arrow, click,
 # window/session switch). Also pickable with `shader: choose pane-switch
 # effect`. Disabled entirely when `animations = false`.
-# pane-switch-shader = "chromatic-aberration"   # chromatic-aberration (default)
-#                       # | block-glitch | pixelate | none
+# pane-switch-shader = "none"   # none (default) | chromatic-aberration
+#                               # | block-glitch | pixelate
 
 # Intensity multiplier for the pane-switch effect (RGB-split amount, block
 # displacement, pixelation size — meaning depends on the effect). 1.0 = the
@@ -1241,6 +1255,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_shader_follows_mouse_cursor: file.wallpaper_shader_follows_mouse_cursor,
         wallpaper_shader_follows_keyboard_input: file.wallpaper_shader_follows_keyboard_input,
         shader: file.shader.clone(),
+        session_view_shader: file.session_view_shader.clone(),
         pane_switch_shader: file.pane_switch_shader.clone(),
         pane_switch_intensity,
         pane_switch_duration,
@@ -1292,6 +1307,8 @@ pub struct ConfigUpdate {
     pub wallpaper_shader_follows_keyboard_input: Option<bool>,
     /// Post-process effect name; the empty string clears it.
     pub shader: Option<String>,
+    /// Session-switcher background effect name; the empty string clears it.
+    pub session_view_shader: Option<String>,
     /// Pane-switch effect name; the empty string falls back to the default.
     pub pane_switch_shader: Option<String>,
     pub pane_switch_intensity: Option<f32>,
@@ -1349,6 +1366,9 @@ impl ConfigUpdate {
         }
         if other.shader.is_some() {
             self.shader = other.shader.clone();
+        }
+        if other.session_view_shader.is_some() {
+            self.session_view_shader = other.session_view_shader.clone();
         }
         if other.pane_switch_shader.is_some() {
             self.pane_switch_shader = other.pane_switch_shader.clone();
@@ -1416,6 +1436,9 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(shader) = &overrides.shader {
         file.shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    }
+    if let Some(shader) = &overrides.session_view_shader {
+        file.session_view_shader = Some(shader.clone()).filter(|s| !s.is_empty());
     }
     if let Some(shader) = &overrides.pane_switch_shader {
         file.pane_switch_shader = Some(shader.clone()).filter(|s| !s.is_empty());
@@ -1510,6 +1533,8 @@ palette:
         assert_eq!(resolved.wallpaper_seed, "mellow-nebula-dream");
         assert!(resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);
+        assert_eq!(resolved.session_view_shader, None);
+        assert_eq!(resolved.pane_switch_shader, None);
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
@@ -1540,6 +1565,7 @@ palette:
                 wallpaper_shader_follows_mouse_cursor: Some(false),
                 wallpaper_shader_follows_keyboard_input: Some(false),
                 shader: Some("vignette".to_string()),
+                session_view_shader: Some("dither".to_string()),
                 pane_switch_shader: Some("pixelate".to_string()),
                 pane_switch_intensity: Some(1.5),
                 pane_switch_duration: Some(2.0),
@@ -1567,6 +1593,7 @@ palette:
         assert!(!resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);
         assert_eq!(resolved.shader.as_deref(), Some("vignette"));
+        assert_eq!(resolved.session_view_shader.as_deref(), Some("dither"));
         assert_eq!(resolved.pane_switch_shader.as_deref(), Some("pixelate"));
         assert_eq!(resolved.pane_switch_intensity, 1.5);
         assert_eq!(resolved.pane_switch_duration, 2.0);

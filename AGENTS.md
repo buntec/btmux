@@ -114,20 +114,26 @@ early-returns so typing goes to the overlay, not the terminal.
 **Post-process shaders:** panes render through ghostty-web's
 `renderer.setPostProcessShader` hook (WebGL only). `terminalFxShaders.ts` holds
 every fragment shader plus two registries the frontend owns end-to-end — the
-backend only stores the chosen id (`shader` / `pane-switch-shader`), and an
-unknown id falls back:
+backend only stores the chosen id (`shader` / `session-view-shader` /
+`pane-switch-shader`), and an unknown id falls back:
 
 - `SHADER_EFFECTS` — _steady-state_ effects (`shader: choose effect`). The
   configured one is the **base state** of a pane's single post-process slot.
 - `PANE_SWITCH_EFFECTS` — _one-shot_ effects played on the pane you switch to
-  (`shader: choose pane-switch effect`, default a chromatic-aberration flash).
+  (`shader: choose pane-switch effect`, disabled by default).
   Each carries a `durationMs` that must cover its own timeline, since that's how
   long `TerminalPane` pumps frames before restoring the base effect.
 
-Transient users of the slot (the pane-switch effect, `App.tsx`'s privacy
-pixelate) must hand it back via `baseShaderSrc()` (`lib/baseShader.ts`) rather
-than `null`. Any `u_time`-driven shader also needs `pumpRenders` — an idle
-terminal paints no frames, so animated effects freeze without one.
+The session switcher's background panes can temporarily use any steady-state
+effect via `session-view-shader` (unset by default). This uses the same
+`SHADER_EFFECTS` registry and restores the pane's base shader when the switcher
+closes. The key-help overlay retains its privacy pixelation.
+
+Transient users of the slot (the pane-switch effect, session-view effect, and
+`App.tsx`'s privacy pixelate) must hand it back via `baseShaderSrc()`
+(`lib/baseShader.ts`) rather than `null`. Any `u_time`-driven shader also needs
+`pumpRenders` — an idle terminal paints no frames, so animated effects freeze
+without one.
 
 **Live config reload:** `main.rs` watches the config file's _parent dir_ with
 `notify` (to catch editors' atomic rename-on-save), debounces, re-resolves, and

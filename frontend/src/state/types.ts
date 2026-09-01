@@ -131,9 +131,11 @@ export interface ClientConfig {
   wallpaper_shader_follows_keyboard_input: boolean;
   /** Persistent post-process effect id (see SHADER_EFFECTS), or null for none. */
   shader: string | null;
+  /** Effect applied to panes behind the session switcher, or null for none. */
+  session_view_shader: string | null;
   /**
    * One-shot effect played on the pane you switch to (see PANE_SWITCH_EFFECTS).
-   * Null means unset — the frontend's DEFAULT_PANE_SWITCH_EFFECT_ID applies.
+   * Null means unset — the frontend's default (none) applies.
    */
   pane_switch_shader: string | null;
   /** Intensity multiplier for the pane-switch effect (1.0 = default strength). */

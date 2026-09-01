@@ -56,6 +56,7 @@ type Draft = {
   wallpaperFollowsMouse: boolean;
   wallpaperFollowsKeyboard: boolean;
   shader: string;
+  sessionViewShader: string;
   paneSwitchShader: string;
   paneSwitchIntensity: number;
   paneSwitchDuration: number;
@@ -151,6 +152,7 @@ function initialDraft(config: ClientConfig): Draft {
     wallpaperFollowsMouse: getWallpaperFollowsMouse(config),
     wallpaperFollowsKeyboard: getWallpaperFollowsKeyboard(config),
     shader: config.shader ?? '',
+    sessionViewShader: config.session_view_shader ?? '',
     paneSwitchShader: config.pane_switch_shader ?? '',
     paneSwitchIntensity: getPaneSwitchIntensity(config),
     paneSwitchDuration: getPaneSwitchDuration(config),
@@ -176,6 +178,7 @@ function toToml(draft: Draft): string {
     `wallpaper-shader-follows-mouse-cursor = ${draft.wallpaperFollowsMouse}`,
     `wallpaper-shader-follows-keyboard-input = ${draft.wallpaperFollowsKeyboard}`,
     draft.shader ? `shader = ${quote(draft.shader)}` : null,
+    draft.sessionViewShader ? `session-view-shader = ${quote(draft.sessionViewShader)}` : null,
     draft.paneSwitchShader ? `pane-switch-shader = ${quote(draft.paneSwitchShader)}` : null,
     `pane-switch-intensity = ${draft.paneSwitchIntensity.toFixed(2)}`,
     `pane-switch-duration = ${draft.paneSwitchDuration.toFixed(2)}`,
@@ -209,6 +212,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
     update.wallpaper_shader_follows_keyboard_input = draft.wallpaperFollowsKeyboard;
   }
   if (dirty.has('shader')) update.shader = draft.shader;
+  if (dirty.has('sessionViewShader')) update.session_view_shader = draft.sessionViewShader;
   if (dirty.has('paneSwitchShader')) update.pane_switch_shader = draft.paneSwitchShader;
   if (dirty.has('paneSwitchIntensity')) update.pane_switch_intensity = draft.paneSwitchIntensity;
   if (dirty.has('paneSwitchDuration')) update.pane_switch_duration = draft.paneSwitchDuration;
@@ -593,11 +597,32 @@ export function ConfigPage({ config, send }: Props) {
                 </Select>
               </Field>
               <Field>
+                <FieldLabel htmlFor="session-view-shader">Session-view background shader</FieldLabel>
+                <Select
+                  value={draft.sessionViewShader || 'none'}
+                  onValueChange={(value) => update('sessionViewShader', value === 'none' ? '' : value)}
+                >
+                  <SelectTrigger id="session-view-shader" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">None</SelectItem>
+                      {SHADER_EFFECTS.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
                 <FieldLabel htmlFor="pane-switch-shader">Pane-switch shader</FieldLabel>
                 <Select
-                  value={draft.paneSwitchShader || 'default'}
+                  value={draft.paneSwitchShader || 'none'}
                   onValueChange={(value) => {
-                    update('paneSwitchShader', value === 'default' ? '' : value);
+                    update('paneSwitchShader', value === 'none' ? '' : value);
                     setPaneSwitchPreviewKey((key) => key + 1);
                   }}
                 >
@@ -606,10 +631,9 @@ export function ConfigPage({ config, send }: Props) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      <SelectItem value="default">Default</SelectItem>
                       {PANE_SWITCH_EFFECTS.map((item) => (
                         <SelectItem key={item.id} value={item.id}>
-                          {item.label}
+                          {item.id === 'none' ? 'None' : item.label}
                         </SelectItem>
                       ))}
                     </SelectGroup>

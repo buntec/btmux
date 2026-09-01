@@ -92,6 +92,10 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
   // otherwise a background session's panes would steal it on every server push.
   // Switching sessions flips isActiveSession→true here, re-running this effect
   // so the newly-shown session re-asserts focus (same race-fix as window switch).
+  // A config update also rebuilds every Terminal (see TerminalPane's termOptions
+  // effect). Re-run for that replacement even when activePaneId is unchanged:
+  // each replacement auto-focuses during open(), so otherwise the last pane to
+  // reopen can own keyboard input while the server-selected pane stays highlighted.
   // While the window-grid is open it owns the keyboard, so don't focus a pane;
   // focus is returned by WindowGrid's own close path (it can't be done here:
   // closing the grid leaves activePaneId unchanged, and a setTimeout(0) refocus
@@ -117,6 +121,7 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
     fileBrowserOpen,
     fileBrowserPaneId,
     isActiveSession,
+    config,
     clearPaneNotification,
   ]);
 

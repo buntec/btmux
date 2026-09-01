@@ -5,10 +5,11 @@
 //! restored — restored panes get a fresh shell, spawned lazily in their saved
 //! cwd (see `SessionManager::restore_from_snapshots`).
 //!
-//! The state file lives under `$XDG_STATE_HOME/btmux/state.json` (falling back
-//! to `$HOME/.local/state/btmux/state.json`) — deliberately *not* in the config
-//! dir, which `main.rs` watches for live config reloads; writing there on every
-//! mutation would spuriously trigger a reload.
+//! The default state file lives under `$XDG_STATE_HOME/btmux/state.json`
+//! (falling back to `$HOME/.local/state/btmux/state.json`). Named profiles use
+//! `$XDG_STATE_HOME/btmux/<profile>/state.json`. State is deliberately *not* in
+//! the config dir, which `main.rs` watches for live config reloads; writing there
+//! on every mutation would spuriously trigger a reload.
 
 use std::path::{Path, PathBuf};
 
@@ -26,11 +27,35 @@ fn state_dir() -> Option<PathBuf> {
     Some(base.join("btmux"))
 }
 
-/// Resolve the state file path: `$XDG_STATE_HOME/btmux/state.json`, falling back
-/// to `$HOME/.local/state/btmux/state.json`. Returns `None` when neither env var
-/// is set (persistence is then disabled).
-pub fn state_path() -> Option<PathBuf> {
-    state_dir().map(|d| d.join("state.json"))
+/// Resolve the state file path. Without a profile this is
+/// `$XDG_STATE_HOME/btmux/state.json`, falling back to
+/// `$HOME/.local/state/btmux/state.json`. With a profile it is stored under a
+/// profile-specific subdirectory. Returns `None` when neither env var is set
+/// (persistence is then disabled).
+pub fn state_path(profile: Option<&str>) -> Result<Option<PathBuf>, String> {
+    let Some(dir) = state_dir() else {
+        return Ok(None);
+    };
+
+    let path = match profile {
+        None => dir.join("state.json"),
+        Some(profile) => {
+            if profile.is_empty()
+                || profile == "."
+                || profile == ".."
+                || profile.contains('/')
+                || profile.contains('\\')
+                || profile.contains('\0')
+            {
+                return Err(format!(
+                    "invalid profile {profile:?}: use a non-empty name without path separators"
+                ));
+            }
+            dir.join(profile).join("state.json")
+        }
+    };
+
+    Ok(Some(path))
 }
 
 /// Resolve the log directory: `$XDG_STATE_HOME/btmux/log/`.

@@ -157,6 +157,11 @@ fn render_systemd_unit(
     env_shell: &str,
     path_env: &str,
 ) -> String {
+    let profile_arg = args
+        .profile
+        .as_deref()
+        .map(|profile| format!(" --profile {profile}"))
+        .unwrap_or_default();
     let shell_arg = explicit_shell
         .map(|s| format!(" --shell {s}"))
         .unwrap_or_default();
@@ -166,7 +171,7 @@ fn render_systemd_unit(
          After=network.target\n\
          \n\
          [Service]\n\
-         ExecStart={exe} --no-browser --host {host} --port {port}{shell_arg}\n\
+         ExecStart={exe} --no-browser --host {host} --port {port}{profile_arg}{shell_arg}\n\
          Restart=on-failure\n\
          Environment=PATH={path}\n\
          Environment=SHELL={env_shell}\n\
@@ -176,6 +181,7 @@ fn render_systemd_unit(
         exe = exe.display(),
         host = args.host,
         port = args.port,
+        profile_arg = profile_arg,
         shell_arg = shell_arg,
         env_shell = env_shell,
         path = path_env,
@@ -360,6 +366,17 @@ fn render_plist(
         })
         .unwrap_or_default();
 
+    let profile_args = args
+        .profile
+        .as_deref()
+        .map(|profile| {
+            format!(
+                "\n        <string>--profile</string>\n        <string>{}</string>",
+                xml_escape(profile)
+            )
+        })
+        .unwrap_or_default();
+
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -374,7 +391,7 @@ fn render_plist(
         <string>--host</string>
         <string>{host}</string>
         <string>--port</string>
-        <string>{port}</string>{shell_args}
+        <string>{port}</string>{profile_args}{shell_args}
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -400,6 +417,7 @@ fn render_plist(
         exe = xml_escape(&exe.to_string_lossy()),
         host = xml_escape(&args.host),
         port = args.port,
+        profile_args = profile_args,
         shell_args = shell_args,
         env_shell = xml_escape(env_shell),
         path = xml_escape(path_env),

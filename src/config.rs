@@ -54,6 +54,11 @@ pub struct CliArgs {
     #[arg(short, long, default_value_t = DEFAULT_PORT)]
     pub port: u16,
 
+    /// Use an isolated, named session state profile. Without a profile,
+    /// sessions are stored in the default state.json.
+    #[arg(long)]
+    pub profile: Option<String>,
+
     /// Shell to spawn. Overrides `shell` in config.toml when passed explicitly.
     #[arg(long)]
     pub shell: Option<String>,

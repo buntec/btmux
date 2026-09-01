@@ -50,7 +50,7 @@ btmux install --print      # print the generated service unit without installing
 btmux uninstall            # stop + remove
 ```
 
-The `--host`/`--port`/`--shell` flags (and your shell's `PATH`) are captured
+The `--host`/`--port`/`--profile`/`--shell` flags (and your shell's `PATH`) are captured
 into the generated unit at install time, so re-run the installer after changing
 any of them. Install from a stable binary path (e.g. `~/.local/bin/btmux`), not a
 `target/` build artifact — a rebuild or `cargo clean` would break the service.
@@ -70,6 +70,18 @@ cargo install --path .
 btmux         # start the server (binds to localhost:8004 by default)
 btmux --help  # get help
 ```
+
+By default, session structure is persisted in
+`~/.local/state/btmux/state.json` (respecting `$XDG_STATE_HOME`). Use a named
+profile to run isolated btmux instances; each profile has its own session
+state:
+
+```sh
+btmux --profile work --port 8005
+btmux --profile personal --port 8006
+```
+
+Without `--profile`, btmux continues to use the top-level `state.json`.
 
 Navigate to `localhost:<port>`
 

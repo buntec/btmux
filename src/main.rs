@@ -175,7 +175,13 @@ async fn main() {
     // Restore the saved session tree from disk if present; otherwise start with
     // a single default session. Process state can't be restored — each pane gets
     // a fresh shell, spawned lazily in its saved cwd.
-    let state_file = persistence::state_path();
+    let state_file = match persistence::state_path(args.profile.as_deref()) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("btmux: {e}");
+            std::process::exit(2);
+        }
+    };
     {
         let mut mgr = state.write().await;
         let restored = state_file

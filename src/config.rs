@@ -725,7 +725,6 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("}", "swap-pane-forward"),
     (" ", "next-layout"),
     ("q", "display-panes"),
-    ("d", "detach"),
     (";", "last-pane"),
     ("?", "list-keys"),
     (":", "command-palette"),

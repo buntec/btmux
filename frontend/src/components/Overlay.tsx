@@ -53,7 +53,6 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'next-session',
       'prev-session',
       'last-session',
-      'detach',
     ],
   },
   {

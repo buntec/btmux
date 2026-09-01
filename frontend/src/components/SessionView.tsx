@@ -62,7 +62,6 @@ export function SessionView({ send }: Props) {
     }
   }, [session?.active_window, activeWindowName, session?.name, navigate]);
 
-  const goToLanding = useCallback(() => navigate('/'), [navigate]);
   const switchToSession = useCallback(
     (name: string) => {
       const target = allSessions.find((s) => s.name === name);
@@ -75,7 +74,7 @@ export function SessionView({ send }: Props) {
     },
     [allSessions, navigate],
   );
-  useKeybindings(session?.id ?? '', send, goToLanding, switchToSession);
+  useKeybindings(session?.id ?? '', send, switchToSession);
 
   // Renders nothing: the terminal grid (SessionPool), StatusBar and Overlay are
   // owned by AppInner so they persist across session switches. SessionView is an

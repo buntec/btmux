@@ -191,16 +191,6 @@ async function main() {
     await prefix(page, 'p');
     await page.waitForTimeout(800);
 
-    // ── 12. Detach to landing page (prefix + d) ──────────────────────────────
-    console.log('Detaching to landing page…');
-    await prefix(page, 'd');
-    await page.waitForTimeout(1500);
-
-    // ── 13. Hold on landing page, then re-enter ───────────────────────────────
-    await page.keyboard.press('Enter');
-    await waitForTerminal(page);
-    await page.waitForTimeout(1200);
-
     console.log('Recording complete.');
   } finally {
     await context.close(); // flushes the video

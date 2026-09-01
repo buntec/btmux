@@ -63,7 +63,6 @@ function matchesPrefix(e: KeyboardEvent, p: ParsedKey): boolean {
 export function useKeybindings(
   sessionId: string,
   send: (msg: ClientMessage) => void,
-  onNavigateToLanding: () => void,
   onSwitchToSession: (sessionName: string) => void,
 ) {
   const config = useStore((s) => s.config);
@@ -93,7 +92,6 @@ export function useKeybindings(
   const bindsRef = useRef(binds);
   const sessionIdRef = useRef(sessionId);
   const sendRef = useRef(send);
-  const onNavigateRef = useRef(onNavigateToLanding);
   const onSwitchToSessionRef = useRef(onSwitchToSession);
 
   prefixActiveRef.current = prefixActive;
@@ -105,7 +103,6 @@ export function useKeybindings(
   bindsRef.current = binds;
   sessionIdRef.current = sessionId;
   sendRef.current = send;
-  onNavigateRef.current = onNavigateToLanding;
   onSwitchToSessionRef.current = onSwitchToSession;
 
   useEffect(() => {
@@ -158,14 +155,7 @@ export function useKeybindings(
         clearTimeout(timeoutRef.current);
         setPrefixActive(false);
         prefixActiveRef.current = false;
-        dispatch(
-          e,
-          sessionIdRef.current,
-          bindsRef.current,
-          sendRef.current,
-          onNavigateRef.current,
-          onSwitchToSessionRef.current,
-        );
+        dispatch(e, sessionIdRef.current, bindsRef.current, sendRef.current, onSwitchToSessionRef.current);
         return;
       }
     };
@@ -182,7 +172,6 @@ function dispatch(
   sessionId: string,
   binds: Map<string, string>,
   send: (msg: ClientMessage) => void,
-  onNavigateToLanding: () => void,
   onSwitchToSession: (sessionName: string) => void,
 ) {
   if (!binds.has(e.key) && e.key >= '0' && e.key <= '9') {
@@ -196,14 +185,13 @@ function dispatch(
   }
 
   const action = binds.get(e.key);
-  if (action) runAction(action, sessionId, send, onNavigateToLanding, onSwitchToSession);
+  if (action) runAction(action, sessionId, send, onSwitchToSession);
 }
 
 function runAction(
   action: string,
   sessionId: string,
   send: (msg: ClientMessage) => void,
-  onNavigateToLanding: () => void,
   onSwitchToSession: (sessionName: string) => void,
 ) {
   const store = useStore.getState();
@@ -355,9 +343,6 @@ function runAction(
       break;
     case 'display-panes':
       showPaneNumbers();
-      break;
-    case 'detach':
-      onNavigateToLanding();
       break;
     case 'last-pane':
       send({ type: 'last_pane', session_id: sessionId });

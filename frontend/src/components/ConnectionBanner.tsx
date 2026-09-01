@@ -1,38 +1,27 @@
 import { useStore } from '../state/store';
-import { DEFAULT_THEME } from '../state/defaultTheme';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 
 // Shown when the /ws/control socket is down (e.g. the server went away). The
 // frontend holds no canonical state, so while disconnected the UI is stale;
-// the socket auto-reconnects every 2s (see useControlSocket.ts).
+// the socket auto-reconnects every 2s (see useControlSocket.ts). The dialog is
+// intentionally not dismissible because interaction cannot be sent while the
+// control socket is unavailable.
 export function ConnectionBanner() {
   const connected = useStore((s) => s.controlConnected);
-  const theme = useStore((s) => s.config?.theme);
-
-  if (connected) return null;
-
-  const fg = theme?.brightWhite ?? DEFAULT_THEME.brightWhite;
-  const bg = theme?.red ?? DEFAULT_THEME.red;
 
   return (
-    <div
-      role="alert"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 100,
-        background: bg,
-        color: fg,
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
-        fontSize: '13px',
-        textAlign: 'center',
-        padding: '6px 8px',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
-      }}
-    >
-      Connection lost — trying to reconnect…
-    </div>
+    <Dialog open={!connected}>
+      <DialogContent
+        className="sm:max-w-sm"
+        showCloseButton={false}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onPointerDownOutside={(event) => event.preventDefault()}
+      >
+        <DialogHeader className="text-center sm:text-center">
+          <DialogTitle>Connection lost</DialogTitle>
+          <DialogDescription aria-live="polite">Trying to reconnect…</DialogDescription>
+        </DialogHeader>
+      </DialogContent>
+    </Dialog>
   );
 }

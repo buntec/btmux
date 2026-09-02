@@ -1,0 +1,41 @@
+{
+  "description": "Report Codex status changes to the containing btmux pane.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

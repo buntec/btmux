@@ -21,7 +21,7 @@ Why run another app when your browser is already running?
 - Hot config reload (theme, keybindings, terminal options)
 - base16/base24 theme support
 - REST API and MCP server for scripted/AI-agent control
-- Claude Code hook integration (pane notifications for Stop, permission requests, etc.)
+- Agent hook integrations (pane notifications for completed turns, permission requests, etc.)
 
 ## Demo
 
@@ -148,19 +148,26 @@ this isn't a subprocess Claude Code spawns, it's routes on your existing
 btmux server, so if you change `--port` you'll need to re-register with the
 new URL. Verify it's connected with `claude mcp list`.
 
-### Claude Code hook notifications
+### Agent hook notifications
 
 Every pane's shell gets `BTMUX_PANE_ID`/`BTMUX_API_URL` set automatically, so
-a Claude Code instance running inside a btmux pane can report its own status
-back to that pane — a colored dot / toast notification when it stops, needs
-permission, fails, or finishes a task, visible even if you're looking at a
-different pane or session.
+an agent harness running inside a btmux pane can report its own status back to
+that pane — a colored dot / toast notification when it stops, needs permission,
+fails, or finishes a task, visible even if you're looking at a different pane or
+session.
 
-[`extras/claude-code/hooks.json`](extras/claude-code/hooks.json) is a
-ready-made hooks config covering `Stop`, `SubagentStop`, `StopFailure`,
-`PermissionRequest`, `TaskCompleted`, and `Notification`. Merge its `hooks`
-key into your `~/.claude/settings.json` (or a project's `.claude/settings.json`)
-to enable it.
+btmux prints ready-to-paste hook configuration for popular harnesses:
+
+```sh
+btmux generate-claude-code-hooks  # merge `hooks` into ~/.claude/settings.json
+btmux generate-codex-hooks        # merge `hooks` into ~/.codex/hooks.json
+btmux generate-gemini-cli-hooks   # merge `hooks` into ~/.gemini/settings.json
+```
+
+The same snippets live under [`extras/`](extras/) for reference. The
+notification endpoint accepts the harness's JSON hook payload directly, so
+other command-hook harnesses can use the same pattern: pipe hook stdin to
+`$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/notify`.
 
 ## Development
 

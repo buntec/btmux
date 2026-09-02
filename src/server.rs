@@ -137,7 +137,7 @@ async fn api_create_window(
 
 #[derive(Deserialize)]
 struct PaneNotifyRequest {
-    /// Claude Code hook event name (e.g. "Stop", "PermissionRequest").
+    /// Agent harness hook event name (e.g. "Stop", "AfterAgent").
     hook_event_name: Option<String>,
     /// Explicit event field (custom callers).
     event: Option<String>,
@@ -147,10 +147,14 @@ struct PaneNotifyRequest {
     title: Option<String>,
     /// Explicit body (custom callers).
     body: Option<String>,
-    /// CC Stop/SubagentStop/StopFailure: last assistant message.
+    /// Claude Code/Codex Stop and SubagentStop: last assistant message.
     last_assistant_message: Option<String>,
-    /// CC Notification event message.
+    /// Gemini CLI AfterAgent: final response.
+    prompt_response: Option<String>,
+    /// Notification event message.
     message: Option<String>,
+    /// Gemini CLI Notification category.
+    notification_type: Option<String>,
     /// CC TaskCompleted: task subject line.
     task_subject: Option<String>,
     /// CC TaskCompleted: task description.
@@ -183,6 +187,10 @@ impl PaneNotifyRequest {
                 self.last_assistant_message
                     .as_ref()
                     .map(|m| truncate_msg(m, 200)),
+            ),
+            "AfterAgent" => (
+                Some("Done".to_string()),
+                self.prompt_response.as_ref().map(|m| truncate_msg(m, 200)),
             ),
             "SubagentStop" => {
                 let agent = self.agent_type.as_deref().unwrap_or("agent");
@@ -223,7 +231,10 @@ impl PaneNotifyRequest {
                 (Some(format!("Permission: {tool}")), desc)
             }
             "Notification" => (
-                self.title.clone(),
+                self.title
+                    .clone()
+                    .or_else(|| self.notification_type.clone())
+                    .or_else(|| Some("Notification".to_string())),
                 self.message.clone().or_else(|| self.body.clone()),
             ),
             _ => (None, None),
@@ -289,18 +300,62 @@ async fn api_pane_notify_clear(
     StatusCode::NO_CONTENT.into_response()
 }
 
-/// Map well-known Claude Code hook events to notification severity.
+/// Map well-known agent-harness hook events to notification severity.
 fn infer_level(event: &str) -> ws::control::NotificationLevel {
     match event {
-        "Stop" => ws::control::NotificationLevel::Attention,
-        // SubagentStop is intermediate progress during a working run (CC spawns
-        // many subagents) — not a "come back" signal. Keep it quiet: it still
+        "Stop" | "AfterAgent" => ws::control::NotificationLevel::Attention,
+        // SubagentStop is intermediate progress during a working run (agent
+        // harnesses may spawn many subagents) — not a "come back" signal. It
         // updates the StatusBar dot but no longer pops an OS/toast notification.
         "SubagentStop" => ws::control::NotificationLevel::Info,
         "PermissionRequest" | "Notification" => ws::control::NotificationLevel::Attention,
         "StopFailure" => ws::control::NotificationLevel::Error,
         "TaskCompleted" => ws::control::NotificationLevel::Success,
         _ => ws::control::NotificationLevel::Info,
+    }
+}
+
+#[cfg(test)]
+mod pane_notification_tests {
+    use super::*;
+
+    #[test]
+    fn resolves_gemini_after_agent_payload() {
+        let request: PaneNotifyRequest = serde_json::from_value(serde_json::json!({
+            "hook_event_name": "AfterAgent",
+            "prompt_response": "Finished the requested refactor.\nMore detail"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request.resolve_title_body("AfterAgent"),
+            (
+                Some("Done".to_string()),
+                Some("Finished the requested refactor.".to_string())
+            )
+        );
+        assert!(matches!(
+            infer_level("AfterAgent"),
+            ws::control::NotificationLevel::Attention
+        ));
+    }
+
+    #[test]
+    fn resolves_gemini_notification_payload() {
+        let request: PaneNotifyRequest = serde_json::from_value(serde_json::json!({
+            "hook_event_name": "Notification",
+            "notification_type": "ToolPermission",
+            "message": "Approval required"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request.resolve_title_body("Notification"),
+            (
+                Some("ToolPermission".to_string()),
+                Some("Approval required".to_string())
+            )
+        );
     }
 }
 

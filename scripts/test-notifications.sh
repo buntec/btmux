@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sends one notification per hook event type btmux knows about, so the
 # toast/dot design can be eyeballed for every level (info/attention/success/error)
-# without waiting for a real Claude Code run to hit each one.
+# without waiting for real agent harness runs to hit each one.
 #
 # Usage: scripts/test-notifications.sh [pane_id]
 #   Uses $BTMUX_PANE_ID / $BTMUX_API_URL if set (already true inside a btmux
@@ -65,7 +65,13 @@ send "TaskCompleted" '{
 send "Notification" '{
   "hook_event_name": "Notification",
   "title": "Waiting for input",
-  "message": "Claude is waiting for your response to continue."
+  "message": "The agent is waiting for your response to continue."
 }'
 
-echo "done: 6 notifications sent to pane $PANE_ID"
+# Gemini CLI completion event (level: attention)
+send "AfterAgent" '{
+  "hook_event_name": "AfterAgent",
+  "prompt_response": "Gemini finished the requested turn."
+}'
+
+echo "done: 7 notifications sent to pane $PANE_ID"

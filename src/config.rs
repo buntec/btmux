@@ -74,6 +74,12 @@ pub enum SubCommand {
     Version,
     /// Print a default config.toml with all settings documented and commented out.
     GenerateConfig,
+    /// Print a Claude Code hooks.json snippet for btmux pane notifications.
+    GenerateClaudeCodeHooks,
+    /// Print a Codex hooks.json snippet for btmux pane notifications.
+    GenerateCodexHooks,
+    /// Print a Gemini CLI settings.json hooks snippet for btmux pane notifications.
+    GenerateGeminiCliHooks,
     /// Install btmux as a per-user background service so it starts at login and
     /// restarts on crash. The current `--host`/`--port`/`--shell` and the
     /// installing shell's PATH are baked into the generated unit. Currently

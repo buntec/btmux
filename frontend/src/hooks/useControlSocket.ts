@@ -49,7 +49,7 @@ export function useControlSocket() {
           });
           if (msg.level === 'attention' || msg.level === 'error') {
             if (document.hidden) {
-              const title = msg.title || `Claude Code: ${msg.event}`;
+              const title = msg.title || `Agent: ${msg.event}`;
               if (Notification.permission === 'granted') {
                 // tag per pane so a burst from one pane coalesces into a single
                 // updating banner instead of stacking N popups (renotify

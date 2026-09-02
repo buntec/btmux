@@ -1,3 +1,4 @@
+mod agent_hooks;
 mod api;
 mod config;
 mod file_git;
@@ -103,6 +104,21 @@ async fn main() {
 
     if let Some(config::SubCommand::GenerateConfig) = args.command {
         print!("{}", config::generate_config_toml());
+        return;
+    }
+
+    if let Some(config::SubCommand::GenerateClaudeCodeHooks) = args.command {
+        print!("{}", agent_hooks::claude_code());
+        return;
+    }
+
+    if let Some(config::SubCommand::GenerateCodexHooks) = args.command {
+        print!("{}", agent_hooks::codex());
+        return;
+    }
+
+    if let Some(config::SubCommand::GenerateGeminiCliHooks) = args.command {
+        print!("{}", agent_hooks::gemini_cli());
         return;
     }
 

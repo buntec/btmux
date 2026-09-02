@@ -49,7 +49,7 @@ interface AppStore {
   // that run outside the pane tree — e.g. capture-pane in useKeybindings — can
   // read a pane's emulator buffer. SessionPane's registryRef is for focus only.
   terminals: Map<string, Terminal>;
-  // Per-pane notifications from external tools (Claude Code hooks, etc.).
+  // Per-pane notifications from external agent harnesses and tools.
   // Keyed by pane ID; cleared when the user focuses the pane.
   notifications: Map<string, PaneNotification>;
   // Router navigate fn, registered by AppInner (which lives inside <BrowserRouter>).
@@ -125,8 +125,8 @@ export const useStore = create<AppStore>((set, get) => ({
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
   showToast: (message, level = 'info', opts) => {
     const paneId = opts?.paneId;
-    // Attention and error both mean "needs a look" (Claude Code waiting on
-    // input, or a hard failure) — give them longer than routine info/success.
+    // Attention and error both mean "needs a look" (an agent waiting on input,
+    // or a hard failure) — give them longer than routine info/success.
     const duration = level === 'error' || level === 'attention' ? 8000 : 5000;
     toast.custom(
       (id) => (

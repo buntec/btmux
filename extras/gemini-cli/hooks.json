@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "name": "btmux-status",
+            "type": "command",
+            "command": "curl -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "timeout": 5000,
+            "description": "Report completed turns to the containing btmux pane"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "name": "btmux-notification",
+            "type": "command",
+            "command": "curl -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "timeout": 5000,
+            "description": "Forward Gemini CLI notifications to the containing btmux pane"
+          }
+        ]
+      }
+    ]
+  }
+}

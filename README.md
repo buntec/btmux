@@ -15,11 +15,15 @@ Why run another app when your browser is already running?
 ## Features
 
 - Multiple sessions, windows and panes
-- Split panes vertically and horizontally
-- tmux-style keybindings, fully configurable
-- Persistent scrollback, replayed on reconnect
+- Vertical/horizontal splits, pane zoom, pane swapping and preset layouts
+- Configurable tmux-style action bindings, including optional vi-style navigation
+- Configurable in-memory scrollback, replayed when a browser reconnects
+- Searchable session tree, session switcher and live window-grid thumbnails
+- Keyboard-driven file browser with previews, filename/content search and Git operations
 - Hot config reload (theme, keybindings, terminal options)
 - base16/base24 theme support
+- Bundled fonts, appearance editor, wallpapers and WebGL terminal effects
+- Host CPU, memory and network statistics in the status bar
 - REST API and MCP server for scripted/AI-agent control
 - Agent hook integrations (pane notifications for completed turns, permission requests, etc.)
 
@@ -29,7 +33,7 @@ https://github.com/user-attachments/assets/5fade3d9-9ee1-49ae-9460-16a15a0ec49a
 
 ## Installation
 
-### One-liner (macOS and Linux)
+### One-liner (Apple Silicon macOS and Linux)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
@@ -37,8 +41,10 @@ curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.s
 
 This downloads the latest release binary for your platform and places it in `~/.local/bin`.
 Set `BTMUX_INSTALL_DIR` to override the install location.
+Release binaries are provided for Apple Silicon macOS and x86-64/ARM64 Linux;
+Intel macOS is not currently supported by the installer.
 
-### Run as a background service (optional)
+### Run btmux as a background service (recommended)
 
 btmux can register itself as a per-user background service so it starts at login and restarts on crash.
 macOS uses a [launchd](https://www.launchd.info/) LaunchAgent; Linux uses a [systemd](https://systemd.io/) user unit.
@@ -47,6 +53,7 @@ macOS uses a [launchd](https://www.launchd.info/) LaunchAgent; Linux uses a [sys
 btmux install              # install + start (defaults: 127.0.0.1:8004)
 btmux --port 8004 install  # the host/port/shell you pass are baked into the service
 btmux install --print      # print the generated service unit without installing
+btmux restart              # restart the installed service
 btmux uninstall            # stop + remove
 ```
 
@@ -67,14 +74,18 @@ cargo install --path .
 ## Use
 
 ```sh
-btmux         # start the server (binds to localhost:8004 by default)
-btmux --help  # get help
+btmux                   # start the server and open it in a browser
+btmux --no-browser      # start without opening a browser tab
+btmux --help            # show all flags and subcommands
+btmux version           # print the installed version
+btmux generate-config   # print a documented default config.toml
 ```
 
 By default, session structure is persisted in
 `~/.local/state/btmux/state.json` (respecting `$XDG_STATE_HOME`). Use a named
 profile to run isolated btmux instances; each profile has its own session
-state:
+state under `$XDG_STATE_HOME/btmux/<profile>/state.json`, falling back to
+`~/.local/state/btmux/<profile>/state.json`:
 
 ```sh
 btmux --profile work --port 8005
@@ -83,9 +94,20 @@ btmux --profile personal --port 8006
 
 Without `--profile`, btmux continues to use the top-level `state.json`.
 
-Navigate to `localhost:<port>`
+Persistence covers the session/window/pane tree, layout, names, active indices
+and each pane's last-known working directory. It does **not** preserve running
+shell processes or scrollback across a btmux restart: restored panes start fresh
+shells lazily in their saved working directories.
+
+Navigate to `http://localhost:<port>`.
 
 Press `<prefix> + ?` to see a list of keybindings.
+
+btmux has no authentication on any route. Anyone who can reach its port can
+control shells and sessions through WebSockets, REST or MCP, and can use the
+file browser to read and modify files available to the btmux user. Keep it bound
+to `127.0.0.1` (the default) unless you put an appropriate authenticated,
+encrypted access layer in front of it.
 
 ## Configuration
 
@@ -98,6 +120,17 @@ A default config file is created on first launch:
 (respects `$XDG_CONFIG_HOME`).
 All fields are optional and have sensible defaults.
 Config changes are picked up live.
+
+Press `<prefix> + :` and choose `config: open appearance settings` to open the
+browser-based appearance editor. Its Apply button creates process-local preview
+overrides; it never writes `config.toml`. These overrides affect connected
+clients and are discarded when btmux restarts or whenever `config.toml` reloads.
+Use the editor's generated TOML/copy action to persist settings yourself.
+
+The configuration also supports session/window sort order, pane title bars,
+vi-style navigation, bundled font family/weight selection, image or procedural
+wallpapers, and steady-state/session-switch/pane-switch WebGL effects. Run
+`btmux generate-config` for the complete documented set of options.
 
 `colors` accepts either the name of a base16/base24 YAML file in
 `~/.config/btmux/colors/` or an `http://`/`https://` URL to one. YAML palettes
@@ -112,8 +145,8 @@ Everything below is served on the same host/port as the web UI (default
 ### REST API
 
 Sessions, windows, and panes can be scripted over HTTP under `/api`:
-create/rename/kill sessions and windows, split/kill/zoom panes, and send
-input to / read output from a pane's shell.
+create, inspect, rename and kill sessions/windows; split, select, navigate, swap,
+zoom and rearrange panes; and send input to or read output from a pane's shell.
 
 ```sh
 curl -X POST localhost:8004/api/sessions -H 'Content-Type: application/json' -d '{"name":"build"}'
@@ -121,20 +154,40 @@ curl -X POST localhost:8004/api/panes/<pane-id>/input -H 'Content-Type: applicat
 curl localhost:8004/api/panes/<pane-id>/output
 ```
 
-There's no authentication — the API is only as safe as access to the port
-itself, so keep btmux bound to `127.0.0.1` (the default) unless you know what
-you're exposing.
+The main endpoint groups are:
+
+| Method and path                                                 | Purpose                                                   |
+| --------------------------------------------------------------- | --------------------------------------------------------- |
+| `GET/POST/DELETE /api/sessions`                                 | List, create, or clear sessions                           |
+| `GET/DELETE /api/sessions/<session-id>`                         | Inspect or kill a session                                 |
+| `POST /api/sessions/<session-id>/rename`                        | Rename a session                                          |
+| `POST /api/sessions/<session-id>/windows`                       | Create a window                                           |
+| `POST /api/sessions/<session-id>/windows/{switch,rename,close}` | Operate on a session's active window                      |
+| `DELETE /api/windows/<window-id>`                               | Kill a window by ID                                       |
+| `POST/DELETE /api/sessions/<session-id>/panes/...`              | Split, kill, select, navigate, cycle, swap, or zoom panes |
+| `POST /api/sessions/<session-id>/layout`                        | Select a named pane layout                                |
+| `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                             |
+| `POST /api/panes/<pane-id>/input`                               | Send raw text to a pane, spawning its shell if necessary  |
+| `GET /api/panes/<pane-id>/output`                               | Read raw scrollback bytes, including ANSI escapes         |
+| `POST/DELETE /api/panes/<pane-id>/notify`                       | Set or clear an agent notification                        |
+
+There is no separate authentication boundary for the API; the security warning
+in [Use](#use) applies to every endpoint on the btmux port.
 
 ### MCP server
 
 btmux also exposes an [MCP](https://modelcontextprotocol.io) server at
 `/mcp` on the same port, so an AI agent (e.g. Claude Code) can control
 sessions, windows, and panes directly as tools instead of shelling out to
-curl. It's a curated set of ~11 tools (`list_sessions`, `create_session`,
+curl. It's a curated set of 11 tools (`list_sessions`, `create_session`,
 `split_pane`, `run_command`, `send_keys`, `read_pane_output`, ...) —
 `run_command` sends a command to a pane and waits for its output to settle
 before returning the (ANSI-stripped) result, so an agent gets something
-close to a synchronous "run this and tell me what happened."
+close to a synchronous "run this and tell me what happened." Settled means that
+the pane produced no new output for the idle interval (400 ms by default), not
+that the process is known to have exited. A quiet long-running command can
+therefore return early; the overall timeout defaults to 15 seconds, and callers
+can adjust both intervals or follow up with `read_pane_output`.
 
 Register it with Claude Code:
 

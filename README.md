@@ -71,6 +71,40 @@ just setup
 cargo install --path .
 ```
 
+### Home Manager
+
+The repository exposes a Home Manager module and release package through its
+flake. It writes `config.toml`, installs btmux, and enables a per-user service
+(systemd on Linux or launchd on macOS) by default:
+
+```nix
+{
+  inputs.btmux.url = "github:buntec/btmux";
+
+  # In a home-manager configuration:
+  imports = [ inputs.btmux.homeManagerModules.default ];
+
+  programs.btmux = {
+    enable = true;
+    settings = {
+      prefix = "C-a";
+      terminal.font-family = "JetBrains Mono";
+      terminal.font-size = 16;
+    };
+    service = {
+      host = "127.0.0.1";
+      port = 8004;
+      shell = "/bin/bash";
+    };
+  };
+}
+```
+
+`services.btmux` is also accepted as an alias for `programs.btmux`. Set
+`programs.btmux.service.enable = false` when Home Manager should install and
+configure btmux without starting it. The `package` option can be overridden
+when using a different build or package source.
+
 ## Use
 
 ```sh

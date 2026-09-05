@@ -70,6 +70,10 @@ bump level="patch":
     cargo set-version --bump {{level}}
     @echo "bumped to $(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')"
 
+# Update the Nix package to the latest published GitHub release.
+update-nix-package:
+    ./scripts/update-nix-package.sh
+
 # Install the binary to ~/.cargo/bin
 install: build
     cargo install --path .

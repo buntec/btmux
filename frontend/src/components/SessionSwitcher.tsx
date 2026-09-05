@@ -56,6 +56,8 @@ export function SessionSwitcher({ send }: Props) {
   // tree to sessions whose name (or a window's name) matches.
   const [filterMode, setFilterMode] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
+  const [hoveredRowKey, setHoveredRowKey] = useState<string | null>(null);
+  const [hoveredPaneId, setHoveredPaneId] = useState<string | null>(null);
   // Closing flag for exit animation (165ms before actual unmount).
   const [closing, setClosing] = useState(false);
   const closingTimerRef = useRef<number>(0);
@@ -127,6 +129,8 @@ export function SessionSwitcher({ send }: Props) {
       prevFocusRef.current = document.activeElement as HTMLElement | null;
       setFilterMode(false);
       setFilterQuery('');
+      setHoveredRowKey(null);
+      setHoveredPaneId(null);
       setExpanded(new Set());
       const idx = activeSession ? rows.findIndex((r) => r.kind === 'session' && r.sessionId === activeSession.id) : -1;
       setSelectedIdx(idx >= 0 ? idx : 0);
@@ -178,12 +182,24 @@ export function SessionSwitcher({ send }: Props) {
     };
   }, [previewWindow]);
 
-  const previewSession = selected ? (sessionById.get(selected.sessionId) ?? null) : null;
+  // The preview is debounced independently from the tree cursor. Resolve its
+  // owning session from the window itself so a click during that short delay
+  // always targets the pane currently visible on screen.
+  const debouncedPreviewContext = useMemo(() => {
+    if (!debouncedPreviewWindow) return null;
+    for (const sess of allSessions) {
+      const windowIndex = sess.windows.findIndex((win) => win.id === debouncedPreviewWindow.id);
+      if (windowIndex >= 0) return { sess, windowIndex };
+    }
+    return null;
+  }, [allSessions, debouncedPreviewWindow]);
   // Number shown in the preview header — the *display* position (matches the tree
   // badge), not the backend index, so it stays consistent under a window sort.
   const previewWindowIndex =
-    previewSession && debouncedPreviewWindow
-      ? sortWindows(previewSession.windows, windowSort).findIndex((o) => o.win.id === debouncedPreviewWindow.id)
+    debouncedPreviewContext && debouncedPreviewWindow
+      ? sortWindows(debouncedPreviewContext.sess.windows, windowSort).findIndex(
+          (o) => o.win.id === debouncedPreviewWindow.id,
+        )
       : -1;
 
   const cancel = () => {
@@ -210,6 +226,17 @@ export function SessionSwitcher({ send }: Props) {
     const win = sess.windows[windowIndex];
     if (!win) return;
     send({ type: 'switch_window', session_id: sess.id, index: windowIndex });
+    navigate(`/s/${encodeURIComponent(sess.name)}/w/${encodeURIComponent(win.name)}`);
+    setOpen(false);
+  };
+
+  const switchToPane = (sess: SessionState, windowIndex: number, paneId: string) => {
+    const win = sess.windows[windowIndex];
+    if (!win || !win.panes.some((pane) => pane.id === paneId)) return;
+    // select_pane operates on the session's active window, so preserve this
+    // ordering on the control socket when the preview belongs to another window.
+    send({ type: 'switch_window', session_id: sess.id, index: windowIndex });
+    send({ type: 'select_pane', session_id: sess.id, pane_id: paneId });
     navigate(`/s/${encodeURIComponent(sess.name)}/w/${encodeURIComponent(win.name)}`);
     setOpen(false);
   };
@@ -449,14 +476,19 @@ export function SessionSwitcher({ send }: Props) {
               const sess = sessionById.get(row.sessionId);
               if (!sess) return null;
               if (row.kind === 'session') {
+                const rowKey = `s-${row.sessionId}`;
+                const isHovered = hoveredRowKey === rowKey;
                 return (
                   <div
-                    key={`s-${row.sessionId}`}
+                    key={rowKey}
                     ref={isSelected ? selectedRef : null}
+                    onMouseEnter={() => setHoveredRowKey(rowKey)}
+                    onMouseLeave={() => setHoveredRowKey(null)}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setSelectedIdx(i);
                     }}
+                    onClick={() => setSessionExpanded(row.sessionId, !row.expanded)}
                     onDoubleClick={() => activate(row)}
                     style={{
                       display: 'flex',
@@ -467,7 +499,15 @@ export function SessionSwitcher({ send }: Props) {
                       fontWeight: 700,
                       cursor: 'pointer',
                       borderRadius: '7px',
-                      background: isSelected ? withAlpha(c.accent, 0.12) : 'transparent',
+                      background: isSelected
+                        ? withAlpha(c.accent, 0.12)
+                        : isHovered
+                          ? withAlpha(c.fgBright, 0.055)
+                          : 'transparent',
+                      boxShadow: isHovered
+                        ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.09)}`
+                        : undefined,
+                      transition: animations ? 'background 100ms ease, box-shadow 100ms ease' : undefined,
                     }}
                   >
                     <span style={{ color: row.expanded ? c.accent : c.fgDim }}>{row.expanded ? '▾' : '▸'}</span>
@@ -483,10 +523,14 @@ export function SessionSwitcher({ send }: Props) {
               if (!win) return null;
               const isActiveWin = win.id === activeWindowId;
               const paneCount = win.panes.length;
+              const rowKey = `w-${row.windowId}`;
+              const isHovered = hoveredRowKey === rowKey;
               return (
                 <div
-                  key={`w-${row.windowId}`}
+                  key={rowKey}
                   ref={isSelected ? selectedRef : null}
+                  onMouseEnter={() => setHoveredRowKey(rowKey)}
+                  onMouseLeave={() => setHoveredRowKey(null)}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     setSelectedIdx(i);
@@ -501,9 +545,15 @@ export function SessionSwitcher({ send }: Props) {
                     borderRadius: '7px',
                     cursor: 'pointer',
                     fontSize: '12.5px',
-                    background: isSelected ? c.accent : 'transparent',
-                    color: isSelected ? c.accentInk : c.fgMuted,
+                    background: isSelected ? c.accent : isHovered ? withAlpha(c.fgBright, 0.065) : 'transparent',
+                    color: isSelected ? c.accentInk : isHovered ? c.fg : c.fgMuted,
                     fontWeight: isSelected ? 700 : 400,
+                    boxShadow: isHovered
+                      ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.1)}`
+                      : undefined,
+                    transition: animations
+                      ? 'background 100ms ease, color 100ms ease, box-shadow 100ms ease'
+                      : undefined,
                   }}
                 >
                   <span
@@ -590,6 +640,14 @@ export function SessionSwitcher({ send }: Props) {
                   open={open}
                   c={c}
                   activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
+                  hoveredPaneId={hoveredPaneId}
+                  onHoveredPaneChange={setHoveredPaneId}
+                  onSelectPane={(paneId) => {
+                    if (debouncedPreviewContext) {
+                      switchToPane(debouncedPreviewContext.sess, debouncedPreviewContext.windowIndex, paneId);
+                    }
+                  }}
+                  animations={animations}
                 />
               ) : (
                 <div style={{ color: c.fgDim }}>No window.</div>
@@ -631,11 +689,19 @@ function PreviewLayout({
   open,
   c,
   activePaneId,
+  hoveredPaneId,
+  onHoveredPaneChange,
+  onSelectPane,
+  animations,
 }: {
   window: SessionState['windows'][number];
   open: boolean;
   c: ReturnType<typeof chromePalette>;
   activePaneId: string | null;
+  hoveredPaneId: string | null;
+  onHoveredPaneChange: (paneId: string | null) => void;
+  onSelectPane: (paneId: string) => void;
+  animations: boolean;
 }) {
   const { rects, dividers } = computeRectsAndDividers(
     win.layout,
@@ -646,9 +712,14 @@ function PreviewLayout({
     <>
       {rects.map((r) => {
         const isActive = r.paneId === activePaneId;
+        const isHovered = r.paneId === hoveredPaneId;
         return (
           <div
             key={r.paneId}
+            onMouseEnter={() => onHoveredPaneChange(r.paneId)}
+            onMouseLeave={() => onHoveredPaneChange(null)}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onSelectPane(r.paneId)}
             style={{
               position: 'absolute',
               top: `${r.top}%`,
@@ -657,6 +728,7 @@ function PreviewLayout({
               height: `${r.height}%`,
               padding: '3px',
               boxSizing: 'border-box',
+              cursor: 'pointer',
             }}
           >
             <div
@@ -666,9 +738,18 @@ function PreviewLayout({
                 height: '100%',
                 overflow: 'hidden',
                 borderRadius: '6px',
-                border: `${isActive ? 1.5 : 1}px solid ${isActive ? c.accent : c.borderDim}`,
-                boxShadow: isActive ? `0 0 18px ${c.accentGlow}` : undefined,
-                background: withAlpha(c.bodyBg, 0.6),
+                border: `${isActive || isHovered ? 1.5 : 1}px solid ${
+                  isHovered ? c.warn : isActive ? c.accent : c.borderDim
+                }`,
+                boxShadow: isHovered
+                  ? `0 0 0 1px ${withAlpha(c.warn, 0.22)}, 0 0 18px ${withAlpha(c.warn, 0.14)}`
+                  : isActive
+                    ? `0 0 18px ${c.accentGlow}`
+                    : undefined,
+                background: isHovered ? withAlpha(c.warn, 0.07) : withAlpha(c.bodyBg, 0.6),
+                transition: animations
+                  ? 'border-color 100ms ease, box-shadow 100ms ease, background 100ms ease'
+                  : undefined,
               }}
             >
               {open && <MirrorPane paneId={r.paneId} visible={open} />}

@@ -1,8 +1,8 @@
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
-import { chromePalette } from '../lib/chrome-colors';
+import { chromePalette, mix } from '../lib/chrome-colors';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { Theme } from '../state/types';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -138,7 +138,9 @@ export function StatusBar({ sessionId, send }: Props) {
   const config = useStore((s) => s.config);
   const prefixActive = useStore((s) => s.prefixActive);
   const notifications = useStore((s) => s.notifications);
+  const setSwitcherOpen = useStore((s) => s.setSwitcherOpen);
   const navigate = useNavigate();
+  const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
   // Re-render when the window MRU changes so an `mru` sort re-orders live.
   useWindowMruTick();
 
@@ -178,6 +180,10 @@ export function StatusBar({ sessionId, send }: Props) {
     navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(name)}`);
   };
 
+  const goToSession = () => {
+    setSwitcherOpen(true);
+  };
+
   return (
     <div
       style={{
@@ -196,35 +202,48 @@ export function StatusBar({ sessionId, send }: Props) {
     >
       {/* Session segment */}
       <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '7px',
-          height: '100%',
-          padding: `${segPadY}px 11px ${segPadY}px 13px`,
-          background: c.accent,
-          color: c.accentInk,
-          fontWeight: 800,
-          letterSpacing: '.03em',
-        }}
+        onClick={goToSession}
+        onMouseEnter={() => setHoveredSegment('session')}
+        onMouseLeave={() => setHoveredSegment(null)}
+        style={{ display: 'flex', height: '100%', cursor: 'pointer' }}
       >
-        <span
+        <div
           style={{
-            width: '6px',
-            height: '6px',
-            borderRadius: '50%',
-            background: c.accentInk,
-            opacity: 0.7,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '7px',
+            height: '100%',
+            padding: `${segPadY}px 11px ${segPadY}px 13px`,
+            background: hoveredSegment === 'session' ? mix(c.accent, c.fgBright, 0.12) : c.accent,
+            color: c.accentInk,
+            fontWeight: 800,
+            letterSpacing: '.03em',
+            transition: 'background-color 140ms ease',
           }}
+        >
+          <span
+            style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              background: c.accentInk,
+              opacity: 0.7,
+            }}
+          />
+          <span>{session.name}</span>
+        </div>
+        <Arrow
+          color={hoveredSegment === 'session' ? mix(c.accent, c.fgBright, 0.12) : c.accent}
+          size={barH}
+          fill={firstWindowActive ? c.titleActiveBg : undefined}
         />
-        <span>{session.name}</span>
       </div>
-      <Arrow color={c.accent} size={barH} fill={firstWindowActive ? c.titleActiveBg : undefined} />
 
       {/* Windows (in display order; `index` is the backend switch index, the
           array position is the shown number + prefix+digit hotkey). */}
       {orderedWindows.map(({ win: w, index }, displayIndex) => {
         const isActive = index === session.active_window;
+        const isHovered = hoveredSegment === w.id;
         const winLevel = windowNotificationLevel(
           w.panes.map((p) => p.id),
           notifications,
@@ -249,7 +268,13 @@ export function StatusBar({ sessionId, send }: Props) {
 
         if (isActive) {
           return (
-            <div key={w.id} style={{ display: 'flex', height: '100%' }}>
+            <div
+              key={w.id}
+              onClick={() => goToWindow(index, w.name)}
+              onMouseEnter={() => setHoveredSegment(w.id)}
+              onMouseLeave={() => setHoveredSegment(null)}
+              style={{ display: 'flex', height: '100%', cursor: 'pointer' }}
+            >
               <div
                 style={{
                   display: 'flex',
@@ -257,9 +282,10 @@ export function StatusBar({ sessionId, send }: Props) {
                   gap: '7px',
                   height: '100%',
                   padding: '0 12px',
-                  background: c.titleActiveBg,
+                  background: isHovered ? mix(c.titleActiveBg, c.accent, 0.14) : c.titleActiveBg,
                   color: c.fgBright,
                   fontWeight: 700,
+                  transition: 'background-color 140ms ease',
                 }}
               >
                 <span style={{ color: c.accent }}>{displayIndex}</span>
@@ -268,7 +294,7 @@ export function StatusBar({ sessionId, send }: Props) {
                 {zoomGlyph}
                 {dot}
               </div>
-              <Arrow color={c.titleActiveBg} size={barH} />
+              <Arrow color={isHovered ? mix(c.titleActiveBg, c.accent, 0.14) : c.titleActiveBg} size={barH} />
             </div>
           );
         }
@@ -276,14 +302,18 @@ export function StatusBar({ sessionId, send }: Props) {
           <div
             key={w.id}
             onClick={() => goToWindow(index, w.name)}
+            onMouseEnter={() => setHoveredSegment(w.id)}
+            onMouseLeave={() => setHoveredSegment(null)}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               height: '100%',
               padding: '0 12px',
+              background: isHovered ? mix(c.barBg, c.titleActiveBg, 0.4) : c.barBg,
               color: c.fgMuted,
               cursor: 'pointer',
+              transition: 'background-color 140ms ease',
             }}
           >
             <span style={{ color: c.fgDim }}>{displayIndex}</span>

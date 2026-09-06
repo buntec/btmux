@@ -11,12 +11,12 @@ dev_port := "8044"
 dev:
     BTMUX_CONSOLE_LOG="${BTMUX_CONSOLE_LOG:-debug}" BTMUX_FILE_LOG="${BTMUX_FILE_LOG:-debug}" \
       bunx concurrently --names backend,frontend --prefix-colors blue,green \
-        "cargo run -- --no-browser --port {{dev_port}}" \
+        "cargo run -- --no-browser --profile dev --public-url http://localhost:5173 --public-url http://127.0.0.1:5173 --port {{dev_port}}" \
         "cd frontend && bunx vite --open"
 
 # Run only the backend
 dev-backend:
-    cargo run -- --port {{dev_port}}
+    cargo run -- --profile dev --public-url http://localhost:5173 --public-url http://127.0.0.1:5173 --port {{dev_port}}
 
 # Run only the frontend
 dev-frontend:
@@ -95,3 +95,15 @@ kill-dev:
 # Build and run the production binary (frontend embedded at compile time)
 run: build
     ./target/release/btmux
+
+# Run backend regression tests
+test:
+    cargo test
+
+# Generate the TypeScript wire contract from Rust
+protocol:
+    BTMUX_UPDATE_PROTOCOL=1 cargo test protocol::generated_protocol_is_current
+
+# Browser regressions against an isolated dev stack (requires BTMUX_AUTH_TOKEN)
+test-browser:
+    cd frontend && bun reliability-test.ts

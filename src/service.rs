@@ -157,6 +157,22 @@ fn render_systemd_unit(
     env_shell: &str,
     path_env: &str,
 ) -> String {
+    let public_url_args: String = args
+        .public_url
+        .iter()
+        .map(|url| {
+            // ExecStart is parsed by systemd, not a shell. Escape its specifier and
+            // environment expansion in addition to quoted-string delimiters.
+            let escaped = url
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('%', "%%")
+                .replace('$', "$$")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r");
+            format!(" --public-url \"{escaped}\"")
+        })
+        .collect();
     let profile_arg = args
         .profile
         .as_deref()
@@ -171,7 +187,7 @@ fn render_systemd_unit(
          After=network.target\n\
          \n\
          [Service]\n\
-         ExecStart={exe} --no-browser --host {host} --port {port}{profile_arg}{shell_arg}\n\
+         ExecStart={exe} --no-browser --host {host} --port {port}{profile_arg}{shell_arg}{public_url_args}\n\
          Restart=on-failure\n\
          Environment=PATH={path}\n\
          Environment=SHELL={env_shell}\n\
@@ -181,6 +197,7 @@ fn render_systemd_unit(
         exe = exe.display(),
         host = args.host,
         port = args.port,
+        public_url_args = public_url_args,
         profile_arg = profile_arg,
         shell_arg = shell_arg,
         env_shell = env_shell,
@@ -366,6 +383,17 @@ fn render_plist(
         })
         .unwrap_or_default();
 
+    let public_url_args: String = args
+        .public_url
+        .iter()
+        .map(|url| {
+            format!(
+                "\n        <string>--public-url</string>\n        <string>{}</string>",
+                xml_escape(url)
+            )
+        })
+        .collect();
+
     let profile_args = args
         .profile
         .as_deref()
@@ -391,7 +419,7 @@ fn render_plist(
         <string>--host</string>
         <string>{host}</string>
         <string>--port</string>
-        <string>{port}</string>{profile_args}{shell_args}
+        <string>{port}</string>{profile_args}{shell_args}{public_url_args}
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -417,6 +445,7 @@ fn render_plist(
         exe = xml_escape(&exe.to_string_lossy()),
         host = xml_escape(&args.host),
         port = args.port,
+        public_url_args = public_url_args,
         profile_args = profile_args,
         shell_args = shell_args,
         env_shell = xml_escape(env_shell),

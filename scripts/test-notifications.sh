@@ -10,6 +10,8 @@ set -euo pipefail
 #   pane), otherwise pass a pane_id explicitly and it falls back to
 #   http://127.0.0.1:8004 for the API URL.
 
+: "${BTMUX_AUTH_TOKEN:?Set BTMUX_AUTH_TOKEN or run this inside a btmux pane}"
+
 PANE_ID="${1:-${BTMUX_PANE_ID:-}}"
 API_URL="${BTMUX_API_URL:-http://127.0.0.1:8004}"
 
@@ -21,7 +23,7 @@ fi
 send() {
   local desc="$1" payload="$2"
   echo "-> $desc"
-  curl -sf -X POST "$API_URL/api/panes/$PANE_ID/notify" \
+  curl -sf -H "Authorization: Bearer ${BTMUX_AUTH_TOKEN}" -X POST "$API_URL/api/panes/$PANE_ID/notify" \
     -H 'Content-Type: application/json' \
     --data-binary "$payload" >/dev/null
   sleep 2

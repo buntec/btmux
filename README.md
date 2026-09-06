@@ -19,7 +19,9 @@ panes, and reconnect without losing the current terminal view.
 
 https://github.com/user-attachments/assets/5fade3d9-9ee1-49ae-9460-16a15a0ec49a
 
-## Install
+## Get started
+
+### Install and launch
 
 On Apple Silicon macOS or x86-64/ARM64 Linux:
 
@@ -33,11 +35,31 @@ This installs the latest release to `~/.local/bin` by default. Then start btmux:
 btmux
 ```
 
-It opens the UI at `http://localhost:8004`. Press `<prefix> + ?` to see the
-keybindings.
+It opens the UI at `http://localhost:8004`.
 
 For background service setup, building from source, Home Manager, and supported
 platforms, see [Installation](docs/installation.md).
+
+### Sign in
+
+btmux requires an access token, including on localhost. On first launch it
+creates `~/.local/state/btmux/state.token` and prints the file's path. In another
+terminal, read the token with:
+
+```sh
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
+```
+
+Enter **`btmux` as the browser username** and **the token as the password**.
+Once signed in, press `<prefix> + ?` to see the keybindings.
+
+If you use `--profile NAME`, the token is in
+`~/.local/state/btmux/NAME/state.token`. Setting `XDG_STATE_HOME` replaces
+`~/.local/state` in these paths. If you start the server with `BTMUX_AUTH_TOKEN`
+set, use that value instead of a token file.
+
+See [Access tokens and reverse proxies](docs/installation.md#access-tokens-and-reverse-proxies)
+for token management and HTTPS setup for remote access.
 
 ## Configuration
 
@@ -57,13 +79,9 @@ profiles, and state persistence.
 btmux exposes a REST API and an MCP server on the same address as the web UI.
 It also supports pane notifications from Claude Code, Codex, and Gemini CLI.
 
-See [Automation and AI agents](docs/automation.md) for endpoints and setup.
-
-> [!WARNING]
-> btmux has no authentication. Anyone who can reach its port can control its
-> shells and sessions and access files available to the btmux user. Keep it
-> bound to `127.0.0.1` (the default) unless it is behind an authenticated,
-> encrypted access layer.
+API and MCP clients authenticate with the same access token. See
+[Automation and AI agents](docs/automation.md#authentication) for authentication,
+endpoints, and setup.
 
 ## Command line
 
@@ -89,7 +107,12 @@ just run    # serve the production build on :8004
 ```
 
 Develop against `http://localhost:5173`; Vite proxies API and WebSocket traffic
-to the development backend.
+to the development backend. `just dev` uses the separate `dev` profile. Read its
+token and paste it into the development UI's access-token form:
+
+```sh
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/dev/state.token"
+```
 
 ## License
 

@@ -99,3 +99,53 @@ pub fn save(path: &Path, snapshots: &[SessionSnapshot]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// Held for the lifetime of the server. The lock file must never be unlinked:
+/// doing so would allow a second process to lock a different inode.
+pub struct ProfileLock(std::fs::File);
+
+impl ProfileLock {
+    pub fn acquire(path: &Path) -> Result<Self, String> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(path.with_extension("lock"))
+            .map_err(|e| e.to_string())?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(format!("session profile {} is already in use (or cannot be locked): {}. Use --profile with a different name", path.display(), std::io::Error::last_os_error()));
+        }
+        Ok(Self(file))
+    }
+}
+
+impl Drop for ProfileLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        unsafe {
+            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn excludes_concurrent_profile_owners_and_releases_on_drop() {
+        let dir = std::env::temp_dir().join(format!("btmux-lock-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("state.json");
+        let lock = ProfileLock::acquire(&path).unwrap();
+        assert!(ProfileLock::acquire(&path).is_err());
+        drop(lock);
+        drop(ProfileLock::acquire(&path).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

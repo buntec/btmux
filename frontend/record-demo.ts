@@ -25,6 +25,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const BASE_URL = process.env.BTMUX_URL ?? 'http://localhost:8004';
+const AUTH_TOKEN = process.env.BTMUX_AUTH_TOKEN;
 const SESSION_NAME = process.env.BTMUX_SESSION;
 // Single letter after C-, e.g. "b" for C-b, "a" for C-a.
 const PREFIX_LETTER = (() => {
@@ -65,7 +66,7 @@ async function waitForTerminal(page: import('playwright').Page, timeoutMs = 15_0
 async function resolveSessionName(): Promise<string> {
   if (SESSION_NAME) return SESSION_NAME;
 
-  const response = await fetch(`${BASE_URL}/api/sessions`);
+  const response = await fetch(`${BASE_URL}/api/sessions`, { headers: AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {} });
   if (!response.ok) {
     throw new Error(`Could not list btmux sessions (${response.status})`);
   }
@@ -86,6 +87,7 @@ async function main() {
   });
 
   const context = await browser.newContext({
+    httpCredentials: AUTH_TOKEN ? { username: 'btmux', password: AUTH_TOKEN } : undefined,
     viewport: { width: VIDEO_WIDTH, height: VIDEO_HEIGHT },
     recordVideo: {
       dir: OUT_DIR,

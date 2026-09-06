@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { init } from 'ghostty-web';
 import { App } from './App';
+import { AuthGate } from './components/AuthGate';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import { CONFIG_DEFAULTS } from './state/configDefaults';
 import './fonts.css';
@@ -78,7 +79,11 @@ async function main() {
     console.error('Failed to initialize ghostty-web:', e);
   }
   const root = createRoot(document.getElementById('root')!);
-  root.render(<App />);
+  root.render(
+    <AuthGate>
+      <App />
+    </AuthGate>,
+  );
 }
 
 main();

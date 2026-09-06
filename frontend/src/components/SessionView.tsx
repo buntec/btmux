@@ -27,7 +27,7 @@ export function SessionView({ send }: Props) {
   const navigate = useNavigate();
   const allSessions = useStore((s) => s.allSessions);
 
-  const decodedSessionName = sessionName ? decodeURIComponent(sessionName) : '';
+  const decodedSessionName = sessionName ?? ''; // useParams already decodes the route segment
   const session = allSessions.find((s) => s.name === decodedSessionName);
 
   // If the session was killed, redirect to landing
@@ -45,7 +45,7 @@ export function SessionView({ send }: Props) {
       return;
     }
     initialWindowSwitchDone.current = true;
-    const decoded = decodeURIComponent(windowName);
+    const decoded = windowName;
     const winIdx = session.windows.findIndex((w) => w.name === decoded);
     if (winIdx >= 0 && winIdx !== session.active_window) {
       send({ type: 'switch_window', session_id: session.id, index: winIdx });

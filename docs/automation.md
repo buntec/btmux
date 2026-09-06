@@ -3,25 +3,39 @@
 The REST API, MCP server, and web UI share the same host and port (by default,
 `127.0.0.1:8004`). No separate process is required.
 
-> [!WARNING]
-> These interfaces have no separate authentication boundary. Anyone who can
-> reach the btmux port can control shells and access files available to the
-> btmux user.
+## Authentication
+
+All HTTP and MCP calls require the instance's access token. Inside a btmux pane,
+`BTMUX_AUTH_TOKEN` is already set. Outside a pane, load the default instance's
+token before running the examples below:
+
+```sh
+export BTMUX_AUTH_TOKEN="$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token")"
+```
+
+For a named profile or development instance, use its
+[profile-specific token file](installation.md#first-sign-in). If the server was
+started with `BTMUX_AUTH_TOKEN` set, use that value instead.
+
+Send `Authorization: Bearer $BTMUX_AUTH_TOKEN` with every request. Existing MCP
+client configurations and previously installed hook snippets also need this
+header. The token grants control of shells and access to files available to
+the btmux user.
 
 ## REST API
 
 Sessions, windows, and panes can be controlled over HTTP under `/api`.
 
 ```sh
-curl -X POST localhost:8004/api/sessions \
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST localhost:8004/api/sessions \
   -H 'Content-Type: application/json' \
   -d '{"name":"build"}'
 
-curl -X POST localhost:8004/api/panes/<pane-id>/input \
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST localhost:8004/api/panes/<pane-id>/input \
   -H 'Content-Type: application/json' \
   -d '{"text":"echo hi\n"}'
 
-curl localhost:8004/api/panes/<pane-id>/output
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" localhost:8004/api/panes/<pane-id>/output
 ```
 
 | Method and path                                                 | Purpose                                                   |
@@ -63,7 +77,7 @@ port.
 
 ## Agent hook notifications
 
-Each pane's shell receives `BTMUX_PANE_ID` and `BTMUX_API_URL`. An agent harness
+Each pane's shell receives `BTMUX_PANE_ID`, `BTMUX_API_URL`, and `BTMUX_AUTH_TOKEN`. An agent harness
 running in the pane can use them to display a colored dot or toast when it
 stops, needs permission, fails, or finishes work—even when another pane or
 session is active.

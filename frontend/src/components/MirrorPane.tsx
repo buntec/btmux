@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from 'ghostty-web';
 import { useStore } from '../state/store';
-import { buildTerminalOptions } from './TerminalPane';
+import { useTerminalOptions } from './TerminalPane';
+import { DEFAULT_THEME } from '../state/defaultTheme';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../state/configDefaults';
 
 interface Props {
@@ -31,6 +32,7 @@ export function MirrorPane({ paneId, visible }: Props) {
   const termRef = useRef<Terminal | null>(null);
 
   const config = useStore((s) => s.config);
+  const termOptions = useTerminalOptions(config);
 
   // Read visibility inside closures without re-running the mount effect (which
   // would dispose+rebuild the terminal and reconnect the socket).
@@ -61,7 +63,7 @@ export function MirrorPane({ paneId, visible }: Props) {
     // Mirror is read-only: stdin disabled, no onData/onResize wiring, no focus
     // registry, no store registration. It only ever displays.
     const term = new Terminal({
-      ...buildTerminalOptions(config),
+      ...termOptions,
       disableStdin: true,
       renderer: 'canvas',
     });
@@ -74,26 +76,37 @@ export function MirrorPane({ paneId, visible }: Props) {
     // to a never-spawned pane (spawns the shell at this size); a real viewer will
     // resize it on switch. The backend never resizes the PTY for a mirror.
     const url = `${protocol}//${window.location.host}/ws/pane/${paneId}?mirror=1&cols=${DEFAULT_PTY_COLS}&rows=${DEFAULT_PTY_ROWS}`;
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
+    let ws: WebSocket;
+    let disposed = false;
+    let timer = 0;
+    const connect = () => {
+      if (disposed) return;
+      ws = new WebSocket(url);
+      ws.onclose = () => {
+        if (!disposed) timer = window.setTimeout(connect, 2000);
+      };
+      ws.onerror = () => ws.close();
+      ws.binaryType = 'arraybuffer';
 
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(ev.data));
-      } else if (typeof ev.data === 'string') {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === 'size' && msg.cols > 0 && msg.rows > 0) {
-            term.resize(msg.cols, msg.rows);
-            // Canvas resizes during the next render; refit after it commits.
-            requestAnimationFrame(refit);
+      ws.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(ev.data));
+        } else if (typeof ev.data === 'string') {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'size' && msg.cols > 0 && msg.rows > 0) {
+              term.resize(msg.cols, msg.rows);
+              // Canvas resizes during the next render; refit after it commits.
+              requestAnimationFrame(refit);
+            }
+          } catch {
+            // Non-JSON text (shouldn't happen on a mirror) — treat as output.
+            term.write(ev.data);
           }
-        } catch {
-          // Non-JSON text (shouldn't happen on a mirror) — treat as output.
-          term.write(ev.data);
         }
-      }
+      };
     };
+    connect();
 
     // Refit when the emulator repaints (covers the initial render and any reflow)
     // and when the cell changes size (grid resize / window-count change).
@@ -102,6 +115,8 @@ export function MirrorPane({ paneId, visible }: Props) {
     if (cellRef.current) observer.observe(cellRef.current);
 
     return () => {
+      disposed = true;
+      clearTimeout(timer);
       offRender.dispose();
       observer.disconnect();
       ws.close();
@@ -111,7 +126,11 @@ export function MirrorPane({ paneId, visible }: Props) {
     // Rebuild on config/font change so a live theme reload re-themes thumbnails,
     // matching TerminalPane. paneId is stable for the component's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneId, config]);
+  }, [paneId, termOptions]);
+
+  useEffect(() => {
+    termRef.current?.renderer?.setTheme(config?.theme ?? DEFAULT_THEME);
+  }, [config?.theme, termOptions]);
 
   // Park / wake with the grid's visibility (sockets keep streaming either way).
   useEffect(() => {
@@ -123,7 +142,7 @@ export function MirrorPane({ paneId, visible }: Props) {
     } else {
       term.suspend();
     }
-  }, [visible]);
+  }, [visible, termOptions]);
 
   return (
     <div ref={cellRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>

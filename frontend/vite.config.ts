@@ -23,6 +23,10 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
       },
+      '/wallpaper': {
+        target: 'http://localhost:8044',
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://localhost:8044',
         changeOrigin: true,

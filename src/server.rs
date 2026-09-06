@@ -247,7 +247,13 @@ fn truncate_msg(s: &str, max: usize) -> String {
     if first_line.len() <= max {
         first_line.to_string()
     } else {
-        format!("{}…", &first_line[..max])
+        let end = first_line
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|i| *i <= max)
+            .last()
+            .unwrap_or(0);
+        format!("{}…", &first_line[..end])
     }
 }
 
@@ -320,6 +326,14 @@ mod pane_notification_tests {
     use super::*;
 
     #[test]
+    fn truncates_unicode_at_a_character_boundary() {
+        let text = format!("{}🙂more", "a".repeat(199));
+        assert_eq!(truncate_msg(&text, 200), format!("{}…", "a".repeat(199)));
+        assert_eq!(truncate_msg("你好世界", 5), "你…");
+        assert_eq!(truncate_msg("🙂", 4), "🙂");
+    }
+
+    #[test]
     fn resolves_gemini_after_agent_payload() {
         let request: PaneNotifyRequest = serde_json::from_value(serde_json::json!({
             "hook_event_name": "AfterAgent",
@@ -364,34 +378,52 @@ struct RawFileQuery {
     path: String,
 }
 
-async fn serve_raw_file(Query(query): Query<RawFileQuery>) -> Response {
-    let path = std::path::Path::new(&query.path);
-    let Ok(canonical) = path.canonicalize() else {
+async fn serve_raw_file(
+    Query(query): Query<RawFileQuery>,
+    request: axum::extract::Request,
+) -> Response {
+    let Ok(canonical) = tokio::fs::canonicalize(&query.path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Ok(data) = tokio::fs::read(&canonical).await else {
+    let Ok(metadata) = tokio::fs::metadata(&canonical).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let mime = mime_guess::from_path(&canonical).first_or_octet_stream();
-    (
-        [
-            (header::CONTENT_TYPE, mime.as_ref().to_string()),
-            (header::CACHE_CONTROL, "no-cache".to_string()),
-        ],
-        Body::from(data),
-    )
-        .into_response()
+    if !metadata.is_file() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Ok(response) = tower_http::services::ServeFile::new(&canonical)
+        .try_call(request)
+        .await
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut response = response.into_response();
+    // Local HTML/SVG must not acquire the terminal application's origin and
+    // credentials when opened directly. Media still streams, with Range support.
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'"
+            .parse()
+            .unwrap(),
+    );
+    response
+        .headers_mut()
+        .insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
 }
 
 async fn serve_wallpaper(State(state): State<AppState>) -> Response {
-    let mgr = state.read().await;
-    let Some(path) = mgr.config().wallpaper_path.as_ref() else {
+    let path = state.read().await.config().wallpaper_path.clone();
+    let Some(path) = path else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Ok(data) = tokio::fs::read(path).await else {
+    let Ok(data) = tokio::fs::read(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
     (
         [
             (header::CONTENT_TYPE, mime.as_ref().to_string()),

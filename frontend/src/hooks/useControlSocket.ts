@@ -2,6 +2,8 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../state/store';
 import { ClientMessage, ServerMessage } from '../protocol/messages';
 
+let nextRequestId = 0;
+
 export function useControlSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const setSessions = useStore((s) => s.setSessions);
@@ -26,7 +28,6 @@ export function useControlSocket() {
 
       ws.onopen = () => {
         console.log('[btmux] control socket connected');
-        setControlConnected(true);
       };
 
       ws.onmessage = (ev) => {
@@ -34,6 +35,9 @@ export function useControlSocket() {
         if (msg.type === 'state') {
           setSessions(msg.sessions);
           setAllSessions(msg.all_sessions);
+          setControlConnected(true);
+        } else if (msg.type === 'command_result') {
+          if (msg.error) showToast(msg.error, 'error');
         } else if (msg.type === 'config') {
           setConfig(msg.config);
         } else if (msg.type === 'toast') {
@@ -98,6 +102,12 @@ export function useControlSocket() {
       };
 
       ws.onclose = () => {
+        if (!disposed)
+          fetch('/api/sessions', { cache: 'no-store' })
+            .then((response) => {
+              if (!disposed && response.status === 401) window.dispatchEvent(new Event('btmux-auth-required'));
+            })
+            .catch(() => {});
         wsRef.current = null;
         setControlConnected(false);
         if (!disposed) {
@@ -126,7 +136,9 @@ export function useControlSocket() {
 
   const send = useCallback((msg: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg));
+      wsRef.current.send(JSON.stringify({ ...msg, request_id: String(++nextRequestId) }));
+    } else {
+      useStore.getState().showToast('Connection lost. The command was not sent.', 'error');
     }
   }, []);
 

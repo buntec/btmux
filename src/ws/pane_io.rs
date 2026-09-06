@@ -45,7 +45,8 @@ pub async fn handle(
     let rows = params.rows.unwrap_or(config::DEFAULT_PTY_ROWS);
     let mirror = is_truthy(&params.mirror);
 
-    ws.on_upgrade(move |socket| handle_socket(socket, pane_id, cols, rows, mirror, state))
+    ws.max_message_size(64 * 1024)
+        .on_upgrade(move |socket| handle_socket(socket, pane_id, cols, rows, mirror, state))
 }
 
 /// Serialize a size update for a mirror socket.
@@ -61,142 +62,114 @@ async fn handle_socket(
     mirror: bool,
     state: AppState,
 ) {
+    use crate::pty::replay::Output;
+    let viewer_id = Uuid::new_v4();
     let (mut ws_tx, mut ws_rx) = socket.split();
-
-    let (input_tx, mut output_rx, mut size_rx, scrollback, pty_size, is_reconnect) = {
+    let attachment = {
         let mut mgr = state.write().await;
-        let Some(pane) = mgr.find_pane_mut(pane_id) else {
-            let _ = ws_tx.close().await;
-            return;
-        };
-
-        let was_spawned = pane.pty.is_spawned();
-        // A mirror must spawn the shell if it's the first to attach (so a
-        // never-viewed window still shows a live thumbnail) but must NOT resize:
-        // resizing would reflow the real shell and clear its scrollback.
-        pane.pty.ensure_spawned(cols, rows);
-        if !mirror {
-            // Resize first so the scrollback is cleared before we snapshot it — a
-            // resize clears the buffer because old content was wrapped for the old
-            // column width and would render as garbage at the new size.
-            pane.pty.resize(cols, rows);
-        }
-        // Subscribe and snapshot atomically so no chunk can appear in both the
-        // replay and the live stream (which would garble the display).
-        let (output_rx, scrollback) = pane.pty.subscribe_and_get_scrollback();
-        let size_rx = pane.pty.subscribe_size();
-        let pty_size = pane.pty.size();
-
-        tracing::debug!(pane_id=%pane_id, mirror, scrollback_bytes=scrollback.len(), "pane ws connect");
-
-        (
-            pane.pty.input_tx.clone(),
-            output_rx,
-            size_rx,
-            scrollback,
-            pty_size,
-            was_spawned,
-        )
+        mgr.find_pane_mut(pane_id).map(|pane| {
+            pane.pty.ensure_spawned(cols, rows)?;
+            if !mirror {
+                pane.pty.attach_viewer(viewer_id, cols, rows);
+            }
+            let (rx, replay) = pane.pty.subscribe_replay();
+            Ok::<_, String>((pane.pty.input_tx.clone(), rx, replay))
+        })
     };
-
-    // Tell a mirror the PTY's real size up front so it can fit its emulator to the
-    // same grid the scrollback was wrapped for, then scale it down with CSS.
-    if mirror {
-        let (c, r) = pty_size;
-        if ws_tx
-            .send(Message::Text(size_frame(c, r).into()))
-            .await
-            .is_err()
-        {
+    let (input_tx, mut output_rx, replay) = match attachment {
+        Some(Ok(attachment)) => attachment,
+        failure => {
+            let error = failure
+                .and_then(Result::err)
+                .unwrap_or_else(|| "Pane no longer exists".into());
+            tracing::warn!(%pane_id, %error, "pane attach failed");
+            let frame = Message::Text(
+                serde_json::json!({"type": "error", "message": error})
+                    .to_string()
+                    .into(),
+            );
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(2), ws_tx.send(frame)).await;
             return;
         }
-    }
-
-    // On reconnect, replay buffered output so client sees existing content
-    if !scrollback.is_empty()
-        && ws_tx
-            .send(Message::Binary(scrollback.into()))
-            .await
-            .is_err()
-    {
-        return;
-    }
-
-    // If this is a reconnect to an already-running PTY, kick a SIGWINCH so TUI
-    // apps redraw. The scrollback may contain a mid-draw cursor-hide
-    // (\x1b[?25l) that the app never reversed — a SIGWINCH triggers a full
-    // repaint and restores the correct cursor state. A mirror never resizes, so
-    // it must not trigger SIGWINCH (which would disturb the real viewer's PTY).
-    if is_reconnect && !mirror {
-        let mgr = state.read().await;
-        if let Some(pane) = mgr.find_pane(pane_id) {
-            pane.pty.force_sigwinch();
-        }
-    }
-
-    // PTY output -> WebSocket. A mirror also forwards size changes so the
-    // thumbnail re-fits when a real viewer resizes the pane in the background.
-    let send_task = tokio::spawn(async move {
+    };
+    let send = async {
+        let mut pending = replay;
+        let mut replaying = true;
         loop {
-            tokio::select! {
-                out = output_rx.recv() => {
-                    match out {
-                        Ok(data) => {
-                            if ws_tx.send(Message::Binary(data.into())).await.is_err() {
-                                break;
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(_) => break,
-                    }
-                }
-                size = size_rx.recv(), if mirror => {
-                    match size {
-                        Ok((c, r)) => {
-                            if ws_tx.send(Message::Text(size_frame(c, r).into())).await.is_err() {
-                                break;
-                            }
-                        }
-                        // Lagged: skip; the next output/size update keeps us close enough.
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(_) => break,
-                    }
+            for event in pending.drain(..) {
+                let frame = match event {
+                    Output::Data(bytes) => Message::Binary(bytes),
+                    Output::Size(cols, rows) => Message::Text(size_frame(cols, rows).into()),
+                };
+                if !matches!(
+                    tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(frame))
+                        .await,
+                    Ok(Ok(()))
+                ) {
+                    return;
                 }
             }
+            if replaying {
+                let ready = Message::Text(
+                    serde_json::json!({"type": "ready", "pane_id": pane_id})
+                        .to_string()
+                        .into(),
+                );
+                if !matches!(
+                    tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(ready))
+                        .await,
+                    Ok(Ok(()))
+                ) {
+                    return;
+                }
+                replaying = false;
+            }
+            match output_rx.recv().await {
+                Ok(event) => pending.push(event),
+                // Output is stateful: disconnect instead of silently continuing
+                // past missing bytes. The client reconnects to a fresh snapshot.
+                Err(_) => return,
+            }
         }
-    });
-
-    // WebSocket -> PTY input. A mirror is read-only: drop everything except the
-    // close so it can never type into or resize the shared PTY.
-    while let Some(Ok(msg)) = ws_rx.next().await {
-        if mirror {
+    };
+    let receive = async {
+        while let Some(Ok(msg)) = ws_rx.next().await {
             if matches!(msg, Message::Close(_)) {
                 break;
             }
-            continue;
-        }
-        match msg {
-            Message::Binary(data) => {
-                let _ = input_tx.send(data.to_vec());
+            if mirror {
+                continue;
             }
-            Message::Text(text) => {
-                if let Ok(resize) = serde_json::from_str::<ResizeMsg>(&text) {
-                    if resize.r#type == "resize" {
-                        let mgr = state.read().await;
-                        if let Some(pane) = mgr.find_pane(pane_id) {
-                            pane.pty.resize(resize.cols, resize.rows);
-                        }
+            match msg {
+                Message::Binary(data) => {
+                    if input_tx.send_wait(data.to_vec()).await.is_err() {
+                        break;
                     }
-                } else {
-                    let _ = input_tx.send(text.as_bytes().to_vec());
                 }
+                Message::Text(text) => {
+                    if let Ok(resize) = serde_json::from_str::<ResizeMsg>(&text) {
+                        if resize.r#type == "resize" {
+                            let mut mgr = state.write().await;
+                            if let Some(pane) = mgr.find_pane_mut(pane_id) {
+                                pane.pty.resize_viewer(viewer_id, resize.cols, resize.rows);
+                            }
+                        }
+                    } else if input_tx.send_wait(text.as_bytes().to_vec()).await.is_err() {
+                        break;
+                    }
+                }
+                _ => {}
             }
-            Message::Close(_) => break,
-            _ => {}
+        }
+    };
+    tokio::select! { _ = send => {}, _ = receive => {} }
+    if !mirror {
+        let mut mgr = state.write().await;
+        if let Some(pane) = mgr.find_pane_mut(pane_id) {
+            pane.pty.detach_viewer(viewer_id);
         }
     }
-
-    send_task.abort();
 }
 
 #[derive(Deserialize)]

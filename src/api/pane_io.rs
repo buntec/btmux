@@ -49,11 +49,15 @@ async fn api_pane_input(
         return StatusCode::NOT_FOUND.into_response();
     };
     let newly_spawned = !pane.pty.is_spawned();
-    pane.pty.ensure_spawned(
+    if let Err(error) = pane.pty.ensure_spawned(
         body.cols.unwrap_or(config::DEFAULT_PTY_COLS),
         body.rows.unwrap_or(config::DEFAULT_PTY_ROWS),
-    );
-    let _ = pane.pty.input_tx.send(body.text.into_bytes());
+    ) {
+        return (StatusCode::BAD_REQUEST, error).into_response();
+    }
+    if let Err(error) = pane.pty.input_tx.send(body.text.into_bytes()) {
+        return (StatusCode::SERVICE_UNAVAILABLE, error).into_response();
+    }
 
     Json(PaneInputResponse { newly_spawned }).into_response()
 }
@@ -77,10 +81,12 @@ async fn api_pane_output(
     let Some(pane) = mgr.find_pane_mut(pane_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    pane.pty.ensure_spawned(
+    if let Err(error) = pane.pty.ensure_spawned(
         query.cols.unwrap_or(config::DEFAULT_PTY_COLS),
         query.rows.unwrap_or(config::DEFAULT_PTY_ROWS),
-    );
+    ) {
+        return (StatusCode::BAD_REQUEST, error).into_response();
+    }
     let (_rx, scrollback) = pane.pty.subscribe_and_get_scrollback();
 
     (

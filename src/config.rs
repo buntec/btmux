@@ -51,6 +51,10 @@ pub struct CliArgs {
     #[arg(long, default_value = DEFAULT_HOST)]
     pub host: String,
 
+    /// Additional allowed HTTP(S) origins, e.g. a reverse proxy or Vite dev URL.
+    #[arg(long)]
+    pub public_url: Vec<String>,
+
     #[arg(short, long, default_value_t = DEFAULT_PORT)]
     pub port: u16,
 
@@ -103,6 +107,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Sort order for the session list on the landing page.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum SessionSort {
     /// Sessions appear in creation order.
     Created,
@@ -118,6 +123,7 @@ pub enum SessionSort {
 /// but the frontend renders — and renumbers — them per this setting.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum WindowSort {
     /// Windows appear in creation order.
     Created,
@@ -303,9 +309,13 @@ impl Default for FileConfig {
     rename_all(serialize = "camelCase", deserialize = "kebab-case"),
     deny_unknown_fields
 )]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename_all = "camelCase"))]
 pub struct TerminalOptions {
+    #[cfg_attr(test, ts(type = "\"canvas\" | \"webgl\" | null"))]
     pub renderer: Option<String>,
     pub cursor_blink: Option<bool>,
+    #[cfg_attr(test, ts(type = "\"block\" | \"underline\" | \"bar\" | null"))]
     pub cursor_style: Option<String>,
     pub scrollback: Option<u32>,
     pub font_size: Option<f32>,
@@ -384,6 +394,7 @@ pub struct BaseTheme {
 /// `ITheme`: default fg/bg/cursor/selection plus the 16 named ANSI colors.
 #[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Theme {
     pub foreground: String,
     pub background: String,
@@ -469,6 +480,7 @@ impl BaseTheme {
 
 /// A single resolved key binding sent to the browser.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Bind {
     pub key: String,
     pub action: String,
@@ -480,6 +492,7 @@ pub struct Bind {
 /// with that text before running) and `None` otherwise. This is a static built-in
 /// registry — see `default_commands`.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Command {
     pub id: String,
     pub label: String,
@@ -625,6 +638,7 @@ pub struct FontInfo {
 
 /// Serializable font entry sent to the browser.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct FontEntry {
     pub family: String,
     pub weight_min: u16,
@@ -635,6 +649,7 @@ pub struct FontEntry {
 /// bind table, ghostty-web terminal options, and the resolved color theme. This
 /// is the single source of truth — the browser renders it directly.
 #[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ClientConfig {
     pub prefix: String,
     pub binds: Vec<Bind>,
@@ -1296,6 +1311,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 /// wrote, and the overrides live only until btmux restarts or the config file is
 /// reloaded (which drops them, see `SessionManager::set_file_config`).
 #[derive(Deserialize, Debug, Clone, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields))]
 pub struct ConfigUpdate {
     pub colors: Option<String>,
     /// Parsed palette for a remote `colors` override. Filled by the WebSocket

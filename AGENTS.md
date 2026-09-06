@@ -13,7 +13,7 @@ WebSocket channels.
 
 The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 
-- `just dev` — run backend (port 8044) and frontend (Vite, port 5173) together. **Develop against http://localhost:5173**; Vite proxies `/ws` and `/api` to 8044. The dev backend uses 8044 (not the production default 8004) so it doesn't collide with a running production/service instance; the port lives in the `dev_port` justfile var and is mirrored in `vite.config.ts`.
+- `just dev` — run backend (port 8044) and frontend (Vite, port 5173) together. **Develop against http://localhost:5173**; Vite proxies `/ws` and `/api` to 8044. Development uses `--profile dev` to isolate saved sessions and access credentials. The dev backend uses 8044 (not the production default 8004) so it doesn't collide with a running production/service instance; the port lives in the `dev_port` justfile var and is mirrored in `vite.config.ts`.
 - `just dev-backend` / `just dev-frontend` — run one side only.
 - `just check` — `cargo check` + `tsc --noEmit` (fast, run this before claiming a change compiles).
 - `just lint` — `cargo clippy -- -D warnings` (warnings are errors).
@@ -22,7 +22,11 @@ The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 - `just install` — production build + `cargo install --path .`
 - `just fmt` (alias `just format`) — format the whole codebase (`cargo fmt` + prettier). **Always run this before committing.**
 
-There is **no test suite**. `cargo check`, `cargo clippy`, and `tsc --noEmit` are the only automated verification.
+`just test` runs the Rust regression suite. `just protocol` regenerates the frontend
+wire types; the tests reject stale generated types. `just check` and `just lint`
+remain required compilation/lint checks. `frontend/reliability-test.ts` exercises
+authentication, reconnect/replay, config updates, and multiple viewers against
+an isolated dev stack (`BTMUX_AUTH_TOKEN=... bun reliability-test.ts`).
 
 ## Architecture
 
@@ -40,12 +44,18 @@ created, switched, renamed, and killed via control commands.
 
    **Broadcast fan-out:** `SessionManager` owns a `tokio::sync::broadcast::Sender<String>` (`events()`) carrying pre-serialized `ServerMessage` JSON. Every control socket spawns a forward task (`receiver → ws_tx`), so a mutation in one browser tab — or a config reload — reaches _all_ tabs. On connect a socket is also sent its current `Config` + `State` directly so it doesn't wait for the next event. Two `ServerMessage` variants: `State { sessions, all_sessions }` (`Vec<SessionSummary>` for the StatusBar/picker + `Vec<SessionSnapshot>` with full window/layout data) and `Config { config }`.
 
-2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` resizes. On connect, the pane's scrollback buffer is replayed so reconnecting/re-mounting shows existing content.
+2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` resizes. On connect, a checkpoint and journal are replayed, followed by `ready`. The browser accepts input only after this initial replay completes.
 
 ### PTY lifecycle (`src/pty/mod.rs`)
 
 - A `PtyHandle` is created when a pane is created but the shell is **lazily spawned** on first `/ws/pane` connection (`ensure_spawned`), using the cols/rows from the query string.
-- Output fans out via a `tokio::sync::broadcast` channel, so multiple browser tabs can attach to the same pane. The last 64 KB is kept in a `scrollback` buffer for replay.
+- Output fans out via a `tokio::sync::broadcast` channel, so multiple browser tabs can attach to the same pane. Replay uses `pty/replay.rs`: a bounded chunk journal (8 MiB per pane, 128 MiB
+  shared history budget) plus a VT100 screen checkpoint at its head. Eviction
+  advances the checkpoint. Resize events are journaled and broadcast in the same
+  stream; resizing never clears history. The first interactive viewer owns PTY
+  dimensions until disconnect; followers and mirrors adopt the ordered sizes.
+  PTY writes use a dedicated blocking thread and a bounded queue. Pane disposal
+  signals the foreground group and kills the shell; a waiter reaps the child.
 - **DA1/DA2 query interception** (`strip_and_answer_da_queries`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. `ghostty-web` _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder. The canned bytes mirror `ghostty-web`'s exact DA replies for the pinned build — re-probe if `ghostty-web` is bumped. Don't remove this without a replacement.
 - **Termios** is set manually on the PTY master (`configure_termios`: `IUTF8`, `ECHOK`, `IMAXBEL`) because `portable-pty` opens the PTY with NULL termios; without `IUTF8`, fish misbehaves.
 
@@ -55,10 +65,9 @@ created, switched, renamed, and killed via control commands.
 `Leaf` / `VSplit` / `HSplit`. It is serialized with serde `tag = "type"`,
 `rename_all = "snake_case"`, and the frontend's `LayoutNode`
 (`frontend/src/state/types.ts`) plus `computeRectsAndDividers` in
-`frontend/src/state/layout.ts` decode it into percentage-based rects. **If you change the Rust `Layout` enum or any
-`*Snapshot` struct, update the matching TypeScript types and the
-`ClientMessage`/`ServerMessage` unions together** — they are hand-mirrored, not
-generated.
+`frontend/src/state/layout.ts` decode it into percentage-based rects. **After changing Rust wire types, run `just protocol`.** Test-only `ts-rs`
+derives generate `frontend/src/generated/protocol.ts`; frontend aliases preserve
+existing import names. The generated layout is a discriminated union.
 
 ### Protocol magic numbers
 
@@ -90,10 +99,9 @@ selection + 16 ANSI colors) using the canonical tinted-theming ANSI mapping. **b
 is auto-detected by the presence of all of `base10`–`base17`** (all-or-nothing; a
 partial set falls back to base16); base24 then uses the dedicated bright slots
 `base12`–`base17` instead of reusing the normal accents. The translation happens on
-the **backend** — the browser receives a finished `ITheme`. Changing the `[theme]`
-or `[terminal]` table triggers a live reload that re-themes existing panes (the
-`termOptions`-keyed effect in `TerminalPane.tsx` rebuilds the `Terminal`; the pane
-socket replays scrollback so content survives).
+the **backend** — the browser receives a finished `ITheme`. Live reload updates renderer themes in place. Only construction-option changes
+(fonts, renderer, scrollback, etc.) rebuild terminals; unrelated config changes
+and shader updates keep emulator instances and sockets alive.
 
 `config.rs` is the **single source of truth for keybindings**: `DEFAULT_BINDS`
 holds the tmux-style defaults, `resolve_binds` merges `[keys]` overrides over them,
@@ -154,3 +162,20 @@ config.toml. Anything added to the pickers therefore needs a field in
 `server.rs` uses `rust_embed` to compile `frontend/dist` into the binary at
 build time. The binary serves the frontend from memory, so it works from any
 working directory — no runtime dependency on the `frontend/dist` folder.
+
+## Access boundary
+
+Every backend route, WebSocket upgrade, and MCP call passes through `auth.rs`.
+A profile's owner-only `state.token` contains its access credential, or
+`BTMUX_AUTH_TOKEN` supplies one. Browsers use the token as their password; Vite's
+frontend has an access-token form. Automation sends `Authorization: Bearer …`.
+PTY shells receive `BTMUX_AUTH_TOKEN` so generated notification hooks work.
+`--public-url` adds explicit origins/authorities for Vite or a reverse proxy.
+Never print credentials, put them in URLs, or bypass this middleware for new APIs.
+Only one running server may own a persistence profile (held OS file lock).
+
+Control commands may carry `request_id`; each gets a `command_result` with the
+same id and an optional error, sent only to its originating socket. State remains
+server-authoritative and shared, including active window/pane selection; session
+navigation in the URL is per browser. Lagging control sockets resnapshot config
+and state. Lagging PTY sockets disconnect and reconnect to a fresh replay.

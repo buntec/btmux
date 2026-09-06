@@ -1,162 +1,20 @@
-export interface PaneState {
-  id: string;
-  title: string | null;
-  cwd: string | null;
-}
-
-export interface LayoutNode {
-  type: 'leaf' | 'v_split' | 'h_split';
-  id?: string;
-  pane_id?: string;
-  ratio?: number;
-  left?: LayoutNode;
-  right?: LayoutNode;
-  top?: LayoutNode;
-  bottom?: LayoutNode;
-}
-
-export interface WindowState {
-  id: string;
-  name: string;
-  panes: PaneState[];
-  active_pane: number;
-  layout: LayoutNode;
-  zoomed_pane: string | null;
-}
-
-export interface SessionState {
-  id: string;
-  name: string;
-  windows: WindowState[];
-  active_window: number;
-}
-
-export interface SessionSummary {
-  id: string;
-  name: string;
-}
-
-export interface Bind {
-  key: string;
-  action: string;
-}
-
-/**
- * A runnable entry in the command palette (prefix + `:`), mirrored from the
- * backend's `config::Command`. `id` is sent back in a `run_command` message;
- * `confirm` is a non-null prompt string for destructive commands (the palette
- * shows a y/n confirm with that text before running) or null otherwise.
- */
-export interface Command {
-  id: string;
-  label: string;
-  description: string;
-  confirm: string | null;
-}
-
-/**
- * ghostty-web terminal options, mirrored from the backend's `TerminalOptions`
- * (itself a subset of ghostty-web's `ITerminalOptions`). A `null` field means
- * "unset" — TerminalPane omits it so ghostty-web's own default applies.
- */
-export interface TerminalOptions {
-  renderer: 'canvas' | 'webgl' | null;
-  cursorBlink: boolean | null;
-  cursorStyle: 'block' | 'underline' | 'bar' | null;
-  scrollback: number | null;
-  fontSize: number | null;
-  fontFamily: string | null;
-  fontWeight: number | null;
-  allowTransparency: boolean | null;
-  convertEol: boolean | null;
-  disableStdin: boolean | null;
-  smoothScrollDuration: number | null;
-  scrollSensitivity: number | null;
-}
-
-/** Resolved color theme, mirroring ghostty-web's `ITheme` (subset we populate). */
-export interface Theme {
-  foreground: string;
-  background: string;
-  cursor: string;
-  cursorAccent: string;
-  selectionBackground: string;
-  black: string;
-  red: string;
-  green: string;
-  yellow: string;
-  blue: string;
-  magenta: string;
-  cyan: string;
-  white: string;
-  brightBlack: string;
-  brightRed: string;
-  brightGreen: string;
-  brightYellow: string;
-  brightBlue: string;
-  brightMagenta: string;
-  brightCyan: string;
-  brightWhite: string;
-}
-
-export type SessionSort = 'created' | 'mru' | 'alphabetical';
-
-export type WindowSort = 'created' | 'mru' | 'alphabetical';
-
-export interface FontEntry {
-  family: string;
-  weight_min: number;
-  weight_max: number;
-}
-
-export interface ClientConfig {
-  prefix: string;
-  binds: Bind[];
-  commands: Command[];
-  terminal: TerminalOptions;
-  theme: Theme | null;
-  vi_mode: boolean;
-  animations: boolean;
-  /** Whether panes render a per-pane title bar. */
-  show_pane_titles: boolean;
-  wallpaper: string | null;
-  /** App-level procedural WebGL wallpaper id, or null for none. */
-  wallpaper_shader: string | null;
-  wallpaper_opacity: number | null;
-  wallpaper_blur: number | null;
-  wallpaper_saturate: number | null;
-  wallpaper_speed: number;
-  wallpaper_seed: string;
-  wallpaper_shader_follows_mouse_cursor: boolean;
-  wallpaper_shader_follows_keyboard_input: boolean;
-  /** Persistent post-process effect id (see SHADER_EFFECTS), or null for none. */
-  shader: string | null;
-  /** Effect applied to panes behind the session switcher, or null for none. */
-  session_view_shader: string | null;
-  /**
-   * One-shot effect played on the pane you switch to (see PANE_SWITCH_EFFECTS).
-   * Null means unset — the frontend's default (none) applies.
-   */
-  pane_switch_shader: string | null;
-  /** Intensity multiplier for the pane-switch effect (1.0 = default strength). */
-  pane_switch_intensity: number;
-  /** Duration multiplier for the pane-switch effect (1.0 = default duration). */
-  pane_switch_duration: number;
-  session_sort: SessionSort;
-  /** Sort order for the window list (status bar, choose-tree, switcher). */
-  window_sort: WindowSort;
-  /** How many recently-viewed windows the window-grid (prefix + w) shows. */
-  window_grid_count: number;
-  version: string;
-  /** Available local color scheme names plus the active remote URL, if any. */
-  color_schemes: string[];
-  /** Resolved themes used for local and remote color-scheme previews on /config. */
-  color_scheme_themes: Record<string, Theme>;
-  /** Currently active color scheme name, or null. */
-  active_color_scheme: string | null;
-  /** Bundled font families with weight ranges. */
-  fonts: FontEntry[];
-}
+// Shared wire types are generated from Rust by `just protocol`.
+import type { Bind, Command } from '../generated/protocol';
+export type {
+  PaneSnapshot as PaneState,
+  Layout as LayoutNode,
+  WindowSnapshot as WindowState,
+  SessionSnapshot as SessionState,
+  SessionSummary,
+  Bind,
+  Command,
+  TerminalOptions,
+  Theme,
+  SessionSort,
+  WindowSort,
+  FontEntry,
+  ClientConfig,
+} from '../generated/protocol';
 
 /**
  * In-browser command prompt / picker, tmux-style.

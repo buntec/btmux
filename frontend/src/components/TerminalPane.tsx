@@ -97,6 +97,14 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   return opts;
 }
 
+// Key only the options that require a new emulator. Theme and shader updates
+// have their own effects and must not reconnect all pooled panes.
+export function useTerminalOptions(config: ClientConfig | null) {
+  const options = buildTerminalOptions(config);
+  const key = JSON.stringify(options ? { ...options, theme: undefined } : null);
+  return useMemo(() => JSON.parse(key) as ReturnType<typeof buildTerminalOptions>, [key]);
+}
+
 export function TerminalPane({
   sessionId,
   paneId,
@@ -128,11 +136,14 @@ export function TerminalPane({
   const config = useStore((s) => s.config);
   const overlay = useStore((s) => s.overlay);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
-  const termOptions = useMemo(() => buildTerminalOptions(config), [config]);
+  const termOptions = useTerminalOptions(config);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !termOptions) return;
+    setConnection('connecting');
 
     const term = new Terminal(termOptions);
     const fitAddon = new FitAddon();
@@ -171,7 +182,7 @@ export function TerminalPane({
     ]).then(() => {
       if (fontAbort) return;
       term.remeasureFont();
-      fitAddon.fit();
+      if (visibleRef.current) fitAddon.fit();
     });
 
     // Replace ghostty-web's built-in wheel handler for alt-screen applications
@@ -189,7 +200,7 @@ export function TerminalPane({
     let scrollAccumPx = 0;
     term.attachCustomWheelEventHandler((event: WheelEvent) => {
       const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      if (!ws || ws.readyState !== WebSocket.OPEN || !ready) return false;
 
       const hasMouseTracking = term.hasMouseTracking();
       // Mode 1049 is the DEC private mode used by Ink.js/ncurses/etc. to
@@ -247,6 +258,7 @@ export function TerminalPane({
     useStore.getState().registerTerminal(paneId, term);
 
     let ws: WebSocket | null = null;
+    let ready = false;
 
     // Connect only after the container has settled at its final CSS-computed size.
     // ResizeObserver can fire multiple times during a split: first at a tiny
@@ -261,51 +273,87 @@ export function TerminalPane({
         prev?.cols === term.cols && prev?.rows === term.rows ? prev : { cols: term.cols, rows: term.rows },
       );
 
+    let applyingServerSize = false;
+    let disposed = false;
+    let reconnectTimer = 0;
+    let attempts = 0;
     let connectRaf = 0;
+    const connect = () => {
+      if (disposed || ws) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const socket = new WebSocket(
+        `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${term.cols}&rows=${term.rows}`,
+      );
+      ws = socket;
+      wsRef.current = socket;
+      socket.binaryType = 'arraybuffer';
+      socket.onopen = () => {
+        if (disposed || ws !== socket) return;
+        attempts = 0;
+        // Server replay starts with a reset and a canonical screen snapshot.
+        setConnectionError(null);
+      };
+      socket.onmessage = (ev) => {
+        if (disposed || ws !== socket) return;
+        if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
+        else {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'ready') {
+              ready = true;
+              setConnection('connected');
+            }
+            if (msg.type === 'error') setConnectionError(msg.message);
+            if (msg.type === 'size') {
+              applyingServerSize = true;
+              term.resize(msg.cols, msg.rows);
+              applyingServerSize = false;
+            }
+          } catch {
+            /* Unknown protocol frames are not terminal input. */
+          }
+        }
+      };
+      socket.onclose = () => {
+        if (disposed || ws !== socket) return;
+        ws = null;
+        ready = false;
+        wsRef.current = null;
+        setConnection('reconnecting');
+        reconnectTimer = window.setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000));
+      };
+      socket.onerror = () => socket.close();
+    };
+    const onData = term.onData((data: string) => {
+      if (ws?.readyState === WebSocket.OPEN && ready) {
+        const bytes = new TextEncoder().encode(data);
+        for (let i = 0; i < bytes.length; i += 16384) ws.send(bytes.slice(i, i + 16384));
+      }
+      if (term.viewportY !== 0) term.scrollToBottom();
+      const rect = container.getBoundingClientRect();
+      const cursor = term.buffer.active;
+      announceWallpaperKeyboardCursor(
+        rect.left + ((cursor.cursorX + 0.5) / Math.max(1, term.cols)) * rect.width,
+        rect.top + ((cursor.cursorY + 0.5) / Math.max(1, term.rows)) * rect.height,
+      );
+    });
+    const onResize = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+      setDims({ cols, rows });
+      if (ws?.readyState === WebSocket.OPEN && visibleRef.current && !applyingServerSize) {
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
+    });
     const observer = new ResizeObserver(() => {
-      // While hidden the container is display:none (0×0); fitting would resize
-      // the PTY to a 1-cell grid and connecting would replay scrollback at the
-      // wrong size. Skip both — the visibility effect fits on the way back in.
       if (!visibleRef.current) return;
       fitAddon.fit();
       syncDims();
-      if (!ws) {
+      if (!ws && !reconnectTimer) {
         cancelAnimationFrame(connectRaf);
         connectRaf = requestAnimationFrame(() => {
-          if (ws || !visibleRef.current) return;
+          if (!visibleRef.current) return;
           fitAddon.fit();
           syncDims();
-          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const url = `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${term.cols}&rows=${term.rows}`;
-          ws = new WebSocket(url);
-          ws.binaryType = 'arraybuffer';
-          wsRef.current = ws;
-
-          ws.onmessage = (ev) => {
-            if (ev.data instanceof ArrayBuffer) {
-              term.write(new Uint8Array(ev.data));
-            } else if (typeof ev.data === 'string') {
-              term.write(ev.data);
-            }
-          };
-
-          term.onData((data: string) => {
-            if (ws!.readyState === WebSocket.OPEN) ws!.send(data);
-            if (term.viewportY !== 0) term.scrollToBottom();
-            const rect = container.getBoundingClientRect();
-            const cursor = term.buffer.active;
-            announceWallpaperKeyboardCursor(
-              rect.left + ((cursor.cursorX + 0.5) / Math.max(1, term.cols)) * rect.width,
-              rect.top + ((cursor.cursorY + 0.5) / Math.max(1, term.rows)) * rect.height,
-            );
-          });
-
-          term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-            setDims({ cols, rows });
-            if (ws!.readyState === WebSocket.OPEN) {
-              ws!.send(JSON.stringify({ type: 'resize', cols, rows }));
-            }
-          });
+          connect();
         });
       }
     });
@@ -313,6 +361,10 @@ export function TerminalPane({
     observer.observe(container);
 
     return () => {
+      disposed = true;
+      clearTimeout(reconnectTimer);
+      onData.dispose();
+      onResize.dispose();
       fontAbort = true;
       cancelAnimationFrame(connectRaf);
       observer.disconnect();
@@ -343,7 +395,7 @@ export function TerminalPane({
     } else {
       term.suspend();
     }
-  }, [visible]);
+  }, [visible, termOptions]);
 
   // The persistent post-process effect chosen with `shader: choose effect`
   // (config `shader = "..."`). It is the *base* state of this pane's
@@ -417,10 +469,10 @@ export function TerminalPane({
     const bg = config?.theme?.background ?? DEFAULT_THEME.background;
     const cursor = config?.theme?.cursor ?? DEFAULT_THEME.cursor;
     term.renderer?.setTheme({
-      ...term.options.theme,
+      ...(config?.theme ?? DEFAULT_THEME),
       cursor: isActive ? cursor : bg,
     });
-  }, [isActive, config?.theme?.background, config?.theme?.cursor, termOptions]);
+  }, [isActive, config?.theme, termOptions]);
 
   // Focus when this pane becomes active (false→true transition, including mount)
   // or when an overlay closes while this pane is active; blur when it is not
@@ -498,6 +550,15 @@ export function TerminalPane({
         transition: animations ? 'border-color .15s ease, background .15s ease' : undefined,
       }}
     >
+      {connection !== 'connected' && (
+        <div
+          role="status"
+          className="absolute inset-x-0 top-0 text-center text-sm bg-background text-foreground"
+          style={{ zIndex: 30 }}
+        >
+          {connectionError ?? (connection === 'connecting' ? 'Connecting…' : 'Connection lost. Reconnecting…')}
+        </div>
+      )}
       {showTitle && (
         <PaneTitleBar
           theme={config?.theme ?? null}

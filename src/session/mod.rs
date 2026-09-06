@@ -72,6 +72,7 @@ pub struct Pane {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PaneSnapshot {
     pub id: Uuid,
     pub title: Option<String>,
@@ -80,6 +81,7 @@ pub struct PaneSnapshot {
 
 /// One entry per session for the StatusBar and the session picker.
 #[derive(Serialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct SessionSummary {
     pub id: Uuid,
     pub name: String,

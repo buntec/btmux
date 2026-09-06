@@ -36,17 +36,17 @@ pub async fn run_command(
     // command's own output can't be missed), then send. The guard is dropped
     // before the wait below — holding it across up to `timeout_ms` would
     // block every other REST/WS/MCP request against the whole session tree.
-    let mut rx: broadcast::Receiver<Vec<u8>> = {
+    let mut rx: broadcast::Receiver<crate::pty::replay::Output> = {
         let mut mgr = state.write().await;
         let Some(pane) = mgr.find_pane_mut(pane_id) else {
             return Err(format!("pane {pane_id} not found"));
         };
         pane.pty
-            .ensure_spawned(config::DEFAULT_PTY_COLS, config::DEFAULT_PTY_ROWS);
+            .ensure_spawned(config::DEFAULT_PTY_COLS, config::DEFAULT_PTY_ROWS)?;
         let (rx, _snapshot) = pane.pty.subscribe_and_get_scrollback();
         let mut line = command.as_bytes().to_vec();
         line.push(b'\r');
-        let _ = pane.pty.input_tx.send(line);
+        pane.pty.input_tx.send(line)?;
         rx
     };
 
@@ -63,12 +63,16 @@ pub async fn run_command(
         }
         tokio::select! {
             chunk = rx.recv() => match chunk {
-                Ok(bytes) => acc.extend_from_slice(&bytes),
+                Ok(crate::pty::replay::Output::Data(bytes)) => {
+                    if acc.len() + bytes.len() > 8 * 1024 * 1024 { return Err("command output exceeded 8 MiB capture limit".into()); }
+                    acc.extend_from_slice(&bytes);
+                }
+                Ok(crate::pty::replay::Output::Size(..)) => {},
                 // Reader thread outpaced the broadcast channel (capacity 256,
                 // see PtyHandle::new_with_cwd) — some middle chunks were
                 // dropped. Pre-existing limitation of the broadcast design;
                 // keep going rather than aborting the capture.
-                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => return Err("command output was lost because the reader fell behind".into()),
                 Err(broadcast::error::RecvError::Closed) => break,
             },
             _ = tokio::time::sleep(idle) => break,

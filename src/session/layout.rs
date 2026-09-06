@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Layout {
     Leaf {
         pane_id: Uuid,

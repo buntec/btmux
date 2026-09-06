@@ -1,5 +1,6 @@
 mod agent_hooks;
 mod api;
+mod auth;
 mod config;
 mod file_git;
 mod file_search;
@@ -7,6 +8,8 @@ mod fs_ops;
 mod git;
 mod mcp;
 mod persistence;
+#[cfg(test)]
+mod protocol;
 mod pty;
 mod server;
 mod service;
@@ -198,6 +201,19 @@ async fn main() {
             std::process::exit(2);
         }
     };
+    let _profile_lock = state_file.as_ref().map(|path| {
+        persistence::ProfileLock::acquire(path).unwrap_or_else(|error| {
+            eprintln!("btmux: {error}");
+            std::process::exit(2);
+        })
+    });
+    let auth = auth::load_token(state_file.as_deref())
+        .and_then(|token| auth::Auth::new(token, &args.host, args.port, &args.public_url))
+        .unwrap_or_else(|error| {
+            eprintln!("btmux: {error}");
+            std::process::exit(2);
+        });
+    let auth = Arc::new(auth);
     {
         let mut mgr = state.write().await;
         let restored = state_file
@@ -228,7 +244,8 @@ async fn main() {
     let addr = format!("{}:{}", args.host, args.port);
     tracing::info!("btmux listening on {}", addr);
 
-    let app = server::create_app(state);
+    let app =
+        server::create_app(state).layer(axum::middleware::from_fn_with_state(auth, auth::protect));
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap_or_else(|e| {
         eprintln!("error: cannot bind to {addr}: {e}");
         if e.kind() == std::io::ErrorKind::AddrInUse {
@@ -329,7 +346,12 @@ async fn spawn_state_saver(path: std::path::PathBuf, state: AppState) {
                 let mgr = state.read().await;
                 mgr.all_snapshots()
             };
-            if let Err(e) = persistence::save(&path, &snapshots) {
+            let save_path = path.clone();
+            if let Err(e) =
+                tokio::task::spawn_blocking(move || persistence::save(&save_path, &snapshots))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            {
                 tracing::warn!("failed to persist state to {}: {}", path.display(), e);
             }
         }

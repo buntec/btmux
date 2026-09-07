@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { useTerminalOptions } from './TerminalPane';
@@ -30,6 +30,10 @@ export function MirrorPane({ paneId, visible }: Props) {
   const cellRef = useRef<HTMLDivElement>(null);
   const scalerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const replayReadyRef = useRef(false);
+  const revealRef = useRef<(() => void) | null>(null);
+  const revealRafRef = useRef(0);
+  const [initialReplayRendered, setInitialReplayRendered] = useState(false);
 
   const config = useStore((s) => s.config);
   const termOptions = useTerminalOptions(config);
@@ -69,7 +73,12 @@ export function MirrorPane({ paneId, visible }: Props) {
     });
     term.open(scaler);
     termRef.current = term;
-    if (!visibleRef.current) term.suspend();
+    // Writes still update the WASM terminal while suspended. Keeping rendering
+    // stopped until the replay's `ready` marker avoids both intermediate paints
+    // and their CPU/GPU cost for large journals.
+    term.suspend();
+    setInitialReplayRendered(false);
+    replayReadyRef.current = false;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // cols/rows in the query only matter if this mirror is the very first attach
@@ -79,8 +88,25 @@ export function MirrorPane({ paneId, visible }: Props) {
     let ws: WebSocket;
     let disposed = false;
     let timer = 0;
+    const revealWhenReady = () => {
+      if (disposed || !replayReadyRef.current || !visibleRef.current) return;
+      term.resume();
+      term.requestRender();
+      cancelAnimationFrame(revealRafRef.current);
+      // resume() queues the completed terminal render first. Reveal the scaler
+      // in the following callback, after that frame has reached the canvas.
+      revealRafRef.current = requestAnimationFrame(() => {
+        if (disposed || !visibleRef.current) return;
+        setInitialReplayRendered(true);
+        refit();
+      });
+    };
+    revealRef.current = revealWhenReady;
     const connect = () => {
       if (disposed) return;
+      replayReadyRef.current = false;
+      setInitialReplayRendered(false);
+      term.suspend();
       ws = new WebSocket(url);
       ws.onclose = () => {
         if (!disposed) timer = window.setTimeout(connect, 2000);
@@ -94,6 +120,10 @@ export function MirrorPane({ paneId, visible }: Props) {
         } else if (typeof ev.data === 'string') {
           try {
             const msg = JSON.parse(ev.data);
+            if (msg.type === 'ready') {
+              replayReadyRef.current = true;
+              revealWhenReady();
+            }
             if (msg.type === 'size' && msg.cols > 0 && msg.rows > 0) {
               term.resize(msg.cols, msg.rows);
               // Canvas resizes during the next render; refit after it commits.
@@ -117,6 +147,9 @@ export function MirrorPane({ paneId, visible }: Props) {
     return () => {
       disposed = true;
       clearTimeout(timer);
+      cancelAnimationFrame(revealRafRef.current);
+      if (revealRef.current === revealWhenReady) revealRef.current = null;
+      replayReadyRef.current = false;
       offRender.dispose();
       observer.disconnect();
       ws.close();
@@ -137,9 +170,9 @@ export function MirrorPane({ paneId, visible }: Props) {
     const term = termRef.current;
     if (!term) return;
     if (visible) {
-      term.resume();
-      requestAnimationFrame(refit);
+      revealRef.current?.();
     } else {
+      cancelAnimationFrame(revealRafRef.current);
       term.suspend();
     }
   }, [visible, termOptions]);
@@ -153,6 +186,7 @@ export function MirrorPane({ paneId, visible }: Props) {
           top: 0,
           left: 0,
           transformOrigin: 'top left',
+          visibility: initialReplayRendered ? 'visible' : 'hidden',
           // Block the terminal's own input affordances; the grid handles clicks.
           pointerEvents: 'none',
         }}

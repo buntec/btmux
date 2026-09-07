@@ -139,11 +139,17 @@ export function TerminalPane({
   const termOptions = useTerminalOptions(config);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
+  // Keep a newly-created emulator hidden while the server streams its initial
+  // checkpoint + journal. Parsing writes is synchronous, but paints happen on
+  // animation frames; revealing only after the frame queued by `ready` avoids
+  // showing a long replay as rapidly scrolling terminal output.
+  const [initialReplayRendered, setInitialReplayRendered] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !termOptions) return;
     setConnection('connecting');
+    setInitialReplayRendered(false);
 
     const term = new Terminal(termOptions);
     const fitAddon = new FitAddon();
@@ -278,6 +284,7 @@ export function TerminalPane({
     let reconnectTimer = 0;
     let attempts = 0;
     let connectRaf = 0;
+    let revealRaf = 0;
     const connect = () => {
       if (disposed || ws) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -301,7 +308,16 @@ export function TerminalPane({
             const msg = JSON.parse(ev.data);
             if (msg.type === 'ready') {
               ready = true;
-              setConnection('connected');
+              // All replay bytes have now been parsed. Terminal writes normally
+              // coalesce behind one queued render; schedule our reveal after it
+              // so the first visible canvas contains the completed screen.
+              term.requestRender();
+              cancelAnimationFrame(revealRaf);
+              revealRaf = requestAnimationFrame(() => {
+                if (disposed || ws !== socket) return;
+                setInitialReplayRendered(true);
+                setConnection('connected');
+              });
             }
             if (msg.type === 'error') setConnectionError(msg.message);
             if (msg.type === 'size') {
@@ -367,6 +383,7 @@ export function TerminalPane({
       onResize.dispose();
       fontAbort = true;
       cancelAnimationFrame(connectRaf);
+      cancelAnimationFrame(revealRaf);
       observer.disconnect();
       ws?.close();
       term.dispose();
@@ -474,9 +491,9 @@ export function TerminalPane({
     });
   }, [isActive, config?.theme, termOptions]);
 
-  // Focus when this pane becomes active (false→true transition, including mount)
-  // or when an overlay closes while this pane is active; blur when it is not
-  // active so it can't keep keyboard focus after losing the highlight.
+  // Focus when this pane becomes active (false→true transition, including mount),
+  // when its initial replay finishes, or when an overlay closes while this pane
+  // is active. Blur when it is inactive or not yet ready for keyboard input.
   // Tracking the previous value prevents the old active pane from re-stealing
   // focus while a select_pane command is still in flight to the server.
   // Note: ghostty-web's open() auto-focuses every terminal as it mounts (and
@@ -486,27 +503,31 @@ export function TerminalPane({
   const prevIsActive = useRef(false);
   const prevOverlay = useRef(overlay);
   const prevFileBrowser = useRef(fileBrowserOpen);
+  const prevInitialReplayRendered = useRef(false);
   useEffect(() => {
     const wasActive = prevIsActive.current;
     const hadOverlay = prevOverlay.current;
     const hadFileBrowser = prevFileBrowser.current;
+    const hadRenderedInitialReplay = prevInitialReplayRendered.current;
     prevIsActive.current = isActive;
     prevOverlay.current = overlay;
     prevFileBrowser.current = fileBrowserOpen;
+    prevInitialReplayRendered.current = initialReplayRendered;
 
     const anyOverlay = overlay || fileBrowserOpen;
 
-    if (!isActive || anyOverlay) {
+    if (!isActive || anyOverlay || !initialReplayRendered) {
       termRef.current?.blur();
       return;
     }
 
     const becameActive = !wasActive;
+    const replayFinished = !hadRenderedInitialReplay;
     const overlayClosed = (!overlay && !!hadOverlay) || (!fileBrowserOpen && hadFileBrowser);
-    if (becameActive || overlayClosed) {
+    if (becameActive || replayFinished || overlayClosed) {
       termRef.current?.focus();
     }
-  }, [isActive, overlay, fileBrowserOpen]);
+  }, [isActive, overlay, fileBrowserOpen, initialReplayRendered]);
 
   // When the user clicks this pane, tell the backend to make it active so the
   // border and server-side state stay in sync with DOM focus.
@@ -589,8 +610,26 @@ export function TerminalPane({
       )}
       {/* The terminal fills the space below the (optional) title bar. inset-style
           padding around it keeps a small gutter so glyphs don't touch the border. */}
-      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-        <div ref={containerRef} style={{ position: 'absolute', inset: '8px' }} />
+      <div
+        style={{
+          position: 'relative',
+          flex: 1,
+          minHeight: 0,
+          // Cover wallpaper/transparency only while the terminal canvas is
+          // hidden; once revealed, restore the pane's normal transparency.
+          background: initialReplayRendered ? 'transparent' : (config?.theme?.background ?? DEFAULT_THEME.background),
+        }}
+      >
+        <div
+          ref={containerRef}
+          style={{
+            position: 'absolute',
+            inset: '8px',
+            // `visibility` preserves layout, so FitAddon and ResizeObserver can
+            // establish the correct grid while replay remains off-screen.
+            visibility: initialReplayRendered ? 'visible' : 'hidden',
+          }}
+        />
       </div>
     </div>
   );

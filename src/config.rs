@@ -25,6 +25,12 @@ pub const DEFAULT_WALLPAPER_FOLLOWS_MOUSE: bool = true;
 pub const DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD: bool = false;
 pub const DEFAULT_PANE_SWITCH_INTENSITY: f32 = 0.25;
 pub const DEFAULT_PANE_SWITCH_DURATION: f32 = 0.5;
+/// Default pane-switch border-draw style (`"none"` disables it). The style
+/// registry lives in the frontend (`lib/paneSwitchBorder.ts`); an unknown name
+/// falls back there.
+pub const DEFAULT_PANE_SWITCH_BORDER_STYLE: &str = "wipe";
+/// Seconds for the pane-switch border draw to complete. Clamped to 0.05-3.0.
+pub const DEFAULT_PANE_SWITCH_BORDER_SPEED: f32 = 0.10;
 pub const DEFAULT_WINDOW_GRID_COUNT: u32 = 4;
 
 pub const DEFAULT_SCROLLBACK_LINES: u32 = 100_000;
@@ -235,6 +241,18 @@ pub struct FileConfig {
     /// the effect's own default duration. Clamped to 0.1–5.0.
     #[serde(rename = "pane-switch-duration")]
     pub pane_switch_duration: Option<f32>,
+    /// Border-draw effect played on the pane you switch to: `"none"`, `"trace"`
+    /// (counter-clockwise perimeter draw), `"sweep"` (clockwise conic sweep), or
+    /// `"wipe"` (diagonal gradient wipe). A pure-CSS accent, independent of the
+    /// WebGL `pane-switch-shader`; the style registry lives in the frontend and
+    /// an unknown name falls back there. Disabled entirely when
+    /// `animations = false`. Defaults to `"wipe"`.
+    #[serde(rename = "pane-switch-border")]
+    pub pane_switch_border: Option<String>,
+    /// Seconds for the pane-switch border draw to complete (lower = faster).
+    /// Clamped to 0.05–3.0.
+    #[serde(rename = "pane-switch-border-speed")]
+    pub pane_switch_border_speed: Option<f32>,
     /// Sort order for the session list on the landing page.
     #[serde(rename = "session-sort", default)]
     pub session_sort: SessionSort,
@@ -285,6 +303,8 @@ impl Default for FileConfig {
             pane_switch_shader: None,
             pane_switch_intensity: Some(DEFAULT_PANE_SWITCH_INTENSITY),
             pane_switch_duration: Some(DEFAULT_PANE_SWITCH_DURATION),
+            pane_switch_border: Some(DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string()),
+            pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
@@ -701,6 +721,12 @@ pub struct ClientConfig {
     /// Resolved duration multiplier for the pane-switch effect (default 0.5,
     /// clamped 0.1–5.0).
     pub pane_switch_duration: f32,
+    /// Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
+    /// in the file). The frontend also gates this on `animations`.
+    pub pane_switch_border: Option<String>,
+    /// Resolved seconds for the pane-switch border draw (default 0.10, clamped
+    /// 0.05–3.0).
+    pub pane_switch_border_speed: f32,
     /// Sort order for the session list on the landing page.
     pub session_sort: SessionSort,
     /// Sort order for the window list (status bar, choose-tree, switcher).
@@ -1045,6 +1071,16 @@ pub fn generate_config_toml() -> String {
 # effect's own default duration. Clamped to 0.1-5.0.
 # pane-switch-duration = {DEFAULT_PANE_SWITCH_DURATION:.1}
 
+# Border-draw effect played on the switched-to pane (pure CSS, independent of
+# `pane-switch-shader`). Disabled entirely when `animations = false`.
+# "none" | "trace" (counter-clockwise perimeter) | "sweep" (clockwise conic)
+# | "wipe" (diagonal gradient)
+# pane-switch-border = "{DEFAULT_PANE_SWITCH_BORDER_STYLE}"
+
+# Seconds for the pane-switch border draw to complete (lower = faster).
+# Clamped to 0.05-3.0.
+# pane-switch-border-speed = {DEFAULT_PANE_SWITCH_BORDER_SPEED:.2}
+
 # Sort order for the session list on the landing page.
 # "created" = creation order, "mru" = most recently visited first (default),
 # "alphabetical" = sorted by name.
@@ -1203,6 +1239,18 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .pane_switch_duration
         .unwrap_or(DEFAULT_PANE_SWITCH_DURATION)
         .clamp(0.1, 5.0);
+    let pane_switch_border_speed = file
+        .pane_switch_border_speed
+        .unwrap_or(DEFAULT_PANE_SWITCH_BORDER_SPEED)
+        .clamp(0.05, 3.0);
+    // `None` in the file means "unset" → the default style; `"none"`/empty means
+    // the user explicitly turned it off → `None` on the wire.
+    let pane_switch_border = file
+        .pane_switch_border
+        .clone()
+        .unwrap_or_else(|| DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string());
+    let pane_switch_border = (!pane_switch_border.is_empty() && pane_switch_border != "none")
+        .then_some(pane_switch_border);
     let wallpaper_speed = file
         .wallpaper_speed
         .unwrap_or(DEFAULT_WALLPAPER_SPEED)
@@ -1284,6 +1332,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         pane_switch_shader: file.pane_switch_shader.clone(),
         pane_switch_intensity,
         pane_switch_duration,
+        pane_switch_border,
+        pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
@@ -1340,6 +1390,9 @@ pub struct ConfigUpdate {
     pub pane_switch_shader: Option<String>,
     pub pane_switch_intensity: Option<f32>,
     pub pane_switch_duration: Option<f32>,
+    /// Border-draw style name; `"none"` (or the empty string) disables it.
+    pub pane_switch_border: Option<String>,
+    pub pane_switch_border_speed: Option<f32>,
 }
 
 impl ConfigUpdate {
@@ -1405,6 +1458,12 @@ impl ConfigUpdate {
         }
         if other.pane_switch_duration.is_some() {
             self.pane_switch_duration = other.pane_switch_duration;
+        }
+        if other.pane_switch_border.is_some() {
+            self.pane_switch_border = other.pane_switch_border.clone();
+        }
+        if other.pane_switch_border_speed.is_some() {
+            self.pane_switch_border_speed = other.pane_switch_border_speed;
         }
     }
 }
@@ -1475,6 +1534,13 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(duration) = overrides.pane_switch_duration {
         file.pane_switch_duration = Some(duration.clamp(0.1, 5.0));
+    }
+    if let Some(style) = &overrides.pane_switch_border {
+        // Kept verbatim (including `"none"`); resolve_binds maps it to the wire.
+        file.pane_switch_border = Some(style.clone());
+    }
+    if let Some(speed) = overrides.pane_switch_border_speed {
+        file.pane_switch_border_speed = Some(speed.clamp(0.05, 3.0));
     }
 
     resolve_binds(&file)
@@ -1567,6 +1633,8 @@ palette:
         assert_eq!(resolved.session_sort, SessionSort::Mru);
         assert_eq!(resolved.pane_switch_intensity, 0.25);
         assert_eq!(resolved.pane_switch_duration, 0.5);
+        assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
+        assert_eq!(resolved.pane_switch_border_speed, 0.10);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
     }
 
@@ -1596,6 +1664,8 @@ palette:
                 pane_switch_shader: Some("pixelate".to_string()),
                 pane_switch_intensity: Some(1.5),
                 pane_switch_duration: Some(2.0),
+                pane_switch_border: Some("none".to_string()),
+                pane_switch_border_speed: Some(1.2),
             },
         );
 
@@ -1624,6 +1694,8 @@ palette:
         assert_eq!(resolved.pane_switch_shader.as_deref(), Some("pixelate"));
         assert_eq!(resolved.pane_switch_intensity, 1.5);
         assert_eq!(resolved.pane_switch_duration, 2.0);
+        assert_eq!(resolved.pane_switch_border, None);
+        assert_eq!(resolved.pane_switch_border_speed, 1.2);
 
         assert_eq!(
             file.wallpaper_shader.as_deref(),

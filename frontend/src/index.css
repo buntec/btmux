@@ -169,6 +169,85 @@
     transform: scale(1);
   }
 }
+/* ── Pane-switch border-draw effects (see lib/paneSwitchBorder.ts) ──────────
+   One-shot, played on the pane you switch to. Each consumes the custom props
+   TerminalPane sets inline: --btm-border-speed / --btm-border-color /
+   --btm-border-edge. */
+
+/* `trace` — counter-clockwise SVG stroke. The companion <path> is wound
+   counter-clockwise and normalized to pathLength 100, so walking the offset
+   down to 0 "draws" it CCW. */
+@keyframes btm-pane-border-trace {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* `sweep` / `wipe` — border-image gradient draws. Registered custom properties
+   so the gradient re-resolves each frame as they animate. */
+@property --btm-bi-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@property --btm-bi-slice {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: false;
+}
+@property --btm-bi-pct {
+  syntax: '<percentage>';
+  initial-value: 0%;
+  inherits: false;
+}
+@keyframes btm-pane-border-sweep {
+  from {
+    --btm-bi-angle: 0deg;
+    --btm-bi-slice: 0;
+  }
+  to {
+    --btm-bi-angle: 360deg;
+    --btm-bi-slice: 1;
+  }
+}
+@keyframes btm-pane-border-wipe {
+  from {
+    --btm-bi-pct: 0%;
+  }
+  to {
+    --btm-bi-pct: 100%;
+  }
+}
+.btm-pane-border {
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+  z-index: 2;
+  border: 3px solid transparent;
+  border-image-width: 3px;
+  box-sizing: border-box;
+}
+.btm-pane-border--sweep {
+  border-image-source: conic-gradient(
+    from 46deg,
+    var(--btm-border-color) var(--btm-bi-angle),
+    var(--btm-border-edge, #fff) calc(var(--btm-bi-angle) + 0.5deg)
+  );
+  border-image-slice: var(--btm-bi-slice);
+  animation:
+    btm-pane-border-sweep var(--btm-border-speed, 0.35s) linear forwards,
+    btm-fade-out 0.25s linear var(--btm-border-speed, 0.35s) forwards;
+}
+.btm-pane-border--wipe {
+  border-image-source: linear-gradient(-45deg, var(--btm-border-color) var(--btm-bi-pct), transparent 0);
+  border-image-slice: 1;
+  animation:
+    btm-pane-border-wipe var(--btm-border-speed, 0.35s) linear forwards,
+    btm-fade-out 0.25s linear var(--btm-border-speed, 0.35s) forwards;
+}
 @keyframes btm-prefix-in {
   from {
     opacity: 0;
@@ -204,5 +283,14 @@
   }
   @keyframes btm-prefix-pulse {
     from, to { box-shadow: none; }
+  }
+  @keyframes btm-pane-border-trace {
+    from, to { stroke-dashoffset: 0; }
+  }
+  @keyframes btm-pane-border-sweep {
+    from, to { --btm-bi-angle: 360deg; --btm-bi-slice: 1; }
+  }
+  @keyframes btm-pane-border-wipe {
+    from, to { --btm-bi-pct: 100%; }
   }
 }

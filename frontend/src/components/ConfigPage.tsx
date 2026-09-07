@@ -5,10 +5,12 @@ import { toast } from 'sonner';
 import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
 import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
+import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import {
   getFontWeightRange,
+  getPaneSwitchBorderSpeed,
   getPaneSwitchDuration,
   getPaneSwitchIntensity,
   getTerminalFontFamily,
@@ -60,6 +62,8 @@ type Draft = {
   paneSwitchShader: string;
   paneSwitchIntensity: number;
   paneSwitchDuration: number;
+  paneSwitchBorderStyle: string;
+  paneSwitchBorderSpeed: number;
 };
 
 type DraftKey = keyof Draft;
@@ -156,6 +160,8 @@ function initialDraft(config: ClientConfig): Draft {
     paneSwitchShader: config.pane_switch_shader ?? '',
     paneSwitchIntensity: getPaneSwitchIntensity(config),
     paneSwitchDuration: getPaneSwitchDuration(config),
+    paneSwitchBorderStyle: config.pane_switch_border ?? 'none',
+    paneSwitchBorderSpeed: getPaneSwitchBorderSpeed(config),
   };
 }
 
@@ -182,6 +188,8 @@ function toToml(draft: Draft): string {
     draft.paneSwitchShader ? `pane-switch-shader = ${quote(draft.paneSwitchShader)}` : null,
     `pane-switch-intensity = ${draft.paneSwitchIntensity.toFixed(2)}`,
     `pane-switch-duration = ${draft.paneSwitchDuration.toFixed(2)}`,
+    `pane-switch-border = ${quote(draft.paneSwitchBorderStyle)}`,
+    `pane-switch-border-speed = ${draft.paneSwitchBorderSpeed.toFixed(2)}`,
     '',
     '[terminal]',
     `font-family = ${quote(draft.fontFamily)}`,
@@ -216,6 +224,8 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('paneSwitchShader')) update.pane_switch_shader = draft.paneSwitchShader;
   if (dirty.has('paneSwitchIntensity')) update.pane_switch_intensity = draft.paneSwitchIntensity;
   if (dirty.has('paneSwitchDuration')) update.pane_switch_duration = draft.paneSwitchDuration;
+  if (dirty.has('paneSwitchBorderStyle')) update.pane_switch_border = draft.paneSwitchBorderStyle;
+  if (dirty.has('paneSwitchBorderSpeed')) update.pane_switch_border_speed = draft.paneSwitchBorderSpeed;
   return update;
 }
 
@@ -661,6 +671,35 @@ export function ConfigPage({ config, send }: Props) {
                   update('paneSwitchDuration', value);
                   setPaneSwitchPreviewKey((key) => key + 1);
                 }}
+              />
+              <Field>
+                <FieldLabel htmlFor="pane-switch-border">Pane-switch border draw</FieldLabel>
+                <Select
+                  value={draft.paneSwitchBorderStyle || 'none'}
+                  onValueChange={(value) => update('paneSwitchBorderStyle', value)}
+                >
+                  <SelectTrigger id="pane-switch-border" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">None</SelectItem>
+                      {PANE_BORDER_STYLES.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <RangeField
+                label="Pane-switch border speed (seconds)"
+                value={draft.paneSwitchBorderSpeed}
+                min={0.05}
+                max={3}
+                step={0.05}
+                onChange={(value) => update('paneSwitchBorderSpeed', value)}
               />
               <Button
                 type="button"

@@ -1,18 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Terminal, FitAddon } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { PaneTitleBar } from './PaneTitleBar';
-import { withAlpha } from '../lib/chrome-colors';
+import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders';
+import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
 import { baseShaderSrc } from '../lib/baseShader';
 import { pumpRenders } from '../lib/pumpRenders';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import {
   CONFIG_DEFAULTS,
   getAnimations,
+  getPaneSwitchBorderSpeed,
+  getPaneSwitchBorderStyle,
   getPaneSwitchDuration,
   getPaneSwitchIntensity,
   getShowPaneTitles,
@@ -478,6 +481,28 @@ export function TerminalPane({
     );
   }, [isActive, visible, config?.animations, paneSwitchEffect]);
 
+  // One-shot border-draw effect on the pane you switch to (`pane-switch-border`,
+  // style-selectable, `trace` by default; null = disabled). Pure CSS/SVG, keyed
+  // on this nonce so the element remounts and replays on every activation. Same
+  // activation transitions as the pane-switch shader above: pane-to-pane nav,
+  // and a window/session switch (where the newly active pane goes visible+active
+  // in one update). The nonce doubles as a mounted flag — bumped on activation,
+  // cleared once the draw+fade has run so an idle pane carries no leftover node.
+  const paneSwitchBorderStyleId = getPaneSwitchBorderStyle(config);
+  const paneSwitchBorderStyle = paneSwitchBorderStyleId ? findPaneBorderStyle(paneSwitchBorderStyleId) : null;
+  const paneSwitchBorderSpeed = getPaneSwitchBorderSpeed(config);
+  const [borderTraceNonce, setBorderTraceNonce] = useState(0);
+  const prevIsActiveForBorderTrace = useRef(isActive);
+  useEffect(() => {
+    const wasActive = prevIsActiveForBorderTrace.current;
+    prevIsActiveForBorderTrace.current = isActive;
+    if (wasActive || !isActive || !visible) return;
+    if (!paneSwitchBorderStyle || !getAnimations(config)) return;
+    setBorderTraceNonce((nonce) => nonce + 1);
+    const done = setTimeout(() => setBorderTraceNonce(0), (paneSwitchBorderSpeed + 0.35) * 1000);
+    return () => clearTimeout(done);
+  }, [isActive, visible, config?.animations, paneSwitchBorderStyleId, paneSwitchBorderSpeed]);
+
   // Hide cursor on inactive panes by blending it into the background.
   // term.options.theme is unsupported after open(); go directly to the renderer.
   useEffect(() => {
@@ -539,6 +564,11 @@ export function TerminalPane({
   const borderInactive = config?.theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
   const borderZoomed = config?.theme?.magenta ?? DEFAULT_THEME.magenta;
   const borderColor = isZoomed ? borderZoomed : isActive ? borderActive : borderInactive;
+  // Brighter than the resting focus ring so the draw reads as motion on top of
+  // the (already accent-colored) static border; `borderEdgeColor` is the near-
+  // white leading edge for the `sweep` style.
+  const borderTraceColor = mix(borderColor, config?.theme?.foreground ?? DEFAULT_THEME.foreground, 0.55);
+  const borderEdgeColor = mix(borderColor, '#ffffff', 0.7);
   const animations = getAnimations(config);
   const showTitle = getShowPaneTitles(config);
   const termFont = getTerminalFontSize(config);
@@ -608,6 +638,61 @@ export function TerminalPane({
           }}
         />
       )}
+      {/* One-shot pane-switch border draw. Keyed on the nonce so React remounts
+          the element (restarting its CSS animation) on each activation. `trace`
+          is an SVG stroke wound counter-clockwise (pathLength 100, offset 100→0);
+          the other styles are border-image gradient draws driven by the custom
+          props set below. See lib/paneSwitchBorder.ts. */}
+      {borderTraceNonce > 0 &&
+        animations &&
+        paneSwitchBorderStyle &&
+        (isActive || isZoomed) &&
+        (paneSwitchBorderStyle.render === 'svg' ? (
+          <svg
+            key={borderTraceNonce}
+            aria-hidden
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            style={{
+              position: 'absolute',
+              top: 1,
+              left: 1,
+              width: 'calc(100% - 2px)',
+              height: 'calc(100% - 2px)',
+              pointerEvents: 'none',
+              overflow: 'visible',
+              zIndex: 2,
+            }}
+          >
+            <path
+              d="M0 0 L0 100 L100 100 L100 0 Z"
+              fill="none"
+              stroke={borderTraceColor}
+              strokeWidth={2.5}
+              strokeLinecap="square"
+              vectorEffect="non-scaling-stroke"
+              pathLength={100}
+              style={{
+                strokeDasharray: 100,
+                filter: `drop-shadow(0 0 6px ${withAlpha(borderColor, 0.9)}) drop-shadow(0 0 2px ${withAlpha(borderColor, 0.7)})`,
+                animation: `btm-pane-border-trace ${paneSwitchBorderSpeed}s linear forwards, btm-fade-out .25s linear ${paneSwitchBorderSpeed}s forwards`,
+              }}
+            />
+          </svg>
+        ) : (
+          <div
+            key={borderTraceNonce}
+            aria-hidden
+            className={`btm-pane-border ${paneSwitchBorderStyle.className}`}
+            style={
+              {
+                '--btm-border-speed': `${paneSwitchBorderSpeed}s`,
+                '--btm-border-color': borderTraceColor,
+                '--btm-border-edge': borderEdgeColor,
+              } as CSSProperties
+            }
+          />
+        ))}
       {/* The terminal fills the space below the (optional) title bar. inset-style
           padding around it keeps a small gutter so glyphs don't touch the border. */}
       <div

@@ -19,6 +19,8 @@ export const CONFIG_DEFAULTS = {
   wallpaperFollowsKeyboard: false,
   paneSwitchIntensity: 0.25,
   paneSwitchDuration: 0.5,
+  paneSwitchBorder: 'wipe' as string | null,
+  paneSwitchBorderSpeed: 0.1,
   sessionSort: 'mru' as const,
   windowSort: 'alphabetical' as const,
   windowGridCount: 4,
@@ -113,6 +115,16 @@ export function getPaneSwitchIntensity(config: ConfigLike): number {
 
 export function getPaneSwitchDuration(config: ConfigLike): number {
   return config?.pane_switch_duration ?? CONFIG_DEFAULTS.paneSwitchDuration;
+}
+
+export function getPaneSwitchBorderStyle(config: ConfigLike): string | null {
+  // Once connected, preserve an explicit null (border disabled). Fall back to
+  // the default style only before the first config message arrives.
+  return config ? config.pane_switch_border : CONFIG_DEFAULTS.paneSwitchBorder;
+}
+
+export function getPaneSwitchBorderSpeed(config: ConfigLike): number {
+  return config?.pane_switch_border_speed ?? CONFIG_DEFAULTS.paneSwitchBorderSpeed;
 }
 
 export function getSessionSort(config: ConfigLike): ClientConfig['session_sort'] {

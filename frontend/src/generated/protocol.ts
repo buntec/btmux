@@ -117,6 +117,16 @@ pane_switch_intensity: number,
  */
 pane_switch_duration: number, 
 /**
+ * Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
+ * in the file). The frontend also gates this on `animations`.
+ */
+pane_switch_border: string | null, 
+/**
+ * Resolved seconds for the pane-switch border draw (default 0.10, clamped
+ * 0.05–3.0).
+ */
+pane_switch_border_speed: number, 
+/**
  * Sort order for the session list on the landing page.
  */
 session_sort: SessionSort, 
@@ -163,7 +173,11 @@ session_view_shader?: string,
 /**
  * Pane-switch effect name; the empty string falls back to the default.
  */
-pane_switch_shader?: string, pane_switch_intensity?: number, pane_switch_duration?: number, };
+pane_switch_shader?: string, pane_switch_intensity?: number, pane_switch_duration?: number, 
+/**
+ * Border-draw style name; `"none"` (or the empty string) disables it.
+ */
+pane_switch_border?: string, pane_switch_border_speed?: number, };
 
 // prettier-ignore
 export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "run_command", command: string, session_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };

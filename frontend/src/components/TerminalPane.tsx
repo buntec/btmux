@@ -138,6 +138,8 @@ export function TerminalPane({
 
   const config = useStore((s) => s.config);
   const overlay = useStore((s) => s.overlay);
+  const windowGridOpen = useStore((s) => s.windowGridOpen);
+  const switcherOpen = useStore((s) => s.switcherOpen);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const termOptions = useTerminalOptions(config);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -159,10 +161,12 @@ export function TerminalPane({
     term.loadAddon(fitAddon);
     term.open(container);
     // ghostty-web's open() auto-focuses (and schedules a deferred setTimeout(0)
-    // focus); undo both if an overlay is active so the picker keeps focus.
+    // focus); undo both if another surface owns the keyboard. This also covers a
+    // terminal mounted by a server state update while the session switcher or
+    // window grid is open.
     const shouldBlurOnOpen = () => {
       const s = useStore.getState();
-      return !!s.overlay || (s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
+      return !!s.overlay || s.windowGridOpen || s.switcherOpen || (s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
     };
     if (shouldBlurOnOpen()) {
       term.blur();
@@ -518,7 +522,8 @@ export function TerminalPane({
 
   // Focus when this pane becomes active (false→true transition, including mount),
   // when its initial replay finishes, or when an overlay closes while this pane
-  // is active. Blur when it is inactive or not yet ready for keyboard input.
+  // is active. Blur when it is inactive, not yet ready for keyboard input, or a
+  // modal surface owns the keyboard.
   // Tracking the previous value prevents the old active pane from re-stealing
   // focus while a select_pane command is still in flight to the server.
   // Note: ghostty-web's open() auto-focuses every terminal as it mounts (and
@@ -539,9 +544,9 @@ export function TerminalPane({
     prevFileBrowser.current = fileBrowserOpen;
     prevInitialReplayRendered.current = initialReplayRendered;
 
-    const anyOverlay = overlay || fileBrowserOpen;
+    const keyboardOwnedElsewhere = overlay || windowGridOpen || switcherOpen || fileBrowserOpen;
 
-    if (!isActive || anyOverlay || !initialReplayRendered) {
+    if (!isActive || keyboardOwnedElsewhere || !initialReplayRendered) {
       termRef.current?.blur();
       return;
     }
@@ -552,7 +557,7 @@ export function TerminalPane({
     if (becameActive || replayFinished || overlayClosed) {
       termRef.current?.focus();
     }
-  }, [isActive, overlay, fileBrowserOpen, initialReplayRendered]);
+  }, [isActive, overlay, windowGridOpen, switcherOpen, fileBrowserOpen, initialReplayRendered]);
 
   // When the user clicks this pane, tell the backend to make it active so the
   // border and server-side state stay in sync with DOM focus.

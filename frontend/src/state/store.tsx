@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Terminal } from 'ghostty-web';
 import { SessionState, SessionSummary, ClientConfig, Overlay } from './types';
-import type { NotificationLevel } from '../protocol/messages';
+import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { ToastCard } from '../components/ToastCard';
 
 export interface PaneNotification {
@@ -56,6 +56,9 @@ interface AppStore {
   // Lets code outside the router — the control socket's OS-notification onclick —
   // do SPA navigation. Non-reactive (set once, read on demand).
   navigateFn: ((path: string) => void) | null;
+  // Control sender paired with navigateFn so notification clicks can activate
+  // the server-authoritative window and pane before changing the route.
+  controlSendFn: ((message: ClientMessage) => void) | null;
   setSessions: (sessions: SessionSummary[]) => void;
   setAllSessions: (allSessions: SessionState[]) => void;
   setConfig: (config: ClientConfig) => void;
@@ -72,7 +75,8 @@ interface AppStore {
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
   setFileBrowserOpen: (open: boolean, cwd?: string | null, paneId?: string | null) => void;
-  setNavigateFn: (fn: (path: string) => void) => void;
+  setNavigateFn: (fn: ((path: string) => void) | null) => void;
+  setControlSendFn: (fn: ((message: ClientMessage) => void) | null) => void;
   // Navigate to the window containing a pane, if it can be located.
   navigateToPane: (paneId: string) => void;
   // Derive a session snapshot by id from allSessions
@@ -97,6 +101,7 @@ export const useStore = create<AppStore>((set, get) => ({
   terminals: new Map(),
   notifications: new Map(),
   navigateFn: null,
+  controlSendFn: null,
   setSessions: (sessions) => set({ sessions }),
   setAllSessions: (allSessions) => set({ allSessions }),
   setConfig: (config) => {
@@ -156,12 +161,17 @@ export const useStore = create<AppStore>((set, get) => ({
       return { notifications: next };
     }),
   setNavigateFn: (fn) => set({ navigateFn: fn }),
+  setControlSendFn: (fn) => set({ controlSendFn: fn }),
   navigateToPane: (paneId) => {
-    const { allSessions, navigateFn } = get();
-    if (!navigateFn) return;
+    const { allSessions, navigateFn, controlSendFn } = get();
+    if (!navigateFn || !controlSendFn) return;
     for (const session of allSessions) {
-      for (const win of session.windows) {
+      for (const [windowIndex, win] of session.windows.entries()) {
         if (win.panes.some((p) => p.id === paneId)) {
+          // select_pane targets the session's active window, so these commands
+          // must stay ordered on the same control socket.
+          controlSendFn({ type: 'switch_window', session_id: session.id, index: windowIndex });
+          controlSendFn({ type: 'select_pane', session_id: session.id, pane_id: paneId });
           navigateFn(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(win.name)}`);
           return;
         }

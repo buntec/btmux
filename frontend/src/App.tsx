@@ -190,9 +190,15 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   // Expose the router's navigate to code outside <BrowserRouter> (the control
   // socket's OS-notification onclick) so clicking a notification jumps to the pane.
   const setNavigateFn = useStore((s) => s.setNavigateFn);
+  const setControlSendFn = useStore((s) => s.setControlSendFn);
   useEffect(() => {
     setNavigateFn((path) => navigate(path));
-  }, [navigate, setNavigateFn]);
+    setControlSendFn(send);
+    return () => {
+      setNavigateFn(null);
+      setControlSendFn(null);
+    };
+  }, [navigate, send, setNavigateFn, setControlSendFn]);
 
   // On cold load at /, auto-redirect to the last known session for this tab.
   // If sessionStorage already has a last-session entry, the user has visited a

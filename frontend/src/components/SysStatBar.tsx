@@ -8,6 +8,23 @@ interface Props {
   font: number;
 }
 
+const NETWORK_SATURATION_FLOOR_BPS = 1_000;
+const NETWORK_FULL_SATURATION_BPS = 10_000_000;
+
+/**
+ * Map bytes/s onto a perceptual 0–1 saturation scale. Network rates span many
+ * orders of magnitude, so a logarithmic curve keeps light interactive traffic
+ * visible while reserving full color for sustained transfers.
+ */
+function networkSaturation(bytesPerSecond: number): number {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return 0;
+  return Math.min(
+    1,
+    Math.log1p(bytesPerSecond / NETWORK_SATURATION_FLOOR_BPS) /
+      Math.log1p(NETWORK_FULL_SATURATION_BPS / NETWORK_SATURATION_FLOOR_BPS),
+  );
+}
+
 function fmtBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)}G`;
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)}M`;
@@ -84,6 +101,8 @@ export function SysStatBar({ c, barH, font }: Props) {
   const memBarW = Math.round(barH * 0.9);
   const memFillW = Math.round(memBarW * memPct);
   const innerH = Math.round(barH * 0.55);
+  const netRxSaturation = networkSaturation(stats.net_rx);
+  const netTxSaturation = networkSaturation(stats.net_tx);
 
   return (
     <div
@@ -136,9 +155,30 @@ export function SysStatBar({ c, barH, font }: Props) {
       {/* Network */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: c.fgDim }}>
         <span style={{ fontSize: `${Math.max(8, font - 1)}px`, letterSpacing: '.03em' }}>NET</span>
-        <span style={{ color: c.accent, fontSize: `${Math.max(8, font - 1)}px` }}>↓</span>
+        <span
+          title={`Receive: ${fmtBytes(stats.net_rx)}/s`}
+          style={{
+            color: c.accent,
+            filter: `saturate(${netRxSaturation})`,
+            fontSize: `${Math.max(8, font - 1)}px`,
+            transition: 'filter 200ms ease-out',
+          }}
+        >
+          ↓
+        </span>
         <span style={{ color: c.fgMuted, minWidth: '4ch', textAlign: 'right' }}>{fmtBytes(stats.net_rx)}</span>
-        <span style={{ color: c.warn, fontSize: `${Math.max(8, font - 1)}px`, marginLeft: '2px' }}>↑</span>
+        <span
+          title={`Transmit: ${fmtBytes(stats.net_tx)}/s`}
+          style={{
+            color: c.warn,
+            filter: `saturate(${netTxSaturation})`,
+            fontSize: `${Math.max(8, font - 1)}px`,
+            marginLeft: '2px',
+            transition: 'filter 200ms ease-out',
+          }}
+        >
+          ↑
+        </span>
         <span style={{ color: c.fgMuted, minWidth: '4ch', textAlign: 'right' }}>{fmtBytes(stats.net_tx)}</span>
       </div>
     </div>

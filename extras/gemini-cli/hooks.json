@@ -1,5 +1,18 @@
 {
   "hooks": {
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "name": "btmux-agent-working",
+            "type": "command",
+            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "timeout": 5000,
+            "description": "Report agent turns starting in the containing btmux pane"
+          }
+        ]
+      }
+    ],
     "AfterAgent": [
       {
         "hooks": [

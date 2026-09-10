@@ -69,6 +69,46 @@ impl Window {
 pub struct Pane {
     pub id: Uuid,
     pub pty: PtyHandle,
+    /// Server-authoritative semantic status for an agent running in this pane.
+    /// It is separate from transient notifications, which are UI attention
+    /// events rather than durable pane state.
+    pub agent_status: AgentStatus,
+}
+
+/// Lifecycle states for an agent occupying a pane.
+///
+/// This intentionally follows Herdr's small semantic vocabulary. Failure and
+/// permission details belong in the accompanying message/notification instead
+/// of multiplying lifecycle states.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum AgentState {
+    Unknown,
+    Idle,
+    Working,
+    Blocked,
+    Done,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct AgentStatus {
+    pub state: AgentState,
+    pub agent: Option<String>,
+    pub source: Option<String>,
+    pub message: Option<String>,
+}
+
+impl Default for AgentStatus {
+    fn default() -> Self {
+        Self {
+            state: AgentState::Unknown,
+            agent: None,
+            source: None,
+            message: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -77,6 +117,8 @@ pub struct PaneSnapshot {
     pub id: Uuid,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub agent_status: AgentStatus,
 }
 
 /// One entry per session for the StatusBar and the session picker.

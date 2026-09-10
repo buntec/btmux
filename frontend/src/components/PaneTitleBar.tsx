@@ -1,5 +1,6 @@
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import type { Theme } from '../state/types';
+import type { AgentState, AgentStatus, Theme } from '../state/types';
+import { DEFAULT_THEME } from '../state/defaultTheme';
 
 /**
  * Height of a pane title bar for a given terminal font size. TerminalPane insets
@@ -28,6 +29,7 @@ interface Props {
   index: number;
   title: string | null | undefined;
   cwd: string | null | undefined;
+  agentStatus?: AgentStatus;
   cols: number | null;
   rows: number | null;
   isActive: boolean;
@@ -42,7 +44,18 @@ interface Props {
  * brighter fill; inactive panes get a muted badge and a status dot. Fully
  * theme-driven via `chromePalette`.
  */
-export function PaneTitleBar({ theme, index, title, cwd, cols, rows, isActive, notificationColor, termFont }: Props) {
+export function PaneTitleBar({
+  theme,
+  index,
+  title,
+  cwd,
+  agentStatus,
+  cols,
+  rows,
+  isActive,
+  notificationColor,
+  termFont,
+}: Props) {
   const c = chromePalette(theme);
   const font = chromeFont(termFont);
   const height = paneTitleHeight(termFont);
@@ -105,6 +118,7 @@ export function PaneTitleBar({ theme, index, title, cwd, cols, rows, isActive, n
         </span>
       )}
       <span style={{ flex: 1 }} />
+      <AgentStatusBadge theme={theme} status={agentStatus} />
       {notificationColor ? (
         <span
           style={{
@@ -126,4 +140,81 @@ export function PaneTitleBar({ theme, index, title, cwd, cols, rows, isActive, n
       ) : null}
     </div>
   );
+}
+
+export function AgentStatusBadge({
+  theme,
+  status,
+  overlay = false,
+}: {
+  theme: Theme | null;
+  status?: AgentStatus;
+  overlay?: boolean;
+}) {
+  const c = chromePalette(theme);
+  if (!status || status.state === 'unknown') return null;
+  const label = status.state;
+
+  const color = agentStateColor(status.state, c, theme);
+  return (
+    <span
+      title={status.message ?? undefined}
+      aria-label={`Agent ${status.agent ? `${status.agent} ` : ''}${label}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        color,
+        fontSize: overlay ? '11px' : 'inherit',
+        fontWeight: 700,
+        textTransform: 'lowercase',
+        flex: 'none',
+        ...(overlay
+          ? {
+              position: 'absolute',
+              top: '7px',
+              right: '8px',
+              zIndex: 3,
+              padding: '2px 6px',
+              border: `1px solid ${withAlpha(color, 0.45)}`,
+              borderRadius: '4px',
+              background: withAlpha(c.barBg, 0.92),
+              pointerEvents: 'none',
+            }
+          : {}),
+      }}
+    >
+      <span
+        style={{
+          width: '6px',
+          height: '6px',
+          borderRadius: '50%',
+          background: color,
+          boxShadow: `0 0 6px ${withAlpha(color, 0.55)}`,
+        }}
+      />
+      {status.agent ? `${status.agent} ` : ''}
+      {label}
+    </span>
+  );
+}
+
+function agentStateColor(
+  state: AgentState | undefined,
+  chrome: ReturnType<typeof chromePalette>,
+  theme: Theme | null,
+): string {
+  const t = theme ?? DEFAULT_THEME;
+  switch (state) {
+    case 'blocked':
+      return t.yellow;
+    case 'working':
+      return t.blue;
+    case 'done':
+      return t.green;
+    case 'idle':
+      return chrome.fgMuted;
+    default:
+      return chrome.fgDim;
+  }
 }

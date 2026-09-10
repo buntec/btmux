@@ -12,6 +12,8 @@ export type {
   Theme,
   SessionSort,
   WindowSort,
+  AgentState,
+  AgentStatus,
   FontEntry,
   ClientConfig,
 } from '../generated/protocol';

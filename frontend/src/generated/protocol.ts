@@ -4,7 +4,13 @@
 export type Layout = { "type": "leaf", pane_id: string, } | { "type": "v_split", id: string, ratio: number, left: Layout, right: Layout, } | { "type": "h_split", id: string, ratio: number, top: Layout, bottom: Layout, };
 
 // prettier-ignore
-export type PaneSnapshot = { id: string, title: string | null, cwd: string | null, };
+export type AgentState = "unknown" | "idle" | "working" | "blocked" | "done";
+
+// prettier-ignore
+export type AgentStatus = { state: AgentState, agent: string | null, source: string | null, message: string | null, };
+
+// prettier-ignore
+export type PaneSnapshot = { id: string, title: string | null, cwd: string | null, agent_status: AgentStatus, };
 
 // prettier-ignore
 export type WindowSnapshot = { id: string, name: string, panes: Array<PaneSnapshot>, active_pane: number, layout: Layout, zoomed_pane: string | null, };
@@ -180,7 +186,7 @@ pane_switch_shader?: string, pane_switch_intensity?: number, pane_switch_duratio
 pane_switch_border?: string, pane_switch_border_speed?: number, };
 
 // prettier-ignore
-export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "run_command", command: string, session_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
+export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_agent", pane_id: string, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "run_command", command: string, session_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
 export type ServerMessage = { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: ToastLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null, } | { "type": "pane_notification_clear", pane_id: string, };

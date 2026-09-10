@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::file_search::FileIndex;
+use crate::session::{AgentState, AgentStatus};
 use crate::ws;
 use crate::AppState;
 
@@ -43,6 +44,10 @@ pub fn create_app(state: AppState) -> Router {
         .route(
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify).delete(api_pane_notify_clear),
+        )
+        .route(
+            "/api/panes/{pane_id}/agent-status",
+            axum::routing::post(api_pane_agent_status).delete(api_pane_agent_status_clear),
         )
         .route("/api/file", get(serve_raw_file))
         .route("/wallpaper", get(serve_wallpaper))
@@ -167,6 +172,10 @@ struct PaneNotifyRequest {
     error: Option<String>,
     /// CC SubagentStop: agent type.
     agent_type: Option<String>,
+    /// Optional agent name for semantic status reporting.
+    agent: Option<String>,
+    /// Optional reporter identity for semantic status reporting.
+    source: Option<String>,
 }
 
 impl PaneNotifyRequest {
@@ -240,6 +249,19 @@ impl PaneNotifyRequest {
             _ => (None, None),
         }
     }
+
+    fn inferred_agent_status(&self, event: &str, body: Option<&str>) -> Option<AgentStatus> {
+        let state = infer_agent_state(event, self.notification_type.as_deref())?;
+        Some(AgentStatus {
+            state,
+            agent: clean_status_field(self.agent.clone().or_else(|| self.agent_type.clone()), 48),
+            source: clean_status_field(
+                self.source.clone().or_else(|| Some("hook".to_string())),
+                64,
+            ),
+            message: body.map(|value| truncate_msg(value, 200)),
+        })
+    }
 }
 
 fn truncate_msg(s: &str, max: usize) -> String {
@@ -262,7 +284,7 @@ async fn api_pane_notify(
     Path(pane_id): Path<Uuid>,
     Json(body): Json<PaneNotifyRequest>,
 ) -> Response {
-    let mgr = state.read().await;
+    let mut mgr = state.write().await;
     if mgr.find_pane(pane_id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -270,6 +292,16 @@ async fn api_pane_notify(
     let event = body.resolve_event();
     let level = body.level.unwrap_or_else(|| infer_level(&event));
     let (title, notif_body) = body.resolve_title_body(&event);
+
+    if let Some(mut status) = body.inferred_agent_status(&event, notif_body.as_deref()) {
+        if let Some(current) = mgr.find_pane(pane_id) {
+            status.agent = status.agent.or_else(|| current.agent_status.agent.clone());
+            status.source = status
+                .source
+                .or_else(|| current.agent_status.source.clone());
+        }
+        mgr.set_agent_status(pane_id, status);
+    }
 
     tracing::info!(
         pane_id = %pane_id,
@@ -287,6 +319,7 @@ async fn api_pane_notify(
         body: notif_body,
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    ws::control::broadcast_state(&mgr);
 
     StatusCode::NO_CONTENT.into_response()
 }
@@ -304,6 +337,77 @@ async fn api_pane_notify_clear(
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
 
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+struct PaneAgentStatusRequest {
+    state: AgentState,
+    agent: Option<String>,
+    source: Option<String>,
+    message: Option<String>,
+}
+
+async fn api_pane_agent_status(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+    Json(body): Json<PaneAgentStatusRequest>,
+) -> Response {
+    let mut mgr = state.write().await;
+    if mgr.find_pane(pane_id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    mgr.set_agent_status(
+        pane_id,
+        AgentStatus {
+            state: body.state,
+            agent: clean_status_field(body.agent, 48),
+            source: clean_status_field(body.source, 64),
+            message: clean_status_field(body.message, 200),
+        },
+    );
+    ws::control::broadcast_state(&mgr);
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn api_pane_agent_status_clear(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+) -> Response {
+    let mut mgr = state.write().await;
+    if mgr.find_pane(pane_id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    mgr.set_agent_status(pane_id, AgentStatus::default());
+    ws::control::broadcast_state(&mgr);
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
+fn clean_status_field(value: Option<String>, max: usize) -> Option<String> {
+    let value = value?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| truncate_msg(value, max))
+}
+
+fn infer_agent_state(event: &str, notification_type: Option<&str>) -> Option<AgentState> {
+    match event {
+        "UserPromptSubmit" | "BeforeAgent" | "BeforeModel" => Some(AgentState::Working),
+        "SubagentStop" => Some(AgentState::Working),
+        "PermissionRequest" => Some(AgentState::Blocked),
+        "Stop" | "AfterAgent" | "TaskCompleted" | "StopFailure" => Some(AgentState::Done),
+        "Notification"
+            if notification_type.is_some_and(|value| {
+                let value = value.to_ascii_lowercase();
+                value.contains("permission") || value.contains("approval")
+            }) =>
+        {
+            Some(AgentState::Blocked)
+        }
+        _ => None,
+    }
 }
 
 /// Map well-known agent-harness hook events to notification severity.
@@ -370,6 +474,24 @@ mod pane_notification_tests {
                 Some("Approval required".to_string())
             )
         );
+    }
+
+    #[test]
+    fn infers_semantic_agent_states_from_hook_events() {
+        assert_eq!(
+            infer_agent_state("UserPromptSubmit", None),
+            Some(AgentState::Working)
+        );
+        assert_eq!(
+            infer_agent_state("PermissionRequest", None),
+            Some(AgentState::Blocked)
+        );
+        assert_eq!(infer_agent_state("Stop", None), Some(AgentState::Done));
+        assert_eq!(
+            infer_agent_state("Notification", Some("ToolPermission")),
+            Some(AgentState::Blocked)
+        );
+        assert_eq!(infer_agent_state("Notification", Some("Progress")), None);
     }
 }
 

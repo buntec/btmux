@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Terminal, FitAddon } from 'ghostty-web';
 import { useStore } from '../state/store';
-import { LayoutRect, ClientConfig } from '../state/types';
+import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
-import { PaneTitleBar } from './PaneTitleBar';
+import { AgentStatusBadge, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
@@ -33,6 +33,8 @@ interface Props {
   title?: string | null;
   /** Pane working directory (OSC 7), shown in the title bar. */
   cwd?: string | null;
+  /** Server-authoritative semantic status for an agent in this pane. */
+  agentStatus?: AgentStatus;
   /** 0-based pane index within its window (layout order), shown as the badge. */
   paneIndex?: number;
   /**
@@ -115,6 +117,7 @@ export function TerminalPane({
   isActive,
   title,
   cwd,
+  agentStatus,
   paneIndex,
   visible,
   isZoomed = false,
@@ -621,6 +624,7 @@ export function TerminalPane({
           index={paneIndex ?? 0}
           title={title}
           cwd={cwd}
+          agentStatus={agentStatus}
           cols={dims?.cols ?? null}
           rows={dims?.rows ?? null}
           isActive={isActive}
@@ -628,6 +632,7 @@ export function TerminalPane({
           termFont={termFont}
         />
       )}
+      {!showTitle && <AgentStatusBadge theme={config?.theme ?? null} status={agentStatus} overlay />}
       {/* Focus ring — only rendered on the active/zoomed pane so mounting it
           replays btm-bloom on every focus change without needing a key trick. */}
       {(isActive || isZoomed) && (

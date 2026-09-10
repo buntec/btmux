@@ -4,7 +4,7 @@ import { useStore, PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette, mix } from '../lib/chrome-colors';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
-import type { Theme } from '../state/types';
+import type { AgentState, AgentStatus, PaneState, Theme } from '../state/types';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { SysStatBar } from './SysStatBar';
 import { getAnimations, getTerminalFontSize, getWindowSort } from '../state/configDefaults';
@@ -75,6 +75,32 @@ function windowNotificationLevel(
     if (priority.indexOf(n.level) < priority.indexOf(highest)) highest = n.level;
   }
   return highest;
+}
+
+function windowAgentStatus(panes: PaneState[]): AgentStatus | null {
+  const priority: AgentState[] = ['blocked', 'working', 'done', 'idle', 'unknown'];
+  let highest: AgentStatus | null = null;
+  for (const pane of panes) {
+    const status = pane.agent_status;
+    if (!highest || priority.indexOf(status.state) < priority.indexOf(highest.state)) {
+      highest = status;
+    }
+  }
+  return highest && highest.state !== 'unknown' ? highest : null;
+}
+
+function agentStatusColor(status: AgentStatus, theme: Theme | null): string {
+  const t = theme ?? DEFAULT_THEME;
+  switch (status.state) {
+    case 'blocked':
+      return t.yellow;
+    case 'working':
+      return t.blue;
+    case 'done':
+      return t.green;
+    default:
+      return t.brightBlack;
+  }
 }
 
 /**
@@ -248,23 +274,32 @@ export function StatusBar({ sessionId, send }: Props) {
           w.panes.map((p) => p.id),
           notifications,
         );
+        const agentStatus = windowAgentStatus(w.panes);
         const zoomGlyph = w.zoomed_pane ? <span style={{ color: c.zoom, marginLeft: '3px' }}>⛶</span> : null;
-        const dot = winLevel ? (
-          <span
-            onClick={(e) => {
-              e.stopPropagation();
-              goToWindow(index, w.name);
-            }}
-            style={{
-              color: notificationColor(winLevel, config?.theme ?? null),
-              marginLeft: '4px',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-            }}
-          >
-            ●
-          </span>
-        ) : null;
+        const dot =
+          winLevel || (agentStatus && agentStatus.state !== 'idle') ? (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                goToWindow(index, w.name);
+              }}
+              title={
+                agentStatus
+                  ? `Agent ${agentStatus.agent ? `${agentStatus.agent} ` : ''}${agentStatus.state}`
+                  : undefined
+              }
+              style={{
+                color: winLevel
+                  ? notificationColor(winLevel, config?.theme ?? null)
+                  : agentStatusColor(agentStatus!, config?.theme ?? null),
+                marginLeft: '4px',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+              }}
+            >
+              ●
+            </span>
+          ) : null;
 
         if (isActive) {
           return (

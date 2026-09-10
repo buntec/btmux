@@ -140,11 +140,16 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
     }
 
     if let ClientMessage::WritePaneInput { pane_id, text, .. } = &cmd {
-        let mgr = state.read().await;
-        if let Some(pane) = mgr.find_pane(*pane_id) {
-            return pane.pty.input_tx.send(text.as_bytes().to_vec());
+        let mut mgr = state.write().await;
+        let result = if let Some(pane) = mgr.find_pane(*pane_id) {
+            pane.pty.input_tx.send(text.as_bytes().to_vec())
+        } else {
+            return Err("Pane no longer exists".into());
+        };
+        if result.is_ok() && mgr.note_agent_input(*pane_id) {
+            broadcast_state(&mgr);
         }
-        return Err("Pane no longer exists".into());
+        return result;
     }
 
     // Command-palette settings (color scheme, font, shader) are session-only:
@@ -216,6 +221,9 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             session_id,
             pane_id,
         } => mgr.select_pane(session_id, pane_id),
+        ClientMessage::AcknowledgeAgent { pane_id } => {
+            mgr.acknowledge_agent(pane_id);
+        }
         ClientMessage::CyclePane { session_id, delta } => mgr.cycle_pane(session_id, delta),
         ClientMessage::SwapPane { session_id, delta } => mgr.swap_pane(session_id, delta),
         ClientMessage::NextLayout { session_id } => mgr.next_layout(session_id),
@@ -304,6 +312,9 @@ fn validate_command(
             return Err("Window no longer exists".into())
         }
         CapturePane { pane_id, .. } if mgr.find_pane(*pane_id).is_none() => {
+            return Err("Pane no longer exists".into())
+        }
+        AcknowledgeAgent { pane_id } if mgr.find_pane(*pane_id).is_none() => {
             return Err("Pane no longer exists".into())
         }
         SwitchWindow { index, .. }
@@ -451,6 +462,9 @@ pub(crate) enum ClientMessage {
     },
     SelectPane {
         session_id: Uuid,
+        pane_id: Uuid,
+    },
+    AcknowledgeAgent {
         pane_id: Uuid,
     },
     CyclePane {

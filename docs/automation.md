@@ -71,6 +71,7 @@ because that editor already exited — selecting a file falls back to spawning
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification            |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
+| `POST/DELETE /api/panes/<pane-id>/agent-status`                 | Set or clear semantic agent status                       |
 
 ## MCP server
 
@@ -94,6 +95,29 @@ claude mcp list
 Add `--scope user` to the first command to make it available in every project.
 The btmux server must already be running. Re-register the server if you change
 its port or token.
+
+## Semantic agent status
+
+Agent integrations can report a live lifecycle state independently from
+notifications:
+
+```sh
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
+  -X POST "${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/agent-status" \
+  -H 'Content-Type: application/json' \
+  -d '{"state":"working","agent":"codex","source":"hook"}'
+```
+
+The supported states are `unknown`, `idle`, `working`, `blocked`, and `done`.
+`done` becomes `idle` when the pane is viewed, while input to a `blocked` pane
+automatically moves it back to `working`. The existing `/notify` endpoint also
+maps known hook events: prompt-start events to `working`, permission requests to
+`blocked`, and completion or failure events to `done`.
+
+Use `DELETE` on the same endpoint when the reporter no longer knows which agent
+is in the pane. Status is broadcast through the normal server-authoritative
+state snapshot, so all connected browser tabs see the same value.
+The status resets when btmux restarts.
 
 ## Agent hook notifications
 

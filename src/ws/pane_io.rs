@@ -146,6 +146,10 @@ async fn handle_socket(
                     if input_tx.send_wait(data.to_vec()).await.is_err() {
                         break;
                     }
+                    let mut mgr = state.write().await;
+                    if mgr.note_agent_input(pane_id) {
+                        crate::ws::control::broadcast_state(&mgr);
+                    }
                 }
                 Message::Text(text) => {
                     if let Ok(resize) = serde_json::from_str::<ResizeMsg>(&text) {
@@ -155,8 +159,14 @@ async fn handle_socket(
                                 pane.pty.resize_viewer(viewer_id, resize.cols, resize.rows);
                             }
                         }
-                    } else if input_tx.send_wait(text.as_bytes().to_vec()).await.is_err() {
-                        break;
+                    } else {
+                        if input_tx.send_wait(text.as_bytes().to_vec()).await.is_err() {
+                            break;
+                        }
+                        let mut mgr = state.write().await;
+                        if mgr.note_agent_input(pane_id) {
+                            crate::ws::control::broadcast_state(&mgr);
+                        }
                     }
                 }
                 _ => {}

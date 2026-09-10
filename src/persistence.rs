@@ -93,11 +93,79 @@ pub fn save(path: &Path, snapshots: &[SessionSnapshot]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let json = serde_json::to_string(snapshots).map_err(|e| e.to_string())?;
+    let json = serialize_snapshots(snapshots)?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> {
+    let mut value = serde_json::to_value(snapshots).map_err(|e| e.to_string())?;
+    for session in value
+        .as_array_mut()
+        .expect("session snapshots serialize as an array")
+    {
+        for window in session["windows"]
+            .as_array_mut()
+            .expect("window snapshots serialize as an array")
+        {
+            for pane in window["panes"]
+                .as_array_mut()
+                .expect("pane snapshots serialize as an array")
+            {
+                pane.as_object_mut()
+                    .expect("pane snapshots serialize as an object")
+                    .remove("agent_status");
+            }
+        }
+    }
+    serde_json::to_string(&value).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod agent_status_tests {
+    use super::*;
+    use crate::session::{
+        layout::Layout, manager::WindowSnapshot, AgentState, AgentStatus, PaneSnapshot,
+    };
+    use uuid::Uuid;
+
+    #[test]
+    fn excludes_live_agent_status_from_saved_state() {
+        let pane_id = Uuid::new_v4();
+        let snapshots = vec![SessionSnapshot {
+            id: Uuid::new_v4(),
+            name: "test".to_string(),
+            windows: vec![WindowSnapshot {
+                id: Uuid::new_v4(),
+                name: "shell".to_string(),
+                panes: vec![PaneSnapshot {
+                    id: pane_id,
+                    title: None,
+                    cwd: None,
+                    agent_status: AgentStatus {
+                        state: AgentState::Blocked,
+                        agent: Some("codex".to_string()),
+                        source: Some("hook".to_string()),
+                        message: Some("private prompt".to_string()),
+                    },
+                }],
+                active_pane: 0,
+                layout: Layout::Leaf { pane_id },
+                zoomed_pane: None,
+            }],
+            active_window: 0,
+        }];
+        let json = serialize_snapshots(&snapshots).unwrap();
+        assert!(!json.contains("agent_status"));
+        assert!(!json.contains("private prompt"));
+        let restored: Vec<SessionSnapshot> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored[0].windows[0].panes[0].agent_status.state,
+            AgentState::Unknown
+        );
+    }
 }
 
 /// Held for the lifetime of the server. The lock file must never be unlinked:

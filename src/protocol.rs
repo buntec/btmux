@@ -6,12 +6,16 @@ use ts_rs::TS;
 fn generated_protocol_is_current() {
     use crate::{
         config::*,
-        session::{layout::Layout, manager::*, PaneSnapshot, SessionSummary},
+        session::{
+            layout::Layout, manager::*, AgentState, AgentStatus, PaneSnapshot, SessionSummary,
+        },
         ws::control::*,
     };
     let config = ts_rs::Config::default();
     let declarations = [
         Layout::decl(&config),
+        AgentState::decl(&config),
+        AgentStatus::decl(&config),
         PaneSnapshot::decl(&config),
         WindowSnapshot::decl(&config),
         SessionSnapshot::decl(&config),

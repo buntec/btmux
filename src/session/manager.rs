@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{
     layout::{Layout, LayoutPreset},
-    Pane, PaneSnapshot, Session, SessionSummary, Window,
+    AgentState, AgentStatus, Pane, PaneSnapshot, Session, SessionSummary, Window,
 };
 use crate::config::{ClientConfig, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
@@ -191,6 +191,7 @@ impl SessionManager {
             id: pane_id,
             pty,
             editor_addr: None,
+            agent_status: AgentStatus::default(),
         };
         let wname = window_name
             .unwrap_or_else(|| self.unique_window_name_in(&[], &shell_name(&self.shell)));
@@ -245,6 +246,43 @@ impl SessionManager {
         None
     }
 
+    pub fn set_agent_status(&mut self, pane_id: Uuid, status: AgentStatus) -> bool {
+        let Some(pane) = self.find_pane_mut(pane_id) else {
+            return false;
+        };
+        pane.agent_status = status;
+        true
+    }
+
+    /// Mark a completed agent as seen by the shared btmux clients. Other
+    /// lifecycle states remain untouched because focusing a pane does not mean
+    /// that work has stopped or that a blocked prompt was answered.
+    pub fn acknowledge_agent(&mut self, pane_id: Uuid) -> bool {
+        let Some(pane) = self.find_pane_mut(pane_id) else {
+            return false;
+        };
+        if pane.agent_status.state == AgentState::Done {
+            pane.agent_status.state = AgentState::Idle;
+            pane.agent_status.message = None;
+            return true;
+        }
+        false
+    }
+
+    /// User input is the acknowledgement of a blocked agent prompt. Treat it
+    /// as the next working turn while preserving the reporter identity.
+    pub fn note_agent_input(&mut self, pane_id: Uuid) -> bool {
+        let Some(pane) = self.find_pane_mut(pane_id) else {
+            return false;
+        };
+        if pane.agent_status.state == AgentState::Blocked {
+            pane.agent_status.state = AgentState::Working;
+            pane.agent_status.message = None;
+            return true;
+        }
+        false
+    }
+
     fn session_mut(&mut self, session_id: Uuid) -> Option<&mut Session> {
         self.sessions.iter_mut().find(|s| s.id == session_id)
     }
@@ -272,6 +310,7 @@ impl SessionManager {
             id: new_pane_id,
             pty,
             editor_addr: None,
+            agent_status: AgentStatus::default(),
         };
 
         let Some(session) = self.session_mut(session_id) else {
@@ -484,6 +523,7 @@ impl SessionManager {
             id: pane_id,
             pty,
             editor_addr: None,
+            agent_status: AgentStatus::default(),
         };
         let base = name.unwrap_or_else(|| shell_name(&self.shell));
 
@@ -835,6 +875,9 @@ impl SessionManager {
                     id: p.id,
                     pty,
                     editor_addr: None,
+                    // The restored shell is a new process, so never carry a
+                    // stale status from the saved tree into it.
+                    agent_status: AgentStatus::default(),
                 }
             })
             .collect();
@@ -883,6 +926,7 @@ impl SessionManager {
                             id: p.id,
                             title: p.pty.title.lock().unwrap().clone(),
                             cwd: p.pty.effective_cwd(),
+                            agent_status: p.agent_status.clone(),
                         })
                         .collect(),
                     active_pane: w.active_pane,

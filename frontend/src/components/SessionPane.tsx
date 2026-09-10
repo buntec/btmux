@@ -56,6 +56,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const activeWindow = session ? windows[session.active_window] : undefined;
   const activePaneId = activeWindow?.panes[activeWindow.active_pane]?.id ?? null;
   const zoomedPaneId = activeWindow?.zoomed_pane ?? null;
+  const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
+  const focusedAgentState = focusedPane?.agent_status.state ?? null;
 
   // Lazy-but-sticky pool membership. We don't mount *every* window's panes the
   // instant a session is entered — that would just move the mount-cost burst to
@@ -126,6 +128,9 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
       return;
     }
     clearPaneNotification(focusId);
+    if (focusedAgentState === 'done') {
+      send({ type: 'acknowledge_agent', pane_id: focusId });
+    }
     const id = window.setTimeout(() => {
       registryRef.current.get(focusId)?.focus();
     }, 0);
@@ -142,6 +147,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     isActiveSession,
     settingsOpen,
     previewConfig,
+    focusedAgentState,
+    send,
     config,
     clearPaneNotification,
   ]);
@@ -255,6 +262,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
                 isActive={visible && (zoomedPaneId ? isZoomed : pane.id === activePaneId)}
                 title={pane.title}
                 cwd={pane.cwd}
+                agentStatus={pane.agent_status}
                 paneIndex={paneNumberById.get(pane.id) ?? 0}
                 visible={visible}
                 isZoomed={isZoomed}

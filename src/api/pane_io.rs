@@ -59,6 +59,10 @@ async fn api_pane_input(
         return (StatusCode::SERVICE_UNAVAILABLE, error).into_response();
     }
 
+    if mgr.note_agent_input(pane_id) {
+        crate::ws::control::broadcast_state(&mgr);
+    }
+
     Json(PaneInputResponse { newly_spawned }).into_response()
 }
 

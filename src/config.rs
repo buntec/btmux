@@ -269,9 +269,9 @@ pub struct FileConfig {
     pub terminal: TerminalOptions,
     /// Inline base16/base24 palette translated to an `ITheme` for the browser.
     pub theme: Option<BaseTheme>,
-    /// Name of a color scheme file in `~/.config/btmux/colors/` (without extension).
-    /// May also be an HTTP(S) URL to a base16/base24 YAML file. Overridden by
-    /// an inline `[theme]` if both are present.
+    /// Name of a color scheme file in `~/.config/btmux/colors/` (without extension),
+    /// an absolute or `~/`-relative local path, or an HTTP(S) URL to a base16/base24
+    /// YAML file. Overridden by an inline `[theme]` if both are present.
     pub colors: Option<String>,
     /// Parsed palette for a remote `colors` URL. This is populated while the
     /// config is loaded and is not read from or written to config.toml.
@@ -799,26 +799,56 @@ pub fn colors_dir() -> Option<PathBuf> {
     config_path().map(|p| p.parent().unwrap().join("colors"))
 }
 
-/// Load a color scheme YAML file by name from the colors directory. Forgiving:
-/// looks for base00–base0F (and optionally base10–base17) at the top level or
-/// under a `palette` key. Returns `None` if the file doesn't exist or doesn't
-/// contain the required keys.
-pub fn load_color_scheme(name: &str) -> Option<BaseTheme> {
-    let dir = colors_dir()?;
-    let yaml_path = dir.join(format!("{name}.yaml"));
-    let path = if yaml_path.exists() {
-        yaml_path
+/// Whether `colors` denotes a local file rather than a scheme name from the
+/// colors directory. Relative names remain scheme names for backwards
+/// compatibility; explicit local paths are absolute or start with `~/`.
+fn is_color_scheme_path(value: &str) -> bool {
+    std::path::Path::new(value).is_absolute() || value.starts_with("~/")
+}
+
+/// Expand an explicit local color scheme path. If HOME is unavailable, retain
+/// the original `~/` path so the read below emits a useful warning.
+fn expand_color_scheme_path(value: &str) -> PathBuf {
+    if let Some(relative) = value.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(relative))
+            .unwrap_or_else(|| PathBuf::from(value))
     } else {
-        let yml_path = dir.join(format!("{name}.yml"));
-        if yml_path.exists() {
-            yml_path
+        PathBuf::from(value)
+    }
+}
+
+/// Load a color scheme YAML file by name from the colors directory, or from an
+/// absolute/`~/`-relative path. Forgiving: looks for base00–base0F (and
+/// optionally base10–base17) at the top level or under a `palette` key. Returns
+/// `None` if the file doesn't exist or doesn't contain the required keys.
+pub fn load_color_scheme(name: &str) -> Option<BaseTheme> {
+    let path = if is_color_scheme_path(name) {
+        expand_color_scheme_path(name)
+    } else {
+        let dir = colors_dir()?;
+        let yaml_path = dir.join(format!("{name}.yaml"));
+        if yaml_path.exists() {
+            yaml_path
         } else {
-            tracing::warn!("color scheme '{name}' not found in {}", dir.display());
-            return None;
+            let yml_path = dir.join(format!("{name}.yml"));
+            if yml_path.exists() {
+                yml_path
+            } else {
+                tracing::warn!("color scheme '{name}' not found in {}", dir.display());
+                return None;
+            }
         }
     };
 
-    let contents = std::fs::read_to_string(&path).ok()?;
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            tracing::warn!("could not read color scheme '{}': {error}", path.display());
+            return None;
+        }
+    };
     let palette = parse_color_scheme(&contents);
 
     if palette.is_none() {
@@ -1127,7 +1157,8 @@ pub fn generate_config_toml() -> String {
 # file-level = "{DEFAULT_FILE_LOG}"       # file output (~/.local/state/btmux/log/btmux.log.YYYY-MM-DD)
 
 # Color scheme from ~/.config/btmux/colors/<name>.yaml (base16/base24 YAML files),
-# or a URL to a base16/base24 YAML file. A `palette` wrapper is supported.
+# an absolute or ~/relative local path, or a URL to a base16/base24 YAML file.
+# A `palette` wrapper is supported.
 # An inline [theme] below overrides this.
 # colors = "catppuccin-mocha"
 # colors = "https://example.com/theme.yml"
@@ -1260,17 +1291,25 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .clone()
         .unwrap_or_else(|| DEFAULT_WALLPAPER_SEED.to_string());
 
-    // Inline [theme] takes priority; fall back to a resolved remote palette or
-    // a local `colors` scheme file.
-    let theme = file.theme.as_ref().map(BaseTheme::to_theme).or_else(|| {
-        file.colors.as_deref().and_then(|colors| {
+    // Inline [theme] takes priority; fall back to a resolved remote palette, a
+    // local palette path, or a named scheme from the colors directory.
+    let selected_color_theme = file
+        .theme
+        .is_none()
+        .then_some(file.colors.as_deref())
+        .flatten()
+        .and_then(|colors| {
             if is_color_scheme_url(colors) {
                 file.resolved_colors.as_ref().map(BaseTheme::to_theme)
             } else {
                 load_color_scheme(colors).map(|bt| bt.to_theme())
             }
-        })
-    });
+        });
+    let theme = file
+        .theme
+        .as_ref()
+        .map(BaseTheme::to_theme)
+        .or_else(|| selected_color_theme.clone());
 
     let (wallpaper_url, wallpaper_path) = match &file.wallpaper {
         Some(raw) if raw.starts_with('/') => (
@@ -1289,8 +1328,10 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     };
 
     let mut color_schemes = list_color_schemes();
-    if let (Some(colors), Some(_)) = (&file.colors, &file.resolved_colors) {
-        if is_color_scheme_url(colors) && !color_schemes.contains(colors) {
+    if let (Some(colors), Some(_)) = (&file.colors, &selected_color_theme) {
+        if (is_color_scheme_url(colors) || is_color_scheme_path(colors))
+            && !color_schemes.contains(colors)
+        {
             color_schemes.push(colors.clone());
         }
     }
@@ -1299,9 +1340,9 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .filter(|name| !is_color_scheme_url(name))
         .filter_map(|name| load_color_scheme(name).map(|base| (name.clone(), base.to_theme())))
         .collect();
-    if let (Some(colors), Some(base)) = (&file.colors, &file.resolved_colors) {
-        if is_color_scheme_url(colors) {
-            color_scheme_themes.insert(colors.clone(), base.to_theme());
+    if let (Some(colors), Some(selected_theme)) = (&file.colors, selected_color_theme) {
+        if is_color_scheme_url(colors) || is_color_scheme_path(colors) {
+            color_scheme_themes.insert(colors.clone(), selected_theme);
         }
     }
 
@@ -1603,6 +1644,34 @@ palette:
         assert_eq!(resolved.theme.as_ref().unwrap().background, "#000000");
         assert!(resolved.color_schemes.iter().any(|scheme| scheme == url));
         assert!(resolved.color_scheme_themes.contains_key(url));
+    }
+
+    #[test]
+    fn absolute_color_scheme_file_is_used_as_the_active_theme() {
+        let path =
+            std::env::temp_dir().join(format!("btmux-color-scheme-{}.yaml", uuid::Uuid::new_v4()));
+        std::fs::write(&path, BASE24_YAML).expect("test palette should be written");
+
+        let path_string = path.to_string_lossy().into_owned();
+        let mut file = FileConfig::default();
+        file.colors = Some(path_string.clone());
+        let resolved = resolve_binds(&file);
+
+        std::fs::remove_file(&path).expect("test palette should be removed");
+        assert_eq!(
+            resolved.active_color_scheme.as_deref(),
+            Some(path_string.as_str())
+        );
+        assert_eq!(resolved.theme.as_ref().unwrap().background, "#000000");
+        assert!(resolved.color_schemes.contains(&path_string));
+        assert_eq!(
+            resolved
+                .color_scheme_themes
+                .get(&path_string)
+                .unwrap()
+                .bright_red,
+            "#ff1111"
+        );
     }
 
     #[test]

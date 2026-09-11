@@ -640,8 +640,8 @@ pub const BUNDLED_FONTS: &[FontInfo] = &[
     },
     FontInfo {
         family: "Geist Mono",
-        weight_min: 400,
-        weight_max: 700,
+        weight_min: 100,
+        weight_max: 900,
     },
     FontInfo {
         family: "Departure Mono",
@@ -1141,7 +1141,7 @@ pub fn generate_config_toml() -> String {
 # font-family = "{DEFAULT_FONT_FAMILY}"        # bundled: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", "Geist Mono", "Departure Mono"
 # font-weight = {DEFAULT_FONT_WEIGHT}           # bold = font-weight + 200 (capped at 900)
 #                              # bundled weight ranges: JetBrains Mono 100-800, Fira Code 300-700,
-#                              # Source Code Pro 200-900, Cascadia Code 200-700, Geist Mono 400-700, Departure Mono 400
+#                              # Source Code Pro 200-900, Cascadia Code 200-700, Geist Mono 100-900, Departure Mono 400
 # allow-transparency = false
 # convert-eol = false
 # disable-stdin = false

@@ -40,6 +40,7 @@ interface FileStore {
   contentSearchResults: SearchResult[];
 
   directoryTree: TreeNode | null;
+  selectedDirectory: string | null;
   treeDepth: number;
 
   isGitMode: boolean;
@@ -49,6 +50,7 @@ interface FileStore {
   gitExpandedSections: Set<string>;
 
   setDirectoryTree: (tree: TreeNode | null) => void;
+  setSelectedDirectory: (path: string | null) => void;
   setTreeDepth: (depth: number) => void;
   setCurrentPath: (path: string) => void;
   setEntries: (entries: FileEntry[]) => void;
@@ -93,6 +95,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   searchResults: [],
   contentSearchResults: [],
   directoryTree: null,
+  selectedDirectory: null,
   treeDepth: 1,
 
   isGitMode: false,
@@ -102,6 +105,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   gitExpandedSections: new Set(['staged', 'unstaged', 'untracked']),
 
   setDirectoryTree: (tree) => set({ directoryTree: tree }),
+  setSelectedDirectory: (path) => set({ selectedDirectory: path }),
   setTreeDepth: (depth) => set({ treeDepth: depth }),
   setCurrentPath: (path) => set({ currentPath: path }),
   setEntries: (entries) => set({ entries, focusedIndex: 0 }),
@@ -146,6 +150,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       filterQuery: '',
       isFilterActive: false,
       directoryTree: null,
+      selectedDirectory: null,
       treeDepth: 1,
       selectedPaths: new Set(),
       yankRegister: null,

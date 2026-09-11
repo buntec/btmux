@@ -73,7 +73,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const initialized = useRef(false);
   const gitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
-  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const [sidebarWidth, setSidebarWidth] = useState(() => Math.max(160, window.innerWidth / 3));
   const dragging = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
     null,
@@ -111,6 +111,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
       store.getState().setDirectoryTree(null);
+      store.getState().setSelectedDirectory(null);
       store.getState().setTreeDepth(1);
       try {
         const resp = await fileSend('list_dir', { root: path, path: '.' });
@@ -137,6 +138,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       if (store.getState().selectedFile === path && store.getState().fileContent !== null) return;
       const previewGen = ++filePreviewGenRef.current;
       store.getState().setSelectedFile(path);
+      store.getState().setSelectedDirectory(null);
       // Do not let the previous file's MIME type determine the new preview
       // while its content is being fetched (e.g. a PDF -> .tex transition).
       store.getState().setFileContent(null);
@@ -169,13 +171,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const selectDir = useCallback(
     async (path: string, depth?: number) => {
-      filePreviewGenRef.current += 1;
+      const previewGen = ++filePreviewGenRef.current;
       store.getState().setSelectedFile(null);
       store.getState().setFileContent(null);
+      store.getState().setSelectedDirectory(path);
+      store.getState().setDirectoryTree(null);
       const resolvedDepth = depth ?? store.getState().treeDepth;
       try {
         const resp = await fileSend('list_tree', { root: path, path: '.', max_depth: resolvedDepth, max_items: 200 });
-        store.getState().setDirectoryTree(resp.payload as unknown as TreeNode);
+        if (filePreviewGenRef.current === previewGen) {
+          store.getState().setDirectoryTree(resp.payload as unknown as TreeNode);
+        }
       } catch (e) {
         console.error('list_tree failed:', e);
       }
@@ -951,7 +957,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           ) : searchMode !== 'off' ? (
             <FileSearch fileSend={fileSend} currentPath={currentPath} focusedIndex={focusedIndex} />
           ) : (
-            <FileTree onNavigate={navigate} onSelect={selectFile} />
+            <FileTree fileSend={fileSend} onNavigate={navigate} onSelect={selectFile} />
           )}
         </div>
         {/* Drag handle */}
@@ -961,7 +967,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         />
         {/* Preview */}
         <div className="flex-1 flex flex-col min-h-0 file-preview-scroll">
-          <FilePreview />
+          <FilePreview fileSend={fileSend} />
         </div>
       </div>
 

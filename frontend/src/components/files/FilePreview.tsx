@@ -8,6 +8,7 @@ import { DiffPreview } from './previews/DiffPreview';
 import { MediaPreview } from './previews/MediaPreview';
 import { PdfPreview } from './previews/PdfPreview';
 import { DirectoryPreview } from './previews/DirectoryPreview';
+import type { ServerFileMessage } from '@/protocol/file-messages';
 
 type PreviewType =
   | 'code'
@@ -115,13 +116,18 @@ function getPreviewType(path: string, mimeType: string): PreviewType {
   return 'unknown';
 }
 
-export function FilePreview() {
+interface FilePreviewProps {
+  fileSend: (type: string, payload: Record<string, unknown>) => Promise<ServerFileMessage>;
+}
+
+export function FilePreview({ fileSend }: FilePreviewProps) {
   const fileContent = useFileStore((s) => s.fileContent);
   const selectedFile = useFileStore((s) => s.selectedFile);
   const isLoading = useFileStore((s) => s.isLoading);
   const isGitMode = useFileStore((s) => s.isGitMode);
   const gitDiff = useFileStore((s) => s.gitDiff);
   const directoryTree = useFileStore((s) => s.directoryTree);
+  const selectedDirectory = useFileStore((s) => s.selectedDirectory);
   const searchMode = useFileStore((s) => s.searchMode);
 
   if (isGitMode && gitDiff) {
@@ -129,11 +135,15 @@ export function FilePreview() {
   }
 
   if (directoryTree) {
-    return <DirectoryPreview tree={directoryTree} />;
+    return <DirectoryPreview tree={directoryTree} path={selectedDirectory} fileSend={fileSend} />;
   }
 
   if (isLoading) {
     return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading...</div>;
+  }
+
+  if (selectedDirectory) {
+    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading directory...</div>;
   }
 
   if (!selectedFile || !fileContent || fileContent.path !== selectedFile) {

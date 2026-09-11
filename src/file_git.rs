@@ -1,4 +1,4 @@
-use git2::{DiffOptions, Repository, Status, StatusOptions};
+use git2::{BranchType, DiffOptions, Repository, Status, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -24,6 +24,8 @@ pub struct GitHead {
     pub branch: Option<String>,
     pub commit_sha: String,
     pub commit_message: String,
+    pub ahead: usize,
+    pub behind: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +35,7 @@ pub struct GitStatusResult {
     pub unstaged: Vec<StatusEntry>,
     pub untracked: Vec<String>,
     pub is_repo: bool,
+    pub is_repo_root: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -109,11 +112,14 @@ fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
                     branch: None,
                     commit_sha: String::new(),
                     commit_message: String::new(),
+                    ahead: 0,
+                    behind: 0,
                 },
                 staged: vec![],
                 unstaged: vec![],
                 untracked: vec![],
                 is_repo: false,
+                is_repo_root: false,
             });
         }
     };
@@ -132,11 +138,15 @@ fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
         .unwrap_or_default();
 
     let head = get_head_info(&repo);
+    let is_repo_root = repo.workdir().is_some_and(|workdir| workdir == root);
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
         .include_unmodified(false);
+    if !prefix.is_empty() {
+        opts.pathspec(&prefix);
+    }
 
     let statuses = repo
         .statuses(Some(&mut opts))
@@ -188,14 +198,27 @@ fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
         unstaged,
         untracked,
         is_repo: true,
+        is_repo_root,
     })
 }
 
 fn get_head_info(repo: &Repository) -> GitHead {
-    let branch = repo
-        .head()
-        .ok()
+    let head = repo.head().ok();
+    let branch = head
+        .as_ref()
         .and_then(|r| r.shorthand().map(|s| s.to_string()));
+
+    let local_oid = head.as_ref().and_then(|r| r.target());
+    let (ahead, behind) = local_oid
+        .zip(
+            branch
+                .as_deref()
+                .and_then(|name| repo.find_branch(name, BranchType::Local).ok())
+                .and_then(|branch| branch.upstream().ok())
+                .and_then(|upstream| upstream.get().target()),
+        )
+        .and_then(|(local_oid, upstream_oid)| repo.graph_ahead_behind(local_oid, upstream_oid).ok())
+        .unwrap_or((0, 0));
 
     let (commit_sha, commit_message) = repo
         .head()
@@ -213,6 +236,8 @@ fn get_head_info(repo: &Repository) -> GitHead {
         branch,
         commit_sha,
         commit_message,
+        ahead,
+        behind,
     }
 }
 

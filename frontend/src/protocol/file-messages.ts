@@ -55,6 +55,8 @@ export interface GitHead {
   branch: string | null;
   commit_sha: string;
   commit_message: string;
+  ahead: number;
+  behind: number;
 }
 
 export interface GitStatusResult {
@@ -63,6 +65,7 @@ export interface GitStatusResult {
   unstaged: StatusEntry[];
   untracked: string[];
   is_repo: boolean;
+  is_repo_root: boolean;
 }
 
 export interface DiffLine {

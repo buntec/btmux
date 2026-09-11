@@ -28,8 +28,9 @@ type Row =
 /**
  * The session/window switcher (prefix + s). A centered modal with a session→window
  * tree on the left and a live pane-layout preview of the selected window on the
- * right. Selecting a window switches to it (across sessions); `x` kills the
- * selected session or window. Theme-driven via `chromePalette`.
+ * right. Selecting a window switches to it (across sessions); `m` renames the
+ * selected session and `x` kills the selected session or window. Theme-driven via
+ * `chromePalette`.
  *
  * Like WindowGrid it's lazily mounted on first open and kept mounted (display
  * toggles) so the preview mirrors stay warm. It owns the keyboard while open —
@@ -272,6 +273,18 @@ export function SessionSwitcher({ send }: Props) {
     }
   };
 
+  const renameRow = (row: Row) => {
+    const sess = sessionById.get(row.sessionId);
+    if (!sess) return;
+    setOverlay({
+      mode: 'prompt',
+      title: 'rename-session',
+      value: sess.name,
+      action: 'rename-session',
+      targetSessionId: sess.id,
+    });
+  };
+
   const setSessionExpanded = (sessionId: string, want: boolean) => {
     setExpanded((prev) => {
       if (prev.has(sessionId) === want) return prev;
@@ -347,6 +360,12 @@ export function SessionSwitcher({ send }: Props) {
         value: '',
         action: 'new-session',
       });
+      return;
+    }
+
+    if (e.key === 'm') {
+      e.preventDefault();
+      if (selected) renameRow(selected);
       return;
     }
 
@@ -669,6 +688,9 @@ export function SessionSwitcher({ send }: Props) {
             </span>
             <span>
               <span style={{ color: c.fgMuted }}>c</span> new
+            </span>
+            <span>
+              <span style={{ color: c.fgMuted }}>m</span> rename
             </span>
             <span>
               <span style={{ color: c.fgMuted }}>x</span> kill

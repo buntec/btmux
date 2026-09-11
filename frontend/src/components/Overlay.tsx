@@ -265,8 +265,9 @@ export function Overlay({ sessionId, send, config }: Props) {
         if (activeOverlay.action === 'rename-window') {
           send({ type: 'rename_window', session_id: sessionId, name });
         } else if (activeOverlay.action === 'rename-session') {
-          send({ type: 'rename_session', session_id: sessionId, name });
-          navigate(`/s/${encodeURIComponent(name)}`, { replace: true });
+          const targetSessionId = activeOverlay.targetSessionId ?? sessionId;
+          send({ type: 'rename_session', session_id: targetSessionId, name });
+          if (targetSessionId === sessionId) navigate(`/s/${encodeURIComponent(name)}`, { replace: true });
         } else if (activeOverlay.action === 'new-session') {
           send({ type: 'create_session', name });
         }

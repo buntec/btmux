@@ -40,6 +40,10 @@ const MEDIA_EXTENSIONS = new Set([
   'wma',
 ]);
 
+const DEFAULT_SIDEBAR_RATIO = 1 / 3;
+const MIN_SIDEBAR_RATIO = 0.2;
+const MAX_SIDEBAR_RATIO = 0.5;
+
 interface FileBrowserOverlayProps {
   cwd: string | null;
   sessionId: string;
@@ -73,7 +77,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const initialized = useRef(false);
   const gitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
-  const [sidebarWidth, setSidebarWidth] = useState(() => Math.max(160, window.innerWidth / 3));
+  const [sidebarRatio, setSidebarRatio] = useState(DEFAULT_SIDEBAR_RATIO);
   const dragging = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
     null,
@@ -84,11 +88,21 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    const root = rootRef.current;
+    if (!root) return;
+
+    const rootBounds = root.getBoundingClientRect();
+    if (rootBounds.width === 0) return;
+
+    const updateSidebarRatio = (clientX: number) => {
+      const ratio = (clientX - rootBounds.left) / rootBounds.width;
+      setSidebarRatio(Math.max(MIN_SIDEBAR_RATIO, Math.min(MAX_SIDEBAR_RATIO, ratio)));
+    };
+
     dragging.current = true;
     const onMouseMove = (ev: MouseEvent) => {
       if (!dragging.current) return;
-      const newWidth = Math.max(160, Math.min(ev.clientX, window.innerWidth * 0.5));
-      setSidebarWidth(newWidth);
+      updateSidebarRatio(ev.clientX);
     };
     const onMouseUp = () => {
       dragging.current = false;
@@ -97,6 +111,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
+    updateSidebarRatio(e.clientX);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', onMouseMove);
@@ -948,7 +963,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       {/* Body */}
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
-        <div className="shrink-0 flex flex-col min-h-0 overflow-hidden" style={{ width: sidebarWidth }}>
+        <div
+          className="min-w-0 shrink-0 flex flex-col min-h-0 overflow-hidden"
+          style={{ width: `${sidebarRatio * 100}%` }}
+        >
           {isGitMode ? (
             <>
               <GitModeHeader />

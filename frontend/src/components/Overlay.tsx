@@ -37,6 +37,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'display-panes',
       'capture-pane',
       'file-browser',
+      'git-view',
     ],
   },
   {

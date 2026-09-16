@@ -14,6 +14,8 @@ export interface PaneNotification {
   timestamp: number;
 }
 
+export type FileBrowserMode = 'files' | 'git';
+
 interface AppStore {
   // All sessions from server (broadcast to all tabs)
   sessions: SessionSummary[];
@@ -36,9 +38,10 @@ interface AppStore {
   // with a session→window tree and a live pane preview. Like the window-grid it
   // takes over the keyboard while open (the keybinding hook early-returns).
   switcherOpen: boolean;
-  // File browser overlay (prefix + f)
+  // File browser overlay (prefix + f / g)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
+  fileBrowserInitialMode: FileBrowserMode;
   // The pane whose slot the file browser occupies. Null when closed.
   fileBrowserPaneId: string | null;
   // Whether the /ws/control socket is currently connected. The frontend holds
@@ -74,7 +77,12 @@ interface AppStore {
   showToast: (message: string, level?: NotificationLevel, opts?: { body?: string; paneId?: string }) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
-  setFileBrowserOpen: (open: boolean, cwd?: string | null, paneId?: string | null) => void;
+  setFileBrowserOpen: (
+    open: boolean,
+    cwd?: string | null,
+    paneId?: string | null,
+    initialMode?: FileBrowserMode,
+  ) => void;
   setNavigateFn: (fn: ((path: string) => void) | null) => void;
   setControlSendFn: (fn: ((message: ClientMessage) => void) | null) => void;
   // Navigate to the window containing a pane, if it can be located.
@@ -96,6 +104,7 @@ export const useStore = create<AppStore>((set, get) => ({
   switcherOpen: false,
   fileBrowserOpen: false,
   fileBrowserCwd: null,
+  fileBrowserInitialMode: 'files',
   fileBrowserPaneId: null,
   controlConnected: false,
   terminals: new Map(),
@@ -122,8 +131,13 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   setPrefixActive: (active) => set({ prefixActive: active }),
   setOverlay: (overlay) => set({ overlay }),
-  setFileBrowserOpen: (open, cwd, paneId) =>
-    set({ fileBrowserOpen: open, fileBrowserCwd: cwd ?? null, fileBrowserPaneId: paneId ?? null }),
+  setFileBrowserOpen: (open, cwd, paneId, initialMode = 'files') =>
+    set({
+      fileBrowserOpen: open,
+      fileBrowserCwd: cwd ?? null,
+      fileBrowserInitialMode: open ? initialMode : 'files',
+      fileBrowserPaneId: paneId ?? null,
+    }),
   setWindowGridOpen: (open) => set({ windowGridOpen: open }),
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),

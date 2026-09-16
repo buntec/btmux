@@ -130,8 +130,12 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   const selectedDirectory = useFileStore((s) => s.selectedDirectory);
   const searchMode = useFileStore((s) => s.searchMode);
 
-  if (isGitMode && gitDiff) {
-    return <DiffPreview />;
+  if (isGitMode) {
+    return gitDiff ? (
+      <DiffPreview />
+    ) : (
+      <div className="flex-1 flex items-center justify-center text-muted-foreground">Select a file to view diff</div>
+    );
   }
 
   if (directoryTree) {
@@ -207,7 +211,7 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
             {previewType === 'json' && <JsonPreview />}
             {previewType === 'csv' && <CsvPreview />}
             {previewType === 'unknown' && (
-              <pre className="leading-relaxed whitespace-pre-wrap break-all font-mono text-foreground text-sm">
+              <pre className="leading-relaxed whitespace-pre-wrap break-all text-foreground text-sm">
                 {fileContent.content}
                 {fileContent.truncated && <span className="text-muted-foreground">{'\n\n'}[truncated]</span>}
               </pre>

@@ -110,6 +110,19 @@
   }
 }
 
+/* Keep file previews on the configured terminal typography. Tailwind's
+   preflight gives pre/code the default mono family, which can also change the
+   apparent weight when the configured family or weight is lighter. */
+.file-preview-content {
+  font-family: var(--btmux-font);
+  font-weight: var(--btmux-font-weight);
+}
+
+.file-preview-content :where(pre, code) {
+  font-family: inherit;
+  font-weight: inherit;
+}
+
 /* btmux chrome animations (command sheet, keybinding/switcher modals). */
 @keyframes btm-blink {
   0%,

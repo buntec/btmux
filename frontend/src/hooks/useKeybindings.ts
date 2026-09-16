@@ -431,7 +431,14 @@ function runAction(
       const win = session?.windows[session.active_window];
       const pane = win?.panes[win.active_pane];
       const cwd = pane?.cwd ?? null;
-      store.setFileBrowserOpen(true, cwd, pane?.id ?? null);
+      store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'files');
+      break;
+    }
+    case 'git-view': {
+      const win = session?.windows[session.active_window];
+      const pane = win?.panes[win.active_pane];
+      const cwd = pane?.cwd ?? null;
+      store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'git');
       break;
     }
   }

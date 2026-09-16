@@ -55,6 +55,7 @@ interface FileBrowserOverlayProps {
 export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: FileBrowserOverlayProps) {
   const { send: fileSend } = useFileSocket();
   const config = useStore((s) => s.config);
+  const fileBrowserInitialMode = useStore((s) => s.fileBrowserInitialMode);
   const fontSize = getTerminalFontSize(config);
   const currentPath = useFileStore((s) => s.currentPath);
   const entries = useFileStore((s) => s.entries);
@@ -78,6 +79,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const gitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
   const [sidebarRatio, setSidebarRatio] = useState(DEFAULT_SIDEBAR_RATIO);
+  const [browserReady, setBrowserReady] = useState(false);
   const dragging = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
     null,
@@ -204,23 +206,37 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, store],
   );
 
-  const toggleGitMode = useCallback(async () => {
-    const { isGitMode } = store.getState();
-    if (isGitMode) {
-      store.getState().setIsGitMode(false);
-      store.getState().setGitDiff(null);
-    } else {
+  const enterGitMode = useCallback(
+    async (path: string) => {
       store.getState().setIsGitMode(true);
       store.getState().setGitFocusedIndex(0);
+      store.getState().setGitStatus(null);
+      store.getState().setGitDiff(null);
       try {
-        const resp = await fileSend('git_status', { path: currentPath });
+        const resp = await fileSend('git_status', { path });
         store.getState().setGitStatus(resp.payload as unknown as GitStatusResult);
       } catch (e) {
         console.error('git_status failed:', e);
         store.getState().setIsGitMode(false);
       }
+    },
+    [fileSend, store],
+  );
+
+  const toggleGitMode = useCallback(async () => {
+    if (store.getState().isGitMode) {
+      store.getState().setIsGitMode(false);
+      store.getState().setGitDiff(null);
+    } else {
+      await enterGitMode(currentPath);
     }
-  }, [fileSend, currentPath, store]);
+  }, [currentPath, enterGitMode, store]);
+
+  const exitGitMode = useCallback(() => {
+    store.getState().setIsGitMode(false);
+    store.getState().setGitDiff(null);
+    onClose();
+  }, [onClose, store]);
 
   const gitStage = useCallback(
     async (path: string) => {
@@ -366,8 +382,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     if (initialized.current) return;
     initialized.current = true;
     const startPath = cwd || '/';
-    navigate(startPath);
-  }, [cwd, navigate]);
+    if (fileBrowserInitialMode === 'files') {
+      store.getState().setIsGitMode(false);
+      store.getState().setGitDiff(null);
+    }
+    void navigate(startPath).then(() => setBrowserReady(true));
+  }, [cwd, fileBrowserInitialMode, navigate, store]);
+
+  useEffect(() => {
+    if (!browserReady || fileBrowserInitialMode !== 'git') return;
+    void enterGitMode(currentPath);
+  }, [browserReady, currentPath, enterGitMode, fileBrowserInitialMode]);
 
   const insertPath = useCallback(
     (path: string) => {
@@ -503,8 +528,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         } else if (isFilterActive) {
           store.getState().setIsFilterActive(false);
         } else if (isGitMode) {
-          store.getState().setIsGitMode(false);
-          store.getState().setGitDiff(null);
+          exitGitMode();
         } else {
           onClose();
         }
@@ -590,6 +614,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           case 'g':
             e.preventDefault();
             store.getState().setGitFocusedIndex(0);
+            break;
+          case 'q':
+            e.preventDefault();
+            exitGitMode();
             break;
           case 'G':
             e.preventDefault();
@@ -886,6 +914,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     openPath,
     onClose,
     toggleGitMode,
+    exitGitMode,
     gitStage,
     gitUnstage,
     gitDiscard,
@@ -984,7 +1013,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           className="w-1 shrink-0 cursor-col-resize border-r border-border hover:bg-accent active:bg-accent"
         />
         {/* Preview */}
-        <div className="flex-1 flex flex-col min-h-0 file-preview-scroll">
+        <div className="flex-1 flex flex-col min-h-0 file-preview-scroll file-preview-content">
           <FilePreview fileSend={fileSend} />
         </div>
       </div>
@@ -1078,6 +1107,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             <span>
               <KbdGroup>
                 <Kbd>Esc</Kbd>
+                <Kbd>q</Kbd>
               </KbdGroup>{' '}
               exit git
             </span>

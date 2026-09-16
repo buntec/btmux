@@ -13,6 +13,9 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['ghostty-web'],
   },
+  build: {
+    chunkSizeWarningLimit: Infinity,
+  },
   server: {
     port: 5173,
     proxy: {

@@ -44,6 +44,11 @@ const DEFAULT_SIDEBAR_RATIO = 1 / 3;
 const MIN_SIDEBAR_RATIO = 0.2;
 const MAX_SIDEBAR_RATIO = 0.5;
 
+function scrollFilePreview(direction: 1 | -1) {
+  const viewport = document.querySelector<HTMLElement>('.file-preview-scroll [data-slot="scroll-area-viewport"]');
+  if (viewport) viewport.scrollBy({ top: direction * (viewport.clientHeight / 2) });
+}
+
 interface FileBrowserOverlayProps {
   cwd: string | null;
   sessionId: string;
@@ -557,6 +562,16 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         const items = gitStatus ? computeGitItems(gitStatus, gitExpandedSections) : [];
         const count = items.length;
 
+        if (e.ctrlKey && e.key === 'd') {
+          e.preventDefault();
+          scrollFilePreview(1);
+          return;
+        }
+        if (e.ctrlKey && e.key === 'u') {
+          e.preventDefault();
+          scrollFilePreview(-1);
+          return;
+        }
         if (e.ctrlKey && e.key === 'n') {
           e.preventDefault();
           store.getState().setGitFocusedIndex(Math.min(gitFocusedIndex + 1, count - 1));
@@ -748,14 +763,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
       if (e.ctrlKey && e.key === 'd') {
         e.preventDefault();
-        const viewport = document.querySelector('.file-preview-scroll [data-slot="scroll-area-viewport"]');
-        if (viewport) viewport.scrollBy({ top: viewport.clientHeight / 2 });
+        scrollFilePreview(1);
         return;
       }
       if (e.ctrlKey && e.key === 'u') {
         e.preventDefault();
-        const viewport = document.querySelector('.file-preview-scroll [data-slot="scroll-area-viewport"]');
-        if (viewport) viewport.scrollBy({ top: -viewport.clientHeight / 2 });
+        scrollFilePreview(-1);
         return;
       }
 

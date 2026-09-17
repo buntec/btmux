@@ -29,7 +29,8 @@ remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
 reconnect/replay, config updates, correlated command errors, and multiple viewers
 against an isolated dev stack (`BTMUX_AUTH_TOKEN=... just test-browser`).
-`just record-demo` drives the production UI with Playwright.
+`just test-frontend` runs the frontend unit tests (`bun test`, currently the
+LaTeX detector). `just record-demo` drives the production UI with Playwright.
 
 The CLI also accepts `--host`, `--port`, `--profile`, `--shell`, `--public-url`,
 and `--no-browser`; `install`, `uninstall`, and `restart` manage a per-user
@@ -207,6 +208,17 @@ Transient users of the slot (the pane-switch effect, session-view effect, and
 (`lib/baseShader.ts`) rather than `null`. Any `u_time`-driven shader also needs
 `pumpRenders` — an idle terminal paints no frames, so animated effects freeze
 without one.
+
+**LaTeX overlay:** frontend-only. `lib/latexDetect.ts` is a pure, tiered
+heuristic detector (explicit delimiters → bare `[`/`]` blocks → `$…$` → bare
+`( … )`) tested by `frontend/latex-detect.test.ts`; add fixtures there when
+tuning it. `lib/latexScan.ts` (`useLatexScan`) reads the viewport ± a margin from
+the emulator buffer, debounced, and validates candidates with KaTeX, which is
+lazy-loaded via `lib/katexRender.ts` on the first candidate. ghostty-web has no
+output event (`onRender` never fires), so `TerminalPane` pokes the scanner after
+each `term.write`. `toggle-latex` flips per-pane local UI state (`latexPanes` in
+the store, not server state); `LatexOverlay.tsx` highlights source cells with
+`term.setDecorations`, whose absolute buffer lines go stale on every rescan.
 
 **Live config reload:** `main.rs` watches the config file's _parent dir_ with
 `notify` (to catch editors' atomic rename-on-save), debounces, re-resolves, and

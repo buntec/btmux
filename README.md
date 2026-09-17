@@ -13,6 +13,7 @@ panes, and reconnect without losing the current terminal view.
 - Configurable tmux-style keybindings with optional vi-style navigation
 - Hot-reloaded themes, terminal options, bundled fonts, wallpapers, and WebGL effects
 - Host statistics and pane notifications for coding agents
+- Rendered LaTeX overlay for math printed in a pane
 - REST API and MCP server for automation
 
 ## Demo

@@ -13,11 +13,12 @@ use crate::pty::PtyHandle;
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     shell: String,
+    cli_shell: Option<String>,
     /// The config as last read from disk. Kept so a session-only override can be
     /// re-layered onto it without re-reading the file.
     file_config: FileConfig,
-    /// Session-only overrides from the command palette's pickers, dropped on
-    /// every config-file reload. Never written to disk.
+    /// Session-only overrides from the settings UI and command palette, dropped
+    /// on every config-file reload. Never written to disk.
     overrides: ConfigUpdate,
     /// `file_config` + `overrides`, resolved — this is what the browser sees.
     config: ClientConfig,
@@ -54,12 +55,14 @@ impl SessionManager {
         exit_tx: mpsc::UnboundedSender<Uuid>,
         meta_tx: mpsc::UnboundedSender<()>,
         port: u16,
+        cli_shell: Option<String>,
     ) -> Self {
         let (events, _) = broadcast::channel::<String>(64);
         let config = crate::config::resolve_binds(&file_config);
         Self {
             sessions: Vec::new(),
             shell,
+            cli_shell,
             file_config,
             overrides: ConfigUpdate::default(),
             config,
@@ -85,16 +88,22 @@ impl SessionManager {
         self.file_config = file_config;
         self.overrides = ConfigUpdate::default();
         self.config = crate::config::resolve_binds(&self.file_config);
+        if self.cli_shell.is_none() {
+            self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
+        }
         &self.config
     }
 
-    /// Apply a config change from the command palette's pickers. It is layered
+    /// Apply a config change from the settings UI or command palette. It is layered
     /// over the on-disk config in memory only — nothing is written to
     /// config.toml, and it lasts until the next restart or config reload. To
     /// keep a setting the user edits config.toml themselves.
     pub fn apply_config_override(&mut self, update: &ConfigUpdate) -> &ClientConfig {
         self.overrides.merge(update);
         self.config = crate::config::resolve_with_overrides(&self.file_config, &self.overrides);
+        if update.shell.is_some() && self.cli_shell.is_none() {
+            self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
+        }
         &self.config
     }
 
@@ -103,11 +112,12 @@ impl SessionManager {
     pub fn reset_config_overrides(&mut self) -> &ClientConfig {
         self.overrides = ConfigUpdate::default();
         self.config = crate::config::resolve_binds(&self.file_config);
+        if let Some(shell) = &self.cli_shell {
+            self.shell = shell.clone();
+        } else {
+            self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
+        }
         &self.config
-    }
-
-    pub fn set_shell(&mut self, shell: String) {
-        self.shell = shell;
     }
 
     fn scrollback_lines(&self) -> u32 {

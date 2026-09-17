@@ -147,7 +147,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return Err("Pane no longer exists".into());
     }
 
-    // Command-palette settings (color scheme, font, shader) are session-only:
+    // Browser settings (color scheme, font, general settings, shader) are session-only:
     // they're layered over the on-disk config in memory and broadcast to every
     // tab, but config.toml is left untouched, so they last until btmux restarts
     // or the config file is reloaded.
@@ -565,6 +565,7 @@ mod tests {
             exit_tx,
             meta_tx,
             8044,
+            None,
         );
         let id = mgr.create_session(Some("before".into())).await;
         let mut events = mgr.events().subscribe();

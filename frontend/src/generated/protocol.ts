@@ -22,6 +22,17 @@ export type SessionSort = "created" | "mru" | "alphabetical";
 export type WindowSort = "created" | "mru" | "alphabetical";
 
 // prettier-ignore
+export type LogConfig = { 
+/**
+ * Log level for stderr output. Defaults to "warn".
+ */
+"console-level": string, 
+/**
+ * Log level for the file appender. Defaults to "info".
+ */
+"file-level": string, };
+
+// prettier-ignore
 export type Bind = { key: string, action: string, };
 
 // prettier-ignore
@@ -44,6 +55,18 @@ scrollSensitivity: number | null, };
 
 // prettier-ignore
 export type ClientConfig = { prefix: string, binds: Array<Bind>, 
+/**
+ * The configured shell for new panes, or `null` to use `$SHELL`.
+ */
+shell: string | null, 
+/**
+ * Exact `[keys]` overrides from config.toml. `binds` is the effective table.
+ */
+keys: { [key in string]: string }, 
+/**
+ * Logging levels configured for the server.
+ */
+log: LogConfig, 
 /**
  * Built-in command-palette entries (prefix + `:`).
  */
@@ -161,7 +184,7 @@ active_color_scheme: string | null,
 fonts: Array<FontEntry>, };
 
 // prettier-ignore
-export type ConfigUpdate = { colors?: string, font_family?: string, font_weight?: number, font_size?: number, animations?: boolean, wallpaper?: string, wallpaper_shader?: string, wallpaper_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, 
+export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, wallpaper?: string, wallpaper_shader?: string, wallpaper_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, 
 /**
  * Post-process effect name; the empty string clears it.
  */

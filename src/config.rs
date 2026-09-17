@@ -47,6 +47,19 @@ pub const MAX_FONT_SIZE: f32 = 72.0;
 pub const DEFAULT_CONSOLE_LOG: &str = "warn";
 pub const DEFAULT_FILE_LOG: &str = "info";
 
+/// Resolve the shell used for newly-created panes when no CLI override exists.
+pub fn resolve_shell(configured: Option<&str>) -> String {
+    configured
+        .filter(|shell| !shell.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            std::env::var("SHELL")
+                .ok()
+                .filter(|shell| !shell.is_empty())
+        })
+        .unwrap_or_else(|| DEFAULT_SHELL.to_string())
+}
+
 /// Command-line arguments. These take precedence over the file config where they overlap.
 #[derive(Parser, Clone)]
 #[command(name = "btmux", about = "Browser-based tmux")]
@@ -142,8 +155,9 @@ pub enum WindowSort {
 
 /// Log level configuration. Both fields accept standard tracing directives
 /// (`error`, `warn`, `info`, `debug`, `trace`) or full `EnvFilter` syntax.
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[serde(default, deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct LogConfig {
     /// Log level for stderr output. Defaults to "warn".
     #[serde(rename = "console-level")]
@@ -569,8 +583,8 @@ fn default_commands() -> Vec<Command> {
         },
         Command {
             id: "open-config".to_string(),
-            label: "config: open appearance settings".to_string(),
-            description: "Open the appearance configuration view.".to_string(),
+            label: "config: open settings".to_string(),
+            description: "Open the btmux configuration view.".to_string(),
             confirm: None,
         },
         Command {
@@ -673,6 +687,12 @@ pub struct FontEntry {
 pub struct ClientConfig {
     pub prefix: String,
     pub binds: Vec<Bind>,
+    /// The configured shell for new panes, or `null` to use `$SHELL`.
+    pub shell: Option<String>,
+    /// Exact `[keys]` overrides from config.toml. `binds` is the effective table.
+    pub keys: BTreeMap<String, String>,
+    /// Logging levels configured for the server.
+    pub log: LogConfig,
     /// Built-in command-palette entries (prefix + `:`).
     pub commands: Vec<Command>,
     pub terminal: TerminalOptions,
@@ -1353,6 +1373,9 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
             .clone()
             .unwrap_or_else(|| DEFAULT_PREFIX.to_string()),
         binds,
+        shell: file.shell.clone(),
+        keys: file.keys.clone(),
+        log: file.log.clone(),
         commands: default_commands(),
         terminal: file.terminal.clone(),
         theme,
@@ -1394,9 +1417,9 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     }
 }
 
-/// A partial config change requested from the browser's command-palette
-/// pickers, and — accumulated across requests — the session-only override layer
-/// itself (`SessionManager::apply_config_override`). An absent field means
+/// A partial config change requested by the browser settings UI, and — accumulated
+/// across requests — the session-only override layer itself
+/// (`SessionManager::apply_config_override`). An absent field means
 /// "leave as configured"; an empty string clears that setting.
 ///
 /// These are **never written to disk**: the config file stays whatever the user
@@ -1406,6 +1429,14 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(optional_fields))]
 pub struct ConfigUpdate {
+    pub prefix: Option<String>,
+    pub shell: Option<String>,
+    pub vi_mode: Option<bool>,
+    pub show_pane_titles: Option<bool>,
+    pub keys: Option<BTreeMap<String, String>>,
+    pub session_sort: Option<SessionSort>,
+    pub window_sort: Option<WindowSort>,
+    pub window_grid_count: Option<u32>,
     pub colors: Option<String>,
     /// Parsed palette for a remote `colors` override. Filled by the WebSocket
     /// handler after fetching; never accepted from the browser as JSON.
@@ -1414,7 +1445,18 @@ pub struct ConfigUpdate {
     pub font_family: Option<String>,
     pub font_weight: Option<u16>,
     pub font_size: Option<f32>,
+    pub renderer: Option<String>,
+    pub cursor_blink: Option<bool>,
+    pub cursor_style: Option<String>,
+    pub scrollback: Option<u32>,
+    pub allow_transparency: Option<bool>,
+    pub convert_eol: Option<bool>,
+    pub disable_stdin: Option<bool>,
+    pub smooth_scroll_duration: Option<f32>,
+    pub scroll_sensitivity: Option<f32>,
     pub animations: Option<bool>,
+    pub console_level: Option<String>,
+    pub file_level: Option<String>,
     pub wallpaper: Option<String>,
     pub wallpaper_shader: Option<String>,
     pub wallpaper_opacity: Option<f32>,
@@ -1441,6 +1483,32 @@ impl ConfigUpdate {
     /// Fold a newer update into this one: every field the newer update sets wins,
     /// the rest are kept.
     pub fn merge(&mut self, other: &ConfigUpdate) {
+        if other.prefix.is_some() {
+            self.prefix = other.prefix.clone();
+        }
+        if other.shell.is_some() {
+            self.shell = other.shell.clone();
+        }
+        if other.vi_mode.is_some() {
+            self.vi_mode = other.vi_mode;
+        }
+        if other.show_pane_titles.is_some() {
+            self.show_pane_titles = other.show_pane_titles;
+        }
+        if let Some(keys) = &other.keys {
+            self.keys
+                .get_or_insert_with(BTreeMap::new)
+                .extend(keys.clone());
+        }
+        if other.session_sort.is_some() {
+            self.session_sort = other.session_sort.clone();
+        }
+        if other.window_sort.is_some() {
+            self.window_sort = other.window_sort.clone();
+        }
+        if other.window_grid_count.is_some() {
+            self.window_grid_count = other.window_grid_count;
+        }
         if other.colors.is_some() {
             self.colors = other.colors.clone();
             self.resolved_colors = other.resolved_colors.clone();
@@ -1454,8 +1522,41 @@ impl ConfigUpdate {
         if other.font_size.is_some() {
             self.font_size = other.font_size;
         }
+        if other.renderer.is_some() {
+            self.renderer = other.renderer.clone();
+        }
+        if other.cursor_blink.is_some() {
+            self.cursor_blink = other.cursor_blink;
+        }
+        if other.cursor_style.is_some() {
+            self.cursor_style = other.cursor_style.clone();
+        }
+        if other.scrollback.is_some() {
+            self.scrollback = other.scrollback;
+        }
+        if other.allow_transparency.is_some() {
+            self.allow_transparency = other.allow_transparency;
+        }
+        if other.convert_eol.is_some() {
+            self.convert_eol = other.convert_eol;
+        }
+        if other.disable_stdin.is_some() {
+            self.disable_stdin = other.disable_stdin;
+        }
+        if other.smooth_scroll_duration.is_some() {
+            self.smooth_scroll_duration = other.smooth_scroll_duration;
+        }
+        if other.scroll_sensitivity.is_some() {
+            self.scroll_sensitivity = other.scroll_sensitivity;
+        }
         if other.animations.is_some() {
             self.animations = other.animations;
+        }
+        if other.console_level.is_some() {
+            self.console_level = other.console_level.clone();
+        }
+        if other.file_level.is_some() {
+            self.file_level = other.file_level.clone();
         }
         if other.wallpaper.is_some() {
             self.wallpaper = other.wallpaper.clone();
@@ -1515,6 +1616,30 @@ impl ConfigUpdate {
 pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> ClientConfig {
     let mut file = file.clone();
 
+    if let Some(prefix) = &overrides.prefix {
+        file.prefix = Some(prefix.clone()).filter(|value| !value.trim().is_empty());
+    }
+    if let Some(shell) = &overrides.shell {
+        file.shell = Some(shell.clone()).filter(|value| !value.trim().is_empty());
+    }
+    if let Some(vi_mode) = overrides.vi_mode {
+        file.vi_mode = vi_mode;
+    }
+    if let Some(show_pane_titles) = overrides.show_pane_titles {
+        file.show_pane_titles = show_pane_titles;
+    }
+    if let Some(keys) = &overrides.keys {
+        file.keys.extend(keys.clone());
+    }
+    if let Some(session_sort) = &overrides.session_sort {
+        file.session_sort = session_sort.clone();
+    }
+    if let Some(window_sort) = &overrides.window_sort {
+        file.window_sort = window_sort.clone();
+    }
+    if let Some(window_grid_count) = overrides.window_grid_count {
+        file.window_grid_count = Some(window_grid_count.clamp(1, 24));
+    }
     if let Some(colors) = &overrides.colors {
         file.colors = Some(colors.clone()).filter(|c| !c.is_empty());
         file.resolved_colors = overrides.resolved_colors.as_deref().cloned();
@@ -1532,8 +1657,41 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     if let Some(size) = overrides.font_size {
         file.terminal.font_size = Some(size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE));
     }
+    if let Some(renderer) = &overrides.renderer {
+        file.terminal.renderer = Some(renderer.clone());
+    }
+    if let Some(cursor_blink) = overrides.cursor_blink {
+        file.terminal.cursor_blink = Some(cursor_blink);
+    }
+    if let Some(cursor_style) = &overrides.cursor_style {
+        file.terminal.cursor_style = Some(cursor_style.clone());
+    }
+    if let Some(scrollback) = overrides.scrollback {
+        file.terminal.scrollback = Some(scrollback.max(1));
+    }
+    if let Some(allow_transparency) = overrides.allow_transparency {
+        file.terminal.allow_transparency = Some(allow_transparency);
+    }
+    if let Some(convert_eol) = overrides.convert_eol {
+        file.terminal.convert_eol = Some(convert_eol);
+    }
+    if let Some(disable_stdin) = overrides.disable_stdin {
+        file.terminal.disable_stdin = Some(disable_stdin);
+    }
+    if let Some(smooth_scroll_duration) = overrides.smooth_scroll_duration {
+        file.terminal.smooth_scroll_duration = Some(smooth_scroll_duration.max(0.0));
+    }
+    if let Some(scroll_sensitivity) = overrides.scroll_sensitivity {
+        file.terminal.scroll_sensitivity = Some(scroll_sensitivity.clamp(0.1, 20.0));
+    }
     if let Some(animations) = overrides.animations {
         file.animations = animations;
+    }
+    if let Some(console_level) = &overrides.console_level {
+        file.log.console_level = console_level.clone();
+    }
+    if let Some(file_level) = &overrides.file_level {
+        file.log.file_level = file_level.clone();
     }
     if let Some(wallpaper) = &overrides.wallpaper {
         file.wallpaper = Some(wallpaper.clone()).filter(|s| !s.is_empty());
@@ -1709,6 +1867,60 @@ palette:
     }
 
     #[test]
+    fn general_terminal_and_log_overrides_are_resolved() {
+        let mut keys = BTreeMap::new();
+        keys.insert("new-window".to_string(), "N".to_string());
+        let resolved = resolve_with_overrides(
+            &FileConfig::default(),
+            &ConfigUpdate {
+                prefix: Some("C-a".to_string()),
+                shell: Some("/bin/zsh".to_string()),
+                vi_mode: Some(true),
+                show_pane_titles: Some(true),
+                keys: Some(keys),
+                session_sort: Some(SessionSort::Alphabetical),
+                window_sort: Some(WindowSort::Created),
+                window_grid_count: Some(9),
+                renderer: Some("canvas".to_string()),
+                cursor_blink: Some(false),
+                cursor_style: Some("underline".to_string()),
+                scrollback: Some(42),
+                allow_transparency: Some(true),
+                convert_eol: Some(true),
+                disable_stdin: Some(true),
+                smooth_scroll_duration: Some(0.4),
+                scroll_sensitivity: Some(2.0),
+                console_level: Some("debug".to_string()),
+                file_level: Some("trace".to_string()),
+                ..ConfigUpdate::default()
+            },
+        );
+
+        assert_eq!(resolved.prefix, "C-a");
+        assert_eq!(resolved.shell.as_deref(), Some("/bin/zsh"));
+        assert!(resolved.vi_mode);
+        assert!(resolved.show_pane_titles);
+        assert_eq!(
+            resolved.keys.get("new-window").map(String::as_str),
+            Some("N")
+        );
+        assert_eq!(resolved.session_sort, SessionSort::Alphabetical);
+        assert_eq!(resolved.window_sort, WindowSort::Created);
+        assert_eq!(resolved.window_grid_count, 9);
+        assert_eq!(resolved.terminal.renderer.as_deref(), Some("canvas"));
+        assert_eq!(resolved.terminal.cursor_blink, Some(false));
+        assert_eq!(resolved.terminal.cursor_style.as_deref(), Some("underline"));
+        assert_eq!(resolved.terminal.scrollback, Some(42));
+        assert_eq!(resolved.terminal.allow_transparency, Some(true));
+        assert_eq!(resolved.terminal.convert_eol, Some(true));
+        assert_eq!(resolved.terminal.disable_stdin, Some(true));
+        assert_eq!(resolved.terminal.smooth_scroll_duration, Some(0.4));
+        assert_eq!(resolved.terminal.scroll_sensitivity, Some(2.0));
+        assert_eq!(resolved.log.console_level, "debug");
+        assert_eq!(resolved.log.file_level, "trace");
+    }
+
+    #[test]
     fn styling_overrides_are_session_only_and_fully_resolved() {
         let file = FileConfig::default();
         let resolved = resolve_with_overrides(
@@ -1736,6 +1948,7 @@ palette:
                 pane_switch_duration: Some(2.0),
                 pane_switch_border: Some("none".to_string()),
                 pane_switch_border_speed: Some(1.2),
+                ..ConfigUpdate::default()
             },
         );
 

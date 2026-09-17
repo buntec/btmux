@@ -173,9 +173,7 @@ async fn main() {
     let shell = args
         .shell
         .clone()
-        .or_else(|| file_config.shell.clone())
-        .or_else(|| std::env::var("SHELL").ok().filter(|s| !s.is_empty()))
-        .unwrap_or_else(|| config::DEFAULT_SHELL.to_string());
+        .unwrap_or_else(|| config::resolve_shell(file_config.shell.as_deref()));
 
     // PTY reader threads report a pane's id here when its shell exits (EOF). The
     // drain task below removes the pane and broadcasts the new state to all tabs.
@@ -189,6 +187,7 @@ async fn main() {
         exit_tx,
         meta_tx,
         args.port,
+        args.shell.clone(),
     )));
 
     // Restore the saved session tree from disk if present; otherwise start with
@@ -410,9 +409,6 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
 
     let json = {
         let mut mgr = state.write().await;
-        if let Some(shell) = file_config.shell.clone() {
-            mgr.set_shell(shell);
-        }
         // Also drops any session-only overrides picked from the command palette.
         let client_config = mgr.set_file_config(file_config).clone();
         serde_json::to_string(&ServerMessage::Config {

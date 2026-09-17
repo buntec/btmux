@@ -582,6 +582,12 @@ fn default_commands() -> Vec<Command> {
             confirm: Some("Kill ALL sessions and reset to one fresh session?".to_string()),
         },
         Command {
+            id: "toggle-latex".to_string(),
+            label: "latex: toggle overlay".to_string(),
+            description: "Render LaTeX detected in the active pane in a side panel.".to_string(),
+            confirm: None,
+        },
+        Command {
             id: "open-config".to_string(),
             label: "config: open settings".to_string(),
             description: "Open the btmux configuration view.".to_string(),
@@ -779,6 +785,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("x", "kill-pane"),
     ("z", "zoom-pane"),
     ("[", "capture-pane"),
+    ("m", "toggle-latex"),
     ("c", "new-window"),
     ("n", "next-window"),
     ("p", "prev-window"),

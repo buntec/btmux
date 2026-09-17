@@ -36,6 +36,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'next-layout',
       'display-panes',
       'capture-pane',
+      'toggle-latex',
       'file-browser',
       'git-view',
     ],
@@ -154,6 +155,12 @@ export function Overlay({ sessionId, send, config }: Props) {
     if (cmdId === 'open-config') {
       setOverlay(null);
       navigate('/config');
+      return true;
+    }
+    if (cmdId === 'toggle-latex') {
+      const paneId = useStore.getState().getActivePaneId(sessionId);
+      if (paneId) useStore.getState().toggleLatex(paneId);
+      setOverlay(null);
       return true;
     }
     if (cmdId === 'choose-colors') {

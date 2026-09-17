@@ -55,6 +55,8 @@ interface AppStore {
   // Per-pane notifications from external agent harnesses and tools.
   // Keyed by pane ID; cleared when the user focuses the pane.
   notifications: Map<string, PaneNotification>;
+  // Panes whose LaTeX overlay is open. Local UI state, never sent to the server.
+  latexPanes: Set<string>;
   // Router navigate fn, registered by AppInner (which lives inside <BrowserRouter>).
   // Lets code outside the router — the control socket's OS-notification onclick —
   // do SPA navigation. Non-reactive (set once, read on demand).
@@ -77,6 +79,7 @@ interface AppStore {
   showToast: (message: string, level?: NotificationLevel, opts?: { body?: string; paneId?: string }) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
+  toggleLatex: (paneId: string) => void;
   setFileBrowserOpen: (
     open: boolean,
     cwd?: string | null,
@@ -109,6 +112,7 @@ export const useStore = create<AppStore>((set, get) => ({
   controlConnected: false,
   terminals: new Map(),
   notifications: new Map(),
+  latexPanes: new Set(),
   navigateFn: null,
   controlSendFn: null,
   setSessions: (sessions) => set({ sessions }),
@@ -173,6 +177,12 @@ export const useStore = create<AppStore>((set, get) => ({
       const next = new Map(s.notifications);
       next.delete(paneId);
       return { notifications: next };
+    }),
+  toggleLatex: (paneId) =>
+    set((s) => {
+      const next = new Set(s.latexPanes);
+      if (!next.delete(paneId)) next.add(paneId);
+      return { latexPanes: next };
     }),
   setNavigateFn: (fn) => set({ navigateFn: fn }),
   setControlSendFn: (fn) => set({ controlSendFn: fn }),

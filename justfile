@@ -100,6 +100,10 @@ run: build
 test:
     cargo test
 
+# Frontend unit tests (LaTeX detector)
+test-frontend:
+    cd frontend && bun test
+
 # Generate the TypeScript wire contract from Rust
 protocol:
     BTMUX_UPDATE_PROTOCOL=1 cargo test protocol::generated_protocol_is_current

@@ -34,6 +34,10 @@ interface Props {
   /** Color of the pending-notification dot for this pane, or null if none. */
   notificationColor: string | null;
   termFont: number;
+  /** LaTeX formulas detected on screen; the chip is hidden at 0. */
+  latexCount?: number;
+  latexOpen?: boolean;
+  onToggleLatex?: () => void;
 }
 
 /**
@@ -42,7 +46,20 @@ interface Props {
  * brighter fill; inactive panes get a muted badge and a status dot. Fully
  * theme-driven via `chromePalette`.
  */
-export function PaneTitleBar({ theme, index, title, cwd, cols, rows, isActive, notificationColor, termFont }: Props) {
+export function PaneTitleBar({
+  theme,
+  index,
+  title,
+  cwd,
+  cols,
+  rows,
+  isActive,
+  notificationColor,
+  termFont,
+  latexCount = 0,
+  latexOpen = false,
+  onToggleLatex,
+}: Props) {
   const c = chromePalette(theme);
   const font = chromeFont(termFont);
   const height = paneTitleHeight(termFont);
@@ -105,6 +122,26 @@ export function PaneTitleBar({ theme, index, title, cwd, cols, rows, isActive, n
         </span>
       )}
       <span style={{ flex: 1 }} />
+      {(latexCount > 0 || latexOpen) && (
+        <button
+          type="button"
+          title="Toggle LaTeX overlay"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onToggleLatex}
+          style={{
+            flex: 'none',
+            padding: '0 6px',
+            borderRadius: '5px',
+            fontSize: `${Math.max(9, font - 1)}px`,
+            fontWeight: 700,
+            cursor: 'pointer',
+            color: latexOpen ? c.accentInk : c.accent,
+            background: latexOpen ? c.accent : withAlpha(c.accent, 0.16),
+          }}
+        >
+          ∑ {latexCount}
+        </button>
+      )}
       {notificationColor ? (
         <span
           style={{

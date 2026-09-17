@@ -11,6 +11,8 @@ import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
 import { baseShaderSrc } from '../lib/baseShader';
 import { pumpRenders } from '../lib/pumpRenders';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
+import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
+import { LatexOverlay } from './LatexOverlay';
 import {
   CONFIG_DEFAULTS,
   getAnimations,
@@ -149,6 +151,8 @@ export function TerminalPane({
   // animation frames; revealing only after the frame queued by `ready` avoids
   // showing a long replay as rapidly scrolling terminal output.
   const [initialReplayRendered, setInitialReplayRendered] = useState(false);
+  // Set below; the socket handler calls it after each write to rescan for LaTeX.
+  const latexPokeRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const container = containerRef.current;
@@ -309,8 +313,10 @@ export function TerminalPane({
       };
       socket.onmessage = (ev) => {
         if (disposed || ws !== socket) return;
-        if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
-        else {
+        if (ev.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(ev.data));
+          latexPokeRef.current();
+        } else {
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === 'ready') {
@@ -403,6 +409,24 @@ export function TerminalPane({
     // Rebuilding on termOptions re-themes existing panes after a live config
     // reload; the pane socket replays scrollback on reconnect so content is kept.
   }, [paneId, termOptions, registry]);
+
+  // LaTeX detection (lib/latexDetect.ts). Declared after the mount effect so
+  // termRef is populated when the scan effect runs.
+  const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, visible);
+  latexPokeRef.current = latexPoke;
+  const latexOpen = useStore((s) => s.latexPanes.has(paneId));
+  const toggleLatex = () => useStore.getState().toggleLatex(paneId);
+  const highlightLatex = (match: PaneLatexMatch | null) => {
+    const term = termRef.current;
+    if (!term) return;
+    if (!match) return term.clearDecorations();
+    const background = withAlpha(config?.theme?.yellow ?? DEFAULT_THEME.yellow, 0.35);
+    term.setDecorations(match.cells.map((cell) => ({ ...cell, background })));
+  };
+  // Highlights hold absolute buffer lines, which go stale on any rescan.
+  useEffect(() => {
+    termRef.current?.clearDecorations();
+  }, [latexOpen, latexMatches]);
 
   // Park / wake the terminal as it leaves / enters the active window. Hidden
   // panes stay mounted (their socket keeps streaming into the WASM terminal) but
@@ -627,6 +651,9 @@ export function TerminalPane({
           isActive={isActive}
           notificationColor={notifColor}
           termFont={termFont}
+          latexCount={latexMatches.length}
+          latexOpen={latexOpen}
+          onToggleLatex={toggleLatex}
         />
       )}
       {/* Focus ring — only rendered on the active/zoomed pane so mounting it
@@ -721,6 +748,39 @@ export function TerminalPane({
             visibility: initialReplayRendered ? 'visible' : 'hidden',
           }}
         />
+        {/* Without a title bar the LaTeX chip floats in the pane's corner. */}
+        {!showTitle && !latexOpen && latexMatches.length > 0 && (
+          <button
+            type="button"
+            title="Toggle LaTeX overlay"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={toggleLatex}
+            style={{
+              position: 'absolute',
+              top: 6,
+              right: 10,
+              padding: '1px 7px',
+              borderRadius: 5,
+              fontSize: Math.max(10, Math.round(termFont * 0.75)),
+              fontWeight: 700,
+              cursor: 'pointer',
+              color: config?.theme?.background ?? DEFAULT_THEME.background,
+              background: withAlpha(borderActive, 0.85),
+              zIndex: 5,
+            }}
+          >
+            ∑ {latexMatches.length}
+          </button>
+        )}
+        {latexOpen && (
+          <LatexOverlay
+            theme={config?.theme ?? null}
+            termFont={termFont}
+            matches={latexMatches}
+            onHover={highlightLatex}
+            onClose={toggleLatex}
+          />
+        )}
       </div>
     </div>
   );

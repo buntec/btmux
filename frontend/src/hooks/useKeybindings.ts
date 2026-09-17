@@ -256,6 +256,9 @@ function runAction(
       send({ type: 'capture_pane', pane_id: paneId, content });
       break;
     }
+    case 'toggle-latex':
+      if (paneId) store.toggleLatex(paneId);
+      break;
     case 'new-window':
       send({ type: 'create_window', session_id: sessionId });
       break;

@@ -507,16 +507,17 @@ export function TerminalPane({
     return () => clearTimeout(done);
   }, [isActive, visible, config?.animations, paneSwitchBorderStyleId, paneSwitchBorderSpeed]);
 
-  // Hide cursor on inactive panes by blending it into the background.
+  // Hide cursor on inactive panes with transparency. Blending it into the
+  // terminal background leaves a visible bar when transparency shows the
+  // wallpaper behind the canvas.
   // term.options.theme is unsupported after open(); go directly to the renderer.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    const bg = config?.theme?.background ?? DEFAULT_THEME.background;
     const cursor = config?.theme?.cursor ?? DEFAULT_THEME.cursor;
     term.renderer?.setTheme({
       ...(config?.theme ?? DEFAULT_THEME),
-      cursor: isActive ? cursor : bg,
+      cursor: isActive ? cursor : 'rgba(0, 0, 0, 0)',
     });
   }, [isActive, config?.theme, termOptions]);
 

@@ -687,6 +687,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             break;
           }
+          case 'Enter': {
+            e.preventDefault();
+            const item = items[gitFocusedIndex];
+            if (item?.kind === 'file' && item.path) {
+              openPath(item.path, false);
+            }
+            break;
+          }
           case 'g':
             e.preventDefault();
             store.getState().setGitFocusedIndex(0);

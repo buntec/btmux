@@ -19,6 +19,8 @@ const SECTION_LABELS: Record<string, string> = {
   untracked: 'UNTRACKED FILES',
 };
 
+export const ALL_GIT_SECTIONS = new Set(['staged', 'unstaged', 'untracked']);
+
 export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Set<string>): GitItem[] {
   const items: GitItem[] = [];
 
@@ -52,6 +54,36 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
   return items;
 }
 
+/** Drops non-matching file items and any section header left with no matches. */
+export function filterGitItems(items: GitItem[], query: string): GitItem[] {
+  if (!query) return items;
+  const q = query.toLowerCase();
+  const result: GitItem[] = [];
+  let headerIndex = -1;
+  let matched = false;
+
+  const commitHeader = () => {
+    if (headerIndex !== -1 && !matched) {
+      result.splice(headerIndex, 1);
+    }
+    headerIndex = -1;
+    matched = false;
+  };
+
+  for (const item of items) {
+    if (item.kind === 'section-header') {
+      commitHeader();
+      result.push(item);
+      headerIndex = result.length - 1;
+    } else if (item.path?.toLowerCase().includes(q)) {
+      result.push(item);
+      matched = true;
+    }
+  }
+  commitHeader();
+  return result;
+}
+
 function statusIcon(status: FileStatus) {
   switch (status) {
     case 'added':
@@ -71,9 +103,14 @@ export function GitStatus() {
   const gitStatus = useFileStore((s) => s.gitStatus);
   const gitFocusedIndex = useFileStore((s) => s.gitFocusedIndex);
   const gitExpandedSections = useFileStore((s) => s.gitExpandedSections);
+  const isFilterActive = useFileStore((s) => s.isFilterActive);
+  const filterQuery = useFileStore((s) => s.filterQuery);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const items = gitStatus ? computeGitItems(gitStatus, gitExpandedSections) : [];
+  const expandedSections = isFilterActive ? ALL_GIT_SECTIONS : gitExpandedSections;
+  const items = gitStatus
+    ? filterGitItems(computeGitItems(gitStatus, expandedSections), isFilterActive ? filterQuery : '')
+    : [];
 
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-git-index="${gitFocusedIndex}"]`);
@@ -89,7 +126,11 @@ export function GitStatus() {
   }
 
   if (items.length === 0) {
-    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Clean working tree</div>;
+    return (
+      <div className="flex-1 flex items-center justify-center text-muted-foreground">
+        {isFilterActive && filterQuery ? 'No matches' : 'Clean working tree'}
+      </div>
+    );
   }
 
   return (
@@ -97,7 +138,7 @@ export function GitStatus() {
       <div ref={listRef}>
         {items.map((item, i) => {
           if (item.kind === 'section-header') {
-            const expanded = gitExpandedSections.has(item.section);
+            const expanded = expandedSections.has(item.section);
             return (
               <div
                 key={`header-${item.section}`}

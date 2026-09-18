@@ -7,7 +7,7 @@ import { FileTree } from './files/FileTree';
 import { FilePreview } from './files/FilePreview';
 import { Breadcrumb } from './files/Breadcrumb';
 import { GitModeHeader } from './files/GitModeHeader';
-import { GitStatus, computeGitItems } from './files/GitStatus';
+import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
 import { getParent } from '@/lib/utils';
 import { getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
@@ -47,6 +47,17 @@ const MAX_SIDEBAR_RATIO = 0.5;
 function scrollFilePreview(direction: 1 | -1) {
   const viewport = document.querySelector<HTMLElement>('.file-preview-scroll [data-slot="scroll-area-viewport"]');
   if (viewport) viewport.scrollBy({ top: direction * (viewport.clientHeight / 2) });
+}
+
+/** The git item list as currently navigable — forces all sections open and applies the filter while filtering. */
+function visibleGitItems(
+  gitStatus: GitStatusResult,
+  expandedSections: Set<string>,
+  isFilterActive: boolean,
+  filterQuery: string,
+): GitItem[] {
+  const items = computeGitItems(gitStatus, isFilterActive ? ALL_GIT_SECTIONS : expandedSections);
+  return isFilterActive ? filterGitItems(items, filterQuery) : items;
 }
 
 interface FileBrowserOverlayProps {
@@ -368,7 +379,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Auto-preview diff when git focused index changes
   useEffect(() => {
     if (!isGitMode || !gitStatus) return;
-    const items = computeGitItems(gitStatus, gitExpandedSections);
+    const items = visibleGitItems(gitStatus, gitExpandedSections, isFilterActive, filterQuery);
     const item = items[gitFocusedIndex];
     if (!item || item.kind === 'section-header' || !item.path) {
       store.getState().setGitDiff(null);
@@ -384,7 +395,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       },
       () => {},
     );
-  }, [isGitMode, gitFocusedIndex, gitStatus, gitExpandedSections, fileSend, currentPath, store]);
+  }, [
+    isGitMode,
+    gitFocusedIndex,
+    gitStatus,
+    gitExpandedSections,
+    isFilterActive,
+    filterQuery,
+    fileSend,
+    currentPath,
+    store,
+  ]);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -564,8 +585,27 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
       // Git mode keybindings
       if (isGitMode) {
-        const items = gitStatus ? computeGitItems(gitStatus, gitExpandedSections) : [];
+        const items = gitStatus ? visibleGitItems(gitStatus, gitExpandedSections, isFilterActive, filterQuery) : [];
         const count = items.length;
+
+        if (isFilterActive) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            store.getState().setIsFilterActive(false);
+            return;
+          }
+          if (e.key === 'Backspace') {
+            e.preventDefault();
+            store.getState().setFilterQuery(filterQuery.slice(0, -1));
+            return;
+          }
+          if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
+            e.preventDefault();
+            store.getState().setFilterQuery(filterQuery + e.key);
+            return;
+          }
+          if (!e.ctrlKey) return;
+        }
 
         if (e.ctrlKey && e.key === 'd') {
           e.preventDefault();
@@ -658,6 +698,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           case 'G':
             e.preventDefault();
             store.getState().setGitFocusedIndex(count - 1);
+            break;
+          case '/':
+            e.preventDefault();
+            store.getState().setIsFilterActive(true);
             break;
         }
         return;
@@ -1153,6 +1197,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 <Kbd>x</Kbd>
               </KbdGroup>{' '}
               discard
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>/</Kbd>
+              </KbdGroup>{' '}
+              filter
             </span>
             <span>
               <KbdGroup>

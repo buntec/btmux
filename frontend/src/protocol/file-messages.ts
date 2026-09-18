@@ -4,6 +4,7 @@ export interface FileEntry {
   size: number;
   modified: string | null;
   extension: string | null;
+  is_ignored: boolean;
 }
 
 export interface FileContent {

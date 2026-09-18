@@ -68,6 +68,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const filterQuery = useFileStore((s) => s.filterQuery);
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const showDotFiles = useFileStore((s) => s.showDotFiles);
+  const showIgnored = useFileStore((s) => s.showIgnored);
   const isGitMode = useFileStore((s) => s.isGitMode);
   const treeDepth = useFileStore((s) => s.treeDepth);
   const gitStatus = useFileStore((s) => s.gitStatus);
@@ -141,8 +142,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         store.getState().setCurrentPath(payload.path);
         store.getState().setEntries(payload.entries);
         if (focusTarget) {
-          const { showDotFiles } = store.getState();
-          const visible = payload.entries.filter((e) => showDotFiles || !e.name.startsWith('.'));
+          const { showDotFiles, showIgnored } = store.getState();
+          const visible = payload.entries.filter(
+            (e) => (showDotFiles || !e.name.startsWith('.')) && (showIgnored || !e.is_ignored),
+          );
           const idx = visible.findIndex((e) => e.name === focusTarget);
           if (idx !== -1) store.getState().setFocusedIndex(idx);
         }
@@ -450,6 +453,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     }
     const visible = entries.filter((entry) => {
       if (!showDotFiles && entry.name.startsWith('.')) return false;
+      if (!showIgnored && entry.is_ignored) return false;
       if (isFilterActive && filterQuery) {
         return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
       }
@@ -468,6 +472,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     entries,
     currentPath,
     showDotFiles,
+    showIgnored,
     isFilterActive,
     filterQuery,
     treeDepth,
@@ -602,6 +607,22 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             break;
           }
+          case 'h': {
+            e.preventDefault();
+            const item = items[gitFocusedIndex];
+            if (item?.kind === 'section-header' && gitExpandedSections.has(item.section)) {
+              store.getState().toggleGitSection(item.section);
+            }
+            break;
+          }
+          case 'l': {
+            e.preventDefault();
+            const item = items[gitFocusedIndex];
+            if (item?.kind === 'section-header' && !gitExpandedSections.has(item.section)) {
+              store.getState().toggleGitSection(item.section);
+            }
+            break;
+          }
           case 's': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
@@ -682,6 +703,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           store.getState().setIsFilterActive(false);
           const vis = entries.filter((entry) => {
             if (!showDotFiles && entry.name.startsWith('.')) return false;
+            if (!showIgnored && entry.is_ignored) return false;
             if (filterQuery) {
               return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
             }
@@ -714,6 +736,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           const vis = entries.filter((entry) => {
             if (!showDotFiles && entry.name.startsWith('.')) return false;
+            if (!showIgnored && entry.is_ignored) return false;
             if (filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
             return true;
           });
@@ -726,6 +749,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
       const visible = entries.filter((entry) => {
         if (!showDotFiles && entry.name.startsWith('.')) return false;
+        if (!showIgnored && entry.is_ignored) return false;
         if (isFilterActive && filterQuery) {
           return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
         }
@@ -838,6 +862,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           store.getState().setShowDotFiles(!showDotFiles);
           break;
+        case 'i':
+          e.preventDefault();
+          store.getState().setShowIgnored(!showIgnored);
+          break;
         case 'g':
           e.preventDefault();
           store.getState().setFocusedIndex(0);
@@ -915,6 +943,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     isFilterActive,
     filterQuery,
     showDotFiles,
+    showIgnored,
     isGitMode,
     gitStatus,
     gitFocusedIndex,
@@ -951,6 +980,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const focusedEntryIsDir = (() => {
     const visible = entries.filter((entry) => {
       if (!showDotFiles && entry.name.startsWith('.')) return false;
+      if (!showIgnored && entry.is_ignored) return false;
       if (isFilterActive && filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
       return true;
     });
@@ -1101,6 +1131,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             </span>
             <span>
               <KbdGroup>
+                <Kbd>h</Kbd>
+                <Kbd>l</Kbd>
+              </KbdGroup>{' '}
+              fold/unfold
+            </span>
+            <span>
+              <KbdGroup>
                 <Kbd>s</Kbd>
               </KbdGroup>{' '}
               stage
@@ -1247,6 +1284,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 <Kbd>.</Kbd>
               </KbdGroup>{' '}
               dotfiles
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>i</Kbd>
+              </KbdGroup>{' '}
+              gitignored
             </span>
             <span>
               <KbdGroup>

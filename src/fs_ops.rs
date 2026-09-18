@@ -10,6 +10,7 @@ pub struct FileEntry {
     pub size: u64,
     pub modified: Option<String>,
     pub extension: Option<String>,
+    pub is_ignored: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,6 +88,7 @@ pub async fn list_dir(root: &Path, path: &str) -> Result<(Vec<FileEntry>, String
                 .ok()
                 .and_then(|t| time_to_string(t).ok()),
             extension,
+            is_ignored: false,
         });
     }
 
@@ -95,6 +97,16 @@ pub async fn list_dir(root: &Path, path: &str) -> Result<(Vec<FileEntry>, String
         (false, true) => std::cmp::Ordering::Greater,
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
+
+    let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+    let ignore_dir = dir_path.clone();
+    let ignored =
+        tokio::task::spawn_blocking(move || crate::file_git::ignored_names(&ignore_dir, &names))
+            .await
+            .unwrap_or_default();
+    for entry in &mut entries {
+        entry.is_ignored = ignored.contains(&entry.name);
+    }
 
     Ok((entries, resolved_path))
 }

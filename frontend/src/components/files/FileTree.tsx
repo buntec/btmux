@@ -24,6 +24,7 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
   const filterQuery = useFileStore((s) => s.filterQuery);
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const showDotFiles = useFileStore((s) => s.showDotFiles);
+  const showIgnored = useFileStore((s) => s.showIgnored);
   const isLoading = useFileStore((s) => s.isLoading);
   const selectedPaths = useFileStore((s) => s.selectedPaths);
   const yankRegister = useFileStore((s) => s.yankRegister);
@@ -36,12 +37,13 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
     () =>
       entries.filter((e) => {
         if (!showDotFiles && e.name.startsWith('.')) return false;
+        if (!showIgnored && e.is_ignored) return false;
         if (isFilterActive && filterQuery) {
           return e.name.toLowerCase().includes(filterQuery.toLowerCase());
         }
         return true;
       }),
-    [entries, showDotFiles, isFilterActive, filterQuery],
+    [entries, showDotFiles, showIgnored, isFilterActive, filterQuery],
   );
 
   useEffect(() => {

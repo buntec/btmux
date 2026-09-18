@@ -1,5 +1,6 @@
 use git2::{BranchType, DiffOptions, Repository, Status, StatusOptions};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -101,6 +102,30 @@ pub async fn git_discard_file(root: &Path, path: &str) -> Result<(), String> {
 
 fn open_repo(root: &Path) -> Result<Repository, String> {
     Repository::discover(root).map_err(|e| format!("Not a git repository: {}", e))
+}
+
+/// Returns the subset of `names` (entries of `dir`) that are gitignored.
+/// Empty if `dir` isn't inside a git repository.
+pub fn ignored_names(dir: &Path, names: &[String]) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let Ok(repo) = Repository::discover(dir) else {
+        return result;
+    };
+    let Some(workdir) = repo.workdir() else {
+        return result;
+    };
+    let Ok(rel_dir) = dir.strip_prefix(workdir) else {
+        return result;
+    };
+    for name in names {
+        if repo
+            .status_should_ignore(&rel_dir.join(name))
+            .unwrap_or(false)
+        {
+            result.insert(name.clone());
+        }
+    }
+    result
 }
 
 fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {

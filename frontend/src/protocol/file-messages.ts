@@ -50,6 +50,13 @@ export interface StatusEntry {
   path: string;
   status: FileStatus;
   old_path: string | null;
+  additions: number;
+  deletions: number;
+}
+
+export interface LineStats {
+  additions: number;
+  deletions: number;
 }
 
 export interface GitHead {
@@ -65,6 +72,7 @@ export interface GitStatusResult {
   staged: StatusEntry[];
   unstaged: StatusEntry[];
   untracked: string[];
+  untracked_stats: Record<string, LineStats>;
   is_repo: boolean;
   is_repo_root: boolean;
 }

@@ -222,9 +222,14 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("path")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
+            let include_diff_stats = request
+                .payload
+                .get("include_diff_stats")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
             let git_root = fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
 
-            match file_git::git_status(&git_root).await {
+            match file_git::git_status(&git_root, include_diff_stats).await {
                 Ok(result) => ServerMessage {
                     id,
                     msg_type: "git_status_result".to_string(),
@@ -276,7 +281,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
             if let Err(e) = file_git::git_stage_file(&status_root, path).await {
                 return error_response(id, &e);
             }
-            match file_git::git_status(&status_root).await {
+            match file_git::git_status(&status_root, true).await {
                 Ok(status) => ServerMessage {
                     id,
                     msg_type: "git_stage_result".to_string(),
@@ -301,7 +306,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
             if let Err(e) = file_git::git_unstage_file(&status_root, path).await {
                 return error_response(id, &e);
             }
-            match file_git::git_status(&status_root).await {
+            match file_git::git_status(&status_root, true).await {
                 Ok(status) => ServerMessage {
                     id,
                     msg_type: "git_unstage_result".to_string(),
@@ -326,7 +331,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
             if let Err(e) = file_git::git_discard_file(&status_root, path).await {
                 return error_response(id, &e);
             }
-            match file_git::git_status(&status_root).await {
+            match file_git::git_status(&status_root, true).await {
                 Ok(status) => ServerMessage {
                     id,
                     msg_type: "git_discard_result".to_string(),

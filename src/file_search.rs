@@ -1,12 +1,15 @@
 use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config, Matcher, Nucleo, Utf32Str};
 use serde::{Deserialize, Serialize};
+use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
+
+const MAX_CONTENT_RESULTS: usize = 100;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileSearchResult {
@@ -81,11 +84,16 @@ impl FileIndex {
             let stdout = child.stdout.take().unwrap();
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
+            let mut lines_read = 0;
             while let Ok(Some(line)) = lines.next_line().await {
                 let path = line.trim_start_matches("./").to_string();
                 injector.push(path, |s, cols| {
                     cols[0] = s.as_str().into();
                 });
+                lines_read += 1;
+                if lines_read % 256 == 0 {
+                    tokio::task::yield_now().await;
+                }
             }
             let _ = child.wait().await;
 
@@ -108,6 +116,7 @@ impl FileIndex {
             if !status.running {
                 break;
             }
+            tokio::task::yield_now().await;
         }
 
         let snapshot = state.nucleo.snapshot();
@@ -140,35 +149,62 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
         return Ok(Vec::new());
     }
 
-    let root_str = root.to_string_lossy();
+    let mut rg = Command::new("rg");
+    rg.args([
+        "--json",
+        "--max-count",
+        "5",
+        "--max-filesize",
+        "1M",
+        "--max-columns",
+        "200",
+        "--",
+    ])
+    .arg(query)
+    .arg(".")
+    .current_dir(root)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
 
-    let mut child = Command::new("rg")
-        .args([
-            "--json",
-            "--max-count",
-            "5",
-            "--max-filesize",
-            "1M",
-            "--max-columns",
-            "200",
-            query,
-        ])
+    match rg.spawn() {
+        Ok(child) => return collect_rg_results(child, root).await,
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Failed to run ripgrep: {}", error)),
+    }
+
+    let mut grep = Command::new("grep");
+    grep.args(["-R", "-n", "-H", "-I", "-e"])
+        .arg(query)
+        .arg(".")
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Failed to run ripgrep: {}", e))?;
+        .stderr(Stdio::null());
 
-    let stdout = child.stdout.take().unwrap();
-    let reader = BufReader::new(stdout);
-    let mut lines = reader.lines();
+    let child = grep
+        .spawn()
+        .map_err(|error| format!("Failed to run ripgrep or grep: {}", error))?;
+    collect_grep_results(child, root).await
+}
+
+async fn collect_rg_results(
+    mut child: tokio::process::Child,
+    root: &Path,
+) -> Result<Vec<SearchResult>, String> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to read ripgrep output".to_string())?;
+    let mut lines = BufReader::new(stdout).lines();
     let mut results = Vec::new();
 
-    while let Ok(Some(line)) = lines.next_line().await {
-        if results.len() >= 100 {
-            break;
-        }
+    while results.len() < MAX_CONTENT_RESULTS {
+        let line = lines
+            .next_line()
+            .await
+            .map_err(|error| format!("Failed to read ripgrep output: {}", error))?;
+        let Some(line) = line else { break };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
@@ -184,7 +220,6 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
             .and_then(|p| p.get("text"))
             .and_then(|t| t.as_str())
             .unwrap_or("");
-        let path = format!("{}/{}", root_str, rel_path.trim_start_matches("./"));
         let line_number = data.get("line_number").and_then(|n| n.as_u64());
         let text = data
             .get("lines")
@@ -193,12 +228,118 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
             .map(|s| s.trim().to_string());
 
         results.push(SearchResult {
-            path,
+            path: search_path(root, rel_path),
             line: line_number,
             text,
         });
     }
 
-    let _ = child.kill().await;
+    let limited = results.len() >= MAX_CONTENT_RESULTS;
+    drop(lines);
+    if limited {
+        let _ = child.kill().await;
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|error| format!("Failed to wait for ripgrep: {}", error))?;
+    if !limited && !matches!(status.code(), Some(0) | Some(1)) {
+        return Err(format!("ripgrep failed with status {}", status));
+    }
+
     Ok(results)
+}
+
+async fn collect_grep_results(
+    mut child: tokio::process::Child,
+    root: &Path,
+) -> Result<Vec<SearchResult>, String> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to read grep output".to_string())?;
+    let mut lines = BufReader::new(stdout).lines();
+    let mut results = Vec::new();
+
+    while results.len() < MAX_CONTENT_RESULTS {
+        let line = lines
+            .next_line()
+            .await
+            .map_err(|error| format!("Failed to read grep output: {}", error))?;
+        let Some(line) = line else { break };
+        if let Some(result) = parse_grep_result(&line, root) {
+            results.push(result);
+        }
+    }
+
+    let limited = results.len() >= MAX_CONTENT_RESULTS;
+    drop(lines);
+    if limited {
+        let _ = child.kill().await;
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|error| format!("Failed to wait for grep: {}", error))?;
+    if !limited && !matches!(status.code(), Some(0) | Some(1)) {
+        return Err(format!("grep failed with status {}", status));
+    }
+
+    Ok(results)
+}
+
+fn search_path(root: &Path, relative: &str) -> String {
+    root.join(relative.trim_start_matches("./"))
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn parse_grep_result(line: &str, root: &Path) -> Option<SearchResult> {
+    // Split at the colon followed by a numeric line number, so filenames
+    // containing colons remain valid.
+    for (index, character) in line.char_indices() {
+        if character != ':' {
+            continue;
+        }
+        let rest = &line[index + 1..];
+        let (line_number, text) = rest.split_once(':')?;
+        let Ok(line_number) = line_number.parse() else {
+            continue;
+        };
+        return Some(SearchResult {
+            path: search_path(root, &line[..index]),
+            line: Some(line_number),
+            text: Some(text.trim().to_string()),
+        });
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::content_search;
+    use std::fs;
+
+    #[tokio::test]
+    async fn content_search_finds_matching_lines() {
+        let root =
+            std::env::temp_dir().join(format!("btmux-content-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(
+            root.join("nested/matches.txt"),
+            "before\nneedle with context\nafter\n",
+        )
+        .unwrap();
+
+        let results = content_search("needle", &root).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].path,
+            root.join("nested/matches.txt").to_string_lossy()
+        );
+        assert_eq!(results[0].line, Some(2));
+        assert_eq!(results[0].text.as_deref(), Some("needle with context"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -3,13 +3,15 @@ import { Plus, Pencil, Trash2, GitBranch, FileQuestion, ChevronRight, ChevronDow
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
-import type { GitStatusResult, FileStatus } from '@/protocol/file-messages';
+import type { GitStatusResult, FileStatus, LineStats } from '@/protocol/file-messages';
 
 export interface GitItem {
   kind: 'section-header' | 'file';
   section: string;
   path?: string;
   status?: FileStatus;
+  additions?: number;
+  deletions?: number;
   count?: number;
 }
 
@@ -28,7 +30,14 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
     items.push({ kind: 'section-header', section: 'staged', count: gitStatus.staged.length });
     if (expandedSections.has('staged')) {
       for (const entry of gitStatus.staged) {
-        items.push({ kind: 'file', section: 'staged', path: entry.path, status: entry.status });
+        items.push({
+          kind: 'file',
+          section: 'staged',
+          path: entry.path,
+          status: entry.status,
+          additions: entry.additions,
+          deletions: entry.deletions,
+        });
       }
     }
   }
@@ -37,7 +46,14 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
     items.push({ kind: 'section-header', section: 'unstaged', count: gitStatus.unstaged.length });
     if (expandedSections.has('unstaged')) {
       for (const entry of gitStatus.unstaged) {
-        items.push({ kind: 'file', section: 'unstaged', path: entry.path, status: entry.status });
+        items.push({
+          kind: 'file',
+          section: 'unstaged',
+          path: entry.path,
+          status: entry.status,
+          additions: entry.additions,
+          deletions: entry.deletions,
+        });
       }
     }
   }
@@ -46,7 +62,15 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
     items.push({ kind: 'section-header', section: 'untracked', count: gitStatus.untracked.length });
     if (expandedSections.has('untracked')) {
       for (const path of gitStatus.untracked) {
-        items.push({ kind: 'file', section: 'untracked', path, status: 'added' });
+        const stats = gitStatus.untracked_stats[path];
+        items.push({
+          kind: 'file',
+          section: 'untracked',
+          path,
+          status: 'added',
+          additions: stats?.additions ?? 0,
+          deletions: stats?.deletions ?? 0,
+        });
       }
     }
   }
@@ -97,6 +121,29 @@ function statusIcon(status: FileStatus) {
     case 'typechange':
       return <FileQuestion className="size-3 text-[var(--color-yellow)] shrink-0" />;
   }
+}
+
+function DiffStat({ additions, deletions }: LineStats) {
+  const total = additions + deletions;
+  if (total === 0) return null;
+
+  const additionsWidth = `${(additions / total) * 100}%`;
+  const deletionsWidth = `${(deletions / total) * 100}%`;
+
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 text-[0.7em] tabular-nums whitespace-nowrap"
+      title={`${additions} additions, ${deletions} deletions`}
+      aria-label={`${additions} additions, ${deletions} deletions`}
+    >
+      <span className="inline-flex h-1.5 w-8 overflow-hidden rounded-full bg-muted/60" aria-hidden="true">
+        {additions > 0 && <span className="bg-[var(--color-green)]" style={{ width: additionsWidth }} />}
+        {deletions > 0 && <span className="bg-[var(--color-red)]" style={{ width: deletionsWidth }} />}
+      </span>
+      {additions > 0 && <span className="text-[var(--color-green)]">+{additions}</span>}
+      {deletions > 0 && <span className="text-[var(--color-red)]">-{deletions}</span>}
+    </span>
+  );
 }
 
 export function GitStatus() {
@@ -173,10 +220,11 @@ export function GitStatus() {
               title={path}
             >
               {statusIcon(item.status!)}
-              <span className="truncate">
+              <span className="min-w-0 flex-1 truncate">
                 {dir && <span className="text-muted-foreground">{dir}</span>}
                 {filename}
               </span>
+              <DiffStat additions={item.additions ?? 0} deletions={item.deletions ?? 0} />
             </div>
           );
         })}

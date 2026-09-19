@@ -1,6 +1,9 @@
-use git2::{BranchType, DiffOptions, Repository, Status, StatusOptions};
+use git2::{
+    BranchType, DiffDelta, DiffHunk as GitDiffHunk, DiffLine as GitDiffLine, DiffOptions,
+    Repository, Status, StatusOptions,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -18,6 +21,14 @@ pub struct StatusEntry {
     pub path: String,
     pub status: FileStatus,
     pub old_path: Option<String>,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default)]
+pub struct LineStats {
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,6 +46,7 @@ pub struct GitStatusResult {
     pub staged: Vec<StatusEntry>,
     pub unstaged: Vec<StatusEntry>,
     pub untracked: Vec<String>,
+    pub untracked_stats: HashMap<String, LineStats>,
     pub is_repo: bool,
     pub is_repo_root: bool,
 }
@@ -61,9 +73,9 @@ pub struct FileDiff {
     pub is_binary: bool,
 }
 
-pub async fn git_status(root: &Path) -> Result<GitStatusResult, String> {
+pub async fn git_status(root: &Path, include_diff_stats: bool) -> Result<GitStatusResult, String> {
     let root = root.to_path_buf();
-    tokio::task::spawn_blocking(move || git_status_sync(&root))
+    tokio::task::spawn_blocking(move || git_status_sync(&root, include_diff_stats))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -128,7 +140,7 @@ pub fn ignored_names(dir: &Path, names: &[String]) -> HashSet<String> {
     result
 }
 
-fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
+fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusResult, String> {
     let repo = match Repository::discover(root) {
         Ok(r) => r,
         Err(_) => {
@@ -143,6 +155,7 @@ fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
                 staged: vec![],
                 unstaged: vec![],
                 untracked: vec![],
+                untracked_stats: HashMap::new(),
                 is_repo: false,
                 is_repo_root: false,
             });
@@ -177,6 +190,15 @@ fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
         .statuses(Some(&mut opts))
         .map_err(|e| format!("Failed to get status: {}", e))?;
 
+    let (staged_stats, unstaged_stats) = if include_diff_stats {
+        (
+            diff_line_stats(&repo, &prefix, true)?,
+            diff_line_stats(&repo, &prefix, false)?,
+        )
+    } else {
+        (HashMap::new(), HashMap::new())
+    };
+
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
     let mut untracked = Vec::new();
@@ -203,6 +225,8 @@ fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
                 path: path.clone(),
                 status: index_status_to_enum(st),
                 old_path: None,
+                additions: staged_stats.get(&path).map_or(0, |stats| stats.additions),
+                deletions: staged_stats.get(&path).map_or(0, |stats| stats.deletions),
             });
         }
 
@@ -213,18 +237,106 @@ fn git_status_sync(root: &Path) -> Result<GitStatusResult, String> {
                 path: path.clone(),
                 status: wt_status_to_enum(st),
                 old_path: None,
+                additions: unstaged_stats.get(&path).map_or(0, |stats| stats.additions),
+                deletions: unstaged_stats.get(&path).map_or(0, |stats| stats.deletions),
             });
         }
     }
+
+    let untracked_stats = if include_diff_stats {
+        untracked
+            .iter()
+            .map(|path| {
+                let stats = repo
+                    .workdir()
+                    .map(|workdir| count_untracked_lines(&workdir.join(path)))
+                    .unwrap_or_default();
+                (path.clone(), stats)
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
 
     Ok(GitStatusResult {
         head,
         staged,
         unstaged,
         untracked,
+        untracked_stats,
         is_repo: true,
         is_repo_root,
     })
+}
+
+fn diff_line_stats(
+    repo: &Repository,
+    prefix: &str,
+    staged: bool,
+) -> Result<HashMap<String, LineStats>, String> {
+    let mut diff_opts = DiffOptions::new();
+    if !prefix.is_empty() {
+        diff_opts.pathspec(prefix);
+    }
+
+    let diff = if staged {
+        let head_tree = repo
+            .head()
+            .ok()
+            .and_then(|reference| reference.peel_to_tree().ok());
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts))
+    } else {
+        repo.diff_index_to_workdir(None, Some(&mut diff_opts))
+    }
+    .map_err(|e| format!("Failed to get diff stats: {}", e))?;
+
+    let mut stats = HashMap::new();
+    let mut file_cb = |_delta: DiffDelta<'_>, _progress: f32| true;
+    let mut line_cb =
+        |delta: DiffDelta<'_>, _hunk: Option<GitDiffHunk<'_>>, line: GitDiffLine<'_>| {
+            let Some(path) = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|path| path.to_string_lossy().into_owned())
+            else {
+                return true;
+            };
+
+            let entry = stats.entry(path).or_insert_with(LineStats::default);
+            match line.origin() {
+                '+' => entry.additions += line.num_lines().max(1) as usize,
+                '-' => entry.deletions += line.num_lines().max(1) as usize,
+                _ => {}
+            }
+            true
+        };
+
+    diff.foreach(&mut file_cb, None, None, Some(&mut line_cb))
+        .map_err(|e| format!("Failed to count diff stats: {}", e))?;
+    Ok(stats)
+}
+
+fn count_untracked_lines(path: &Path) -> LineStats {
+    let Ok(content) = std::fs::read(path) else {
+        return LineStats::default();
+    };
+
+    // Git reports binary changes without line additions or deletions.
+    if content.contains(&0) {
+        return LineStats::default();
+    }
+
+    let additions = if content.is_empty() {
+        0
+    } else {
+        content.iter().filter(|byte| **byte == b'\n').count()
+            + usize::from(!content.ends_with(b"\n"))
+    };
+    LineStats {
+        additions,
+        deletions: 0,
+    }
 }
 
 fn get_head_info(repo: &Repository) -> GitHead {
@@ -459,4 +571,62 @@ fn git_discard_file_sync(root: &Path, path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to discard changes: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_untracked_lines, git_status_sync};
+    use git2::{Repository, Signature};
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn count_untracked_lines_matches_file_lines() {
+        let root = std::env::temp_dir().join(format!("btmux-git-stats-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+
+        let path = root.join("file.txt");
+        fs::write(&path, "one\ntwo\n\n").unwrap();
+        assert_eq!(count_untracked_lines(&path).additions, 3);
+
+        fs::write(&path, [0, 1, 2]).unwrap();
+        assert_eq!(count_untracked_lines(&path).additions, 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn status_includes_staged_and_unstaged_line_counts() {
+        let root = std::env::temp_dir().join(format!("btmux-git-status-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, "one\n").unwrap();
+
+        let repo = Repository::init(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+
+        fs::write(&file, "one\ntwo\nthree\n").unwrap();
+        let lightweight_status = git_status_sync(&root, false).unwrap();
+        assert_eq!(lightweight_status.unstaged[0].additions, 0);
+
+        let status = git_status_sync(&root, true).unwrap();
+        assert_eq!(status.unstaged[0].path, "file.txt");
+        assert_eq!(status.unstaged[0].additions, 2);
+        assert_eq!(status.unstaged[0].deletions, 0);
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let status = git_status_sync(&root, true).unwrap();
+        assert_eq!(status.staged[0].additions, 2);
+        assert_eq!(status.staged[0].deletions, 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

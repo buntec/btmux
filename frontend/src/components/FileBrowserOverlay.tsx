@@ -245,7 +245,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       store.getState().setGitStatus(null);
       store.getState().setGitDiff(null);
       try {
-        const resp = await fileSend('git_status', { path });
+        const resp = await fileSend('git_status', { path, include_diff_stats: true });
         store.getState().setGitStatus(resp.payload as unknown as GitStatusResult);
       } catch (e) {
         console.error('git_status failed:', e);
@@ -444,6 +444,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [send, onClose, sessionId, paneId],
   );
 
+  const exitSearch = useCallback(() => {
+    store.getState().setSearchMode('off');
+    store.getState().setSearchQuery('');
+    store.getState().setSearchResults([]);
+    store.getState().setContentSearchResults([]);
+    store.getState().setFocusedIndex(0);
+  }, [store]);
+
   const openPath = useCallback(
     (path: string, isDir: boolean, line?: number) => {
       const text = isDir ? `cd ${shellQuote(path)}\n` : editorCommand(path, line);
@@ -469,11 +477,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       const lastSlash = path.lastIndexOf('/');
       const dir = lastSlash > 0 ? path.slice(0, lastSlash) : '/';
       const name = path.slice(lastSlash + 1);
-      store.getState().setSearchMode('off');
-      store.getState().setSearchQuery('');
+      exitSearch();
       await navigate(dir, name);
     },
-    [navigate, store],
+    [exitSearch, navigate],
   );
 
   // Auto-preview focused entry (file, directory, or search result)
@@ -567,8 +574,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         } else if (selectedPaths.size > 0) {
           store.getState().clearSelection();
         } else if (searchMode !== 'off') {
-          store.getState().setSearchMode('off');
-          store.getState().setSearchQuery('');
+          exitSearch();
         } else if (isFilterActive) {
           store.getState().setIsFilterActive(false);
         } else if (isGitMode) {
@@ -1041,6 +1047,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     contentSearchResults,
     selectSearchResult,
     navigateToSearchResult,
+    exitSearch,
     store,
   ]);
 
@@ -1111,10 +1118,15 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               <GitModeHeader />
               <GitStatus />
             </>
-          ) : searchMode !== 'off' ? (
-            <FileSearch fileSend={fileSend} currentPath={currentPath} focusedIndex={focusedIndex} />
           ) : (
-            <FileTree fileSend={fileSend} onNavigate={navigate} onSelect={selectFile} />
+            <>
+              <div className={searchMode === 'off' ? 'flex flex-1 flex-col min-h-0' : 'hidden'}>
+                <FileTree fileSend={fileSend} onNavigate={navigate} onSelect={selectFile} />
+              </div>
+              {searchMode !== 'off' && (
+                <FileSearch fileSend={fileSend} currentPath={currentPath} focusedIndex={focusedIndex} />
+              )}
+            </>
           )}
         </div>
         {/* Drag handle */}

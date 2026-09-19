@@ -19,7 +19,9 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
   const store = useFileStore;
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchGenerationRef = useRef(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -27,35 +29,62 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
   }, []);
 
   useEffect(() => {
+    const generation = ++searchGenerationRef.current;
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    setError(null);
     if (!searchQuery.trim()) {
       store.getState().setSearchResults([]);
       store.getState().setContentSearchResults([]);
       setIsLoading(false);
       return;
     }
+    if (searchMode === 'files') {
+      store.getState().setSearchResults([]);
+    } else {
+      store.getState().setContentSearchResults([]);
+    }
     debounceRef.current = setTimeout(async () => {
+      if (generation !== searchGenerationRef.current) return;
       setIsLoading(true);
       try {
         if (searchMode === 'files') {
           const resp = await fileSend('search_files', { query: searchQuery, path: '.', root: currentPath });
           const payload = resp.payload as { results: FileSearchResult[] };
-          store.getState().setSearchResults(payload.results ?? []);
+          if (generation === searchGenerationRef.current) {
+            store.getState().setSearchResults(payload.results ?? []);
+          }
         } else {
           const resp = await fileSend('search_content', { query: searchQuery, path: '.', root: currentPath });
           const payload = resp.payload as { results: SearchResult[] };
-          store.getState().setContentSearchResults(payload.results ?? []);
+          if (generation === searchGenerationRef.current) {
+            store.getState().setContentSearchResults(payload.results ?? []);
+          }
         }
       } catch (err) {
-        console.error('search failed:', err);
+        if (generation === searchGenerationRef.current) {
+          const message = err instanceof Error ? err.message : 'Search failed';
+          setError(message);
+          console.error('search failed:', err);
+        }
       } finally {
-        setIsLoading(false);
+        if (generation === searchGenerationRef.current) setIsLoading(false);
       }
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      searchGenerationRef.current += 1;
     };
   }, [searchQuery, searchMode, currentPath, fileSend, store]);
+
+  const resultCount = searchMode === 'files' ? searchResults.length : contentSearchResults.length;
+
+  useEffect(() => {
+    if (resultCount === 0 && focusedIndex !== 0) {
+      store.getState().setFocusedIndex(0);
+    } else if (focusedIndex >= resultCount && resultCount > 0) {
+      store.getState().setFocusedIndex(resultCount - 1);
+    }
+  }, [focusedIndex, resultCount, store]);
 
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-index="${focusedIndex}"]`);
@@ -111,7 +140,8 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
                 focused={i === focusedIndex}
               />
             ))}
-          {isEmpty && <div className="px-3 py-4 text-center text-muted-foreground">No results</div>}
+          {error && <div className="px-3 py-4 text-center text-destructive">{error}</div>}
+          {!error && isEmpty && <div className="px-3 py-4 text-center text-muted-foreground">No results</div>}
           {!searchQuery.trim() && <div className="px-3 py-4 text-center text-muted-foreground">Type to search</div>}
         </div>
       </ScrollArea>

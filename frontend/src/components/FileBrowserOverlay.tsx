@@ -874,11 +874,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           if (!focusedEntry || !focusedFullPath) break;
           if (e.ctrlKey) {
-            openPath(focusedFullPath, focusedEntry.is_dir);
+            insertPath(focusedFullPath);
           } else if (focusedEntry.is_dir) {
             navigate(focusedFullPath);
           } else {
-            insertPath(focusedFullPath);
+            openPath(focusedFullPath, false);
           }
           break;
         }
@@ -1312,7 +1312,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               <KbdGroup>
                 <Kbd>Enter</Kbd>
               </KbdGroup>{' '}
-              insert
+              open
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>^Enter</Kbd>
+              </KbdGroup>{' '}
+              insert path
             </span>
             <span>
               <KbdGroup>

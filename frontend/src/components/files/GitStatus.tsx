@@ -190,6 +190,7 @@ export function GitStatus() {
               <div
                 key={`header-${item.section}`}
                 data-git-index={i}
+                onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
                 className={cn(
                   'flex items-center gap-1.5 px-2 cursor-pointer select-none text-muted-foreground leading-tight',
                   i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
@@ -213,6 +214,7 @@ export function GitStatus() {
             <div
               key={`${item.section}-${item.path}`}
               data-git-index={i}
+              onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
               className={cn(
                 'flex items-center gap-2 px-2 pl-5 cursor-pointer leading-tight',
                 i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',

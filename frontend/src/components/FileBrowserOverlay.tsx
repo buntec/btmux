@@ -465,28 +465,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [send, onClose, sessionId, paneId],
   );
 
-  const selectSearchResult = useCallback(
-    (path: string, ctrlKey: boolean) => {
-      if (ctrlKey) {
-        openPath(path, false);
-      } else {
-        insertPath(path);
-      }
-    },
-    [openPath, insertPath],
-  );
-
-  const navigateToSearchResult = useCallback(
-    async (path: string) => {
-      const lastSlash = path.lastIndexOf('/');
-      const dir = lastSlash > 0 ? path.slice(0, lastSlash) : '/';
-      const name = path.slice(lastSlash + 1);
-      exitSearch();
-      await navigate(dir, name);
-    },
-    [exitSearch, navigate],
-  );
-
   // Auto-preview focused entry (file, directory, or search result)
   useEffect(() => {
     if (searchMode !== 'off') {
@@ -761,12 +739,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           const result = results[focusedIndex] as (FileSearchResult | SearchResult) | undefined;
           if (result) {
-            if (searchMode === 'content') {
-              openPath(result.path, false, (result as SearchResult).line ?? undefined);
-            } else if (e.ctrlKey) {
-              selectSearchResult(result.path, true);
+            if (e.ctrlKey) {
+              insertPath(result.path);
             } else {
-              navigateToSearchResult(result.path);
+              const line = searchMode === 'content' ? ((result as SearchResult).line ?? undefined) : undefined;
+              openPath(result.path, false, line);
             }
           }
           return;
@@ -1051,8 +1028,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     searchMode,
     searchResults,
     contentSearchResults,
-    selectSearchResult,
-    navigateToSearchResult,
     exitSearch,
     store,
   ]);
@@ -1266,16 +1241,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               <KbdGroup>
                 <Kbd>Enter</Kbd>
               </KbdGroup>{' '}
-              {searchMode === 'content' ? 'open at line' : 'go to'}
+              {searchMode === 'content' ? 'open at line' : 'open'}
             </span>
-            {searchMode === 'files' && (
-              <span>
-                <KbdGroup>
-                  <Kbd>^Enter</Kbd>
-                </KbdGroup>{' '}
-                open
-              </span>
-            )}
+            <span>
+              <KbdGroup>
+                <Kbd>^Enter</Kbd>
+              </KbdGroup>{' '}
+              insert path
+            </span>
             <span>
               <KbdGroup>
                 <Kbd>Tab</Kbd>

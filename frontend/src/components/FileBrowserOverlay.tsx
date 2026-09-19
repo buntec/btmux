@@ -1111,7 +1111,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       </div>
 
       {/* Body */}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         {/* Sidebar */}
         <div
           className="min-w-0 shrink-0 flex flex-col min-h-0 overflow-hidden"
@@ -1139,7 +1139,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           className="w-1 shrink-0 cursor-col-resize border-r border-border hover:bg-accent active:bg-accent"
         />
         {/* Preview */}
-        <div className="flex-1 flex flex-col min-h-0 file-preview-scroll file-preview-content">
+        <div className="min-w-0 flex-1 flex flex-col min-h-0 file-preview-scroll file-preview-content">
           <FilePreview fileSend={fileSend} />
         </div>
       </div>

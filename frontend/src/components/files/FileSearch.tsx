@@ -97,7 +97,7 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
     (searchMode === 'files' ? searchResults.length === 0 : contentSearchResults.length === 0);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+    <div className="flex min-w-0 flex-1 flex-col min-h-0 overflow-hidden">
       <div className="flex items-center gap-1.5 px-2 py-1 border-b border-border">
         {isLoading ? (
           <Loader2 className="size-3.5 animate-spin text-muted-foreground shrink-0" />
@@ -124,7 +124,7 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
         </button>
       </div>
 
-      <ScrollArea className="flex-1 overflow-hidden">
+      <ScrollArea className="min-w-0 flex-1 overflow-hidden">
         <div ref={listRef}>
           {searchMode === 'files' &&
             searchResults.map((r, i) => (
@@ -221,7 +221,7 @@ function ContentResultRow({
     >
       <div className="flex items-center gap-1.5 min-w-0 leading-tight">
         <FileText className="size-3.5 text-muted-foreground shrink-0" />
-        <span className="truncate">
+        <span className="min-w-0 flex-1 truncate">
           {displayPath}
           {result.line != null && (
             <span className={focused ? 'text-accent-foreground/60' : 'text-muted-foreground'}>:{result.line}</span>
@@ -230,7 +230,10 @@ function ContentResultRow({
       </div>
       {result.text && (
         <div
-          className={cn('pl-5 truncate leading-tight', focused ? 'text-accent-foreground/70' : 'text-muted-foreground')}
+          className={cn(
+            'min-w-0 truncate pl-5 leading-tight',
+            focused ? 'text-accent-foreground/70' : 'text-muted-foreground',
+          )}
         >
           {result.text}
         </div>

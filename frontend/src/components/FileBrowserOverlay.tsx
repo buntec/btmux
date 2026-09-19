@@ -450,6 +450,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     store.getState().setSearchResults([]);
     store.getState().setContentSearchResults([]);
     store.getState().setFocusedIndex(0);
+
+    // The search input owns focus while open. Restore keyboard focus after it
+    // unmounts so the overlay can continue handling navigation keys.
+    window.setTimeout(() => rootRef.current?.focus(), 0);
   }, [store]);
 
   const openPath = useCallback(

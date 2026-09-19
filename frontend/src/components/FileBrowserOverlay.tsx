@@ -761,7 +761,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           const result = results[focusedIndex] as (FileSearchResult | SearchResult) | undefined;
           if (result) {
-            if (e.ctrlKey) {
+            if (searchMode === 'content') {
+              openPath(result.path, false, (result as SearchResult).line ?? undefined);
+            } else if (e.ctrlKey) {
               selectSearchResult(result.path, true);
             } else {
               navigateToSearchResult(result.path);
@@ -1264,14 +1266,16 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               <KbdGroup>
                 <Kbd>Enter</Kbd>
               </KbdGroup>{' '}
-              go to
+              {searchMode === 'content' ? 'open at line' : 'go to'}
             </span>
-            <span>
-              <KbdGroup>
-                <Kbd>^Enter</Kbd>
-              </KbdGroup>{' '}
-              open
-            </span>
+            {searchMode === 'files' && (
+              <span>
+                <KbdGroup>
+                  <Kbd>^Enter</Kbd>
+                </KbdGroup>{' '}
+                open
+              </span>
+            )}
             <span>
               <KbdGroup>
                 <Kbd>Tab</Kbd>

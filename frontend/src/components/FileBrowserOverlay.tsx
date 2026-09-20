@@ -266,15 +266,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, store],
   );
 
-  const toggleGitMode = useCallback(async () => {
-    if (store.getState().isGitMode) {
-      store.getState().setIsGitMode(false);
-      store.getState().setGitDiff(null);
-    } else {
-      await enterGitMode(currentPath);
-    }
-  }, [currentPath, enterGitMode, store]);
-
   const exitGitMode = useCallback(() => {
     store.getState().setIsGitMode(false);
     store.getState().setGitDiff(null);
@@ -957,8 +948,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           store.getState().setIsFilterActive(true);
           break;
         case 'f':
+        case 's':
           e.preventDefault();
-          store.getState().setSearchMode('files');
+          store.getState().setSearchMode(e.key === 's' ? 'content' : 'files');
           store.getState().setSearchQuery('');
           store.getState().setSearchResults([]);
           store.getState().setContentSearchResults([]);
@@ -983,10 +975,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         case '~':
           e.preventDefault();
           navigate('~');
-          break;
-        case 's':
-          e.preventDefault();
-          toggleGitMode();
           break;
         case 'q':
           e.preventDefault();
@@ -1062,7 +1050,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     insertPath,
     openPath,
     onClose,
-    toggleGitMode,
     exitGitMode,
     gitStage,
     gitUnstage,
@@ -1431,6 +1418,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             <span>
               <KbdGroup>
                 <Kbd>f</Kbd>
+                <Kbd>s</Kbd>
               </KbdGroup>{' '}
               search
             </span>
@@ -1445,12 +1433,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 <Kbd>i</Kbd>
               </KbdGroup>{' '}
               gitignored
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>s</Kbd>
-              </KbdGroup>{' '}
-              git
             </span>
             <span>
               <KbdGroup>

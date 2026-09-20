@@ -6,6 +6,10 @@ default:
 # Vite (vite.config.ts) proxies /ws and /api here.
 dev_port := "8044"
 
+# Demo backend port — kept distinct from both the production default and the
+# development backend.
+demo_port := "8045"
+
 # Run both backend and frontend in dev mode. Default backend logging to debug;
 # an explicitly exported BTMUX_*_LOG value still wins.
 dev:
@@ -78,13 +82,80 @@ update-nix-package:
 install: build
     cargo install --path .
 
-# Record a demo video against the running production instance (port 8004).
+# Build and record a demo against an isolated btmux instance (port 8045).
 # Output: demo.webm (and demo.mp4 if ffmpeg is in PATH) in the repo root.
-# Override the target with: BTMUX_URL=http://localhost:5173 just record-demo
 # Override the session/prefix with: BTMUX_SESSION=my-session BTMUX_PREFIX=C-a just record-demo
-record-demo:
-    cd frontend && bunx playwright install --with-deps chromium
-    cd frontend && bun run record-demo.ts
+record-demo: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    demo_url="http://127.0.0.1:{{demo_port}}"
+    demo_state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/btmux/demo"
+    demo_state_file="$demo_state_dir/state.json"
+    demo_token_file="$demo_state_dir/state.token"
+
+    cd "{{justfile_directory()}}"
+    (cd frontend && bunx playwright install --with-deps chromium)
+
+    if curl --silent --connect-timeout 1 --output /dev/null "$demo_url/"; then
+        echo "Cannot reset the demo profile while $demo_url is already in use" >&2
+        exit 1
+    fi
+
+    # Start each recording with a clean session tree and token. Keep the lock
+    # inode: ProfileLock intentionally never unlinks it while a server runs.
+    rm -f "$demo_state_file" "$demo_token_file"
+
+    # Always use the demo profile's own token, even when the caller has the
+    # production token exported in its environment.
+    env -u BTMUX_AUTH_TOKEN ./target/release/btmux --no-browser --profile demo --port {{demo_port}} &
+    server_pid=$!
+
+    cleanup() {
+        if kill -0 "$server_pid" 2>/dev/null; then
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+        fi
+    }
+    trap cleanup EXIT
+
+    demo_token=""
+    for _ in {1..60}; do
+        if [[ -s "$demo_token_file" ]]; then
+            demo_token="$(<"$demo_token_file")"
+            break
+        fi
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+            wait "$server_pid"
+        fi
+        sleep 0.1
+    done
+    if [[ -z "$demo_token" ]]; then
+        echo "Could not find the demo profile token at $demo_token_file" >&2
+        exit 1
+    fi
+
+    ready=0
+    for _ in {1..60}; do
+        if curl --silent --fail --connect-timeout 1 \
+            --header "Authorization: Bearer $demo_token" \
+            --output /dev/null "$demo_url/api/sessions"; then
+            ready=1
+            break
+        fi
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+            wait "$server_pid"
+        fi
+        sleep 0.5
+    done
+    if [[ "$ready" -ne 1 ]]; then
+        echo "Timed out waiting for the demo server at $demo_url" >&2
+        exit 1
+    fi
+
+    export BTMUX_URL="$demo_url"
+    export BTMUX_AUTH_TOKEN="$demo_token"
+    (cd frontend && bun run record-demo.ts)
 
 # Kill all dev processes (vite, dev backend, concurrently)
 kill-dev:

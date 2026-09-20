@@ -80,10 +80,15 @@ pub async fn git_status(root: &Path, include_diff_stats: bool) -> Result<GitStat
         .map_err(|e| e.to_string())?
 }
 
-pub async fn git_diff_file(root: &Path, path: &str, staged: bool) -> Result<FileDiff, String> {
+pub async fn git_diff_file(
+    root: &Path,
+    path: &str,
+    staged: bool,
+    ignore_all_space: bool,
+) -> Result<FileDiff, String> {
     let root = root.to_path_buf();
     let path = path.to_string();
-    tokio::task::spawn_blocking(move || git_diff_file_sync(&root, &path, staged))
+    tokio::task::spawn_blocking(move || git_diff_file_sync(&root, &path, staged, ignore_all_space))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -437,11 +442,17 @@ fn diff_untracked_file(abs_path: &Path, path: &str) -> Result<FileDiff, String> 
     })
 }
 
-fn git_diff_file_sync(root: &Path, path: &str, staged: bool) -> Result<FileDiff, String> {
+fn git_diff_file_sync(
+    root: &Path,
+    path: &str,
+    staged: bool,
+    ignore_all_space: bool,
+) -> Result<FileDiff, String> {
     let repo = open_repo(root)?;
 
     let mut diff_opts = DiffOptions::new();
     diff_opts.pathspec(path);
+    diff_opts.ignore_whitespace(ignore_all_space);
 
     let workdir = repo.workdir().ok_or("Bare repository")?;
     let abs_path = workdir.join(path);
@@ -634,7 +645,7 @@ fn git_commit_sync(root: &Path, subject: &str, body: &str) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
-    use super::{count_untracked_lines, git_commit_sync, git_status_sync};
+    use super::{count_untracked_lines, git_commit_sync, git_diff_file_sync, git_status_sync};
     use git2::{Repository, Signature};
     use std::fs;
     use std::path::Path;
@@ -685,6 +696,33 @@ mod tests {
         let status = git_status_sync(&root, true).unwrap();
         assert_eq!(status.staged[0].additions, 2);
         assert_eq!(status.staged[0].deletions, 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn diff_can_ignore_all_whitespace() {
+        let root = std::env::temp_dir().join(format!("btmux-git-diff-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, "one two\nunchanged\n").unwrap();
+
+        let repo = Repository::init(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+
+        fs::write(&file, "one   two  \nunchanged\n").unwrap();
+
+        let diff = git_diff_file_sync(&root, "file.txt", false, false).unwrap();
+        assert!(!diff.hunks.is_empty());
+
+        let whitespace_ignored = git_diff_file_sync(&root, "file.txt", false, true).unwrap();
+        assert!(whitespace_ignored.hunks.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

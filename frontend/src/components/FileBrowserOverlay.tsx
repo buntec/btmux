@@ -10,7 +10,7 @@ import { GitModeHeader } from './files/GitModeHeader';
 import { GitCommitModal } from './files/GitCommitModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
-import { getParent } from '@/lib/utils';
+import { cn, getParent } from '@/lib/utils';
 import { getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
 import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import type {
@@ -110,6 +110,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const gitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
   const [sidebarRatio, setSidebarRatio] = useState(DEFAULT_SIDEBAR_RATIO);
+  const [ignoreAllSpace, setIgnoreAllSpace] = useState(false);
   const [browserReady, setBrowserReady] = useState(false);
   const dragging = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
@@ -425,7 +426,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     }
     const gen = ++gitPreviewGenRef.current;
     const staged = item.section === 'staged';
-    fileSend('git_diff', { path: item.path, staged, cwd: currentPath }).then(
+    fileSend('git_diff', { path: item.path, staged, cwd: currentPath, ignore_all_space: ignoreAllSpace }).then(
       (resp) => {
         if (gitPreviewGenRef.current === gen) {
           store.getState().setGitDiff(resp.payload as unknown as FileDiff);
@@ -442,6 +443,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     filterQuery,
     fileSend,
     currentPath,
+    ignoreAllSpace,
     store,
   ]);
 
@@ -728,6 +730,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             break;
           }
+          case 'w':
+            e.preventDefault();
+            setIgnoreAllSpace((enabled) => !enabled);
+            break;
           case 'Enter': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
@@ -1068,6 +1074,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     pendingRename,
     renameValue,
     commitRename,
+    setIgnoreAllSpace,
     selectedPaths,
     yankRegister,
     pasteEntries,
@@ -1271,6 +1278,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 <Kbd>x</Kbd>
               </KbdGroup>{' '}
               discard
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>w</Kbd>
+              </KbdGroup>{' '}
+              <span
+                className={cn('font-mono', ignoreAllSpace ? 'text-theme-cyan' : 'text-muted-foreground/50')}
+                style={{ fontVariantLigatures: 'none' }}
+              >
+                -w/--ignore-all-space
+              </span>
             </span>
             <span>
               <KbdGroup>

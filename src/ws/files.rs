@@ -249,6 +249,11 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("staged")
                 .and_then(|s| s.as_bool())
                 .unwrap_or(false);
+            let ignore_all_space = request
+                .payload
+                .get("ignore_all_space")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
             let cwd = request
                 .payload
                 .get("cwd")
@@ -256,7 +261,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .unwrap_or(".");
             let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
-            match file_git::git_diff_file(&git_root, path, staged).await {
+            match file_git::git_diff_file(&git_root, path, staged, ignore_all_space).await {
                 Ok(result) => ServerMessage {
                     id,
                     msg_type: "git_diff_result".to_string(),

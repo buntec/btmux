@@ -451,17 +451,18 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     if (initialized.current) return;
     initialized.current = true;
     const startPath = cwd || '/';
-    if (fileBrowserInitialMode === 'files') {
+    void navigate(startPath).then(() => setBrowserReady(true));
+  }, [cwd, navigate]);
+
+  useEffect(() => {
+    if (!browserReady) return;
+    if (fileBrowserInitialMode === 'git') {
+      void enterGitMode(currentPath);
+    } else {
       store.getState().setIsGitMode(false);
       store.getState().setGitDiff(null);
     }
-    void navigate(startPath).then(() => setBrowserReady(true));
-  }, [cwd, fileBrowserInitialMode, navigate, store]);
-
-  useEffect(() => {
-    if (!browserReady || fileBrowserInitialMode !== 'git') return;
-    void enterGitMode(currentPath);
-  }, [browserReady, currentPath, enterGitMode, fileBrowserInitialMode]);
+  }, [browserReady, currentPath, enterGitMode, fileBrowserInitialMode, store]);
 
   const insertPath = useCallback(
     (path: string) => {

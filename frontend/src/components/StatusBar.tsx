@@ -1,12 +1,15 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStore, PaneNotification } from '../state/store';
+import { FolderOpen, GitBranch, Keyboard, Settings2 } from 'lucide-react';
+import { useStore, type FileBrowserMode, type PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette, mix } from '../lib/chrome-colors';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { Theme } from '../state/types';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { SysStatBar } from './SysStatBar';
+import { Button } from './ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { getAnimations, getTerminalFontSize, getWindowSort } from '../state/configDefaults';
 
 /**
@@ -133,12 +136,46 @@ function Arrow({
   );
 }
 
+function ToolbarButton({
+  label,
+  barH,
+  onClick,
+  children,
+}: {
+  label: string;
+  barH: number;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={label}
+          title={label}
+          onClick={onClick}
+          style={{ width: `${barH}px`, height: '100%', borderRadius: 0, color: 'inherit', cursor: 'pointer' }}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function StatusBar({ sessionId, send }: Props) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
   const prefixActive = useStore((s) => s.prefixActive);
   const notifications = useStore((s) => s.notifications);
   const setSwitcherOpen = useStore((s) => s.setSwitcherOpen);
+  const setWindowGridOpen = useStore((s) => s.setWindowGridOpen);
+  const setFileBrowserOpen = useStore((s) => s.setFileBrowserOpen);
+  const setOverlay = useStore((s) => s.setOverlay);
   const navigate = useNavigate();
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
   // Re-render when the window MRU changes so an `mru` sort re-orders live.
@@ -158,6 +195,7 @@ export function StatusBar({ sessionId, send }: Props) {
   const activeWindow = session.windows[session.active_window];
   const paneCount = activeWindow?.panes.length ?? 0;
   const activeZoomed = !!activeWindow?.zoomed_pane;
+  const activePane = activeWindow?.panes[activeWindow.active_pane];
   // Windows are shown in the configured display order; each keeps its backend
   // index (the switch_window index) while its display position doubles as the
   // shown number and prefix+digit hotkey — see useKeybindings.
@@ -182,6 +220,29 @@ export function StatusBar({ sessionId, send }: Props) {
 
   const goToSession = () => {
     setSwitcherOpen(true);
+  };
+
+  const openFileBrowser = (initialMode: FileBrowserMode) => {
+    if (!activePane) return;
+    setOverlay(null);
+    setSwitcherOpen(false);
+    setWindowGridOpen(false);
+    setFileBrowserOpen(true, activePane.cwd ?? null, activePane.id, initialMode);
+  };
+
+  const openSettings = () => {
+    setOverlay(null);
+    setSwitcherOpen(false);
+    setWindowGridOpen(false);
+    setFileBrowserOpen(false);
+    navigate('/config');
+  };
+
+  const openKeyBindings = () => {
+    setSwitcherOpen(false);
+    setWindowGridOpen(false);
+    setFileBrowserOpen(false);
+    setOverlay({ mode: 'keys', title: 'Key bindings', binds: config?.binds ?? [] });
   };
 
   return (
@@ -370,6 +431,24 @@ export function StatusBar({ sessionId, send }: Props) {
         </div>
       )}
       <SysStatBar c={c} barH={barH} font={font} />
+      <div
+        role="toolbar"
+        aria-label="Navigation"
+        style={{ display: 'flex', alignItems: 'center', height: '100%', borderLeft: `1px solid ${c.borderDim}` }}
+      >
+        <ToolbarButton label="File browser" barH={barH} onClick={() => openFileBrowser('files')}>
+          <FolderOpen data-icon="inline-start" aria-hidden="true" />
+        </ToolbarButton>
+        <ToolbarButton label="Git mode" barH={barH} onClick={() => openFileBrowser('git')}>
+          <GitBranch data-icon="inline-start" aria-hidden="true" />
+        </ToolbarButton>
+        <ToolbarButton label="Settings" barH={barH} onClick={openSettings}>
+          <Settings2 data-icon="inline-start" aria-hidden="true" />
+        </ToolbarButton>
+        <ToolbarButton label="Key bindings" barH={barH} onClick={openKeyBindings}>
+          <Keyboard data-icon="inline-start" aria-hidden="true" />
+        </ToolbarButton>
+      </div>
     </div>
   );
 }

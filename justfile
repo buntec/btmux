@@ -82,10 +82,10 @@ update-nix-package:
 install: build
     cargo install --path .
 
-# Build and record a demo against an isolated btmux instance (port 8045).
+# Record a demo against an isolated btmux instance (port 8045).
 # Output: demo.webm (and demo.mp4 if ffmpeg is in PATH) in the repo root.
 # Override the session/prefix with: BTMUX_SESSION=my-session BTMUX_PREFIX=C-a just record-demo
-record-demo: build
+record-demo:
     #!/usr/bin/env bash
     set -euo pipefail
 

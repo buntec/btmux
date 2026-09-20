@@ -1,6 +1,6 @@
 use git2::{
     BranchType, DiffDelta, DiffHunk as GitDiffHunk, DiffLine as GitDiffLine, DiffOptions,
-    Repository, Status, StatusOptions,
+    ErrorCode, Repository, Status, StatusOptions,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -108,6 +108,15 @@ pub async fn git_discard_file(root: &Path, path: &str) -> Result<(), String> {
     let root = root.to_path_buf();
     let path = path.to_string();
     tokio::task::spawn_blocking(move || git_discard_file_sync(&root, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+pub async fn git_commit(root: &Path, subject: &str, body: &str) -> Result<(), String> {
+    let root = root.to_path_buf();
+    let subject = subject.to_string();
+    let body = body.to_string();
+    tokio::task::spawn_blocking(move || git_commit_sync(&root, &subject, &body))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -573,9 +582,59 @@ fn git_discard_file_sync(root: &Path, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn git_commit_sync(root: &Path, subject: &str, body: &str) -> Result<(), String> {
+    let subject = subject.trim();
+    if subject.is_empty() {
+        return Err("Commit subject cannot be empty".to_string());
+    }
+    if subject.chars().any(|ch| ch == '\n' || ch == '\r') {
+        return Err("Commit subject must be a single line".to_string());
+    }
+
+    let repo = open_repo(root)?;
+    let mut index = repo
+        .index()
+        .map_err(|e| format!("Failed to get index: {}", e))?;
+    let tree_id = index
+        .write_tree()
+        .map_err(|e| format!("Failed to write tree: {}", e))?;
+    let tree = repo
+        .find_tree(tree_id)
+        .map_err(|e| format!("Failed to find tree: {}", e))?;
+    let signature = repo
+        .signature()
+        .map_err(|e| format!("Failed to create commit signature: {}", e))?;
+    let parent = match repo.head() {
+        Ok(head) => Some(
+            head.peel_to_commit()
+                .map_err(|e| format!("Failed to read HEAD commit: {}", e))?,
+        ),
+        Err(error) if error.code() == ErrorCode::UnbornBranch => None,
+        Err(error) => return Err(format!("Failed to read HEAD: {}", error)),
+    };
+    let parents = parent.iter().collect::<Vec<_>>();
+    let message = if body.trim().is_empty() {
+        subject.to_string()
+    } else {
+        format!("{}\n\n{}", subject, body.trim())
+    };
+
+    repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        &message,
+        &tree,
+        &parents,
+    )
+    .map_err(|e| format!("Failed to create commit: {}", e))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{count_untracked_lines, git_status_sync};
+    use super::{count_untracked_lines, git_commit_sync, git_status_sync};
     use git2::{Repository, Signature};
     use std::fs;
     use std::path::Path;
@@ -626,6 +685,36 @@ mod tests {
         let status = git_status_sync(&root, true).unwrap();
         assert_eq!(status.staged[0].additions, 2);
         assert_eq!(status.staged[0].deletions, 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn commit_uses_staged_changes_and_message_fields() {
+        let root = std::env::temp_dir().join(format!("btmux-git-commit-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, "one\n").unwrap();
+
+        let repo = Repository::init(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+
+        fs::write(&file, "one\ntwo\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+
+        git_commit_sync(&root, "subject", "body\nline").unwrap();
+
+        let commit = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(commit.message().unwrap(), "subject\n\nbody\nline");
+        assert!(git_status_sync(&root, false).unwrap().staged.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

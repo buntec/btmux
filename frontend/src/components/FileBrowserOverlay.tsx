@@ -7,6 +7,7 @@ import { FileTree } from './files/FileTree';
 import { FilePreview } from './files/FilePreview';
 import { Breadcrumb } from './files/Breadcrumb';
 import { GitModeHeader } from './files/GitModeHeader';
+import { GitCommitModal } from './files/GitCommitModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
 import { getParent } from '@/lib/utils';
@@ -114,9 +115,18 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
     null,
   );
+  const [pendingDiscard, setPendingDiscard] = useState<{ path: string } | null>(null);
+  const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCommitModalOpenChange = useCallback((open: boolean) => {
+    setCommitModalOpen(open);
+    if (!open) {
+      window.requestAnimationFrame(() => rootRef.current?.focus());
+    }
+  }, []);
 
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -304,6 +314,21 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         store.getState().setGitStatus(payload.status);
       } catch (e) {
         console.error('git_discard failed:', e);
+      }
+    },
+    [fileSend, currentPath, store],
+  );
+
+  const gitCommit = useCallback(
+    async (subject: string, body: string) => {
+      try {
+        const resp = await fileSend('git_commit', { subject, body, cwd: currentPath });
+        const payload = resp.payload as { status: GitStatusResult };
+        store.getState().setGitStatus(payload.status);
+        store.getState().setGitDiff(null);
+      } catch (e) {
+        console.error('git_commit failed:', e);
+        throw e;
       }
     },
     [fileSend, currentPath, store],
@@ -551,7 +576,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        if (pendingDelete) {
+        if (pendingDiscard) {
+          setPendingDiscard(null);
+        } else if (pendingDelete) {
           setPendingDelete(null);
         } else if (selectedPaths.size > 0) {
           store.getState().clearSelection();
@@ -563,6 +590,19 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           exitGitMode();
         } else {
           onClose();
+        }
+        return;
+      }
+
+      if (pendingDiscard) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'y' || e.key === 'Y') {
+          const { path } = pendingDiscard;
+          setPendingDiscard(null);
+          gitDiscard(path);
+        } else if (e.key === 'n' || e.key === 'N') {
+          setPendingDiscard(null);
         }
         return;
       }
@@ -684,7 +724,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             e.preventDefault();
             const item = items[gitFocusedIndex];
             if (item?.kind === 'file' && item.path && item.section === 'unstaged') {
-              gitDiscard(item.path);
+              setPendingDiscard({ path: item.path });
             }
             break;
           }
@@ -704,6 +744,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           case 'q':
             e.preventDefault();
             exitGitMode();
+            break;
+          case 'c':
+            e.preventDefault();
+            if (gitStatus?.is_repo) setCommitModalOpen(true);
             break;
           case 'G':
             e.preventDefault();
@@ -1016,8 +1060,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     gitStage,
     gitUnstage,
     gitDiscard,
+    gitCommit,
     trashFile,
     deleteFile,
+    pendingDiscard,
     pendingDelete,
     pendingRename,
     renameValue,
@@ -1156,6 +1202,18 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               cancel
             </span>
           </span>
+        ) : pendingDiscard ? (
+          <span className="text-foreground">
+            discard changes to <span className="text-yellow-400">{pendingDiscard.path}</span>?{' '}
+            <KbdGroup>
+              <Kbd>y</Kbd>
+            </KbdGroup>{' '}
+            confirm{' '}
+            <KbdGroup>
+              <Kbd>n</Kbd>
+            </KbdGroup>{' '}
+            cancel
+          </span>
         ) : pendingDelete ? (
           <span className="text-foreground">
             {pendingDelete.permanent ? 'permanently delete' : 'move to trash'}{' '}
@@ -1213,6 +1271,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 <Kbd>x</Kbd>
               </KbdGroup>{' '}
               discard
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>c</Kbd>
+              </KbdGroup>{' '}
+              commit
             </span>
             <span>
               <KbdGroup>
@@ -1390,6 +1454,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           </>
         )}
       </div>
+
+      <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
     </div>
   );
 }

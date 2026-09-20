@@ -340,6 +340,36 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => error_response(id, &e),
             }
         }
+        "git_commit" => {
+            let subject = request
+                .payload
+                .get("subject")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let body = request
+                .payload
+                .get("body")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let cwd = request
+                .payload
+                .get("cwd")
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+            let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+
+            if let Err(e) = file_git::git_commit(&status_root, subject, body).await {
+                return error_response(id, &e);
+            }
+            match file_git::git_status(&status_root, true).await {
+                Ok(status) => ServerMessage {
+                    id,
+                    msg_type: "git_commit_result".to_string(),
+                    payload: serde_json::json!({ "status": status }),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
         "rename_file" => {
             let from = request
                 .payload

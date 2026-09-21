@@ -1,36 +1,36 @@
 # btmux
 
-A browser-based terminal manager with a tmux-inspired interface, powered by a
-[ghostty-web fork](https://github.com/rcarmo/ghostty-web).
+A browser-based terminal manager with a tmux-inspired interface, powered by [ghostty-web](https://github.com/rcarmo/ghostty-web).
 
-Run real shells in your browser, organize them into sessions, windows, and
-panes, and reconnect without losing the current terminal view.
+Client-server architecture means you can connect and reconnect from any number of browsers/tabs without losing state.
+Default key bindings very closely resemble tmux defaults.
+E.g., `prefix + %` create a new vertical split, `prefix + "` create a new horizontal split, etc.
 
 ## Highlights
 
 - Sessions, windows, splits, pane zoom, pane swapping, and preset layouts
-- Searchable session tree, live window thumbnails, and a keyboard-driven file browser
+- Searchable session tree, live window thumbnails, file browser and git UI
 - Configurable tmux-style keybindings with optional vi-style navigation
+- Rendered LaTeX overlay for math printed in a pane
 - Hot-reloaded themes, terminal options, bundled fonts, wallpapers, and WebGL effects
 - Host statistics and pane notifications for coding agents
-- Rendered LaTeX overlay for math printed in a pane
 - REST API and MCP server for automation
 
 ## Demo
 
-https://github.com/user-attachments/assets/5fade3d9-9ee1-49ae-9460-16a15a0ec49a
+https://github.com/user-attachments/assets/9fa5ac71-99fb-47d2-bda7-75bce101bfd5
 
 ## Get started
 
 ### Install and launch
 
-On Apple Silicon macOS or x86-64/ARM64 Linux:
+On macOS (Apple Silicon) or Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 ```
 
-This installs the latest release to `~/.local/bin` by default. Then start btmux:
+This installs the latest release to `~/.local/bin`. Then start btmux:
 
 ```sh
 btmux
@@ -38,35 +38,41 @@ btmux
 
 It opens the UI at `http://localhost:8004`.
 
-For background service setup, building from source, Home Manager, and supported
-platforms, see [Installation](docs/installation.md).
+On macOS it is convenient to install btmux as a `launchd` service:
+
+```sh
+btmux install # install and start service
+btmux uninstall # uninstall service
+```
+
+There is also a [nix Home Manager](https://github.com/nix-community/home-manager) module. See [Installation](docs/installation.md).
 
 ### Sign in
 
-btmux requires an access token, including on localhost. On first launch it
-creates `~/.local/state/btmux/state.token` and prints the file's path. In another
-terminal, read the token with:
+btmux requires an access token, including on localhost.
+On first launch it creates `~/.local/state/btmux/state.token` and prints the file's path.
+In another terminal, read the token with:
 
 ```sh
-cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
+cat "~/.local/state/btmux/state.token"
 ```
 
 Enter **`btmux` as the browser username** and **the token as the password**.
+
 Once signed in, press `<prefix> + ?` to see the keybindings.
 
-If you use `--profile NAME`, the token is in
-`~/.local/state/btmux/NAME/state.token`. Setting `XDG_STATE_HOME` replaces
-`~/.local/state` in these paths. If you start the server with `BTMUX_AUTH_TOKEN`
-set, use that value instead of a token file.
+If you start the server with `BTMUX_AUTH_TOKEN` set, use that value instead of a token file.
+
+If you use `--profile NAME`, the token is in `~/.local/state/btmux/NAME/state.token`.
+Setting `XDG_STATE_HOME` replaces `~/.local/state` in these paths.
 
 See [Access tokens and reverse proxies](docs/installation.md#access-tokens-and-reverse-proxies)
 for token management and HTTPS setup for remote access.
 
 ## Configuration
 
-On first launch, btmux creates a configuration file at
-`~/.config/btmux/config.toml` (or `$XDG_CONFIG_HOME/btmux/config.toml`). Changes
-are picked up live.
+On first launch, btmux creates a configuration file at `~/.config/btmux/config.toml` (or `$XDG_CONFIG_HOME/btmux/config.toml`).
+Changes are picked up live.
 
 ```sh
 btmux generate-config   # print every option with documentation

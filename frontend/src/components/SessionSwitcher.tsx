@@ -29,8 +29,8 @@ type Row =
  * The session/window switcher (prefix + s). A centered modal with a session→window
  * tree on the left and a live pane-layout preview of the selected window on the
  * right. Selecting a window switches to it (across sessions); `m` renames the
- * selected session and `x` kills the selected session or window. Theme-driven via
- * `chromePalette`.
+ * selected session or window and `x` kills the selected session or window.
+ * Theme-driven via `chromePalette`.
  *
  * Like WindowGrid it's lazily mounted on first open and kept mounted (display
  * toggles) so the preview mirrors stay warm. It owns the keyboard while open —
@@ -276,6 +276,21 @@ export function SessionSwitcher({ send }: Props) {
   const renameRow = (row: Row) => {
     const sess = sessionById.get(row.sessionId);
     if (!sess) return;
+    if (row.kind === 'window') {
+      const win = sess.windows[row.windowIndex];
+      if (!win) return;
+      // rename_window operates on the session's active window, so select the
+      // highlighted window before opening the prompt.
+      send({ type: 'switch_window', session_id: sess.id, index: row.windowIndex });
+      setOverlay({
+        mode: 'prompt',
+        title: 'rename-window',
+        value: win.name,
+        action: 'rename-window',
+        targetSessionId: sess.id,
+      });
+      return;
+    }
     setOverlay({
       mode: 'prompt',
       title: 'rename-session',
@@ -352,7 +367,22 @@ export function SessionSwitcher({ send }: Props) {
       return;
     }
 
-    if (e.key === 'c' || e.key === 'n') {
+    if (e.key === 'c') {
+      e.preventDefault();
+      if (selected?.kind === 'window') {
+        send({ type: 'create_window', session_id: selected.sessionId });
+        return;
+      }
+      setOverlay({
+        mode: 'prompt',
+        title: 'new-session',
+        value: '',
+        action: 'new-session',
+      });
+      return;
+    }
+
+    if (e.key === 'n') {
       e.preventDefault();
       setOverlay({
         mode: 'prompt',
@@ -673,7 +703,17 @@ export function SessionSwitcher({ send }: Props) {
               )}
             </div>
           </div>
-          <div style={{ marginTop: '12px', display: 'flex', gap: '16px', color: c.fgDim, fontSize: '11.5px' }}>
+          <div
+            style={{
+              marginTop: '12px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              columnGap: '16px',
+              rowGap: '6px',
+              color: c.fgDim,
+              fontSize: '11.5px',
+            }}
+          >
             <span>
               <span style={{ color: c.fgMuted }}>↑↓</span> navigate
             </span>

@@ -175,6 +175,7 @@ export function StatusBar({ sessionId, send }: Props) {
   const setSwitcherOpen = useStore((s) => s.setSwitcherOpen);
   const setWindowGridOpen = useStore((s) => s.setWindowGridOpen);
   const setFileBrowserOpen = useStore((s) => s.setFileBrowserOpen);
+  const setSettingsOpen = useStore((s) => s.setSettingsOpen);
   const setOverlay = useStore((s) => s.setOverlay);
   const navigate = useNavigate();
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
@@ -212,6 +213,7 @@ export function StatusBar({ sessionId, send }: Props) {
   // alone doesn't — SessionView only sends switch_window on first mount) and
   // navigate, mirroring WindowGrid/SessionSwitcher.
   const goToWindow = (index: number, name: string) => {
+    setSettingsOpen(false);
     if (index !== session.active_window) {
       send({ type: 'switch_window', session_id: session.id, index });
     }
@@ -219,6 +221,7 @@ export function StatusBar({ sessionId, send }: Props) {
   };
 
   const goToSession = () => {
+    setSettingsOpen(false);
     setSwitcherOpen(true);
   };
 
@@ -227,6 +230,7 @@ export function StatusBar({ sessionId, send }: Props) {
     setOverlay(null);
     setSwitcherOpen(false);
     setWindowGridOpen(false);
+    setSettingsOpen(false);
     setFileBrowserOpen(true, activePane.cwd ?? null, activePane.id, initialMode);
   };
 
@@ -235,13 +239,14 @@ export function StatusBar({ sessionId, send }: Props) {
     setSwitcherOpen(false);
     setWindowGridOpen(false);
     setFileBrowserOpen(false);
-    navigate('/config');
+    setSettingsOpen(true);
   };
 
   const openKeyBindings = () => {
     setSwitcherOpen(false);
     setWindowGridOpen(false);
     setFileBrowserOpen(false);
+    setSettingsOpen(false);
     setOverlay({ mode: 'keys', title: 'Key bindings', binds: config?.binds ?? [] });
   };
 

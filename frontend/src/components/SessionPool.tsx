@@ -24,12 +24,14 @@ const POOL_LIMIT = 4;
 
 export function SessionPool({ send }: Props) {
   const allSessions = useStore((s) => s.allSessions);
+  const configPreview = useStore((s) => s.configPreview);
+  const settingsOpen = useStore((s) => s.settingsOpen);
   const location = useLocation();
 
-  // The active session is derived purely from the URL (there is no server-side
-  // "current session"). Mirrors the regex AppInner uses. On the landing page
-  // ("/") nothing is active, so no SessionPane is shown — but the pool is left
-  // untouched, keeping the last-N sessions warm while you browse the tree.
+  // The active session is derived from the URL (there is no server-side
+  // "current session"). On the landing page ("/") nothing is active, so no
+  // SessionPane is shown — but the pool is left untouched, keeping the last-N
+  // sessions warm while you browse the tree.
   const match = location.pathname.match(/^\/s\/([^/]+)/);
   const activeSessionName = match ? decodeURIComponent(match[1]) : null;
   const activeSessionId = allSessions.find((s) => s.name === activeSessionName)?.id ?? null;
@@ -78,7 +80,13 @@ export function SessionPool({ send }: Props) {
       {pool
         .filter((id) => allSessions.some((s) => s.id === id))
         .map((id) => (
-          <SessionPane key={id} sessionId={id} isActiveSession={id === activeSessionId} send={send} />
+          <SessionPane
+            key={id}
+            sessionId={id}
+            isActiveSession={id === activeSessionId}
+            previewConfig={id === activeSessionId && settingsOpen ? configPreview : null}
+            send={send}
+          />
         ))}
     </>
   );

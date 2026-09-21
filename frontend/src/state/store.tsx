@@ -21,6 +21,10 @@ interface AppStore {
   sessions: SessionSummary[];
   allSessions: SessionState[];
   config: ClientConfig | null;
+  // Local-only settings preview. It never crosses the control socket and is
+  // cleared when the settings overlay unmounts.
+  configPreview: ClientConfig | null;
+  settingsOpen: boolean;
   prefixActive: boolean;
   overlay: Overlay | null;
   // Window-grid (prefix + w) visibility. `windowGridMounted` flips true on first
@@ -67,6 +71,8 @@ interface AppStore {
   setSessions: (sessions: SessionSummary[]) => void;
   setAllSessions: (allSessions: SessionState[]) => void;
   setConfig: (config: ClientConfig) => void;
+  setConfigPreview: (config: ClientConfig | null) => void;
+  setSettingsOpen: (open: boolean) => void;
   setControlConnected: (connected: boolean) => void;
   registerTerminal: (paneId: string, term: Terminal) => void;
   unregisterTerminal: (paneId: string, term: Terminal) => void;
@@ -99,6 +105,8 @@ export const useStore = create<AppStore>((set, get) => ({
   sessions: [],
   allSessions: [],
   config: null,
+  configPreview: null,
+  settingsOpen: false,
   prefixActive: false,
   overlay: null,
   windowGridOpen: false,
@@ -125,6 +133,8 @@ export const useStore = create<AppStore>((set, get) => ({
       } catch {}
     }
   },
+  setConfigPreview: (configPreview) => set({ configPreview }),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen, prefixActive: false }),
   setControlConnected: (connected) => set({ controlConnected: connected }),
   registerTerminal: (paneId, term) => get().terminals.set(paneId, term),
   // Guard against a stale unmount clobbering a remounted pane's entry: only

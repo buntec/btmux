@@ -3,9 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import { computeRectsAndDividers } from '../state/layout';
 import { SessionState } from '../state/types';
-import { MirrorPane } from './MirrorPane';
+import { WindowThumbnail } from './WindowThumbnail';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getTerminalFontSize, getWindowSort } from '../state/configDefaults';
@@ -13,10 +12,6 @@ import { getAnimations, getSessionSort, getTerminalFontSize, getWindowSort } fro
 interface Props {
   send: (msg: ClientMessage) => void;
 }
-
-// Thumbnails use each split's stored ratio (no live drag), so a single shared
-// empty override map suffices for every computeRectsAndDividers call.
-const EMPTY_RATIOS: Map<string, number> = new Map();
 
 /** A flat, keyboard-navigable row in the switcher tree. `windowIndex` is the
  *  backend index (for switch_window / preview lookup); `displayIndex` is its
@@ -684,9 +679,9 @@ export function SessionSwitcher({ send }: Props) {
               }}
             >
               {debouncedPreviewWindow ? (
-                <PreviewLayout
+                <WindowThumbnail
                   window={debouncedPreviewWindow}
-                  open={open}
+                  visible={open}
                   c={c}
                   activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
                   hoveredPaneId={hoveredPaneId}
@@ -742,111 +737,5 @@ export function SessionSwitcher({ send }: Props) {
         </div>
       </div>
     </div>
-  );
-}
-
-/** Live preview of a window's pane layout, one MirrorPane per leaf at its rect. */
-function PreviewLayout({
-  window: win,
-  open,
-  c,
-  activePaneId,
-  hoveredPaneId,
-  onHoveredPaneChange,
-  onSelectPane,
-  animations,
-}: {
-  window: SessionState['windows'][number];
-  open: boolean;
-  c: ReturnType<typeof chromePalette>;
-  activePaneId: string | null;
-  hoveredPaneId: string | null;
-  onHoveredPaneChange: (paneId: string | null) => void;
-  onSelectPane: (paneId: string) => void;
-  animations: boolean;
-}) {
-  const { rects, dividers } = computeRectsAndDividers(
-    win.layout,
-    { top: 0, left: 0, width: 100, height: 100 },
-    EMPTY_RATIOS,
-  );
-  return (
-    <>
-      {rects.map((r) => {
-        const isActive = r.paneId === activePaneId;
-        const isHovered = r.paneId === hoveredPaneId;
-        return (
-          <div
-            key={r.paneId}
-            onMouseEnter={() => onHoveredPaneChange(r.paneId)}
-            onMouseLeave={() => onHoveredPaneChange(null)}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onSelectPane(r.paneId)}
-            style={{
-              position: 'absolute',
-              top: `${r.top}%`,
-              left: `${r.left}%`,
-              width: `${r.width}%`,
-              height: `${r.height}%`,
-              padding: '3px',
-              boxSizing: 'border-box',
-              cursor: 'pointer',
-            }}
-          >
-            <div
-              style={{
-                position: 'relative',
-                width: '100%',
-                height: '100%',
-                overflow: 'hidden',
-                borderRadius: '6px',
-                border: `${isActive || isHovered ? 1.5 : 1}px solid ${
-                  isHovered ? c.warn : isActive ? c.accent : c.borderDim
-                }`,
-                boxShadow: isHovered
-                  ? `0 0 0 1px ${withAlpha(c.warn, 0.22)}, 0 0 18px ${withAlpha(c.warn, 0.14)}`
-                  : isActive
-                    ? `0 0 18px ${c.accentGlow}`
-                    : undefined,
-                background: isHovered ? withAlpha(c.warn, 0.07) : withAlpha(c.bodyBg, 0.6),
-                transition: animations
-                  ? 'border-color 100ms ease, box-shadow 100ms ease, background 100ms ease'
-                  : undefined,
-              }}
-            >
-              {open && <MirrorPane paneId={r.paneId} visible={open} />}
-            </div>
-          </div>
-        );
-      })}
-      {dividers.map((d) => (
-        <div
-          key={d.id}
-          style={
-            d.orientation === 'vertical'
-              ? {
-                  position: 'absolute',
-                  top: `${d.crossStart}%`,
-                  left: `${d.position}%`,
-                  transform: 'translateX(-50%)',
-                  width: '1px',
-                  height: `${d.crossSize}%`,
-                  background: 'transparent',
-                  pointerEvents: 'none',
-                }
-              : {
-                  position: 'absolute',
-                  top: `${d.position}%`,
-                  left: `${d.crossStart}%`,
-                  transform: 'translateY(-50%)',
-                  width: `${d.crossSize}%`,
-                  height: '1px',
-                  background: 'transparent',
-                  pointerEvents: 'none',
-                }
-          }
-        />
-      ))}
-    </>
   );
 }

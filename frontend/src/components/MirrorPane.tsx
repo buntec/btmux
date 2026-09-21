@@ -2,11 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { useTerminalOptions } from './TerminalPane';
+import type { ClientConfig } from '../state/types';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../state/configDefaults';
+import { findShaderEffect } from '../lib/terminalFxShaders';
+import { pumpRenders } from '../lib/pumpRenders';
 
 interface Props {
   paneId: string;
+  /** Optional draft config used by the settings-page preview. */
+  config?: ClientConfig | null;
+  /** Explicitly apply a preview shader; normal thumbnails leave this unset. */
+  shaderId?: string | null;
+  animations?: boolean;
   /**
    * Whether the thumbnail is on-screen (the window-grid is open). A mirror stays
    * mounted and streaming while hidden so reopening is instant, but suspend()s
@@ -26,7 +34,7 @@ interface Props {
  * the live shell and clear its scrollback. The canvas downscales cleanly, so TUIs
  * stay pixel-faithful.
  */
-export function MirrorPane({ paneId, visible }: Props) {
+export function MirrorPane({ paneId, config: configOverride, shaderId, animations = true, visible }: Props) {
   const cellRef = useRef<HTMLDivElement>(null);
   const scalerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -35,8 +43,17 @@ export function MirrorPane({ paneId, visible }: Props) {
   const revealRafRef = useRef(0);
   const [initialReplayRendered, setInitialReplayRendered] = useState(false);
 
-  const config = useStore((s) => s.config);
+  const storeConfig = useStore((s) => s.config);
+  const config = configOverride ?? storeConfig;
   const termOptions = useTerminalOptions(config);
+  const shaderEffect = shaderId === undefined ? null : findShaderEffect(shaderId);
+  // Existing window/session thumbnails stay on Canvas2D. The config preview
+  // uses the draft renderer, and steady-state shaders require WebGL.
+  const renderer = shaderEffect
+    ? 'webgl'
+    : configOverride?.terminal.renderer != null
+      ? configOverride.terminal.renderer
+      : 'canvas';
 
   // Read visibility inside closures without re-running the mount effect (which
   // would dispose+rebuild the terminal and reconnect the socket).
@@ -69,7 +86,7 @@ export function MirrorPane({ paneId, visible }: Props) {
     const term = new Terminal({
       ...termOptions,
       disableStdin: true,
-      renderer: 'canvas',
+      renderer,
     });
     term.open(scaler);
     termRef.current = term;
@@ -159,7 +176,19 @@ export function MirrorPane({ paneId, visible }: Props) {
     // Rebuild on config/font change so a live theme reload re-themes thumbnails,
     // matching TerminalPane. paneId is stable for the component's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneId, termOptions]);
+  }, [paneId, termOptions, renderer]);
+
+  // Apply a preview-only steady-state shader and keep animated effects moving
+  // while the terminal is idle. The regular session thumbnails do not pass a
+  // shaderId, so they retain their existing behavior.
+  useEffect(() => {
+    const terminalRenderer = termRef.current?.renderer;
+    if (!terminalRenderer) return;
+    terminalRenderer.setPostProcessShader?.(shaderEffect?.src ?? null);
+    terminalRenderer.requestRender?.();
+    if (!shaderEffect?.animated || !animations) return;
+    return pumpRenders(() => [terminalRenderer], Infinity);
+  }, [animations, shaderEffect?.animated, shaderEffect?.src, termOptions, renderer]);
 
   useEffect(() => {
     termRef.current?.renderer?.setTheme(config?.theme ?? DEFAULT_THEME);

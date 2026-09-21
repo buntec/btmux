@@ -3,7 +3,7 @@ import { useStore } from '../state/store';
 import { getTerminalFontFamily, getTerminalFontWeight } from '../state/configDefaults';
 
 export function useFontLoader() {
-  const config = useStore((s) => s.config);
+  const config = useStore((s) => (s.settingsOpen ? (s.configPreview ?? s.config) : s.config));
   const fontFamily = getTerminalFontFamily(config);
   const fontWeight = getTerminalFontWeight(config);
   const showToast = useStore((s) => s.showToast);

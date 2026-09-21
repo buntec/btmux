@@ -95,6 +95,7 @@ interface Props {
 export function Overlay({ sessionId, send, config }: Props) {
   const overlay = useStore((s) => s.overlay);
   const setOverlay = useStore((s) => s.setOverlay);
+  const setSettingsOpen = useStore((s) => s.setSettingsOpen);
   const fontSize = getTerminalFontSize(config);
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -154,7 +155,7 @@ export function Overlay({ sessionId, send, config }: Props) {
   const runCommand = (cmdId: string) => {
     if (cmdId === 'open-config') {
       setOverlay(null);
-      navigate('/config');
+      setSettingsOpen(true);
       return true;
     }
     if (cmdId === 'toggle-latex') {

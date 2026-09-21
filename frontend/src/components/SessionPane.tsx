@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal } from 'ghostty-web';
 import { TerminalPane } from './TerminalPane';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
-import { LayoutRect } from '../state/types';
+import { ClientConfig, LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
 import { useStore } from '../state/store';
@@ -25,20 +25,24 @@ interface Props {
    * keep re-rendering as the server pushes window/pane changes.
    */
   isActiveSession: boolean;
+  /** Draft config applied locally to this active session while settings are open. */
+  previewConfig: ClientConfig | null;
   send: (msg: ClientMessage) => void;
 }
 
-export function SessionPane({ sessionId, isActiveSession, send }: Props) {
+export function SessionPane({ sessionId, isActiveSession, previewConfig, send }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [ratioOverrides, setRatioOverrides] = useState<Map<string, number>>(new Map());
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
+  const settingsOpen = useStore((s) => s.settingsOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
   const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
   const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
-  const config = useStore((s) => s.config);
+  const storeConfig = useStore((s) => s.config);
+  const config = previewConfig ?? storeConfig;
 
   // Read this session's own state from the store. Subscribing to allSessions
   // (rather than receiving windows via props) means a pooled-but-inactive
@@ -106,7 +110,17 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
     const focusId = zoomedPaneId ?? activePaneId;
     // Don't steal focus into the terminal while the file browser occupies that pane.
     const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
-    if (overlay || windowGridOpen || switcherOpen || browserOwnsActivePane || !focusId || !isActiveSession) return;
+    if (
+      settingsOpen ||
+      overlay ||
+      windowGridOpen ||
+      switcherOpen ||
+      browserOwnsActivePane ||
+      !focusId ||
+      !isActiveSession
+    ) {
+      return;
+    }
     clearPaneNotification(focusId);
     const id = window.setTimeout(() => {
       registryRef.current.get(focusId)?.focus();
@@ -121,6 +135,8 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
     fileBrowserOpen,
     fileBrowserPaneId,
     isActiveSession,
+    settingsOpen,
+    previewConfig,
     config,
     clearPaneNotification,
   ]);
@@ -237,6 +253,7 @@ export function SessionPane({ sessionId, isActiveSession, send }: Props) {
                 paneIndex={paneNumberById.get(pane.id) ?? 0}
                 visible={visible}
                 isZoomed={isZoomed}
+                previewConfig={previewConfig}
                 registry={registryRef.current}
                 send={send}
               />

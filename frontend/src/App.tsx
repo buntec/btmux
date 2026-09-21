@@ -180,6 +180,8 @@ function useSessionTransitionPause(activeSessionId: string | null): boolean {
 function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
+  const configPreview = useStore((s) => s.configPreview);
+  const settingsOpen = useStore((s) => s.settingsOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const overlay = useStore((s) => s.overlay);
   const navigate = useNavigate();
@@ -230,12 +232,9 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const lastSessionName = currentSessionName ?? sessionStorage.getItem('btmux-last-session');
   const currentSessionId = allSessions.find((s) => s.name === lastSessionName)?.id ?? null;
 
-  // The session shown right now, derived purely from the URL (null on landing).
-  // Distinct from currentSessionId, which falls back to the last-visited session
-  // so the landing page can still highlight/anchor to it. SessionPool derives the
-  // same active id independently from useLocation.
+  // The session shown right now is derived from the URL. Settings is an
+  // in-place overlay, so opening it never changes the session route.
   const onLanding = location.pathname === '/';
-  const onConfig = location.pathname === '/config';
   const activeSessionId = currentSessionName
     ? (allSessions.find((s) => s.name === currentSessionName)?.id ?? null)
     : null;
@@ -248,12 +247,12 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 
   // Apply transient shaders only to panes actually visible behind each modal.
   useSessionViewShader(
-    switcherOpen && !helpOverlayActive,
+    switcherOpen && !helpOverlayActive && !settingsOpen,
     config?.session_view_shader,
     getAnimations(config),
     visiblePaneIds,
   );
-  usePanePixelateOverlay(helpOverlayActive, getAnimations(config), visiblePaneIds);
+  usePanePixelateOverlay(helpOverlayActive && !settingsOpen, getAnimations(config), visiblePaneIds);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
@@ -273,70 +272,70 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
     if (activeSessionId) recordMruVisit(activeSessionId);
   }, [activeSessionId]);
 
-  const wallpaper = config?.wallpaper ?? null;
+  const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
+  const wallpaper = effectiveConfig?.wallpaper ?? null;
   // Preserve an explicitly disabled shader (`null`) after config loads while
   // still showing the built-in default during the initial connection.
-  const wallpaperShader = getWallpaperShader(config);
-  const wallpaperOpacity = getWallpaperOpacity(config);
-  const wallpaperBlur = getWallpaperBlur(config);
-  const wallpaperSaturate = getWallpaperSaturate(config);
-  const wallpaperSpeed = getWallpaperSpeed(config);
-  const wallpaperSeed = getWallpaperSeed(config);
-  const wallpaperFollowsMouse = getWallpaperFollowsMouse(config);
-  const wallpaperFollowsKeyboard = getWallpaperFollowsKeyboard(config);
+  const wallpaperShader = getWallpaperShader(effectiveConfig);
+  const wallpaperOpacity = getWallpaperOpacity(effectiveConfig);
+  const wallpaperBlur = getWallpaperBlur(effectiveConfig);
+  const wallpaperSaturate = getWallpaperSaturate(effectiveConfig);
+  const wallpaperSpeed = getWallpaperSpeed(effectiveConfig);
+  const wallpaperSeed = getWallpaperSeed(effectiveConfig);
+  const wallpaperFollowsMouse = getWallpaperFollowsMouse(effectiveConfig);
+  const wallpaperFollowsKeyboard = getWallpaperFollowsKeyboard(effectiveConfig);
 
   // Layout: a flex column owning the viewport. The pane region (flex:1) holds the
-  // persistent SessionPool underneath, the route content (LandingPage or the
-  // effects-only SessionView) on top, and a single Overlay. StatusBar sits below.
+  // persistent SessionPool underneath, route content or an in-place settings
+  // overlay on top, and the other modal surfaces. StatusBar sits below.
   // Flexbox gives the region exactly "viewport minus status bar" — the same shape
   // SessionView used to own, hoisted up one level so it survives navigation and
   // the keep-alive pool persists across session switches.
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      {!onConfig &&
-        (wallpaperShader ? (
-          <ShaderWallpaper
-            shaderId={wallpaperShader}
-            opacity={wallpaperOpacity}
-            blur={wallpaperBlur}
-            saturate={wallpaperSaturate}
-            speed={wallpaperSpeed}
-            animated={getAnimations(config) && wallpaperSpeed > 0}
-            // Modal animations and first-time session mounts both compete with
-            // the wallpaper for GPU time. Keep it stopped until that foreground
-            // work has completed and the newly-visible terminals have painted.
-            paused={modalOverlayActive || sessionTransitionActive}
-            seed={wallpaperSeed}
-            followsMouseCursor={wallpaperFollowsMouse}
-            followsKeyboardInput={wallpaperFollowsKeyboard}
-          />
-        ) : wallpaper ? (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              backgroundImage: `url(${wallpaper})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              opacity: wallpaperOpacity,
-              filter: `blur(${wallpaperBlur}px) saturate(${wallpaperSaturate})`,
-              zIndex: -1,
-              pointerEvents: 'none',
-            }}
-          />
-        ) : null)}
+      {wallpaperShader ? (
+        <ShaderWallpaper
+          shaderId={wallpaperShader}
+          opacity={wallpaperOpacity}
+          blur={wallpaperBlur}
+          saturate={wallpaperSaturate}
+          speed={wallpaperSpeed}
+          animated={getAnimations(effectiveConfig) && wallpaperSpeed > 0}
+          // Modal animations and first-time session mounts both compete with
+          // the wallpaper for GPU time. Keep it stopped until that foreground
+          // work has completed and the newly-visible terminals have painted.
+          paused={modalOverlayActive || sessionTransitionActive}
+          seed={wallpaperSeed}
+          followsMouseCursor={wallpaperFollowsMouse}
+          followsKeyboardInput={wallpaperFollowsKeyboard}
+        />
+      ) : wallpaper ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundImage: `url(${wallpaper})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: wallpaperOpacity,
+            filter: `blur(${wallpaperBlur}px) saturate(${wallpaperSaturate})`,
+            zIndex: -1,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <SessionPool send={send} />
         <Routes>
           <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
-          <Route path="/config" element={config ? <ConfigPage config={config} send={send} /> : null} />
           <Route path="/s/:sessionName" element={<SessionView send={send} />} />
           <Route path="/s/:sessionName/w/:windowName" element={<SessionView send={send} />} />
         </Routes>
+        {settingsOpen && config && <ConfigPage config={config} send={send} />}
         {/* Single Overlay for both landing and session views. On landing,
             activeSessionId is null, so anchor to the last-visited session (its
             prompts — rename/new — target that session; new-session ignores it). */}
-        {!onConfig && (
+        {!settingsOpen && (
           <Overlay
             sessionId={activeSessionId ?? currentSessionId ?? allSessions[0]?.id ?? ''}
             send={send}
@@ -345,13 +344,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         )}
         {/* Live window-grid thumbnails (prefix + w). Sits above the pane region
             like the Overlay; mounts lazily on first open and stays warm. */}
-        {!onConfig && <WindowGrid send={send} />}
+        {!settingsOpen && <WindowGrid send={send} />}
         {/* Session/window switcher modal (prefix + s). Also above the pane region;
             lazily mounted on first open and kept warm like the grid. */}
-        {!onConfig && <SessionSwitcher send={send} />}
+        {!settingsOpen && <SessionSwitcher send={send} />}
       </div>
       {/* No status bar on the landing page (it has its own full-height chrome). */}
-      {!onLanding && !onConfig && <StatusBar sessionId={activeSessionId ?? ''} send={send} />}
+      {!onLanding && <StatusBar sessionId={activeSessionId ?? ''} send={send} />}
     </div>
   );
 }
@@ -360,19 +359,22 @@ export function App() {
   const { send } = useControlSocket();
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
+  const configPreview = useStore((s) => s.configPreview);
+  const settingsOpen = useStore((s) => s.settingsOpen);
+  const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
   useFontLoader();
 
   useEffect(() => {
-    const family = getTerminalFontFamily(config);
-    const weight = String(getTerminalFontWeight(config));
+    const family = getTerminalFontFamily(effectiveConfig);
+    const weight = String(getTerminalFontWeight(effectiveConfig));
     document.documentElement.style.setProperty('--btmux-font', `"${family}", monospace`);
     document.documentElement.style.setProperty('--btmux-font-weight', weight);
-  }, [config?.terminal?.fontFamily, config?.terminal?.fontWeight]);
+  }, [effectiveConfig?.terminal?.fontFamily, effectiveConfig?.terminal?.fontWeight]);
 
   useEffect(() => {
-    document.body.style.background = config?.theme?.background ?? DEFAULT_THEME.background;
-    applyThemeVars(config?.theme ?? DEFAULT_THEME);
-  }, [config?.theme]);
+    document.body.style.background = effectiveConfig?.theme?.background ?? DEFAULT_THEME.background;
+    applyThemeVars(effectiveConfig?.theme ?? DEFAULT_THEME);
+  }, [effectiveConfig?.theme]);
 
   if (allSessions.length === 0 || !config) {
     const cached = (() => {

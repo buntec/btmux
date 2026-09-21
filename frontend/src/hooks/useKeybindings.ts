@@ -71,6 +71,7 @@ export function useKeybindings(
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
+  const settingsOpen = useStore((s) => s.settingsOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const timeoutRef = useRef<number>(0);
 
@@ -87,6 +88,7 @@ export function useKeybindings(
   const overlayRef = useRef(overlay);
   const windowGridOpenRef = useRef(windowGridOpen);
   const switcherOpenRef = useRef(switcherOpen);
+  const settingsOpenRef = useRef(settingsOpen);
   const paneNumbersVisibleRef = useRef(paneNumbersVisible);
   const prefixRef = useRef(prefix);
   const bindsRef = useRef(binds);
@@ -98,6 +100,7 @@ export function useKeybindings(
   overlayRef.current = overlay;
   windowGridOpenRef.current = windowGridOpen;
   switcherOpenRef.current = switcherOpen;
+  settingsOpenRef.current = settingsOpen;
   paneNumbersVisibleRef.current = paneNumbersVisible;
   prefixRef.current = prefix;
   bindsRef.current = binds;
@@ -114,6 +117,7 @@ export function useKeybindings(
       }
 
       if (overlayRef.current) return;
+      if (settingsOpenRef.current) return;
       // While the window-grid or session switcher is open it owns the keyboard
       // (arrows/enter/esc/digits navigate it); don't let the prefix or pane binds
       // fire.

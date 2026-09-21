@@ -23,7 +23,6 @@ import {
   getShowPaneTitles,
   getTerminalFontFamily,
   getTerminalFontSize,
-  getTerminalFontWeight,
 } from '../state/configDefaults';
 
 interface Props {

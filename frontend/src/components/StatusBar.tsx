@@ -194,7 +194,6 @@ export function StatusBar({ sessionId, send }: Props) {
   const c = chromePalette(config?.theme ?? null);
   const animations = getAnimations(config);
   const activeWindow = session.windows[session.active_window];
-  const paneCount = activeWindow?.panes.length ?? 0;
   const activeZoomed = !!activeWindow?.zoomed_pane;
   const activePane = activeWindow?.panes[activeWindow.active_pane];
   // Windows are shown in the configured display order; each keeps its backend

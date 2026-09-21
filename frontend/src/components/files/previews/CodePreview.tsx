@@ -104,7 +104,6 @@ export function CodePreview() {
   const fileContent = useFileStore((s) => s.fileContent);
   const selectedFile = useFileStore((s) => s.selectedFile);
   const searchMode = useFileStore((s) => s.searchMode);
-  const searchQuery = useFileStore((s) => s.searchQuery);
   const contentSearchResults = useFileStore((s) => s.contentSearchResults);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
   const theme = useStore((s) => s.config?.theme ?? null);

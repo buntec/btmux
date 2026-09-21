@@ -224,8 +224,8 @@ the store, not server state); `LatexOverlay.tsx` highlights source cells with
 `notify` (to catch editors' atomic rename-on-save), debounces, re-resolves, and
 broadcasts a new `Config`. A parse error logs and **keeps the last good config**.
 
-**Session-only overrides:** the command-palette pickers and `/config` appearance
-editor send `update_config` and **never touch config.toml**. They can override
+**Session-only overrides:** the command-palette pickers and settings appearance
+overlay send `update_config` and **never touch config.toml**. They can override
 the selected colors, fonts, animations, wallpapers, and shader/border settings.
 `SessionManager` keeps the last-loaded `FileConfig` plus an accumulated
 `ConfigUpdate` override layer, and `resolve_with_overrides` re-resolves the

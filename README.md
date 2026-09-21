@@ -36,9 +36,9 @@ This installs the latest release to `~/.local/bin`. Then start btmux:
 btmux
 ```
 
-It opens the UI at `http://localhost:8004`.
+It opens the UI at `http://127.0.0.1:8004`.
 
-On macOS it is convenient to install btmux as a `launchd` service:
+On macOS or Linux, btmux can run as a per-user `launchd` or systemd service:
 
 ```sh
 btmux install # install and start service
@@ -50,11 +50,12 @@ There is also a [nix Home Manager](https://github.com/nix-community/home-manager
 ### Sign in
 
 btmux requires an access token, including on localhost.
-On first launch it creates `~/.local/state/btmux/state.token` and prints the file's path.
+Unless `BTMUX_AUTH_TOKEN` is set, on first launch it creates
+`~/.local/state/btmux/state.token` and prints the file's path.
 In another terminal, read the token with:
 
 ```sh
-cat "~/.local/state/btmux/state.token"
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
 ```
 
 Enter **`btmux` as the browser username** and **the token as the password**.
@@ -72,7 +73,7 @@ for token management and HTTPS setup for remote access.
 ## Configuration
 
 On first launch, btmux creates a configuration file at `~/.config/btmux/config.toml` (or `$XDG_CONFIG_HOME/btmux/config.toml`).
-Changes are picked up live.
+Most changes are picked up live; log levels take effect after a restart.
 
 ```sh
 btmux generate-config   # print every option with documentation

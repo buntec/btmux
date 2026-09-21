@@ -95,7 +95,7 @@ wallpaper: string | null,
 wallpaper_shader: string | null, 
 /**
  * Opacity of the wallpaper: 0.0 = invisible, 1.0 = fully visible.
- * Always `Some` when `wallpaper` is `Some` (defaults to 1.0).
+ * Always `Some` when a wallpaper is configured (defaults to 0.10).
  */
 wallpaper_opacity: number | null, 
 /**
@@ -166,7 +166,8 @@ window_grid_count: number,
  */
 version: string, 
 /**
- * Available color scheme names from `~/.config/btmux/colors/`.
+ * Available color scheme names from `$XDG_CONFIG_HOME/btmux/colors/`, falling
+ * back to `~/.config/btmux/colors/`.
  */
 color_schemes: Array<string>, 
 /**

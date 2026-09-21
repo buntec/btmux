@@ -104,9 +104,9 @@ pub enum SubCommand {
     /// Print a Gemini CLI settings.json hooks snippet for btmux pane notifications.
     GenerateGeminiCliHooks,
     /// Install btmux as a per-user background service so it starts at login and
-    /// restarts on crash. The current `--host`/`--port`/`--shell` and the
-    /// installing shell's PATH are baked into the generated unit. Currently
-    /// macOS-only (a launchd LaunchAgent); the OS is detected at runtime.
+    /// restarts on crash. The current `--host`/`--port`/`--profile`/`--shell`/
+    /// `--public-url` and the installing shell's PATH are baked into the
+    /// generated unit. Uses launchd on macOS and systemd on Linux.
     Install {
         /// Print the generated service unit to stdout instead of installing it.
         #[arg(long)]
@@ -274,7 +274,7 @@ pub struct FileConfig {
     #[serde(rename = "window-sort", default)]
     pub window_sort: WindowSort,
     /// How many of the most-recently-viewed windows the window-grid
-    /// (`prefix + w`) shows as live thumbnails. Defaults to 6.
+    /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
     pub window_grid_count: Option<u32>,
     /// Per-action key overrides: action name (kebab-case) -> key string.
@@ -283,9 +283,10 @@ pub struct FileConfig {
     pub terminal: TerminalOptions,
     /// Inline base16/base24 palette translated to an `ITheme` for the browser.
     pub theme: Option<BaseTheme>,
-    /// Name of a color scheme file in `~/.config/btmux/colors/` (without extension),
-    /// an absolute or `~/`-relative local path, or an HTTP(S) URL to a base16/base24
-    /// YAML file. Overridden by an inline `[theme]` if both are present.
+    /// Name of a color scheme file in `$XDG_CONFIG_HOME/btmux/colors/` (falling back
+    /// to `~/.config/btmux/colors/`) without extension, an absolute or `~/`-relative
+    /// local path, or an HTTP(S) URL to a base16/base24 YAML file. Overridden by an
+    /// inline `[theme]` if both are present.
     pub colors: Option<String>,
     /// Parsed palette for a remote `colors` URL. This is populated while the
     /// config is loaded and is not read from or written to config.toml.
@@ -596,8 +597,9 @@ fn default_commands() -> Vec<Command> {
         Command {
             id: "choose-colors".to_string(),
             label: "colors: choose scheme".to_string(),
-            description: "Pick a color scheme from ~/.config/btmux/colors/. \
-                Applies until restart or config reload."
+            description: "Pick a color scheme from $XDG_CONFIG_HOME/btmux/colors/ \
+                (falling back to ~/.config/btmux/colors/). Applies until restart or \
+                config reload."
                 .to_string(),
             confirm: None,
         },
@@ -720,7 +722,7 @@ pub struct ClientConfig {
     #[serde(skip)]
     pub wallpaper_path: Option<std::path::PathBuf>,
     /// Opacity of the wallpaper: 0.0 = invisible, 1.0 = fully visible.
-    /// Always `Some` when `wallpaper` is `Some` (defaults to 1.0).
+    /// Always `Some` when a wallpaper is configured (defaults to 0.10).
     pub wallpaper_opacity: Option<f32>,
     /// Blur radius in pixels for the wallpaper. `None` when no wallpaper.
     pub wallpaper_blur: Option<f32>,
@@ -761,7 +763,8 @@ pub struct ClientConfig {
     pub window_grid_count: u32,
     /// btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
     pub version: String,
-    /// Available color scheme names from `~/.config/btmux/colors/`.
+    /// Available color scheme names from `$XDG_CONFIG_HOME/btmux/colors/`, falling
+    /// back to `~/.config/btmux/colors/`.
     pub color_schemes: Vec<String>,
     /// Resolved themes for locally previewing available color schemes in the
     /// browser without applying a session-only override.
@@ -1182,10 +1185,11 @@ pub fn generate_config_toml() -> String {
 # BTMUX_CONSOLE_LOG and BTMUX_FILE_LOG override these values when set.
 # [log]
 # console-level = "{DEFAULT_CONSOLE_LOG}"    # stderr output (keep the terminal quiet)
-# file-level = "{DEFAULT_FILE_LOG}"       # file output (~/.local/state/btmux/log/btmux.log.YYYY-MM-DD)
+# file-level = "{DEFAULT_FILE_LOG}"       # file output ($XDG_STATE_HOME/btmux/log/btmux.log.YYYY-MM-DD, falling back to ~/.local/state/btmux/)
 
-# Color scheme from ~/.config/btmux/colors/<name>.yaml (base16/base24 YAML files),
-# an absolute or ~/relative local path, or a URL to a base16/base24 YAML file.
+# Color scheme from $XDG_CONFIG_HOME/btmux/colors/<name>.yaml (falling back to
+# ~/.config/btmux/colors/; base16/base24 YAML files), an absolute or ~/relative
+# local path, or a URL to a base16/base24 YAML file.
 # A `palette` wrapper is supported.
 # An inline [theme] below overrides this.
 # colors = "catppuccin-mocha"

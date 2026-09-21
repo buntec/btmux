@@ -6,8 +6,9 @@ btmux creates a configuration file on first launch:
 ~/.config/btmux/config.toml
 ```
 
-It respects `$XDG_CONFIG_HOME`, all fields are optional, and changes are picked
-up live. Run the following command for the complete documented set of options:
+It respects `$XDG_CONFIG_HOME`, all fields are optional, and most changes are
+picked up live. Log-level changes take effect after a restart. Run the following
+command for the complete documented set of options:
 
 ```sh
 btmux generate-config
@@ -15,7 +16,7 @@ btmux generate-config
 
 ## Appearance
 
-Press `<prefix> + :` and choose `config: open appearance settings` to open the
+Press `<prefix> + :` and choose `config: open settings` to open the
 browser-based editor. Applying a change creates a process-local preview; the
 editor never writes `config.toml`. Preview overrides disappear when btmux
 restarts or the config file reloads. Use the editor's generated TOML and copy
@@ -26,9 +27,11 @@ title bars, vi-style navigation, bundled font families and weights, image or
 procedural wallpapers, and steady-state, session-switch, and pane-switch WebGL
 effects.
 
-The `colors` option accepts either:
+The `colors` option accepts:
 
-- the name of a base16/base24 YAML file in `~/.config/btmux/colors/`; or
+- the name of a base16/base24 YAML file in `$XDG_CONFIG_HOME/btmux/colors/`
+  (falling back to `~/.config/btmux/colors/`);
+- an absolute or `~/`-relative local YAML path; or
 - an `http://` or `https://` URL to a YAML palette.
 
 Palettes may be defined at the top level or nested under `palette`. Remote

@@ -27,15 +27,15 @@ the btmux user.
 Sessions, windows, and panes can be controlled over HTTP under `/api`.
 
 ```sh
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST localhost:8004/api/sessions \
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/sessions \
   -H 'Content-Type: application/json' \
   -d '{"name":"build"}'
 
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST localhost:8004/api/panes/<pane-id>/input \
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/input \
   -H 'Content-Type: application/json' \
   -d '{"text":"echo hi\n"}'
 
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" localhost:8004/api/panes/<pane-id>/output
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" http://127.0.0.1:8004/api/panes/<pane-id>/output
 ```
 
 | Method and path                                                 | Purpose                                                   |
@@ -67,13 +67,14 @@ quiet, long-running command can return early. The overall timeout defaults to
 Register the server with Claude Code:
 
 ```sh
-claude mcp add --transport http btmux http://127.0.0.1:8004/mcp
+claude mcp add --transport http btmux http://127.0.0.1:8004/mcp \
+  --header "Authorization: Bearer ${BTMUX_AUTH_TOKEN}"
 claude mcp list
 ```
 
 Add `--scope user` to the first command to make it available in every project.
-The btmux server must already be running. Re-register the URL if you change its
-port.
+The btmux server must already be running. Re-register the server if you change
+its port or token.
 
 ## Agent hook notifications
 
@@ -82,19 +83,22 @@ running in the pane can use them to display a colored dot or toast when it
 stops, needs permission, fails, or finishes work—even when another pane or
 session is active.
 
-Generate ready-to-paste hook configuration with:
+Print ready-to-paste hook configuration with:
 
 ```sh
-btmux generate-claude-code-hooks  # merge hooks into ~/.claude/settings.json
-btmux generate-codex-hooks        # merge hooks into ~/.codex/hooks.json
-btmux generate-gemini-cli-hooks   # merge hooks into ~/.gemini/settings.json
+btmux generate-claude-code-hooks  # print JSON; merge it into ~/.claude/settings.json
+btmux generate-codex-hooks        # print JSON; merge it into ~/.codex/hooks.json
+btmux generate-gemini-cli-hooks   # print JSON; merge it into ~/.gemini/settings.json
 ```
 
 The same snippets are available in [`extras/`](../extras/). Other command-hook
-harnesses can pipe their JSON hook payload to:
+harnesses can POST their JSON hook payload to the authenticated endpoint:
 
 ```sh
-$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/notify
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -X POST --data-binary @- \
+  "$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/notify"
 ```
 
 [Back to the README](../README.md)

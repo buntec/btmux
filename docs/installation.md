@@ -16,7 +16,7 @@ It downloads the latest release binary to `~/.local/bin`. Set
 
 ### First sign-in
 
-Start `btmux`, then open `http://localhost:8004`. Access requires a token even
+Start `btmux`, then open `http://127.0.0.1:8004`. Access requires a token even
 on localhost. Unless `BTMUX_AUTH_TOKEN` is set, btmux creates an owner-only
 `state.token` beside the profile's `state.json` and prints its path on startup.
 
@@ -77,8 +77,8 @@ btmux restart              # restart the installed service
 btmux uninstall            # stop and remove the service
 ```
 
-The `--host`, `--port`, `--profile`, and `--shell` flags, along with your
-shell's `PATH`, are captured when the service is installed. Re-run
+The `--host`, `--port`, `--profile`, `--shell`, and `--public-url` flags, along
+with your shell's `PATH`, are captured when the service is installed. Re-run
 `btmux install` after changing them.
 
 Install the service from a stable binary path such as `~/.local/bin/btmux`.

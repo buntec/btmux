@@ -27,8 +27,8 @@ use crate::config::CliArgs;
 /// launchd Label / reverse-DNS identifier for the agent. Also the plist filename.
 const LABEL: &str = "com.btmux.server";
 
-/// Entry point for `btmux install`. Dispatches on the host OS; `print` (macOS
-/// only) emits the generated service unit to stdout instead of installing it.
+/// Entry point for `btmux install`. Dispatches on the host OS; `print` emits
+/// the generated service unit to stdout instead of installing it.
 pub fn install(args: &CliArgs, print: bool) {
     match std::env::consts::OS {
         "macos" => install_macos(args, print),

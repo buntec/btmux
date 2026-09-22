@@ -594,47 +594,6 @@ fn default_commands() -> Vec<Command> {
             description: "Open the btmux configuration view.".to_string(),
             confirm: None,
         },
-        Command {
-            id: "choose-colors".to_string(),
-            label: "colors: choose scheme".to_string(),
-            description: "Pick a color scheme from $XDG_CONFIG_HOME/btmux/colors/ \
-                (falling back to ~/.config/btmux/colors/). Applies until restart or \
-                config reload."
-                .to_string(),
-            confirm: None,
-        },
-        Command {
-            id: "choose-font".to_string(),
-            label: "font: choose family".to_string(),
-            description: "Pick a font from the bundled families. \
-                Applies until restart or config reload."
-                .to_string(),
-            confirm: None,
-        },
-        Command {
-            id: "choose-font-weight".to_string(),
-            label: "font: choose weight".to_string(),
-            description: "Pick a font weight for the current font. \
-                Applies until restart or config reload."
-                .to_string(),
-            confirm: None,
-        },
-        Command {
-            id: "choose-shader".to_string(),
-            label: "shader: choose effect".to_string(),
-            description: "Pick a WebGL post-process effect applied to every pane. \
-                Applies until restart or config reload."
-                .to_string(),
-            confirm: None,
-        },
-        Command {
-            id: "choose-pane-switch-shader".to_string(),
-            label: "shader: choose pane-switch effect".to_string(),
-            description: "Pick the flash played on the pane you switch to. \
-                Applies until restart or config reload."
-                .to_string(),
-            confirm: None,
-        },
     ]
 }
 

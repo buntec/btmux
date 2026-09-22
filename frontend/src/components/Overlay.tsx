@@ -4,15 +4,10 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { Bind, ClientConfig } from '../state/types';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import { paneSwitchPickerItems, shaderPickerItems } from '../hooks/useKeybindings';
 import {
   getAnimations,
-  getFontWeightRange,
   getPrefix,
-  getTerminalFontFamily,
   getTerminalFontSize,
-  getTerminalFontWeight,
-  FONT_WEIGHT_STEP,
   MIN_FONT_SIZE,
 } from '../state/configDefaults';
 
@@ -100,6 +95,7 @@ export function Overlay({ sessionId, send, config }: Props) {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const focusRef = useRef<HTMLDivElement>(null);
+  const commandItemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   // Command-palette selection + typeahead filter (only used in `command` mode).
   const [cmdIdx, setCmdIdx] = useState(0);
@@ -147,10 +143,23 @@ export function Overlay({ sessionId, send, config }: Props) {
     }
   });
 
+  const pendingOverlay = overlay ?? frozenOverlay.current;
+  const filteredCommands =
+    pendingOverlay?.mode === 'command'
+      ? pendingOverlay.commands.filter((c) => c.label.toLowerCase().includes(cmdQuery.trim().toLowerCase()))
+      : [];
+  const clampedCmdIdx = Math.min(cmdIdx, Math.max(0, filteredCommands.length - 1));
+
+  useEffect(() => {
+    if (pendingOverlay?.mode === 'command' && filteredCommands.length > 0) {
+      commandItemRefs.current[clampedCmdIdx]?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [pendingOverlay, clampedCmdIdx, cmdQuery, filteredCommands.length]);
+
   // Keep mounted during the exit animation.
   if (!overlay && !closing) return null;
   // Use the frozen snapshot during the exit animation so content stays visible.
-  const activeOverlay = overlay ?? frozenOverlay.current!;
+  const activeOverlay = pendingOverlay!;
 
   const runCommand = (cmdId: string) => {
     if (cmdId === 'open-config') {
@@ -164,86 +173,8 @@ export function Overlay({ sessionId, send, config }: Props) {
       setOverlay(null);
       return true;
     }
-    if (cmdId === 'choose-colors') {
-      const schemes = config?.color_schemes ?? [];
-      const active = config?.active_color_scheme;
-      setOverlay({
-        mode: 'picker',
-        title: 'Color scheme',
-        items: [
-          { id: '', label: '(none)', active: !active },
-          ...schemes.map((s) => ({ id: s, label: s, active: s === active })),
-        ],
-        onSelect: (id) => send({ type: 'update_config', update: { colors: id } }),
-      });
-      return true;
-    }
-    if (cmdId === 'choose-font') {
-      const fonts = config?.fonts ?? [];
-      const currentFamily = getTerminalFontFamily(config);
-      const currentWeight = getTerminalFontWeight(config);
-      setOverlay({
-        mode: 'picker',
-        title: `Font (current: ${currentFamily} @ ${currentWeight})`,
-        items: fonts.map((f) => ({
-          id: `${f.family}:${f.weight_min}`,
-          label: `${f.family} (${f.weight_min}–${f.weight_max})`,
-          active: f.family === currentFamily,
-        })),
-        onSelect: (id) => {
-          const [family] = id.split(':');
-          send({ type: 'update_config', update: { font_family: family } });
-        },
-      });
-      return true;
-    }
-    if (cmdId === 'choose-shader') {
-      setOverlay({
-        mode: 'picker',
-        title: 'Shader effect',
-        items: shaderPickerItems(config?.shader ?? null),
-        onSelect: (id) => send({ type: 'update_config', update: { shader: id } }),
-      });
-      return true;
-    }
-    if (cmdId === 'choose-pane-switch-shader') {
-      setOverlay({
-        mode: 'picker',
-        title: 'Pane-switch effect',
-        items: paneSwitchPickerItems(config?.pane_switch_shader ?? null),
-        onSelect: (id) => send({ type: 'update_config', update: { pane_switch_shader: id } }),
-      });
-      return true;
-    }
-    if (cmdId === 'choose-font-weight') {
-      const fonts = config?.fonts ?? [];
-      const currentFamily = getTerminalFontFamily(config);
-      const currentWeight = getTerminalFontWeight(config);
-      const { min, max } = getFontWeightRange(fonts, currentFamily);
-      const weights: { id: string; label: string; active: boolean }[] = [];
-      for (let w = min; w <= max; w += FONT_WEIGHT_STEP) {
-        weights.push({ id: String(w), label: String(w), active: w === currentWeight });
-      }
-      setOverlay({
-        mode: 'picker',
-        title: `Font weight (${currentFamily})`,
-        items: weights,
-        onSelect: (id) => {
-          send({ type: 'update_config', update: { font_weight: parseInt(id, 10) } });
-        },
-      });
-      return true;
-    }
     return false;
   };
-
-  // Filtered command list (palette mode). Computed before the early-return-free
-  // render so the key handler and the list render agree on indices.
-  const filteredCommands =
-    activeOverlay.mode === 'command'
-      ? activeOverlay.commands.filter((c) => c.label.toLowerCase().includes(cmdQuery.trim().toLowerCase()))
-      : [];
-  const clampedCmdIdx = Math.min(cmdIdx, Math.max(0, filteredCommands.length - 1));
 
   const close = () => {
     if (closing) return;
@@ -548,6 +479,9 @@ export function Overlay({ sessionId, send, config }: Props) {
                 return (
                   <div
                     key={cmd.id}
+                    ref={(element) => {
+                      commandItemRefs.current[i] = element;
+                    }}
                     onClick={() => {
                       if (runCommand(cmd.id)) return;
                       if (cmd.confirm) {
@@ -565,14 +499,15 @@ export function Overlay({ sessionId, send, config }: Props) {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '12px',
-                      padding: '8px 14px',
+                      padding: '4px 14px',
                       cursor: 'pointer',
                       background: selected ? withAlpha(accent, 0.09) : 'transparent',
                       borderLeft: `2px solid ${selected ? accent : 'transparent'}`,
+                      fontWeight: 'var(--btmux-font-weight)',
                       userSelect: 'none',
                     }}
                   >
-                    <span style={{ color: selected ? accent : fg, fontWeight: 700, minWidth: '150px' }}>
+                    <span style={{ color: selected ? accent : fg, minWidth: '150px', whiteSpace: 'nowrap' }}>
                       {cmd.label}
                     </span>
                     <span style={{ color: selected ? c.fgMuted : dimFg }}>{cmd.description}</span>

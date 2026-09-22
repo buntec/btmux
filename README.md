@@ -18,7 +18,7 @@ E.g., `prefix + %` create a new vertical split, `prefix + "` create a new horizo
 
 ## Demo
 
-https://github.com/user-attachments/assets/9fa5ac71-99fb-47d2-bda7-75bce101bfd5
+https://github.com/user-attachments/assets/9180b2ed-43cb-4dbb-bccd-ac5f0cfc4944
 
 ## Get started
 

@@ -1050,7 +1050,7 @@ pub fn generate_config_toml() -> String {
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
 # Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "{DEFAULT_WALLPAPER_SHADER}"   # or btmux:plasma | btmux:voronoi
+# wallpaper-shader = "{DEFAULT_WALLPAPER_SHADER}"
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = {DEFAULT_WALLPAPER_OPACITY:.2}
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.

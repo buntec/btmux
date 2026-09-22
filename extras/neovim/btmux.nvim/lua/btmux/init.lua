@@ -1,18 +1,20 @@
--- Open the btmux file browser (prefix + f / prefix + g) from Neovim, at a
--- given directory, in whichever btmux pane you're editing from. Selecting a
--- file there opens it back in this same Neovim instance (jumping to the
--- selected line), via btmux's --remote-expr call to our RPC server.
---
--- Paste this into your init.lua, then bind whichever modes you want:
---   vim.keymap.set('n', '<leader>-', function() btmux_open_file_browser() end)
---   vim.keymap.set('n', '<leader>g-', function() btmux_open_file_browser(nil, 'git') end)
---
--- Requires Neovim running inside a btmux pane, which sets BTMUX_PANE_ID,
--- BTMUX_API_URL, and BTMUX_AUTH_TOKEN in its environment.
+-- Talk to btmux's REST API from Neovim, when Neovim is running inside a
+-- btmux pane (which sets BTMUX_PANE_ID, BTMUX_API_URL, and BTMUX_AUTH_TOKEN
+-- in its environment).
+
+local M = {}
+
+M.config = {
+  -- Set an entry to false to skip creating that keymap.
+  keymaps = {
+    open_file_browser = '<leader>-',
+    open_git_browser = '<leader>g-',
+  },
+}
 
 --- Open the btmux file browser at `dir` (default: current buffer's directory).
 --- `mode` is 'files' (default) or 'git'.
-function btmux_open_file_browser(dir, mode)
+function M.open_file_browser(dir, mode)
   local pane_id = vim.env.BTMUX_PANE_ID
   local api_url = vim.env.BTMUX_API_URL
   local token = vim.env.BTMUX_AUTH_TOKEN
@@ -56,10 +58,20 @@ function btmux_open_file_browser(dir, mode)
   end)
 end
 
-vim.keymap.set('n', '<leader>-', function()
-  btmux_open_file_browser()
-end, { desc = 'btmux: open file browser here' })
+function M.setup(opts)
+  M.config = vim.tbl_deep_extend('force', M.config, opts or {})
 
-vim.keymap.set('n', '<leader>g-', function()
-  btmux_open_file_browser(nil, 'git')
-end, { desc = 'btmux: open git view here' })
+  local keymaps = M.config.keymaps or {}
+  if keymaps.open_file_browser then
+    vim.keymap.set('n', keymaps.open_file_browser, function()
+      M.open_file_browser()
+    end, { desc = 'btmux: open file browser here' })
+  end
+  if keymaps.open_git_browser then
+    vim.keymap.set('n', keymaps.open_git_browser, function()
+      M.open_file_browser(nil, 'git')
+    end, { desc = 'btmux: open git view here' })
+  end
+end
+
+return M

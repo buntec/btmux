@@ -120,8 +120,9 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
 
 ## Editor integration
 
-[`extras/neovim/btmux.lua`](../extras/neovim/btmux.lua) adds a Neovim keymap
-that opens the btmux file browser at the current buffer's directory, using the
-same `BTMUX_PANE_ID`/`BTMUX_API_URL`/`BTMUX_AUTH_TOKEN` environment variables.
+[`extras/neovim/btmux.nvim`](../extras/neovim/btmux.nvim) is a small Neovim
+plugin that opens the btmux file browser at the current buffer's directory,
+using the same `BTMUX_PANE_ID`/`BTMUX_API_URL`/`BTMUX_AUTH_TOKEN` environment
+variables. See its README for installation with lazy.nvim/packer.
 
 [Back to the README](../README.md)

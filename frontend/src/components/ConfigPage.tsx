@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Check, Clipboard, Dices, RotateCcw, Upload } from 'lucide-react';
+import { Check, Clipboard, Dices, RotateCcw, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClientMessage } from '../protocol/messages';
 import type { Bind, ClientConfig } from '../state/types';
@@ -88,9 +88,15 @@ type Draft = {
 type DraftKey = keyof Draft;
 type ConfigUpdate = Extract<ClientMessage, { type: 'update_config' }>['update'];
 
-function IconAction({ label, children, disabled, ...props }: ComponentProps<typeof Button> & { label: string }) {
+function IconAction({
+  label,
+  children,
+  disabled,
+  variant = 'outline',
+  ...props
+}: ComponentProps<typeof Button> & { label: string }) {
   const button = (
-    <Button {...props} size="icon" disabled={disabled} aria-label={label}>
+    <Button {...props} variant={variant} size="icon" disabled={disabled} aria-label={label}>
       {children}
     </Button>
   );
@@ -504,6 +510,9 @@ export function ConfigPage({ config, send }: Props) {
               </IconAction>
               <IconAction label="Copy settings to clipboard" onClick={copy}>
                 {copied ? <Check /> : <Clipboard />}
+              </IconAction>
+              <IconAction label="Close settings" onClick={goBack}>
+                <X />
               </IconAction>
             </div>
           </div>

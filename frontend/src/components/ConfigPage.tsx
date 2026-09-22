@@ -380,9 +380,11 @@ export function ConfigPage({ config, send }: Props) {
         // Keep null until the user changes this control so a wallpaper can
         // still enable terminal transparency through its normal default.
         allowTransparency: dirty.has('allowTransparency') ? draft.allowTransparency : config.terminal.allowTransparency,
-        convertEol: draft.convertEol,
-        disableStdin: draft.disableStdin,
-        smoothScrollDuration: draft.smoothScrollDuration,
+        convertEol: dirty.has('convertEol') ? draft.convertEol : config.terminal.convertEol,
+        disableStdin: dirty.has('disableStdin') ? draft.disableStdin : config.terminal.disableStdin,
+        smoothScrollDuration: dirty.has('smoothScrollDuration')
+          ? draft.smoothScrollDuration
+          : config.terminal.smoothScrollDuration,
         scrollSensitivity: draft.scrollSensitivity,
       },
       wallpaper: draft.wallpaper || null,

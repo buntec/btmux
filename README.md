@@ -4,14 +4,17 @@ A browser-based terminal manager with a tmux-inspired interface, powered by [gho
 
 Client-server architecture means you can connect and reconnect from any number of browsers/tabs without losing state.
 Default key bindings very closely resemble tmux defaults.
-E.g., `prefix + %` create a new vertical split, `prefix + "` create a new horizontal split, etc.
+E.g., `<prefix> + %` create a new vertical split, `<prefix> + "` create a new horizontal split, etc.
 
 ## Highlights
 
-- Sessions, windows, splits, pane zoom, pane swapping, and preset layouts
+- Single static binary bundling all assets (including select fonts)
+- Sessions, windows, panes (splits), pane zoom, pane swapping, and preset layouts
 - Searchable session tree, live window thumbnails, file browser and git UI
 - Configurable tmux-style keybindings with optional vi-style navigation
 - Rendered LaTeX overlay for math printed in a pane
+- Procedural wallpapers based on [Radiant shaders](https://github.com/pbakaus/radiant)
+- Support for Base16/24 color schemes
 - Hot-reloaded themes, terminal options, bundled fonts, wallpapers, and WebGL effects
 - Host statistics and pane notifications for coding agents
 - REST API and MCP server for automation
@@ -30,7 +33,7 @@ On macOS (Apple Silicon) or Linux:
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 ```
 
-This installs the latest release to `~/.local/bin`. Then start btmux:
+This installs the latest release binary to `~/.local/bin`. Then start btmux:
 
 ```sh
 btmux
@@ -38,20 +41,20 @@ btmux
 
 It opens the UI at `http://127.0.0.1:8004`.
 
-On macOS or Linux, btmux can run as a per-user `launchd` or systemd service:
+On macOS or Linux, btmux can run as a per-user launchd or systemd service:
 
 ```sh
 btmux install # install and start service
 btmux uninstall # uninstall service
 ```
 
-There is also a [nix Home Manager](https://github.com/nix-community/home-manager) module. See [Installation](docs/installation.md).
+There is also a [nix Home Manager](https://github.com/nix-community/home-manager) module.
+See [Installation](docs/installation.md).
 
 ### Sign in
 
 btmux requires an access token, including on localhost.
-Unless `BTMUX_AUTH_TOKEN` is set, on first launch it creates
-`~/.local/state/btmux/state.token` and prints the file's path.
+Unless `BTMUX_AUTH_TOKEN` is set, on first launch it creates `~/.local/state/btmux/state.token` and prints the file's path.
 In another terminal, read the token with:
 
 ```sh
@@ -73,14 +76,9 @@ for token management and HTTPS setup for remote access.
 ## Configuration
 
 On first launch, btmux creates a configuration file at `~/.config/btmux/config.toml` (or `$XDG_CONFIG_HOME/btmux/config.toml`).
-Most changes are picked up live; log levels take effect after a restart.
-
-```sh
-btmux generate-config   # print every option with documentation
-```
-
-See [Configuration](docs/configuration.md) for appearance settings, themes,
-profiles, and state persistence.
+Most changes are picked up live.
+Use `<prefix> + :` and select the `config` command to open the settings pane for interactive configuration.
+See [Configuration](docs/configuration.md) for appearance settings, themes, profiles, and state persistence.
 
 ## Automation
 
@@ -103,8 +101,7 @@ btmux generate-config   # print a documented default config
 
 ## Development
 
-Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and
-[`just`](https://github.com/casey/just).
+Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and [`just`](https://github.com/casey/just).
 
 ```sh
 just setup  # install dependencies

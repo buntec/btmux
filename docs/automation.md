@@ -36,7 +36,15 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
   -d '{"text":"echo hi\n"}'
 
 curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" http://127.0.0.1:8004/api/panes/<pane-id>/output
+
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/open-file-browser \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/home/user/project","mode":"files"}'
 ```
+
+`open-file-browser`'s `mode` is `"files"` (default) or `"git"`, matching the
+`prefix + f` / `prefix + g` overlay. It switches every connected browser tab
+to the pane's window and session before opening the overlay there.
 
 | Method and path                                                 | Purpose                                                   |
 | --------------------------------------------------------------- | --------------------------------------------------------- |
@@ -52,6 +60,7 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" http://127.0.0.1:8004/api/pane
 | `POST /api/panes/<pane-id>/input`                               | Send text to a pane, spawning its shell if necessary      |
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Set or clear an agent notification                        |
+| `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
 
 ## MCP server
 
@@ -100,5 +109,11 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
   -X POST --data-binary @- \
   "$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/notify"
 ```
+
+## Editor integration
+
+[`extras/neovim/btmux.lua`](../extras/neovim/btmux.lua) adds a Neovim keymap
+that opens the btmux file browser at the current buffer's directory, using the
+same `BTMUX_PANE_ID`/`BTMUX_API_URL`/`BTMUX_AUTH_TOKEN` environment variables.
 
 [Back to the README](../README.md)

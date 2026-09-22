@@ -44,6 +44,10 @@ pub fn create_app(state: AppState) -> Router {
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify).delete(api_pane_notify_clear),
         )
+        .route(
+            "/api/panes/{pane_id}/open-file-browser",
+            axum::routing::post(api_open_file_browser),
+        )
         .route("/api/file", get(serve_raw_file))
         .route("/wallpaper", get(serve_wallpaper))
         .merge(crate::api::router())
@@ -285,6 +289,32 @@ async fn api_pane_notify(
         level,
         title,
         body: notif_body,
+    };
+    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+struct OpenFileBrowserRequest {
+    path: String,
+    mode: Option<ws::control::FileBrowserMode>,
+}
+
+async fn api_open_file_browser(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+    Json(body): Json<OpenFileBrowserRequest>,
+) -> Response {
+    let mgr = state.read().await;
+    if mgr.find_pane(pane_id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let msg = ws::control::ServerMessage::OpenFileBrowser {
+        pane_id,
+        path: body.path,
+        mode: body.mode.unwrap_or(ws::control::FileBrowserMode::Files),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
 

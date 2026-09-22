@@ -532,6 +532,19 @@ pub enum ServerMessage {
     PaneNotificationClear {
         pane_id: Uuid,
     },
+    OpenFileBrowser {
+        pane_id: Uuid,
+        path: String,
+        mode: FileBrowserMode,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum FileBrowserMode {
+    Files,
+    Git,
 }
 
 #[derive(Serialize, Clone, Copy)]

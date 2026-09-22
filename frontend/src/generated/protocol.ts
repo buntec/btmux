@@ -207,10 +207,13 @@ pane_switch_border?: string, pane_switch_border_speed?: number, };
 export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "run_command", command: string, session_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
-export type ServerMessage = { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: ToastLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null, } | { "type": "pane_notification_clear", pane_id: string, };
+export type ServerMessage = { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: ToastLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null, } | { "type": "pane_notification_clear", pane_id: string, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, };
 
 // prettier-ignore
 export type ToastLevel = "info" | "error";
 
 // prettier-ignore
 export type NotificationLevel = "info" | "attention" | "success" | "error";
+
+// prettier-ignore
+export type FileBrowserMode = "files" | "git";

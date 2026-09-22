@@ -55,14 +55,6 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function editorCommand(path: string, line?: number): string {
-  const quotedPath = shellQuote(path);
-  if (!line || line < 1) return `$EDITOR ${quotedPath}\n`;
-
-  // Use a POSIX subshell so this works regardless of the user's interactive shell.
-  return `sh -c 'editor=$1; file=$2; name=\${editor%% *}; name=\${name##*/}; set -- $editor; case "$name" in vi|vim|nvim|nano|emacs) "$@" +${line} "$file";; code|code-insiders|codium) "$@" --goto "$file:${line}";; *) "$@" "$file";; esac' btmux-editor-open "$EDITOR" ${quotedPath}\n`;
-}
-
 /** The git item list as currently navigable — forces all sections open and applies the filter while filtering. */
 function visibleGitItems(
   gitStatus: GitStatusResult,
@@ -479,8 +471,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const openPath = useCallback(
     (path: string, isDir: boolean, line?: number) => {
-      const text = isDir ? `cd ${shellQuote(path)}\n` : editorCommand(path, line);
-      send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
+      if (isDir) {
+        send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text: `cd ${shellQuote(path)}\n` });
+      } else {
+        send({ type: 'open_file', pane_id: paneId, path, line: line ?? null });
+      }
       onClose();
     },
     [send, onClose, sessionId, paneId],

@@ -1,5 +1,7 @@
 -- Open the btmux file browser (prefix + f / prefix + g) from Neovim, at a
--- given directory, in whichever btmux pane you're editing from.
+-- given directory, in whichever btmux pane you're editing from. Selecting a
+-- file there opens it back in this same Neovim instance (jumping to the
+-- selected line), via btmux's --remote-expr call to our RPC server.
 --
 -- Paste this into your init.lua, then bind whichever modes you want:
 --   vim.keymap.set('n', '<leader>-', function() btmux_open_file_browser() end)
@@ -19,8 +21,15 @@ function btmux_open_file_browser(dir, mode)
     return
   end
 
+  -- Neovim always has a default RPC server; start one if this build somehow
+  -- doesn't (v:servername empty), so files picked in the browser come back here.
+  local editor_addr = vim.v.servername
+  if not editor_addr or editor_addr == '' then
+    editor_addr = vim.fn.serverstart()
+  end
+
   dir = dir or vim.fn.expand('%:p:h')
-  local body = vim.json.encode({ path = dir, mode = mode or 'files' })
+  local body = vim.json.encode({ path = dir, mode = mode or 'files', editor_addr = editor_addr })
 
   vim.system({
     'curl',

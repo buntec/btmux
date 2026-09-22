@@ -158,7 +158,11 @@ impl SessionManager {
             self.scrollback_lines(),
         );
 
-        let pane = Pane { id: pane_id, pty };
+        let pane = Pane {
+            id: pane_id,
+            pty,
+            editor_addr: None,
+        };
         let wname = window_name
             .unwrap_or_else(|| self.unique_window_name_in(&[], &shell_name(&self.shell)));
         let window = Window {
@@ -238,6 +242,7 @@ impl SessionManager {
         let new_pane = Pane {
             id: new_pane_id,
             pty,
+            editor_addr: None,
         };
 
         let Some(session) = self.session_mut(session_id) else {
@@ -441,7 +446,11 @@ impl SessionManager {
             self.port,
             self.scrollback_lines(),
         );
-        let pane = Pane { id: pane_id, pty };
+        let pane = Pane {
+            id: pane_id,
+            pty,
+            editor_addr: None,
+        };
         let base = name.unwrap_or_else(|| shell_name(&self.shell));
 
         let Some(session) = self.session_mut(session_id) else {
@@ -771,7 +780,11 @@ impl SessionManager {
                     self.port,
                     self.scrollback_lines(),
                 );
-                Pane { id: p.id, pty }
+                Pane {
+                    id: p.id,
+                    pty,
+                    editor_addr: None,
+                }
             })
             .collect();
         if panes.is_empty() {
@@ -865,7 +878,7 @@ fn unique_name_in(existing: &[&str], base: &str) -> String {
 /// wrap in `'…'` and replace each embedded `'` with `'\''`. Works for bash, zsh,
 /// and fish alike (all treat single quotes literally). Used to inject the capture
 /// file path into a pane's shell.
-fn shell_single_quote(s: &str) -> String {
+pub(crate) fn shell_single_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for ch in s.chars() {

@@ -299,6 +299,10 @@ async fn api_pane_notify(
 struct OpenFileBrowserRequest {
     path: String,
     mode: Option<ws::control::FileBrowserMode>,
+    /// The calling editor's `v:servername` (or equivalent RPC address). When
+    /// set, selecting a file in the browser remote-opens it into this editor
+    /// instead of spawning a fresh `$EDITOR` in the pane's shell.
+    editor_addr: Option<String>,
 }
 
 async fn api_open_file_browser(
@@ -306,10 +310,11 @@ async fn api_open_file_browser(
     Path(pane_id): Path<Uuid>,
     Json(body): Json<OpenFileBrowserRequest>,
 ) -> Response {
-    let mgr = state.read().await;
-    if mgr.find_pane(pane_id).is_none() {
+    let mut mgr = state.write().await;
+    let Some(pane) = mgr.find_pane_mut(pane_id) else {
         return StatusCode::NOT_FOUND.into_response();
-    }
+    };
+    pane.editor_addr = body.editor_addr;
 
     let msg = ws::control::ServerMessage::OpenFileBrowser {
         pane_id,

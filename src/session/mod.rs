@@ -69,6 +69,11 @@ impl Window {
 pub struct Pane {
     pub id: Uuid,
     pub pty: PtyHandle,
+    /// RPC address (`v:servername`) of the editor that opened the file browser
+    /// targeting this pane, if any. Set by `POST .../open-file-browser`; used
+    /// to remote-open a selected file into that same running editor instead of
+    /// spawning a fresh `$EDITOR` in the pane's shell.
+    pub editor_addr: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

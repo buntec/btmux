@@ -46,6 +46,14 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
 `prefix + f` / `prefix + g` overlay. It switches every connected browser tab
 to the pane's window and session before opening the overlay there.
 
+Its optional `editor_addr` registers an RPC address (currently only a Neovim
+`v:servername`/`--listen` address is supported) for that pane. Selecting a
+file in the browser then remote-opens it — jumping to the right line — in
+that already-running editor instead of spawning a fresh `$EDITOR` in the
+pane's shell. Without `editor_addr` — or if the remote-open call fails, e.g.
+because that editor already exited — selecting a file falls back to spawning
+`$EDITOR` in the pane's shell, as before this option existed.
+
 | Method and path                                                 | Purpose                                                   |
 | --------------------------------------------------------------- | --------------------------------------------------------- |
 | `GET/POST/DELETE /api/sessions`                                 | List, create, or clear sessions                           |

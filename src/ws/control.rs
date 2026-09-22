@@ -147,6 +147,37 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return Err("Pane no longer exists".into());
     }
 
+    if let ClientMessage::OpenFile {
+        pane_id,
+        path,
+        line,
+    } = &cmd
+    {
+        let mgr = state.read().await;
+        let Some(pane) = mgr.find_pane(*pane_id) else {
+            return Err("Pane no longer exists".into());
+        };
+        if let Some(addr) = pane.editor_addr.clone() {
+            let state = state.clone();
+            let pane_id = *pane_id;
+            let path = path.clone();
+            let line = *line;
+            drop(mgr);
+            tokio::spawn(async move {
+                if remote_open_in_editor(&addr, &path, line).await.is_err() {
+                    let mgr = state.read().await;
+                    if let Some(pane) = mgr.find_pane(pane_id) {
+                        let text = shell_editor_open_command(&path, line);
+                        let _ = pane.pty.input_tx.send(text.into_bytes());
+                    }
+                }
+            });
+            return Ok(());
+        }
+        let text = shell_editor_open_command(path, *line);
+        return pane.pty.input_tx.send(text.into_bytes());
+    }
+
     // Browser settings (color scheme, font, general settings, shader) are session-only:
     // they're layered over the on-disk config in memory and broadcast to every
     // tab, but config.toml is left untouched, so they last until btmux restarts
@@ -236,7 +267,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         ClientMessage::RunCommand { .. }
         | ClientMessage::UpdateConfig { .. }
         | ClientMessage::ResetConfig
-        | ClientMessage::WritePaneInput { .. } => unreachable!(),
+        | ClientMessage::WritePaneInput { .. }
+        | ClientMessage::OpenFile { .. } => unreachable!(),
     }
 
     broadcast_state(&mgr);
@@ -332,6 +364,68 @@ fn validate_command(
         }
     }
     Ok(())
+}
+
+/// Build the shell text that spawns `$EDITOR` on `path` in the pane's own
+/// shell, jumping to `line` when given. Ported from the frontend's previous
+/// `editorCommand` (kept in sync with it if that logic changes) so the
+/// fallback used here and by `OpenFile`'s remote-open failure path stay
+/// identical. `vi`/`vim`/`nvim`/`nano`/`emacs` take `+LINE`; VS Code variants
+/// take `--goto file:LINE`; anything else just gets the bare path.
+fn shell_editor_open_command(path: &str, line: Option<u32>) -> String {
+    let quoted = crate::session::manager::shell_single_quote(path);
+    match line.filter(|&l| l >= 1) {
+        Some(line) => format!(
+            "sh -c 'editor=$1; file=$2; name=${{editor%% *}}; name=${{name##*/}}; set -- $editor; case \"$name\" in vi|vim|nvim|nano|emacs) \"$@\" +{line} \"$file\";; code|code-insiders|codium) \"$@\" --goto \"$file:{line}\";; *) \"$@\" \"$file\";; esac' btmux-editor-open \"$EDITOR\" {quoted}\n"
+        ),
+        None => format!("$EDITOR {quoted}\n"),
+    }
+}
+
+/// Quote `s` as a single-quoted Vimscript string literal (`'` doubled).
+fn vimscript_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push('\'');
+        }
+        out.push(ch);
+    }
+    out.push('\'');
+    out
+}
+
+/// Ask the editor listening at `addr` (a Neovim `v:servername` address) to
+/// open `path`, jumping to `line` when given. Shells out to the `nvim` binary
+/// itself as an RPC client (`--remote-expr`) rather than linking an RPC
+/// client crate — the editor doing the listening is already `nvim`.
+async fn remote_open_in_editor(addr: &str, path: &str, line: Option<u32>) -> Result<(), ()> {
+    let path_literal = vimscript_string(path);
+    let expr = match line.filter(|&l| l >= 1) {
+        Some(line) => {
+            format!("execute(['edit '.fnameescape({path_literal}), 'normal! {line}Gzz'])")
+        }
+        None => format!("execute('edit '.fnameescape({path_literal}))"),
+    };
+    let status = tokio::process::Command::new("nvim")
+        .args(["--server", addr, "--remote-expr", &expr])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => {
+            tracing::warn!(%addr, %status, "nvim --remote-expr exited with an error");
+            Err(())
+        }
+        Err(error) => {
+            tracing::warn!(%addr, %error, "failed to run nvim --remote-expr");
+            Err(())
+        }
+    }
 }
 
 /// Run a built-in command-palette entry (`prefix + :`). Unlike the structural
@@ -492,6 +586,13 @@ pub(crate) enum ClientMessage {
         session_id: Uuid,
         pane_id: Uuid,
         text: String,
+    },
+    /// Open a file (from the file browser) into the pane's registered editor
+    /// (`Pane::editor_addr`) if any, else spawn `$EDITOR` in the pane's shell.
+    OpenFile {
+        pane_id: Uuid,
+        path: String,
+        line: Option<u32>,
     },
     RunCommand {
         command: String,

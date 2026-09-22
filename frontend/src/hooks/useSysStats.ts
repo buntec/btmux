@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ConnectionState } from '../lib/connectionState';
 
 export interface SysStats {
   cpu: number[];
@@ -11,8 +12,9 @@ export interface SysStats {
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/sysstat`;
 const RECONNECT_MS = 2000;
 
-export function useSysStats(): SysStats | null {
+export function useSysStats(): { stats: SysStats | null; state: ConnectionState } {
   const [stats, setStats] = useState<SysStats | null>(null);
+  const [state, setState] = useState<ConnectionState>('connecting');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const mountedRef = useRef(true);
@@ -25,6 +27,8 @@ export function useSysStats(): SysStats | null {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
+      ws.onopen = () => setState('connected');
+
       ws.onmessage = (e) => {
         try {
           setStats(JSON.parse(e.data) as SysStats);
@@ -33,6 +37,7 @@ export function useSysStats(): SysStats | null {
 
       ws.onclose = () => {
         if (!mountedRef.current) return;
+        setState('reconnecting');
         timerRef.current = setTimeout(connect, RECONNECT_MS);
       };
     }
@@ -46,5 +51,5 @@ export function useSysStats(): SysStats | null {
     };
   }, []);
 
-  return stats;
+  return { stats, state };
 }

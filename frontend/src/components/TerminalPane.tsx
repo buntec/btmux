@@ -13,6 +13,8 @@ import { pumpRenders } from '../lib/pumpRenders';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
 import { LatexOverlay } from './LatexOverlay';
+import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
+import { cn } from '../lib/utils';
 import {
   CONFIG_DEFAULTS,
   getAnimations,
@@ -151,7 +153,7 @@ export function TerminalPane({
   settingsOpenRef.current = settingsOpen;
   const termOptions = useTerminalOptions(config);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
+  const [connection, setConnection] = useState<ConnectionState>('connecting');
   // Keep a newly-created emulator hidden while the server streams its initial
   // checkpoint + journal. Parsing writes is synchronous, but paints happen on
   // animation frames; revealing only after the frame queued by `ready` avoids
@@ -646,10 +648,13 @@ export function TerminalPane({
       {connection !== 'connected' && (
         <div
           role="status"
-          className="absolute inset-x-0 top-0 text-center text-sm bg-background text-foreground"
+          className={cn(
+            'absolute inset-0 flex items-center justify-center text-sm text-muted-foreground',
+            animations && 'animate-pulse',
+          )}
           style={{ zIndex: 30 }}
         >
-          {connectionError ?? (connection === 'connecting' ? 'Connecting…' : 'Connection lost. Reconnecting…')}
+          {connectionError ?? CONNECTION_STATE_LABEL[connection]}
         </div>
       )}
       {showTitle && (

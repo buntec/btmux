@@ -1,18 +1,25 @@
-import { useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import type { ServerFileMessage } from '../protocol/file-messages';
 import { nextId } from '../protocol/file-messages';
+import type { ConnectionState } from '../lib/connectionState';
 
 type PendingRequest = {
   resolve: (msg: ServerFileMessage) => void;
   reject: (err: Error) => void;
 };
 
+const RECONNECT_MS = 2000;
+
 export function useFileSocket() {
   const socketRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef<Map<string, PendingRequest>>(new Map());
   const queueRef = useRef<string[]>([]);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+  const [state, setState] = useState<ConnectionState>('connecting');
 
   const connect = useCallback(() => {
+    if (!mountedRef.current) return;
     if (socketRef.current && socketRef.current.readyState <= WebSocket.OPEN) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -20,6 +27,7 @@ export function useFileSocket() {
     socketRef.current = ws;
 
     ws.onopen = () => {
+      setState('connected');
       for (const msg of queueRef.current) {
         ws.send(msg);
       }
@@ -49,6 +57,18 @@ export function useFileSocket() {
         pending.reject(new Error('WebSocket closed'));
       }
       pendingRef.current.clear();
+      if (!mountedRef.current) return;
+      setState('reconnecting');
+      reconnectTimerRef.current = setTimeout(connect, RECONNECT_MS);
+    };
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      socketRef.current?.close();
     };
   }, []);
 
@@ -71,5 +91,5 @@ export function useFileSocket() {
     [connect],
   );
 
-  return { send };
+  return { send, state };
 }

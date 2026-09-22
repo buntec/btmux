@@ -4,6 +4,7 @@ import type { Terminal } from 'ghostty-web';
 import { SessionState, SessionSummary, ClientConfig, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { ToastCard } from '../components/ToastCard';
+import type { ConnectionState } from '../lib/connectionState';
 
 export interface PaneNotification {
   paneId: string;
@@ -48,9 +49,9 @@ interface AppStore {
   fileBrowserInitialMode: FileBrowserMode;
   // The pane whose slot the file browser occupies. Null when closed.
   fileBrowserPaneId: string | null;
-  // Whether the /ws/control socket is currently connected. The frontend holds
-  // no canonical state, so while this is false the UI is showing stale data.
-  controlConnected: boolean;
+  // State of the /ws/control socket. The frontend holds no canonical state, so
+  // while this isn't 'connected' the UI is showing stale data.
+  controlConnectionState: ConnectionState;
   // Live ghostty-web Terminal per mounted pane, registered by TerminalPane.
   // Non-reactive (mutated in place, nothing subscribes): it exists so actions
   // that run outside the pane tree — e.g. capture-pane in useKeybindings — can
@@ -73,7 +74,7 @@ interface AppStore {
   setConfig: (config: ClientConfig) => void;
   setConfigPreview: (config: ClientConfig | null) => void;
   setSettingsOpen: (open: boolean) => void;
-  setControlConnected: (connected: boolean) => void;
+  setControlConnectionState: (state: ConnectionState) => void;
   registerTerminal: (paneId: string, term: Terminal) => void;
   unregisterTerminal: (paneId: string, term: Terminal) => void;
   setPrefixActive: (active: boolean) => void;
@@ -117,7 +118,7 @@ export const useStore = create<AppStore>((set, get) => ({
   fileBrowserCwd: null,
   fileBrowserInitialMode: 'files',
   fileBrowserPaneId: null,
-  controlConnected: false,
+  controlConnectionState: 'connecting',
   terminals: new Map(),
   notifications: new Map(),
   latexPanes: new Set(),
@@ -135,7 +136,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   setConfigPreview: (configPreview) => set({ configPreview }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen, prefixActive: false }),
-  setControlConnected: (connected) => set({ controlConnected: connected }),
+  setControlConnectionState: (controlConnectionState) => set({ controlConnectionState }),
   registerTerminal: (paneId, term) => get().terminals.set(paneId, term),
   // Guard against a stale unmount clobbering a remounted pane's entry: only
   // delete if the registered Terminal is still the one being torn down.

@@ -1,11 +1,13 @@
 import { useSysStats } from '../hooks/useSysStats';
 import type { ChromePalette } from '../lib/chrome-colors';
 import { mix, withAlpha } from '../lib/chrome-colors';
+import { CONNECTION_STATE_LABEL } from '../lib/connectionState';
 
 interface Props {
   c: ChromePalette;
   barH: number;
   font: number;
+  animations: boolean;
 }
 
 const NETWORK_SATURATION_FLOOR_BPS = 1_000;
@@ -75,12 +77,14 @@ function CpuBars({ cpu, c, barH }: { cpu: number[]; c: ChromePalette; barH: numb
   );
 }
 
-export function SysStatBar({ c, barH, font }: Props) {
-  const stats = useSysStats();
+export function SysStatBar({ c, barH, font, animations }: Props) {
+  const { stats, state } = useSysStats();
 
   if (!stats) {
     return (
       <div
+        role="status"
+        className={state !== 'connected' && animations ? 'animate-pulse' : undefined}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -91,7 +95,7 @@ export function SysStatBar({ c, barH, font }: Props) {
           fontSize: `${font}px`,
         }}
       >
-        —
+        {state === 'connected' ? '—' : CONNECTION_STATE_LABEL[state]}
       </div>
     );
   }

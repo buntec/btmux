@@ -1,4 +1,5 @@
 import { useStore } from '../state/store';
+import { CONNECTION_STATE_LABEL } from '../lib/connectionState';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 
 // Shown when the /ws/control socket is down (e.g. the server went away). The
@@ -7,10 +8,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 // intentionally not dismissible because interaction cannot be sent while the
 // control socket is unavailable.
 export function ConnectionBanner() {
-  const connected = useStore((s) => s.controlConnected);
+  const state = useStore((s) => s.controlConnectionState);
+  if (state === 'connected') return null;
 
   return (
-    <Dialog open={!connected}>
+    <Dialog open>
       <DialogContent
         className="sm:max-w-sm"
         showCloseButton={false}
@@ -18,8 +20,8 @@ export function ConnectionBanner() {
         onPointerDownOutside={(event) => event.preventDefault()}
       >
         <DialogHeader className="text-center sm:text-center">
-          <DialogTitle>Connection lost</DialogTitle>
-          <DialogDescription aria-live="polite">Trying to reconnect…</DialogDescription>
+          <DialogTitle>{state === 'connecting' ? 'Connecting' : 'Connection lost'}</DialogTitle>
+          <DialogDescription aria-live="polite">{CONNECTION_STATE_LABEL[state]}</DialogDescription>
         </DialogHeader>
       </DialogContent>
     </Dialog>

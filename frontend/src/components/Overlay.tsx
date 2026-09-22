@@ -4,12 +4,7 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { Bind, ClientConfig } from '../state/types';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import {
-  getAnimations,
-  getPrefix,
-  getTerminalFontSize,
-  MIN_FONT_SIZE,
-} from '../state/configDefaults';
+import { getAnimations, getPrefix, getTerminalFontSize, MIN_FONT_SIZE } from '../state/configDefaults';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [

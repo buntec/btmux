@@ -9,7 +9,7 @@ export function useControlSocket() {
   const setSessions = useStore((s) => s.setSessions);
   const setAllSessions = useStore((s) => s.setAllSessions);
   const setConfig = useStore((s) => s.setConfig);
-  const setControlConnected = useStore((s) => s.setControlConnected);
+  const setControlConnectionState = useStore((s) => s.setControlConnectionState);
   const showToast = useStore((s) => s.showToast);
   const setPaneNotification = useStore((s) => s.setPaneNotification);
   const clearPaneNotification = useStore((s) => s.clearPaneNotification);
@@ -35,7 +35,7 @@ export function useControlSocket() {
         if (msg.type === 'state') {
           setSessions(msg.sessions);
           setAllSessions(msg.all_sessions);
-          setControlConnected(true);
+          setControlConnectionState('connected');
         } else if (msg.type === 'command_result') {
           if (msg.error) showToast(msg.error, 'error');
         } else if (msg.type === 'config') {
@@ -109,7 +109,7 @@ export function useControlSocket() {
             })
             .catch(() => {});
         wsRef.current = null;
-        setControlConnected(false);
+        setControlConnectionState('reconnecting');
         if (!disposed) {
           console.log('[btmux] control socket closed, reconnecting in 2s...');
           reconnectTimer = window.setTimeout(connect, 2000);
@@ -128,7 +128,7 @@ export function useControlSocket() {
     setSessions,
     setAllSessions,
     setConfig,
-    setControlConnected,
+    setControlConnectionState,
     showToast,
     setPaneNotification,
     clearPaneNotification,

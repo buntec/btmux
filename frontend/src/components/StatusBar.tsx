@@ -434,7 +434,7 @@ export function StatusBar({ sessionId, send }: Props) {
           ⛶ <span style={{ fontWeight: 700 }}>ZOOM</span>
         </div>
       )}
-      <SysStatBar c={c} barH={barH} font={font} />
+      <SysStatBar c={c} barH={barH} font={font} animations={animations} />
       <div
         role="toolbar"
         aria-label="Navigation"

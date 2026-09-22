@@ -11,7 +11,8 @@ import { GitCommitModal } from './files/GitCommitModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
 import { cn, getParent } from '@/lib/utils';
-import { getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
+import { getAnimations, getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
+import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
 import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import type {
   FileEntry,
@@ -82,10 +83,11 @@ interface FileBrowserOverlayProps {
 }
 
 export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: FileBrowserOverlayProps) {
-  const { send: fileSend } = useFileSocket();
+  const { send: fileSend, state: fileConnectionState } = useFileSocket();
   const config = useStore((s) => s.config);
   const fileBrowserInitialMode = useStore((s) => s.fileBrowserInitialMode);
   const fontSize = getTerminalFontSize(config);
+  const animations = getAnimations(config);
   const currentPath = useFileStore((s) => s.currentPath);
   const entries = useFileStore((s) => s.entries);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
@@ -1104,6 +1106,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border">
         <Breadcrumb onNavigate={navigate} />
         <div className="flex-1" />
+        {fileConnectionState !== 'connected' && (
+          <div role="status" className={cn('text-muted-foreground text-xs', animations && 'animate-pulse')}>
+            {CONNECTION_STATE_LABEL[fileConnectionState]}
+          </div>
+        )}
         {isFilterActive && (
           <div className="text-muted-foreground">
             filter: <span className="text-foreground">{filterQuery || '...'}</span>

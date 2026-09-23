@@ -27,7 +27,13 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
   const items: GitItem[] = [];
 
   if (gitStatus.staged.length > 0) {
-    items.push({ kind: 'section-header', section: 'staged', count: gitStatus.staged.length });
+    items.push({
+      kind: 'section-header',
+      section: 'staged',
+      count: gitStatus.staged.length,
+      additions: gitStatus.staged.reduce((sum, entry) => sum + entry.additions, 0),
+      deletions: gitStatus.staged.reduce((sum, entry) => sum + entry.deletions, 0),
+    });
     if (expandedSections.has('staged')) {
       for (const entry of gitStatus.staged) {
         items.push({
@@ -43,7 +49,13 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
   }
 
   if (gitStatus.unstaged.length > 0) {
-    items.push({ kind: 'section-header', section: 'unstaged', count: gitStatus.unstaged.length });
+    items.push({
+      kind: 'section-header',
+      section: 'unstaged',
+      count: gitStatus.unstaged.length,
+      additions: gitStatus.unstaged.reduce((sum, entry) => sum + entry.additions, 0),
+      deletions: gitStatus.unstaged.reduce((sum, entry) => sum + entry.deletions, 0),
+    });
     if (expandedSections.has('unstaged')) {
       for (const entry of gitStatus.unstaged) {
         items.push({
@@ -59,7 +71,13 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
   }
 
   if (gitStatus.untracked.length > 0) {
-    items.push({ kind: 'section-header', section: 'untracked', count: gitStatus.untracked.length });
+    items.push({
+      kind: 'section-header',
+      section: 'untracked',
+      count: gitStatus.untracked.length,
+      additions: gitStatus.untracked.reduce((sum, path) => sum + (gitStatus.untracked_stats[path]?.additions ?? 0), 0),
+      deletions: gitStatus.untracked.reduce((sum, path) => sum + (gitStatus.untracked_stats[path]?.deletions ?? 0), 0),
+    });
     if (expandedSections.has('untracked')) {
       for (const path of gitStatus.untracked) {
         const stats = gitStatus.untracked_stats[path];
@@ -123,12 +141,12 @@ function statusIcon(status: FileStatus) {
   }
 }
 
-function DiffStat({ additions, deletions }: LineStats) {
+function DiffStat({ additions, deletions, showZeroes = false }: LineStats & { showZeroes?: boolean }) {
   const total = additions + deletions;
-  if (total === 0) return null;
+  if (total === 0 && !showZeroes) return null;
 
-  const additionsWidth = `${(additions / total) * 100}%`;
-  const deletionsWidth = `${(deletions / total) * 100}%`;
+  const additionsWidth = total > 0 ? `${(additions / total) * 100}%` : '0%';
+  const deletionsWidth = total > 0 ? `${(deletions / total) * 100}%` : '0%';
 
   return (
     <span
@@ -136,12 +154,14 @@ function DiffStat({ additions, deletions }: LineStats) {
       title={`${additions} additions, ${deletions} deletions`}
       aria-label={`${additions} additions, ${deletions} deletions`}
     >
-      <span className="inline-flex h-1.5 w-8 overflow-hidden rounded-full bg-muted/60" aria-hidden="true">
-        {additions > 0 && <span className="bg-[var(--color-green)]" style={{ width: additionsWidth }} />}
-        {deletions > 0 && <span className="bg-[var(--color-red)]" style={{ width: deletionsWidth }} />}
-      </span>
-      {additions > 0 && <span className="text-[var(--color-green)]">+{additions}</span>}
-      {deletions > 0 && <span className="text-[var(--color-red)]">-{deletions}</span>}
+      {total > 0 && (
+        <span className="inline-flex h-1.5 w-8 overflow-hidden rounded-full bg-muted/60" aria-hidden="true">
+          {additions > 0 && <span className="bg-[var(--color-green)]" style={{ width: additionsWidth }} />}
+          {deletions > 0 && <span className="bg-[var(--color-red)]" style={{ width: deletionsWidth }} />}
+        </span>
+      )}
+      {(additions > 0 || showZeroes) && <span className="text-[var(--color-green)]">+{additions}</span>}
+      {(deletions > 0 || showZeroes) && <span className="text-[var(--color-red)]">-{deletions}</span>}
     </span>
   );
 }
@@ -172,65 +192,68 @@ export function GitStatus() {
     return <div className="flex-1 flex items-center justify-center text-muted-foreground">Not a git repo</div>;
   }
 
-  if (items.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        {isFilterActive && filterQuery ? 'No matches' : 'Clean working tree'}
-      </div>
-    );
-  }
-
   return (
-    <ScrollArea className="flex-1 overflow-hidden">
-      <div ref={listRef}>
-        {items.map((item, i) => {
-          if (item.kind === 'section-header') {
-            const expanded = expandedSections.has(item.section);
-            return (
-              <div
-                key={`header-${item.section}`}
-                data-git-index={i}
-                onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
-                className={cn(
-                  'flex items-center gap-1.5 px-2 cursor-pointer select-none text-muted-foreground leading-tight',
-                  i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-                )}
-              >
-                {expanded ? (
-                  <ChevronDown className="size-3.5 shrink-0" />
-                ) : (
-                  <ChevronRight className="size-3.5 shrink-0" />
-                )}
-                <span className="font-medium">{SECTION_LABELS[item.section] ?? item.section}</span>
-              </div>
-            );
-          }
+    <div className="flex flex-1 min-h-0 flex-col">
+      {items.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-muted-foreground">
+          {isFilterActive && filterQuery ? 'No matches' : 'Clean working tree'}
+        </div>
+      ) : (
+        <ScrollArea className="flex-1 overflow-hidden">
+          <div ref={listRef}>
+            {items.map((item, i) => {
+              if (item.kind === 'section-header') {
+                const expanded = expandedSections.has(item.section);
+                return (
+                  <div
+                    key={`header-${item.section}`}
+                    data-git-index={i}
+                    onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
+                    className={cn(
+                      'flex items-center gap-1.5 px-2 cursor-pointer select-none text-muted-foreground leading-tight',
+                      i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                    )}
+                  >
+                    {expanded ? (
+                      <ChevronDown className="size-3.5 shrink-0" />
+                    ) : (
+                      <ChevronRight className="size-3.5 shrink-0" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate font-medium">
+                      {SECTION_LABELS[item.section] ?? item.section}
+                    </span>
+                    <DiffStat additions={item.additions ?? 0} deletions={item.deletions ?? 0} showZeroes />
+                  </div>
+                );
+              }
 
-          const path = item.path || '';
-          const lastSlash = path.lastIndexOf('/');
-          const dir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : '';
-          const filename = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
-          return (
-            <div
-              key={`${item.section}-${item.path}`}
-              data-git-index={i}
-              onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
-              className={cn(
-                'flex items-center gap-2 px-2 pl-5 cursor-pointer leading-tight',
-                i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-              )}
-              title={path}
-            >
-              {statusIcon(item.status!)}
-              <span className="min-w-0 flex-1 truncate">
-                {dir && <span className="text-muted-foreground">{dir}</span>}
-                {filename}
-              </span>
-              <DiffStat additions={item.additions ?? 0} deletions={item.deletions ?? 0} />
-            </div>
-          );
-        })}
-      </div>
-    </ScrollArea>
+              const path = item.path || '';
+              const lastSlash = path.lastIndexOf('/');
+              const dir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : '';
+              const filename = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
+              return (
+                <div
+                  key={`${item.section}-${item.path}`}
+                  data-git-index={i}
+                  onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
+                  className={cn(
+                    'flex items-center gap-2 px-2 pl-5 cursor-pointer leading-tight',
+                    i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                  )}
+                  title={path}
+                >
+                  {statusIcon(item.status!)}
+                  <span className="min-w-0 flex-1 truncate">
+                    {dir && <span className="text-muted-foreground">{dir}</span>}
+                    {filename}
+                  </span>
+                  <DiffStat additions={item.additions ?? 0} deletions={item.deletions ?? 0} />
+                </div>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      )}
+    </div>
   );
 }

@@ -807,11 +807,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           if (entry) {
             const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
             if (e.ctrlKey) {
-              openPath(fullPath, entry.is_dir);
+              insertPath(fullPath);
             } else if (entry.is_dir) {
               navigate(fullPath);
             } else {
-              insertPath(fullPath);
+              openPath(fullPath, false);
             }
           }
           return;

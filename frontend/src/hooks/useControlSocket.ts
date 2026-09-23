@@ -8,6 +8,7 @@ export function useControlSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const setSessions = useStore((s) => s.setSessions);
   const setAllSessions = useStore((s) => s.setAllSessions);
+  const setAgentPanes = useStore((s) => s.setAgentPanes);
   const setConfig = useStore((s) => s.setConfig);
   const setControlConnectionState = useStore((s) => s.setControlConnectionState);
   const showToast = useStore((s) => s.showToast);
@@ -35,6 +36,7 @@ export function useControlSocket() {
         if (msg.type === 'state') {
           setSessions(msg.sessions);
           setAllSessions(msg.all_sessions);
+          setAgentPanes(msg.agent_panes);
           setControlConnectionState('connected');
         } else if (msg.type === 'command_result') {
           if (msg.error) showToast(msg.error, 'error');
@@ -130,6 +132,7 @@ export function useControlSocket() {
   }, [
     setSessions,
     setAllSessions,
+    setAgentPanes,
     setConfig,
     setControlConnectionState,
     showToast,

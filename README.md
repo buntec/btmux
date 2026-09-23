@@ -10,13 +10,13 @@ E.g., `<prefix> + %` create a new vertical split, `<prefix> + "` create a new ho
 
 - Single static binary bundling all assets (including select fonts)
 - Sessions, windows, panes (splits), pane zoom, pane swapping, and preset layouts
-- Searchable session tree, live window thumbnails, file browser and git UI
+- Searchable session tree, live window and agent thumbnails, file browser and git UI
 - Configurable tmux-style keybindings with optional vi-style navigation
 - Rendered LaTeX overlay for math printed in a pane
 - Procedural wallpapers based on [Radiant shaders](https://github.com/pbakaus/radiant)
 - Support for Base16/24 color schemes
 - Hot-reloaded themes, terminal options, bundled fonts, wallpapers, and WebGL effects
-- Host statistics and pane notifications for coding agents
+- Host statistics and notifications for coding agents
 - REST API and MCP server for automation
 
 ## Demo

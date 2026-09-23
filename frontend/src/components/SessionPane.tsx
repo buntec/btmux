@@ -35,6 +35,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const [ratioOverrides, setRatioOverrides] = useState<Map<string, number>>(new Map());
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
+  const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
@@ -114,6 +115,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
       settingsOpen ||
       overlay ||
       windowGridOpen ||
+      agentGridOpen ||
       switcherOpen ||
       browserOwnsActivePane ||
       !focusId ||
@@ -131,6 +133,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     zoomedPaneId,
     overlay,
     windowGridOpen,
+    agentGridOpen,
     switcherOpen,
     fileBrowserOpen,
     fileBrowserPaneId,

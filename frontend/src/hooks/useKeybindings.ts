@@ -70,6 +70,7 @@ export function useKeybindings(
   const setPrefixActive = useStore((s) => s.setPrefixActive);
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
+  const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
@@ -87,6 +88,7 @@ export function useKeybindings(
   const prefixActiveRef = useRef(prefixActive);
   const overlayRef = useRef(overlay);
   const windowGridOpenRef = useRef(windowGridOpen);
+  const agentGridOpenRef = useRef(agentGridOpen);
   const switcherOpenRef = useRef(switcherOpen);
   const settingsOpenRef = useRef(settingsOpen);
   const paneNumbersVisibleRef = useRef(paneNumbersVisible);
@@ -99,6 +101,7 @@ export function useKeybindings(
   prefixActiveRef.current = prefixActive;
   overlayRef.current = overlay;
   windowGridOpenRef.current = windowGridOpen;
+  agentGridOpenRef.current = agentGridOpen;
   switcherOpenRef.current = switcherOpen;
   settingsOpenRef.current = settingsOpen;
   paneNumbersVisibleRef.current = paneNumbersVisible;
@@ -118,10 +121,9 @@ export function useKeybindings(
 
       if (overlayRef.current) return;
       if (settingsOpenRef.current) return;
-      // While the window-grid or session switcher is open it owns the keyboard
-      // (arrows/enter/esc/digits navigate it); don't let the prefix or pane binds
-      // fire.
-      if (windowGridOpenRef.current || switcherOpenRef.current) return;
+      // While a grid or the session switcher is open it owns the keyboard
+      // (arrows/enter/esc/digits navigate it); don't let pane binds fire.
+      if (windowGridOpenRef.current || agentGridOpenRef.current || switcherOpenRef.current) return;
 
       // While display-panes (prefix + q) numbers are showing, the keyboard is
       // captured: a digit selects the pane with that index, any other key just
@@ -310,6 +312,10 @@ function runAction(
       // keyboard handling while open (the hook early-returns below).
       store.markWindowGridMounted();
       store.setWindowGridOpen(true);
+      break;
+    case 'agent-grid':
+      store.markAgentGridMounted();
+      store.setAgentGridOpen(true);
       break;
     case 'rename-session':
       openOverlay({

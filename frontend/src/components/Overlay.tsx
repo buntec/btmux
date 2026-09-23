@@ -33,7 +33,16 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
   },
   {
     title: 'Windows',
-    actions: ['new-window', 'next-window', 'prev-window', 'last-window', 'rename-window', 'window-grid', 'kill-window'],
+    actions: [
+      'new-window',
+      'next-window',
+      'prev-window',
+      'last-window',
+      'rename-window',
+      'window-grid',
+      'agent-grid',
+      'kill-window',
+    ],
   },
   {
     title: 'Sessions',

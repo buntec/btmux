@@ -756,6 +756,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("C", "new-session"),
     ("s", "choose-session"),
     ("w", "window-grid"),
+    ("a", "agent-grid"),
     (")", "next-session"),
     ("(", "prev-session"),
     ("$", "rename-session"),

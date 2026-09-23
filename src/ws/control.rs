@@ -29,6 +29,7 @@ pub(crate) fn broadcast_state(mgr: &crate::session::manager::SessionManager) {
     let msg = ServerMessage::State {
         sessions: mgr.session_summaries(),
         all_sessions: mgr.all_snapshots(),
+        agent_panes: mgr.running_agent_panes(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
 }
@@ -42,6 +43,7 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> [String; 2
         serde_json::to_string(&ServerMessage::State {
             sessions: mgr.session_summaries(),
             all_sessions: mgr.all_snapshots(),
+            agent_panes: mgr.running_agent_panes(),
         })
         .unwrap(),
     ]
@@ -615,6 +617,7 @@ pub enum ServerMessage {
     State {
         sessions: Vec<SessionSummary>,
         all_sessions: Vec<SessionSnapshot>,
+        agent_panes: Vec<Uuid>,
     },
     Config {
         config: Box<ClientConfig>,

@@ -67,7 +67,7 @@ because that editor already exited — selecting a file falls back to spawning
 | `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                             |
 | `POST /api/panes/<pane-id>/input`                               | Send text to a pane, spawning its shell if necessary      |
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
-| `POST/DELETE /api/panes/<pane-id>/notify`                       | Set or clear an agent notification                        |
+| `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification            |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
 
 ## MCP server
@@ -99,6 +99,12 @@ Each pane's shell receives `BTMUX_PANE_ID`, `BTMUX_API_URL`, and `BTMUX_AUTH_TOK
 running in the pane can use them to display a colored dot or toast when it
 stops, needs permission, fails, or finishes work—even when another pane or
 session is active.
+
+The generated hooks mark a pane as running on agent session start and clear it
+on session end, so idle agents waiting for input stay visible. Press `prefix + a`
+to open a live grid of those panes. This state is runtime-only and resets when btmux restarts.
+Regenerate and install the hooks to enable this for agents that already have an
+older snippet configured.
 
 Print ready-to-paste hook configuration with:
 

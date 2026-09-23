@@ -1,5 +1,44 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "btmux-agent-start",
+            "type": "command",
+            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "timeout": 5000,
+            "description": "Mark the btmux pane as running an agent"
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "name": "btmux-agent-start",
+            "type": "command",
+            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "timeout": 5000,
+            "description": "Mark the btmux pane as running an agent"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "name": "btmux-agent-stop",
+            "type": "command",
+            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "timeout": 5000,
+            "description": "Clear the btmux pane's running agent status"
+          }
+        ]
+      }
+    ],
     "AfterAgent": [
       {
         "hooks": [

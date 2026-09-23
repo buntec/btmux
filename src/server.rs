@@ -181,6 +181,16 @@ impl PaneNotifyRequest {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
+    /// Lifecycle events used by the built-in agent integrations. Session hooks
+    /// keep idle agents visible until the agent process exits.
+    fn agent_running(&self, event: &str) -> Option<bool> {
+        match event {
+            "SessionStart" | "UserPromptSubmit" | "BeforeAgent" => Some(true),
+            "SessionEnd" => Some(false),
+            _ => None,
+        }
+    }
+
     fn resolve_title_body(&self, event: &str) -> (Option<String>, Option<String>) {
         if self.title.is_some() || self.body.is_some() {
             return (self.title.clone(), self.body.clone());
@@ -266,12 +276,23 @@ async fn api_pane_notify(
     Path(pane_id): Path<Uuid>,
     Json(body): Json<PaneNotifyRequest>,
 ) -> Response {
+    let event = body.resolve_event();
+    if let Some(running) = body.agent_running(&event) {
+        let mut mgr = state.write().await;
+        if mgr.find_pane(pane_id).is_none() {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        if mgr.set_agent_running(pane_id, running) {
+            ws::control::broadcast_state(&mgr);
+        }
+        return StatusCode::NO_CONTENT.into_response();
+    }
+
     let mgr = state.read().await;
     if mgr.find_pane(pane_id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let event = body.resolve_event();
     let level = body.level.unwrap_or_else(|| infer_level(&event));
     let (title, notif_body) = body.resolve_title_body(&event);
 

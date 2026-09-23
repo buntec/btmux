@@ -146,6 +146,7 @@ export function TerminalPane({
   const config = previewConfig ?? storeConfig;
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
+  const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
@@ -182,6 +183,7 @@ export function TerminalPane({
         settingsOpenRef.current ||
         !!s.overlay ||
         s.windowGridOpen ||
+        s.agentGridOpen ||
         s.switcherOpen ||
         (s.fileBrowserOpen && s.fileBrowserPaneId === paneId)
       );
@@ -583,7 +585,8 @@ export function TerminalPane({
     prevFileBrowser.current = fileBrowserOpen;
     prevInitialReplayRendered.current = initialReplayRendered;
 
-    const keyboardOwnedElsewhere = settingsOpen || overlay || windowGridOpen || switcherOpen || fileBrowserOpen;
+    const keyboardOwnedElsewhere =
+      settingsOpen || overlay || windowGridOpen || agentGridOpen || switcherOpen || fileBrowserOpen;
 
     if (!isActive || keyboardOwnedElsewhere || !initialReplayRendered) {
       termRef.current?.blur();
@@ -596,7 +599,16 @@ export function TerminalPane({
     if (becameActive || replayFinished || overlayClosed) {
       termRef.current?.focus();
     }
-  }, [isActive, settingsOpen, overlay, windowGridOpen, switcherOpen, fileBrowserOpen, initialReplayRendered]);
+  }, [
+    isActive,
+    settingsOpen,
+    overlay,
+    windowGridOpen,
+    agentGridOpen,
+    switcherOpen,
+    fileBrowserOpen,
+    initialReplayRendered,
+  ]);
 
   // When the user clicks this pane, tell the backend to make it active so the
   // border and server-side state stay in sync with DOM focus.

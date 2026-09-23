@@ -8,6 +8,7 @@ import { SessionPool } from './components/SessionPool';
 import { StatusBar } from './components/StatusBar';
 import { Overlay } from './components/Overlay';
 import { WindowGrid } from './components/WindowGrid';
+import { AgentGrid } from './components/AgentGrid';
 import { SessionSwitcher } from './components/SessionSwitcher';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { ShaderWallpaper } from './components/ShaderWallpaper';
@@ -345,6 +346,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         {/* Live window-grid thumbnails (prefix + w). Sits above the pane region
             like the Overlay; mounts lazily on first open and stays warm. */}
         {!settingsOpen && <WindowGrid send={send} />}
+        {!settingsOpen && <AgentGrid send={send} />}
         {/* Session/window switcher modal (prefix + s). Also above the pane region;
             lazily mounted on first open and kept warm like the grid. */}
         {!settingsOpen && <SessionSwitcher send={send} />}

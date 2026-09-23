@@ -35,6 +35,10 @@ interface AppStore {
   // toggles which is shown vs display:none.
   windowGridOpen: boolean;
   windowGridMounted: boolean;
+  // Live thumbnails of panes whose agent hooks report a running session.
+  agentGridOpen: boolean;
+  agentGridMounted: boolean;
+  agentPanes: Set<string>;
   // display-panes (prefix + q): briefly overlays each pane's index on the active
   // window. While true the keybinding hook captures digit presses to select a
   // pane by number (and any other key dismisses it); it auto-hides on a timer.
@@ -81,6 +85,9 @@ interface AppStore {
   setOverlay: (overlay: Overlay | null) => void;
   setWindowGridOpen: (open: boolean) => void;
   markWindowGridMounted: () => void;
+  setAgentGridOpen: (open: boolean) => void;
+  markAgentGridMounted: () => void;
+  setAgentPanes: (paneIds: string[]) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
   showToast: (message: string, level?: NotificationLevel, opts?: { body?: string; paneId?: string }) => void;
@@ -112,6 +119,9 @@ export const useStore = create<AppStore>((set, get) => ({
   overlay: null,
   windowGridOpen: false,
   windowGridMounted: false,
+  agentGridOpen: false,
+  agentGridMounted: false,
+  agentPanes: new Set(),
   paneNumbersVisible: false,
   switcherOpen: false,
   fileBrowserOpen: false,
@@ -155,6 +165,9 @@ export const useStore = create<AppStore>((set, get) => ({
     }),
   setWindowGridOpen: (open) => set({ windowGridOpen: open }),
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
+  setAgentGridOpen: (open) => set({ agentGridOpen: open }),
+  markAgentGridMounted: () => set((s) => (s.agentGridMounted ? s : { agentGridMounted: true })),
+  setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
   showToast: (message, level = 'info', opts) => {

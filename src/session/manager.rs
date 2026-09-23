@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
@@ -23,6 +24,9 @@ pub struct SessionManager {
     /// `file_config` + `overrides`, resolved — this is what the browser sees.
     config: ClientConfig,
     events: broadcast::Sender<String>,
+    /// Pane IDs whose agent hooks indicate a running agent session. Runtime-only:
+    /// this is intentionally not included in persistence snapshots.
+    agent_panes: HashSet<Uuid>,
     exit_tx: mpsc::UnboundedSender<Uuid>,
     meta_tx: mpsc::UnboundedSender<()>,
     port: u16,
@@ -67,6 +71,7 @@ impl SessionManager {
             overrides: ConfigUpdate::default(),
             config,
             events,
+            agent_panes: HashSet::new(),
             exit_tx,
             meta_tx,
             port,
@@ -75,6 +80,30 @@ impl SessionManager {
 
     pub fn events(&self) -> &broadcast::Sender<String> {
         &self.events
+    }
+
+    /// Set whether a pane currently has a running agent session. Returns
+    /// whether the set changed so callers can avoid redundant state broadcasts.
+    pub fn set_agent_running(&mut self, pane_id: Uuid, running: bool) -> bool {
+        if self.find_pane(pane_id).is_none() {
+            return false;
+        }
+        if running {
+            self.agent_panes.insert(pane_id)
+        } else {
+            self.agent_panes.remove(&pane_id)
+        }
+    }
+
+    /// Current agent panes, excluding IDs for panes that have since been
+    /// removed from the session tree.
+    pub fn running_agent_panes(&self) -> Vec<Uuid> {
+        self.sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+            .filter_map(|pane| self.agent_panes.contains(&pane.id).then_some(pane.id))
+            .collect()
     }
 
     pub fn config(&self) -> &ClientConfig {
@@ -259,16 +288,20 @@ impl SessionManager {
     }
 
     pub fn kill_pane(&mut self, session_id: Uuid, pane_id: Uuid) {
-        let Some(session) = self.session_mut(session_id) else {
-            return;
+        let removed = {
+            let Some(session) = self.session_mut(session_id) else {
+                return;
+            };
+            let window = &mut session.windows[session.active_window];
+            if window.panes.len() <= 1 || !window.panes.iter().any(|pane| pane.id == pane_id) {
+                return;
+            }
+            window.remove_pane(pane_id);
+            true
         };
-        let window = &mut session.windows[session.active_window];
-
-        if window.panes.len() <= 1 {
-            return;
+        if removed {
+            self.agent_panes.remove(&pane_id);
         }
-
-        window.remove_pane(pane_id);
     }
 
     pub async fn handle_pane_exit(&mut self, pane_id: Uuid) {
@@ -281,6 +314,7 @@ impl SessionManager {
             return;
         };
 
+        self.agent_panes.remove(&pane_id);
         let window = &mut self.sessions[si].windows[wi];
         window.remove_pane(pane_id);
         if !window.panes.is_empty() {
@@ -564,15 +598,25 @@ impl SessionManager {
     }
 
     pub fn close_window(&mut self, session_id: Uuid) {
-        let Some(session) = self.session_mut(session_id) else {
-            return;
+        let removed_panes = {
+            let Some(session) = self.session_mut(session_id) else {
+                return;
+            };
+            if session.windows.len() <= 1 {
+                return;
+            }
+            let removed = session.windows.remove(session.active_window);
+            if session.active_window >= session.windows.len() {
+                session.active_window = session.windows.len() - 1;
+            }
+            removed
+                .panes
+                .into_iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>()
         };
-        if session.windows.len() <= 1 {
-            return;
-        }
-        session.windows.remove(session.active_window);
-        if session.active_window >= session.windows.len() {
-            session.active_window = session.windows.len() - 1;
+        for pane_id in removed_panes {
+            self.agent_panes.remove(&pane_id);
         }
     }
 
@@ -608,7 +652,10 @@ impl SessionManager {
             return;
         }
         if let Some(idx) = self.sessions.iter().position(|s| s.id == id) {
-            self.sessions.remove(idx);
+            let removed = self.sessions.remove(idx);
+            for pane in removed.windows.into_iter().flat_map(|window| window.panes) {
+                self.agent_panes.remove(&pane.id);
+            }
         }
     }
 
@@ -619,6 +666,7 @@ impl SessionManager {
     /// recreating "0" when the tree empties), so this resets rather than empties.
     pub async fn clear_sessions(&mut self) {
         self.sessions.clear();
+        self.agent_panes.clear();
         self.create_session(Some("0".to_string())).await;
     }
 
@@ -696,7 +744,10 @@ impl SessionManager {
                 if session.windows.len() <= 1 {
                     return;
                 }
-                session.windows.remove(wi);
+                let removed = session.windows.remove(wi);
+                for pane in removed.panes {
+                    self.agent_panes.remove(&pane.id);
+                }
                 if session.active_window >= session.windows.len() {
                     session.active_window = session.windows.len() - 1;
                 }

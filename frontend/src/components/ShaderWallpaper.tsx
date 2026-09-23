@@ -37,7 +37,10 @@ function useWallpaperBudget(monitor: boolean): WallpaperBudget {
     const sample = (now: number) => {
       const frameDuration = now - lastFrame;
       if (frameDuration > SLOW_FRAME_MS) {
-        slowFrames += Math.min(SLOW_FRAMES_TO_DEGRADE, Math.max(1, Math.floor(frameDuration / SLOW_FRAME_MS)));
+        // Count observed slow frames, not the number of missed frame slots.
+        // A single long main-thread pause during terminal/session changes is
+        // transient and should not permanently lower wallpaper resolution.
+        slowFrames += 1;
       }
       lastFrame = now;
 

@@ -77,6 +77,34 @@ export interface GitStatusResult {
   is_repo_root: boolean;
 }
 
+export type GitLogRefKind = 'branch' | 'remote' | 'tag';
+
+export interface GitLogRef {
+  name: string;
+  kind: GitLogRefKind;
+}
+
+export interface GitLogCommit {
+  id: string;
+  short_id: string;
+  parents: string[];
+  summary: string;
+  author: string;
+  timestamp: number;
+  refs: GitLogRef[];
+  is_head: boolean;
+}
+
+export interface GitLogResult {
+  commits: GitLogCommit[];
+  truncated: boolean;
+}
+
+export interface GitCommitDiffResult {
+  commit_id: string;
+  files: FileDiff[];
+}
+
 export interface DiffLine {
   origin: string;
   content: string;

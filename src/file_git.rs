@@ -1,6 +1,6 @@
 use git2::{
     BranchType, DiffDelta, DiffHunk as GitDiffHunk, DiffLine as GitDiffLine, DiffOptions,
-    ErrorCode, Repository, Status, StatusOptions,
+    ErrorCode, Oid, Repository, Sort, Status, StatusOptions,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -52,6 +52,36 @@ pub struct GitStatusResult {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitLogRef {
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitLogCommit {
+    pub id: String,
+    pub short_id: String,
+    pub parents: Vec<String>,
+    pub summary: String,
+    pub author: String,
+    pub timestamp: i64,
+    pub refs: Vec<GitLogRef>,
+    pub is_head: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitLogResult {
+    pub commits: Vec<GitLogCommit>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitCommitDiff {
+    pub commit_id: String,
+    pub files: Vec<FileDiff>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DiffLine {
     pub origin: char,
     pub content: String,
@@ -76,6 +106,21 @@ pub struct FileDiff {
 pub async fn git_status(root: &Path, include_diff_stats: bool) -> Result<GitStatusResult, String> {
     let root = root.to_path_buf();
     tokio::task::spawn_blocking(move || git_status_sync(&root, include_diff_stats))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+pub async fn git_log(root: &Path, max_count: usize) -> Result<GitLogResult, String> {
+    let root = root.to_path_buf();
+    tokio::task::spawn_blocking(move || git_log_sync(&root, max_count))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+pub async fn git_commit_diff(root: &Path, commit_id: &str) -> Result<GitCommitDiff, String> {
+    let root = root.to_path_buf();
+    let commit_id = commit_id.to_string();
+    tokio::task::spawn_blocking(move || git_commit_diff_sync(&root, &commit_id))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -281,6 +326,191 @@ fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusRes
         is_repo: true,
         is_repo_root,
     })
+}
+
+fn git_log_sync(root: &Path, max_count: usize) -> Result<GitLogResult, String> {
+    let repo = open_repo(root)?;
+    let max_count = max_count.max(1);
+
+    let mut refs_by_commit: HashMap<git2::Oid, Vec<GitLogRef>> = HashMap::new();
+    let references = repo
+        .references()
+        .map_err(|e| format!("Failed to read references: {}", e))?;
+    for reference in references {
+        let reference = reference.map_err(|e| format!("Failed to read reference: {}", e))?;
+        let Some(name) = reference.name() else {
+            continue;
+        };
+        let Some((kind, display_name)) = display_ref_name(name) else {
+            continue;
+        };
+        let Ok(commit) = reference.peel_to_commit() else {
+            continue;
+        };
+        refs_by_commit
+            .entry(commit.id())
+            .or_default()
+            .push(GitLogRef {
+                name: display_name,
+                kind: kind.to_string(),
+            });
+    }
+    for refs in refs_by_commit.values_mut() {
+        refs.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    let head_oid = repo.head().ok().and_then(|head| head.target());
+    let mut revwalk = repo
+        .revwalk()
+        .map_err(|e| format!("Failed to walk history: {}", e))?;
+    revwalk
+        .set_sorting(Sort::TOPOLOGICAL | Sort::TIME)
+        .map_err(|e| format!("Failed to sort history: {}", e))?;
+
+    let has_refs = revwalk.push_glob("refs/*").is_ok();
+    let has_head = if head_oid.is_some() {
+        revwalk
+            .push_head()
+            .map_err(|e| format!("Failed to start history walk: {}", e))?;
+        true
+    } else {
+        false
+    };
+
+    if !has_refs && !has_head {
+        return Ok(GitLogResult {
+            commits: Vec::new(),
+            truncated: false,
+        });
+    }
+
+    let mut commits = Vec::new();
+    let mut truncated = false;
+    for (index, oid) in revwalk.enumerate() {
+        if index >= max_count {
+            truncated = true;
+            break;
+        }
+        let oid = oid.map_err(|e| format!("Failed to read history commit: {}", e))?;
+        let commit = repo
+            .find_commit(oid)
+            .map_err(|e| format!("Failed to read history commit: {}", e))?;
+        let id = oid.to_string();
+        let short_id = id.chars().take(7).collect();
+        let author = commit
+            .author()
+            .name()
+            .unwrap_or("Unknown author")
+            .to_string();
+        let parents = commit
+            .parent_ids()
+            .map(|parent| parent.to_string())
+            .collect();
+
+        commits.push(GitLogCommit {
+            id: id.clone(),
+            short_id,
+            parents,
+            summary: commit.summary().unwrap_or("(no subject)").to_string(),
+            author,
+            timestamp: commit.time().seconds(),
+            refs: refs_by_commit.remove(&oid).unwrap_or_default(),
+            is_head: head_oid == Some(oid),
+        });
+    }
+
+    Ok(GitLogResult { commits, truncated })
+}
+
+fn display_ref_name(name: &str) -> Option<(&'static str, String)> {
+    if let Some(name) = name.strip_prefix("refs/heads/") {
+        return Some(("branch", name.to_string()));
+    }
+    if let Some(name) = name.strip_prefix("refs/remotes/") {
+        return Some(("remote", name.to_string()));
+    }
+    if let Some(name) = name.strip_prefix("refs/tags/") {
+        return Some(("tag", name.to_string()));
+    }
+    None
+}
+
+fn git_commit_diff_sync(root: &Path, commit_id: &str) -> Result<GitCommitDiff, String> {
+    let repo = open_repo(root)?;
+    let oid = Oid::from_str(commit_id).map_err(|e| format!("Invalid commit id: {}", e))?;
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| format!("Failed to find commit: {}", e))?;
+    let commit_tree = commit
+        .tree()
+        .map_err(|e| format!("Failed to read commit tree: {}", e))?;
+    let parent_tree = commit.parent(0).ok().and_then(|parent| parent.tree().ok());
+
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)
+        .map_err(|e| format!("Failed to get commit diff: {}", e))?;
+
+    Ok(GitCommitDiff {
+        commit_id: oid.to_string(),
+        files: diff_to_file_diffs(&diff)?,
+    })
+}
+
+fn diff_to_file_diffs(diff: &git2::Diff<'_>) -> Result<Vec<FileDiff>, String> {
+    let mut files = Vec::with_capacity(diff.deltas().len());
+
+    for delta_idx in 0..diff.deltas().len() {
+        let delta = diff.deltas().nth(delta_idx).unwrap();
+        let diff_path = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let old_path = delta.old_file().path().and_then(|path| {
+            let path = path.to_string_lossy().into_owned();
+            (path != diff_path).then_some(path)
+        });
+
+        let mut hunks = Vec::new();
+        if let Ok(Some(patch)) = git2::Patch::from_diff(diff, delta_idx) {
+            for hunk_idx in 0..patch.num_hunks() {
+                let (hunk, _num_lines) = patch
+                    .hunk(hunk_idx)
+                    .map_err(|e| format!("Failed to get commit diff hunk: {}", e))?;
+                let num_lines = patch
+                    .num_lines_in_hunk(hunk_idx)
+                    .map_err(|e| format!("Failed to get commit diff line count: {}", e))?;
+                let mut lines = Vec::with_capacity(num_lines);
+
+                for line_idx in 0..num_lines {
+                    let line = patch
+                        .line_in_hunk(hunk_idx, line_idx)
+                        .map_err(|e| format!("Failed to get commit diff line: {}", e))?;
+                    lines.push(DiffLine {
+                        origin: line.origin(),
+                        content: String::from_utf8_lossy(line.content()).into_owned(),
+                    });
+                }
+
+                hunks.push(DiffHunk {
+                    header: String::from_utf8_lossy(hunk.header()).trim().to_string(),
+                    old_start: hunk.old_start(),
+                    new_start: hunk.new_start(),
+                    lines,
+                });
+            }
+        }
+
+        files.push(FileDiff {
+            path: diff_path,
+            old_path,
+            hunks,
+            is_binary: delta.flags().is_binary(),
+        });
+    }
+
+    Ok(files)
 }
 
 fn diff_line_stats(
@@ -645,7 +875,10 @@ fn git_commit_sync(root: &Path, subject: &str, body: &str) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
-    use super::{count_untracked_lines, git_commit_sync, git_diff_file_sync, git_status_sync};
+    use super::{
+        count_untracked_lines, git_commit_diff_sync, git_commit_sync, git_diff_file_sync,
+        git_log_sync, git_status_sync,
+    };
     use git2::{Repository, Signature};
     use std::fs;
     use std::path::Path;
@@ -753,6 +986,45 @@ mod tests {
         let commit = repo.head().unwrap().peel_to_commit().unwrap();
         assert_eq!(commit.message().unwrap(), "subject\n\nbody\nline");
         assert!(git_status_sync(&root, false).unwrap().staged.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn log_includes_commit_metadata_and_all_local_refs() {
+        let root = std::env::temp_dir().join(format!("btmux-git-log-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, "one\n").unwrap();
+
+        let repo = Repository::init(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        let oid = repo
+            .commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+        let commit = repo.find_commit(oid).unwrap();
+        repo.branch("feature", &commit, false).unwrap();
+
+        let log = git_log_sync(&root, 10).unwrap();
+        assert_eq!(log.commits.len(), 1);
+        assert!(!log.truncated);
+        assert_eq!(log.commits[0].summary, "initial");
+        assert_eq!(log.commits[0].author, "btmux");
+        assert!(log.commits[0].is_head);
+        assert!(log.commits[0]
+            .refs
+            .iter()
+            .any(|reference| reference.name == "feature"));
+
+        let diff = git_commit_diff_sync(&root, &oid.to_string()).unwrap();
+        assert_eq!(diff.commit_id, oid.to_string());
+        assert_eq!(diff.files.len(), 1);
+        assert_eq!(diff.files[0].path, "file.txt");
+        assert_eq!(diff.files[0].hunks[0].lines[0].origin, '+');
 
         fs::remove_dir_all(root).unwrap();
     }

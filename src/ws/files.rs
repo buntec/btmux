@@ -238,6 +238,51 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => error_response(id, &e),
             }
         }
+        "git_log" => {
+            let path = request
+                .payload
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+            let max_count = request
+                .payload
+                .get("max_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(200)
+                .clamp(1, 500) as usize;
+            let git_root = fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
+
+            match file_git::git_log(&git_root, max_count).await {
+                Ok(result) => ServerMessage {
+                    id,
+                    msg_type: "git_log_result".to_string(),
+                    payload: serde_json::to_value(result).unwrap(),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
+        "git_commit_diff" => {
+            let commit_id = request
+                .payload
+                .get("commit_id")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let cwd = request
+                .payload
+                .get("cwd")
+                .and_then(|value| value.as_str())
+                .unwrap_or(".");
+            let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+
+            match file_git::git_commit_diff(&git_root, commit_id).await {
+                Ok(result) => ServerMessage {
+                    id,
+                    msg_type: "git_commit_diff_result".to_string(),
+                    payload: serde_json::to_value(result).unwrap(),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
         "git_diff" => {
             let path = request
                 .payload

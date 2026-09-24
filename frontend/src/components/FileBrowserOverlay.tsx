@@ -7,6 +7,8 @@ import { FileTree } from './files/FileTree';
 import { FilePreview } from './files/FilePreview';
 import { Breadcrumb } from './files/Breadcrumb';
 import { GitModeHeader } from './files/GitModeHeader';
+import { GitHistory } from './files/GitHistory';
+import { GitCommitDiffPreview } from './files/GitCommitDiffPreview';
 import { GitCommitModal } from './files/GitCommitModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
@@ -18,6 +20,8 @@ import type {
   FileEntry,
   FileContent,
   GitStatusResult,
+  GitLogResult,
+  GitCommitDiffResult,
   FileDiff,
   TreeNode,
   FileSearchResult,
@@ -88,10 +92,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const showDotFiles = useFileStore((s) => s.showDotFiles);
   const showIgnored = useFileStore((s) => s.showIgnored);
   const isGitMode = useFileStore((s) => s.isGitMode);
+  const gitView = useFileStore((s) => s.gitView);
   const treeDepth = useFileStore((s) => s.treeDepth);
   const gitStatus = useFileStore((s) => s.gitStatus);
+  const gitLog = useFileStore((s) => s.gitLog);
   const gitDiff = useFileStore((s) => s.gitDiff);
   const gitFocusedIndex = useFileStore((s) => s.gitFocusedIndex);
+  const gitLogFocusedIndex = useFileStore((s) => s.gitLogFocusedIndex);
   const gitExpandedSections = useFileStore((s) => s.gitExpandedSections);
   const searchMode = useFileStore((s) => s.searchMode);
   const searchResults = useFileStore((s) => s.searchResults);
@@ -102,6 +109,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const store = useFileStore;
   const initialized = useRef(false);
   const gitPreviewGenRef = useRef(0);
+  const gitCommitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
   const [sidebarRatio, setSidebarRatio] = useState(DEFAULT_SIDEBAR_RATIO);
   const [ignoreAllSpace, setIgnoreAllSpace] = useState(false);
@@ -246,14 +254,25 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const enterGitMode = useCallback(
     async (path: string) => {
       store.getState().setIsGitMode(true);
+      store.getState().setGitView('status');
       store.getState().setGitFocusedIndex(0);
+      store.getState().setGitLogFocusedIndex(0);
       store.getState().setGitStatus(null);
+      store.getState().setGitLog(null);
       store.getState().setGitDiff(null);
+      store.getState().setGitCommitDiff(null);
       try {
         const resp = await fileSend('git_status', { path, include_diff_stats: true });
-        store.getState().setGitStatus(resp.payload as unknown as GitStatusResult);
+        const status = resp.payload as unknown as GitStatusResult;
+        store.getState().setGitStatus(status);
+        if (status.is_repo) {
+          const logResp = await fileSend('git_log', { path, max_count: 200 });
+          store.getState().setGitLog(logResp.payload as unknown as GitLogResult);
+        } else {
+          store.getState().setGitLog({ commits: [], truncated: false });
+        }
       } catch (e) {
-        console.error('git_status failed:', e);
+        console.error('git mode load failed:', e);
         store.getState().setIsGitMode(false);
       }
     },
@@ -262,7 +281,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const exitGitMode = useCallback(() => {
     store.getState().setIsGitMode(false);
+    store.getState().setGitView('status');
+    store.getState().setGitLog(null);
     store.getState().setGitDiff(null);
+    store.getState().setGitCommitDiff(null);
     onClose();
   }, [onClose, store]);
 
@@ -312,6 +334,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         const payload = resp.payload as { status: GitStatusResult };
         store.getState().setGitStatus(payload.status);
         store.getState().setGitDiff(null);
+        store.getState().setGitCommitDiff(null);
+        try {
+          const logResp = await fileSend('git_log', { path: currentPath, max_count: 200 });
+          store.getState().setGitLog(logResp.payload as unknown as GitLogResult);
+        } catch (e) {
+          console.error('git_log failed after commit:', e);
+        }
       } catch (e) {
         console.error('git_commit failed:', e);
         throw e;
@@ -402,7 +431,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   // Auto-preview diff when git focused index changes
   useEffect(() => {
-    if (!isGitMode || !gitStatus) return;
+    if (!isGitMode || gitView !== 'status' || !gitStatus) {
+      store.getState().setGitDiff(null);
+      return;
+    }
     const items = visibleGitItems(gitStatus, gitExpandedSections, isFilterActive, filterQuery);
     const item = items[gitFocusedIndex];
     if (!item || item.kind === 'section-header' || !item.path) {
@@ -421,6 +453,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     );
   }, [
     isGitMode,
+    gitView,
     gitFocusedIndex,
     gitStatus,
     gitExpandedSections,
@@ -431,6 +464,30 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     ignoreAllSpace,
     store,
   ]);
+
+  useEffect(() => {
+    if (!isGitMode || gitView !== 'log' || !gitLog) {
+      store.getState().setGitCommitDiff(null);
+      return;
+    }
+
+    const commit = gitLog.commits[gitLogFocusedIndex];
+    if (!commit) {
+      store.getState().setGitCommitDiff(null);
+      return;
+    }
+
+    const gen = ++gitCommitPreviewGenRef.current;
+    store.getState().setGitCommitDiff(null);
+    fileSend('git_commit_diff', { commit_id: commit.id, cwd: currentPath }).then(
+      (resp) => {
+        if (gitCommitPreviewGenRef.current === gen) {
+          store.getState().setGitCommitDiff(resp.payload as unknown as GitCommitDiffResult);
+        }
+      },
+      () => {},
+    );
+  }, [isGitMode, gitView, gitLog, gitLogFocusedIndex, fileSend, currentPath, store]);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -564,6 +621,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         return;
       }
 
+      // Let the global keybinding handler consume prefix sequences.
+      if (useStore.getState().prefixActive) return;
+
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -617,6 +677,63 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
       // Git mode keybindings
       if (isGitMode) {
+        if (gitView === 'log') {
+          const count = gitLog?.commits.length ?? 0;
+          const lastIndex = Math.max(count - 1, 0);
+
+          if (e.ctrlKey && e.key === 'd') {
+            e.preventDefault();
+            scrollFilePreview(1);
+            return;
+          }
+          if (e.ctrlKey && e.key === 'u') {
+            e.preventDefault();
+            scrollFilePreview(-1);
+            return;
+          }
+          if (e.ctrlKey && e.key === 'n') {
+            e.preventDefault();
+            store.getState().setGitLogFocusedIndex(Math.min(gitLogFocusedIndex + 1, lastIndex));
+            return;
+          }
+          if (e.ctrlKey && e.key === 'p') {
+            e.preventDefault();
+            store.getState().setGitLogFocusedIndex(Math.max(gitLogFocusedIndex - 1, 0));
+            return;
+          }
+
+          switch (e.key) {
+            case 'j':
+            case 'ArrowDown':
+              e.preventDefault();
+              store.getState().setGitLogFocusedIndex(Math.min(gitLogFocusedIndex + 1, lastIndex));
+              break;
+            case 'k':
+            case 'ArrowUp':
+              e.preventDefault();
+              store.getState().setGitLogFocusedIndex(Math.max(gitLogFocusedIndex - 1, 0));
+              break;
+            case 'g':
+              e.preventDefault();
+              store.getState().setGitLogFocusedIndex(0);
+              break;
+            case 'G':
+              e.preventDefault();
+              store.getState().setGitLogFocusedIndex(lastIndex);
+              break;
+            case 's':
+              e.preventDefault();
+              store.getState().setGitView('status');
+              store.getState().setGitCommitDiff(null);
+              break;
+            case 'q':
+              e.preventDefault();
+              exitGitMode();
+              break;
+          }
+          return;
+        }
+
         const items = gitStatus ? visibleGitItems(gitStatus, gitExpandedSections, isFilterActive, filterQuery) : [];
         const count = items.length;
 
@@ -687,6 +804,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             break;
           }
+          case 'o':
+            e.preventDefault();
+            store.getState().setGitView('log');
+            store.getState().setGitDiff(null);
+            break;
           case 'l': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
@@ -1036,9 +1158,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     showDotFiles,
     showIgnored,
     isGitMode,
+    gitView,
     gitStatus,
+    gitLog,
     gitDiff,
     gitFocusedIndex,
+    gitLogFocusedIndex,
     gitExpandedSections,
     treeDepth,
     navigate,
@@ -1138,10 +1263,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           style={{ width: `${sidebarRatio * 100}%` }}
         >
           {isGitMode ? (
-            <>
-              <GitModeHeader />
-              <GitStatus />
-            </>
+            gitView === 'log' ? (
+              <>
+                <GitModeHeader />
+                <GitHistory />
+              </>
+            ) : (
+              <>
+                <GitModeHeader />
+                <GitStatus />
+              </>
+            )
           ) : (
             <>
               <div className={searchMode === 'off' ? 'flex flex-1 flex-col min-h-0' : 'hidden'}>
@@ -1160,7 +1292,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         />
         {/* Preview */}
         <div className="min-w-0 flex-1 flex flex-col min-h-0 file-preview-scroll file-preview-content">
-          <FilePreview fileSend={fileSend} />
+          <div className="min-h-0 flex-1 flex flex-col">
+            {isGitMode && gitView === 'log' ? <GitCommitDiffPreview /> : <FilePreview fileSend={fileSend} />}
+          </div>
         </div>
       </div>
 
@@ -1230,76 +1364,114 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             cancel
           </span>
         ) : isGitMode ? (
-          <>
-            <span>
-              <KbdGroup>
-                <Kbd>j</Kbd>
-                <Kbd>k</Kbd>
-              </KbdGroup>{' '}
-              navigate
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>Tab</Kbd>
-              </KbdGroup>{' '}
-              expand
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>h</Kbd>
-                <Kbd>l</Kbd>
-              </KbdGroup>{' '}
-              fold/unfold
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>s</Kbd>
-              </KbdGroup>{' '}
-              stage
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>u</Kbd>
-              </KbdGroup>{' '}
-              unstage
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>x</Kbd>
-              </KbdGroup>{' '}
-              discard
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>w</Kbd>
-              </KbdGroup>{' '}
-              <span
-                className={cn('font-mono', ignoreAllSpace ? 'text-theme-cyan' : 'text-muted-foreground/50')}
-                style={{ fontVariantLigatures: 'none' }}
-              >
-                -w/--ignore-all-space
+          gitView === 'log' ? (
+            <>
+              <span>
+                <KbdGroup>
+                  <Kbd>j</Kbd>
+                  <Kbd>k</Kbd>
+                </KbdGroup>{' '}
+                navigate commits
               </span>
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>c</Kbd>
-              </KbdGroup>{' '}
-              commit
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>/</Kbd>
-              </KbdGroup>{' '}
-              filter
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>Esc</Kbd>
-                <Kbd>q</Kbd>
-              </KbdGroup>{' '}
-              exit git
-            </span>
-          </>
+              <span>
+                <KbdGroup>
+                  <Kbd>g</Kbd>
+                  <Kbd>G</Kbd>
+                </KbdGroup>{' '}
+                top/bottom
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>s</Kbd>
+                </KbdGroup>{' '}
+                status
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>Esc</Kbd>
+                  <Kbd>q</Kbd>
+                </KbdGroup>{' '}
+                exit git
+              </span>
+            </>
+          ) : (
+            <>
+              <span>
+                <KbdGroup>
+                  <Kbd>j</Kbd>
+                  <Kbd>k</Kbd>
+                </KbdGroup>{' '}
+                navigate
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>Tab</Kbd>
+                </KbdGroup>{' '}
+                expand
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>h</Kbd>
+                  <Kbd>l</Kbd>
+                </KbdGroup>{' '}
+                fold/unfold
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>s</Kbd>
+                </KbdGroup>{' '}
+                stage
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>u</Kbd>
+                </KbdGroup>{' '}
+                unstage
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>x</Kbd>
+                </KbdGroup>{' '}
+                discard
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>w</Kbd>
+                </KbdGroup>{' '}
+                <span
+                  className={cn('font-mono', ignoreAllSpace ? 'text-theme-cyan' : 'text-muted-foreground/50')}
+                  style={{ fontVariantLigatures: 'none' }}
+                >
+                  -w/--ignore-all-space
+                </span>
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>c</Kbd>
+                </KbdGroup>{' '}
+                commit
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>/</Kbd>
+                </KbdGroup>{' '}
+                filter
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>o</Kbd>
+                </KbdGroup>{' '}
+                log
+              </span>
+              <span>
+                <KbdGroup>
+                  <Kbd>Esc</Kbd>
+                  <Kbd>q</Kbd>
+                </KbdGroup>{' '}
+                exit git
+              </span>
+            </>
+          )
         ) : searchMode !== 'off' ? (
           <>
             <span>

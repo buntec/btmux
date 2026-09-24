@@ -5,11 +5,14 @@ import type {
   FileSearchResult,
   SearchResult,
   GitStatusResult,
+  GitLogResult,
+  GitCommitDiffResult,
   FileDiff,
   TreeNode,
 } from '../protocol/file-messages';
 
 export type SearchMode = 'off' | 'files' | 'content';
+export type GitView = 'status' | 'log';
 
 export interface YankRegister {
   paths: string[];
@@ -45,9 +48,13 @@ interface FileStore {
   treeDepth: number;
 
   isGitMode: boolean;
+  gitView: GitView;
   gitStatus: GitStatusResult | null;
+  gitLog: GitLogResult | null;
   gitDiff: FileDiff | null;
+  gitCommitDiff: GitCommitDiffResult | null;
   gitFocusedIndex: number;
+  gitLogFocusedIndex: number;
   gitExpandedSections: Set<string>;
 
   setDirectoryTree: (tree: TreeNode | null) => void;
@@ -72,9 +79,13 @@ interface FileStore {
   setSearchResults: (results: FileSearchResult[]) => void;
   setContentSearchResults: (results: SearchResult[]) => void;
   setIsGitMode: (mode: boolean) => void;
+  setGitView: (view: GitView) => void;
   setGitStatus: (status: GitStatusResult | null) => void;
+  setGitLog: (log: GitLogResult | null) => void;
   setGitDiff: (diff: FileDiff | null) => void;
+  setGitCommitDiff: (diff: GitCommitDiffResult | null) => void;
   setGitFocusedIndex: (index: number) => void;
+  setGitLogFocusedIndex: (index: number) => void;
   toggleGitSection: (section: string) => void;
   reset: () => void;
 }
@@ -102,9 +113,13 @@ export const useFileStore = create<FileStore>((set, get) => ({
   treeDepth: 1,
 
   isGitMode: false,
+  gitView: 'status',
   gitStatus: null,
+  gitLog: null,
   gitDiff: null,
+  gitCommitDiff: null,
   gitFocusedIndex: 0,
+  gitLogFocusedIndex: 0,
   gitExpandedSections: new Set(['staged', 'unstaged', 'untracked']),
 
   setDirectoryTree: (tree) => set({ directoryTree: tree }),
@@ -134,9 +149,17 @@ export const useFileStore = create<FileStore>((set, get) => ({
   setSearchResults: (results) => set({ searchResults: results }),
   setContentSearchResults: (results) => set({ contentSearchResults: results }),
   setIsGitMode: (mode) => set({ isGitMode: mode }),
+  setGitView: (view) => set({ gitView: view }),
   setGitStatus: (status) => set({ gitStatus: status }),
+  setGitLog: (log) =>
+    set((state) => ({
+      gitLog: log,
+      gitLogFocusedIndex: log ? Math.min(state.gitLogFocusedIndex, Math.max(log.commits.length - 1, 0)) : 0,
+    })),
   setGitDiff: (diff) => set({ gitDiff: diff }),
+  setGitCommitDiff: (diff) => set({ gitCommitDiff: diff }),
   setGitFocusedIndex: (index) => set({ gitFocusedIndex: index }),
+  setGitLogFocusedIndex: (index) => set({ gitLogFocusedIndex: index }),
   toggleGitSection: (section) => {
     const sections = new Set(get().gitExpandedSections);
     if (sections.has(section)) sections.delete(section);
@@ -164,8 +187,12 @@ export const useFileStore = create<FileStore>((set, get) => ({
       searchResults: [],
       contentSearchResults: [],
       isGitMode: false,
+      gitView: 'status',
       gitStatus: null,
+      gitLog: null,
       gitDiff: null,
+      gitCommitDiff: null,
       gitFocusedIndex: 0,
+      gitLogFocusedIndex: 0,
     }),
 }));

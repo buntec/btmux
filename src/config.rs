@@ -103,6 +103,12 @@ pub enum SubCommand {
     GenerateCodexHooks,
     /// Print a Gemini CLI settings.json hooks snippet for btmux pane notifications.
     GenerateGeminiCliHooks,
+    /// Merge btmux hooks into the user Claude Code settings.
+    InstallClaudeCodeHooks,
+    /// Merge btmux hooks into the user Codex hooks file.
+    InstallCodexHooks,
+    /// Merge btmux hooks into the user Gemini CLI settings.
+    InstallGeminiCliHooks,
     /// Install btmux as a per-user background service so it starts at login and
     /// restarts on crash. The current `--host`/`--port`/`--profile`/`--shell`/
     /// `--public-url` and the installing shell's PATH are baked into the

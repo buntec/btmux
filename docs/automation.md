@@ -114,6 +114,18 @@ btmux generate-codex-hooks        # print JSON; merge it into ~/.codex/hooks.jso
 btmux generate-gemini-cli-hooks   # print JSON; merge it into ~/.gemini/settings.json
 ```
 
+Or install the hooks directly into the per-user config files while preserving
+other settings and hook entries:
+
+```sh
+btmux install-claude-code-hooks
+btmux install-codex-hooks
+btmux install-gemini-cli-hooks
+```
+
+The Codex installer uses `$CODEX_HOME/hooks.json` when `CODEX_HOME` is set,
+otherwise `~/.codex/hooks.json`.
+
 The same snippets are available in [`extras/`](../extras/). Other command-hook
 harnesses can POST their JSON hook payload to the authenticated endpoint:
 

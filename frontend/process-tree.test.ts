@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test';
 import {
   buildProcessRows,
-  filterProcessTreeRows,
   flattenProcessTree,
   nextProcessSortMode,
   PROCESS_SORT_MODES,
+  resolveFocusedPid,
   type ProcessSortMode,
 } from './src/lib/processTree';
 import type { ProcessInfo } from './src/protocol/process-messages';
@@ -19,6 +19,7 @@ const process = (pid: number, parent_pid: number | null, cpu: number): ProcessIn
   virtual_memory: 0,
   status: 'sleeping',
   user: null,
+  start_time: 1,
   run_time: 0,
 });
 
@@ -47,11 +48,10 @@ test('sorts each tree level by the selected mode with PID tie-breaks', () => {
     flattenProcessTree(processes, new Set(), mode).map((row) => row.process.pid);
 
   expect(sorted('cpu')).toEqual([2, 3, 1]);
-  expect(sorted('memory-percent')).toEqual([2, 3, 1]);
-  expect(sorted('time')).toEqual([2, 3, 1]);
+  expect(sorted('memory')).toEqual([2, 3, 1]);
+  expect(sorted('elapsed')).toEqual([2, 3, 1]);
   expect(sorted('pid')).toEqual([1, 2, 3]);
   expect(sorted('user')).toEqual([2, 3, 1]);
-  expect(sorted('resident-memory')).toEqual([2, 3, 1]);
   expect(sorted('virtual-memory')).toEqual([3, 1, 2]);
 });
 
@@ -78,7 +78,7 @@ test('cycles sort modes in the displayed order', () => {
     return next;
   });
 
-  expect(cycled).toEqual(['memory-percent', 'time', 'pid', 'user', 'resident-memory', 'virtual-memory', 'cpu']);
+  expect(cycled).toEqual(['memory', 'elapsed', 'pid', 'user', 'virtual-memory', 'cpu']);
 });
 
 test('folding a process hides all descendants', () => {
@@ -88,9 +88,44 @@ test('folding a process hides all descendants', () => {
   expect(rows[0]?.hasChildren).toBe(true);
 });
 
-test('filters process rows by PID and command details', () => {
-  const rows = flattenProcessTree([process(1, null, 1), process(2, 1, 2), process(3, null, 3)], new Set());
+test('filters flat rows by PID and command details', () => {
+  const processes = [process(1, null, 1), process(2, 1, 2), process(3, null, 3)];
+  const filtered = (query: string) =>
+    buildProcessRows(processes, new Set(), 'pid', false, query).map((row) => row.process.pid);
 
-  expect(filterProcessTreeRows(rows, 'PROCESS-2').map((row) => row.process.pid)).toEqual([2]);
-  expect(filterProcessTreeRows(rows, '3').map((row) => row.process.pid)).toEqual([3]);
+  expect(filtered('PROCESS-2')).toEqual([2]);
+  expect(filtered('3')).toEqual([3]);
+});
+
+test('tree filtering keeps ancestors as context and finds matches in folded subtrees', () => {
+  const processes = [process(1, null, 1), process(2, 1, 2), process(3, 2, 3), process(4, 1, 4), process(5, null, 5)];
+  const rows = buildProcessRows(processes, new Set([1]), 'pid', true, 'process-3');
+
+  expect(rows.map((row) => [row.process.pid, row.depth, row.match])).toEqual([
+    [1, 0, false],
+    [2, 1, false],
+    [3, 2, true],
+  ]);
+});
+
+test('snapshot updates keep the cursor row unless following', () => {
+  const rows = buildProcessRows([process(1, null, 90), process(2, null, 50), process(3, null, 10)], new Set(), 'cpu', false);
+
+  // Focused PID 3 moved away from row 1: stay on the row.
+  expect(resolveFocusedPid(rows, 3, 1, true)).toBe(2);
+  // Following, or after a non-snapshot change: stay on the PID.
+  expect(resolveFocusedPid(rows, 3, 1, false)).toBe(3);
+  // Focused process exited: fall back to the same row, clamped.
+  expect(resolveFocusedPid(rows, 99, 5, false)).toBe(3);
+  expect(resolveFocusedPid([], 3, 0, false)).toBeNull();
+});
+
+test('processes with an unknown start time sort last by elapsed', () => {
+  const processes = [
+    { ...process(1, null, 0), start_time: 0, run_time: 1_790_000_000 },
+    { ...process(2, null, 0), run_time: 10 },
+    { ...process(3, null, 0), run_time: 20 },
+  ];
+
+  expect(buildProcessRows(processes, new Set(), 'elapsed', false).map((row) => row.process.pid)).toEqual([3, 2, 1]);
 });

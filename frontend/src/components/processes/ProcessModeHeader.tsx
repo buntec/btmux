@@ -16,6 +16,7 @@ export function ProcessModeHeader({
   const processCount = useProcessStore((s) => s.processes.length);
   const sortMode = useProcessStore((s) => s.sortMode);
   const treeMode = useProcessStore((s) => s.treeMode);
+  const followFocus = useProcessStore((s) => s.followFocus);
   const filterQuery = useProcessStore((s) => s.filterQuery);
   const filterActive = useProcessStore((s) => s.filterActive);
   const memoryPercent = snapshot && snapshot.mem_total > 0 ? (snapshot.mem_used / snapshot.mem_total) * 100 : 0;
@@ -33,6 +34,11 @@ export function ProcessModeHeader({
       <span className="shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
         {treeMode ? 'tree' : 'flat'}
       </span>
+      {followFocus && (
+        <span className="shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
+          follow
+        </span>
+      )}
       {filterActive && (
         <span className="shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
           filter: <span className="text-foreground">{filterQuery || '...'}</span>

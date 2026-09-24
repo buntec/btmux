@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal } from 'ghostty-web';
 import { TerminalPane } from './TerminalPane';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
+import { ProcessOverlay } from './ProcessOverlay';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
@@ -42,6 +43,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
   const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
   const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
+  const fileBrowserMode = useStore((s) => s.fileBrowserInitialMode);
   const storeConfig = useStore((s) => s.config);
   const config = previewConfig ?? storeConfig;
 
@@ -311,13 +313,22 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
                 zIndex: 20,
               }}
             >
-              <FileBrowserOverlay
-                cwd={fileBrowserCwd}
-                sessionId={sessionId}
-                paneId={fileBrowserPaneId!}
-                send={send}
-                onClose={() => useStore.getState().setFileBrowserOpen(false)}
-              />
+              {fileBrowserMode === 'process' ? (
+                <ProcessOverlay
+                  sessionId={sessionId}
+                  paneId={fileBrowserPaneId!}
+                  send={send}
+                  onClose={() => useStore.getState().setFileBrowserOpen(false)}
+                />
+              ) : (
+                <FileBrowserOverlay
+                  cwd={fileBrowserCwd}
+                  sessionId={sessionId}
+                  paneId={fileBrowserPaneId!}
+                  send={send}
+                  onClose={() => useStore.getState().setFileBrowserOpen(false)}
+                />
+              )}
             </div>
           );
         })()}

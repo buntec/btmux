@@ -8,6 +8,7 @@ export interface ProcessInfo {
   virtual_memory: number;
   status: string;
   user: string | null;
+  start_time: number;
   run_time: number;
 }
 
@@ -33,3 +34,12 @@ export interface ProcessErrorMessage {
 }
 
 export type ProcessServerMessage = ProcessSnapshot | ProcessKillResult | ProcessErrorMessage;
+
+export type ProcessSignal = 'term' | 'kill';
+
+export interface ProcessKillRequest {
+  type: 'kill';
+  pid: number;
+  start_time: number;
+  signal: ProcessSignal;
+}

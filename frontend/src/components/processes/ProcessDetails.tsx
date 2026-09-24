@@ -1,4 +1,4 @@
-import { formatBytes, formatCpu, formatDuration, formatMemoryPercent } from '@/lib/processFormat';
+import { formatBytes, formatCpu, formatElapsed, formatMemoryPercent, formatStarted } from '@/lib/processFormat';
 import { useProcessStore } from '@/state/processStore';
 
 function Detail({ label, value }: { label: string; value: string }) {
@@ -38,7 +38,8 @@ export function ProcessDetails() {
           value={`${formatBytes(process.memory)} (${formatMemoryPercent(process.memory, snapshot?.mem_total ?? 0)})`}
         />
         <Detail label="virtual memory" value={formatBytes(process.virtual_memory)} />
-        <Detail label="runtime" value={formatDuration(process.run_time)} />
+        <Detail label="elapsed" value={formatElapsed(process)} />
+        <Detail label="started" value={formatStarted(process)} />
       </div>
       <div className="mt-6">
         <div className="mb-1 text-muted-foreground">command line</div>

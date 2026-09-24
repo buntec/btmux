@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { formatBytes, formatCpu, formatDuration, formatMemoryPercent } from '@/lib/processFormat';
+import { formatBytes, formatCpu, formatElapsed, formatMemoryPercent } from '@/lib/processFormat';
 import {
-  buildProcessRows,
-  filterProcessTreeRows,
   isProcessSortDescending,
   PROCESS_SORT_LABELS,
+  resolveFocusedPid,
   type ProcessSortMode,
+  type ProcessTreeRow,
 } from '@/lib/processTree';
 import { useProcessStore } from '@/state/processStore';
 
@@ -17,10 +17,10 @@ const SORT_COLUMNS: Array<{ label: string; mode: ProcessSortMode }> = [
   { label: 'PID', mode: 'pid' },
   { label: 'USER', mode: 'user' },
   { label: 'CPU%', mode: 'cpu' },
-  { label: 'MEM%', mode: 'memory-percent' },
-  { label: 'RES', mode: 'resident-memory' },
+  { label: 'MEM%', mode: 'memory' },
+  { label: 'RES', mode: 'memory' },
   { label: 'VIRT', mode: 'virtual-memory' },
-  { label: 'TIME', mode: 'time' },
+  { label: 'ELAPSED', mode: 'elapsed' },
 ];
 
 function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortMode; active: boolean }) {
@@ -39,47 +39,45 @@ function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortM
   );
 }
 
-export function ProcessTree() {
+export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
   const processes = useProcessStore((s) => s.processes);
   const focusedPid = useProcessStore((s) => s.focusedPid);
+  const followFocus = useProcessStore((s) => s.followFocus);
   const collapsedPids = useProcessStore((s) => s.collapsedPids);
   const sortMode = useProcessStore((s) => s.sortMode);
   const treeMode = useProcessStore((s) => s.treeMode);
-  const filterQuery = useProcessStore((s) => s.filterQuery);
-  const filterActive = useProcessStore((s) => s.filterActive);
   const memTotal = useProcessStore((s) => s.snapshot?.mem_total ?? 0);
   const setFocusedPid = useProcessStore((s) => s.setFocusedPid);
   const toggleCollapsed = useProcessStore((s) => s.toggleCollapsed);
-  const rows = useMemo(() => {
-    const allRows = buildProcessRows(processes, collapsedPids, sortMode, treeMode);
-    return filterProcessTreeRows(allRows, filterActive ? filterQuery : '');
-  }, [processes, collapsedPids, sortMode, treeMode, filterActive, filterQuery]);
   const listRef = useRef<HTMLDivElement>(null);
+  const focusIndexRef = useRef(0);
+  const processesRef = useRef(processes);
 
-  useEffect(() => {
-    if (rows.length === 0) {
-      if (focusedPid !== null) setFocusedPid(null);
+  useLayoutEffect(() => {
+    const snapshotChanged = processesRef.current !== processes;
+    processesRef.current = processes;
+    const nextPid = resolveFocusedPid(rows, focusedPid, focusIndexRef.current, snapshotChanged && !followFocus);
+    if (nextPid !== focusedPid) {
+      setFocusedPid(nextPid);
       return;
     }
-    if (focusedPid === null || !rows.some((row) => row.process.pid === focusedPid)) {
-      setFocusedPid(rows[0].process.pid);
-      return;
-    }
+    const index = rows.findIndex((row) => row.process.pid === focusedPid);
+    if (index >= 0) focusIndexRef.current = index;
     const row = listRef.current?.querySelector(`[data-process-pid="${focusedPid}"]`);
     row?.scrollIntoView({ block: 'nearest' });
-  }, [focusedPid, rows, setFocusedPid]);
+  }, [focusedPid, followFocus, processes, rows, setFocusedPid]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className={cn(GRID_COLUMNS, 'shrink-0 border-b border-border px-2 py-1 text-muted-foreground')}>
         {SORT_COLUMNS.map((column) => (
-          <SortHeader key={column.mode} label={column.label} mode={column.mode} active={sortMode === column.mode} />
+          <SortHeader key={column.label} label={column.label} mode={column.mode} active={sortMode === column.mode} />
         ))}
         <span>COMMAND</span>
       </div>
       <ScrollArea className="flex-1 overflow-hidden">
         <div ref={listRef} role={treeMode ? 'tree' : 'list'} aria-label="Processes">
-          {rows.map(({ process, depth, hasChildren }) => {
+          {rows.map(({ process, depth, hasChildren, match }) => {
             const collapsed = collapsedPids.has(process.pid);
             const focused = process.pid === focusedPid;
             return (
@@ -94,6 +92,7 @@ export function ProcessTree() {
                   GRID_COLUMNS,
                   'cursor-pointer items-center px-2 leading-tight',
                   focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                  !match && !focused && 'text-muted-foreground',
                 )}
                 onClick={() => setFocusedPid(process.pid)}
                 onDoubleClick={() => hasChildren && toggleCollapsed(process.pid)}
@@ -114,8 +113,8 @@ export function ProcessTree() {
                 <span className="font-mono" title={`${process.virtual_memory} bytes`}>
                   {formatBytes(process.virtual_memory)}
                 </span>
-                <span className="truncate font-mono" title={formatDuration(process.run_time)}>
-                  {formatDuration(process.run_time)}
+                <span className="truncate font-mono" title={formatElapsed(process)}>
+                  {formatElapsed(process)}
                 </span>
                 <span
                   className="flex min-w-0 items-center"

@@ -1,3 +1,5 @@
+import type { ProcessInfo } from '../protocol/process-messages';
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
@@ -22,4 +24,17 @@ export function formatDuration(seconds: number): string {
 
 export function formatMemoryPercent(memory: number, total: number): string {
   return total > 0 ? `${((memory / total) * 100).toFixed(2)}%` : '—';
+}
+
+/** sysinfo reports a zero start time when it can't read the process. */
+export function hasStartTime(process: ProcessInfo): boolean {
+  return process.start_time > 0;
+}
+
+export function formatElapsed(process: ProcessInfo): string {
+  return hasStartTime(process) ? formatDuration(process.run_time) : '—';
+}
+
+export function formatStarted(process: ProcessInfo): string {
+  return hasStartTime(process) ? new Date(process.start_time * 1000).toLocaleString() : '—';
 }

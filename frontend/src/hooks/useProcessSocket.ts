@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConnectionState } from '../lib/connectionState';
-import type { ProcessServerMessage } from '../protocol/process-messages';
+import type { ProcessKillRequest, ProcessServerMessage, ProcessSignal } from '../protocol/process-messages';
 import { useProcessStore } from '../state/processStore';
 
 const RECONNECT_MS = 2000;
@@ -70,13 +70,14 @@ export function useProcessSocket(enabled: boolean) {
     };
   }, [connect, enabled]);
 
-  const sendKill = useCallback((pid: number) => {
+  const sendKill = useCallback((pid: number, startTime: number, signal: ProcessSignal) => {
     const ws = socketRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       useProcessStore.getState().setMessage({ type: 'error', message: 'Process viewer is not connected' });
       return;
     }
-    ws.send(JSON.stringify({ type: 'kill', pid }));
+    const request: ProcessKillRequest = { type: 'kill', pid, start_time: startTime, signal };
+    ws.send(JSON.stringify(request));
   }, []);
 
   return { sendKill, state };

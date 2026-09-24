@@ -216,4 +216,4 @@ export type ToastLevel = "info" | "error";
 export type NotificationLevel = "info" | "attention" | "success" | "error";
 
 // prettier-ignore
-export type FileBrowserMode = "files" | "git";
+export type FileBrowserMode = "files" | "git" | "process";

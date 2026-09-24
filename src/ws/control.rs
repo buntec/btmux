@@ -649,6 +649,7 @@ pub enum ServerMessage {
 pub enum FileBrowserMode {
     Files,
     Git,
+    Process,
 }
 
 #[derive(Serialize, Clone, Copy)]

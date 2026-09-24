@@ -42,8 +42,9 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
   -d '{"path":"/home/user/project","mode":"files"}'
 ```
 
-`open-file-browser`'s `mode` is `"files"` (default) or `"git"`, matching the
-`prefix + f` / `prefix + g` overlay. It switches every connected browser tab
+`open-file-browser`'s `mode` is `"files"` (default), `"git"`, or `"process"`,
+matching the `prefix + f` / `prefix + g` / `prefix + t` overlay. It switches
+every connected browser tab
 to the pane's window and session before opening the overlay there.
 
 Its optional `editor_addr` registers an RPC address (currently only a Neovim

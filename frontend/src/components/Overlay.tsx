@@ -29,6 +29,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'toggle-latex',
       'file-browser',
       'git-view',
+      'process-view',
     ],
   },
   {

@@ -778,6 +778,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     (":", "command-palette"),
     ("f", "file-browser"),
     ("g", "git-view"),
+    ("t", "process-view"),
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling

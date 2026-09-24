@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FolderOpen, GitBranch, Keyboard, Settings2 } from 'lucide-react';
+import { Activity, FolderOpen, GitBranch, Keyboard, Settings2 } from 'lucide-react';
 import { useStore, type FileBrowserMode, type PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette, mix } from '../lib/chrome-colors';
@@ -445,6 +445,9 @@ export function StatusBar({ sessionId, send }: Props) {
         </ToolbarButton>
         <ToolbarButton label="Git mode" barH={barH} onClick={() => openFileBrowser('git')}>
           <GitBranch data-icon="inline-start" aria-hidden="true" />
+        </ToolbarButton>
+        <ToolbarButton label="Process viewer" barH={barH} onClick={() => openFileBrowser('process')}>
+          <Activity data-icon="inline-start" aria-hidden="true" />
         </ToolbarButton>
         <ToolbarButton label="Settings" barH={barH} onClick={openSettings}>
           <Settings2 data-icon="inline-start" aria-hidden="true" />

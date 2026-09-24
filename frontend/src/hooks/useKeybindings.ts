@@ -462,6 +462,13 @@ function runAction(
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'git');
       break;
     }
+    case 'process-view': {
+      const win = session?.windows[session.active_window];
+      const pane = win?.panes[win.active_pane];
+      const cwd = pane?.cwd ?? null;
+      store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'process');
+      break;
+    }
   }
 }
 

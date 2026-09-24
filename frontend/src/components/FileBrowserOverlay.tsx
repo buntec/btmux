@@ -1,7 +1,9 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
+import { useProcessSocket } from '@/hooks/useProcessSocket';
 import { useFileStore } from '@/state/fileStore';
+import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
 import { FileTree } from './files/FileTree';
 import { FilePreview } from './files/FilePreview';
@@ -12,9 +14,13 @@ import { GitCommitDiffPreview } from './files/GitCommitDiffPreview';
 import { GitCommitModal } from './files/GitCommitModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
+import { ProcessDetails } from './processes/ProcessDetails';
+import { ProcessModeHeader } from './processes/ProcessModeHeader';
+import { ProcessTree } from './processes/ProcessTree';
 import { cn, getParent } from '@/lib/utils';
 import { getAnimations, getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
+import { buildProcessRows, filterProcessTreeRows } from '@/lib/processTree';
 import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import type {
   FileEntry,
@@ -47,6 +53,7 @@ const MEDIA_EXTENSIONS = new Set([
 ]);
 
 const DEFAULT_SIDEBAR_RATIO = 1 / 3;
+const DEFAULT_PROCESS_SIDEBAR_RATIO = 0.5;
 const MIN_SIDEBAR_RATIO = 0.2;
 const MAX_SIDEBAR_RATIO = 0.5;
 
@@ -82,6 +89,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const { send: fileSend, state: fileConnectionState } = useFileSocket();
   const config = useStore((s) => s.config);
   const fileBrowserInitialMode = useStore((s) => s.fileBrowserInitialMode);
+  const isProcessMode = fileBrowserInitialMode === 'process';
+  const { sendKill, state: processConnectionState } = useProcessSocket(isProcessMode);
   const fontSize = getTerminalFontSize(config);
   const animations = getAnimations(config);
   const currentPath = useFileStore((s) => s.currentPath);
@@ -100,6 +109,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const gitFocusedIndex = useFileStore((s) => s.gitFocusedIndex);
   const gitLogFocusedIndex = useFileStore((s) => s.gitLogFocusedIndex);
   const gitExpandedSections = useFileStore((s) => s.gitExpandedSections);
+  const processList = useProcessStore((s) => s.processes);
+  const processFocusedPid = useProcessStore((s) => s.focusedPid);
+  const processCollapsedPids = useProcessStore((s) => s.collapsedPids);
+  const processSortMode = useProcessStore((s) => s.sortMode);
+  const processTreeMode = useProcessStore((s) => s.treeMode);
+  const processFilterQuery = useProcessStore((s) => s.filterQuery);
+  const processFilterActive = useProcessStore((s) => s.filterActive);
+  const processMessage = useProcessStore((s) => s.message);
   const searchMode = useFileStore((s) => s.searchMode);
   const searchResults = useFileStore((s) => s.searchResults);
   const contentSearchResults = useFileStore((s) => s.contentSearchResults);
@@ -111,7 +128,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const gitPreviewGenRef = useRef(0);
   const gitCommitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
-  const [sidebarRatio, setSidebarRatio] = useState(DEFAULT_SIDEBAR_RATIO);
+  const [sidebarRatio, setSidebarRatio] = useState(
+    fileBrowserInitialMode === 'process' ? DEFAULT_PROCESS_SIDEBAR_RATIO : DEFAULT_SIDEBAR_RATIO,
+  );
   const [ignoreAllSpace, setIgnoreAllSpace] = useState(false);
   const [browserReady, setBrowserReady] = useState(false);
   const dragging = useRef(false);
@@ -119,10 +138,16 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     null,
   );
   const [pendingDiscard, setPendingDiscard] = useState<{ path: string } | null>(null);
+  const [pendingProcessKill, setPendingProcessKill] = useState<{ pid: number; name: string } | null>(null);
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const processRows = useMemo(() => {
+    const rows = buildProcessRows(processList, processCollapsedPids, processSortMode, processTreeMode);
+    return filterProcessTreeRows(rows, processFilterActive ? processFilterQuery : '');
+  }, [processList, processCollapsedPids, processSortMode, processTreeMode, processFilterActive, processFilterQuery]);
 
   const handleCommitModalOpenChange = useCallback((open: boolean) => {
     setCommitModalOpen(open);
@@ -287,6 +312,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     store.getState().setGitCommitDiff(null);
     onClose();
   }, [onClose, store]);
+
+  const terminateProcess = useCallback(
+    (pid: number) => {
+      sendKill(pid);
+      setPendingProcessKill(null);
+    },
+    [sendKill],
+  );
 
   const gitStage = useCallback(
     async (path: string) => {
@@ -492,14 +525,23 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
+    if (fileBrowserInitialMode === 'process') {
+      useFileStore.getState().reset();
+      useProcessStore.getState().reset();
+      setBrowserReady(true);
+      return;
+    }
     const startPath = cwd || '/';
     void navigate(startPath).then(() => setBrowserReady(true));
-  }, [cwd, navigate]);
+  }, [cwd, fileBrowserInitialMode, navigate]);
 
   useEffect(() => {
     if (!browserReady) return;
     if (fileBrowserInitialMode === 'git') {
       void enterGitMode(currentPath);
+    } else if (fileBrowserInitialMode === 'process') {
+      store.getState().setIsGitMode(false);
+      store.getState().setGitDiff(null);
     } else {
       store.getState().setIsGitMode(false);
       store.getState().setGitDiff(null);
@@ -637,6 +679,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           exitSearch();
         } else if (isFilterActive) {
           store.getState().setIsFilterActive(false);
+        } else if (isProcessMode && processFilterActive) {
+          useProcessStore.getState().setFilterActive(false);
+        } else if (pendingProcessKill) {
+          setPendingProcessKill(null);
         } else if (isGitMode) {
           exitGitMode();
         } else {
@@ -671,6 +717,146 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           }
         } else if (e.key === 'n' || e.key === 'N') {
           setPendingDelete(null);
+        }
+        return;
+      }
+
+      if (pendingProcessKill) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') {
+          terminateProcess(pendingProcessKill.pid);
+        } else if (e.key === 'n' || e.key === 'N') {
+          setPendingProcessKill(null);
+        }
+        return;
+      }
+
+      // Process mode uses the same tree navigation language as git mode:
+      // j/k move between rows, while h/l fold and unfold the focused tree.
+      if (isProcessMode) {
+        const count = processRows.length;
+        const focusedIndex = processRows.findIndex((row) => row.process.pid === processFocusedPid);
+        const currentIndex = focusedIndex < 0 ? 0 : focusedIndex;
+        const move = (delta: number) => {
+          if (count === 0) return;
+          const next = Math.max(0, Math.min(currentIndex + delta, count - 1));
+          useProcessStore.getState().setFocusedPid(processRows[next].process.pid);
+        };
+
+        if (processFilterActive) {
+          if (e.key === 'F5') {
+            e.preventDefault();
+            useProcessStore.getState().toggleTreeMode();
+            return;
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            useProcessStore.getState().setFilterActive(false);
+            return;
+          }
+          if (e.key === 'Backspace') {
+            e.preventDefault();
+            useProcessStore.getState().setFilterQuery(processFilterQuery.slice(0, -1));
+            return;
+          }
+          if (e.ctrlKey && e.key === 'n') {
+            e.preventDefault();
+            move(1);
+            return;
+          }
+          if (e.ctrlKey && e.key === 'p') {
+            e.preventDefault();
+            move(-1);
+            return;
+          }
+          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            useProcessStore.getState().setFilterQuery(processFilterQuery + e.key);
+            return;
+          }
+          if (!e.ctrlKey) return;
+        }
+
+        if (e.ctrlKey && e.key === 'd') {
+          e.preventDefault();
+          move(Math.max(1, Math.floor(count / 2)));
+          return;
+        }
+        if (e.ctrlKey && e.key === 'u') {
+          e.preventDefault();
+          move(-Math.max(1, Math.floor(count / 2)));
+          return;
+        }
+
+        switch (e.key) {
+          case 'j':
+          case 'ArrowDown':
+            e.preventDefault();
+            move(1);
+            break;
+          case 'k':
+          case 'ArrowUp':
+            e.preventDefault();
+            move(-1);
+            break;
+          case 'g':
+            e.preventDefault();
+            if (processRows[0]) useProcessStore.getState().setFocusedPid(processRows[0].process.pid);
+            break;
+          case 'G':
+            e.preventDefault();
+            if (processRows[count - 1]) useProcessStore.getState().setFocusedPid(processRows[count - 1].process.pid);
+            break;
+          case 's':
+            e.preventDefault();
+            useProcessStore.getState().cycleSortMode();
+            break;
+          case 'F5':
+          case 'V':
+            e.preventDefault();
+            useProcessStore.getState().toggleTreeMode();
+            break;
+          case '/':
+            e.preventDefault();
+            useProcessStore.getState().setFilterActive(true);
+            break;
+          case 'h':
+          case 'ArrowLeft': {
+            e.preventDefault();
+            const row = processRows[currentIndex];
+            if (row?.hasChildren && !processCollapsedPids.has(row.process.pid)) {
+              useProcessStore.getState().toggleCollapsed(row.process.pid);
+            }
+            break;
+          }
+          case 'l':
+          case 'ArrowRight': {
+            e.preventDefault();
+            const row = processRows[currentIndex];
+            if (row?.hasChildren && processCollapsedPids.has(row.process.pid)) {
+              useProcessStore.getState().toggleCollapsed(row.process.pid);
+            }
+            break;
+          }
+          case 'Tab':
+          case 'Enter':
+          case ' ': {
+            e.preventDefault();
+            const row = processRows[currentIndex];
+            if (row?.hasChildren) useProcessStore.getState().toggleCollapsed(row.process.pid);
+            break;
+          }
+          case 'x': {
+            e.preventDefault();
+            const row = processRows[currentIndex];
+            if (row) setPendingProcessKill({ pid: row.process.pid, name: row.process.name || row.process.command });
+            break;
+          }
+          case 'q':
+            e.preventDefault();
+            onClose();
+            break;
         }
         return;
       }
@@ -1155,8 +1341,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     currentPath,
     isFilterActive,
     filterQuery,
+    processFilterActive,
+    processFilterQuery,
     showDotFiles,
     showIgnored,
+    isProcessMode,
     isGitMode,
     gitView,
     gitStatus,
@@ -1181,9 +1370,16 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     deleteFile,
     pendingDiscard,
     pendingDelete,
+    pendingProcessKill,
     pendingRename,
     renameValue,
     commitRename,
+    terminateProcess,
+    processRows,
+    processFocusedPid,
+    processCollapsedPids,
+    processSortMode,
+    processTreeMode,
     setIgnoreAllSpace,
     selectedPaths,
     yankRegister,
@@ -1223,37 +1419,40 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border">
-        <Breadcrumb onNavigate={navigate} />
-        <div className="flex-1" />
-        {fileConnectionState !== 'connected' && (
-          <div role="status" className={cn('text-muted-foreground text-xs', animations && 'animate-pulse')}>
-            {CONNECTION_STATE_LABEL[fileConnectionState]}
-          </div>
-        )}
-        {isFilterActive && (
-          <div className="text-muted-foreground">
-            filter: <span className="text-foreground">{filterQuery || '...'}</span>
-          </div>
-        )}
-        {selectionCount > 0 && !isFilterActive && (
-          <div className="text-muted-foreground text-xs">
-            <span className="text-foreground font-medium">{selectionCount}</span> selected
-          </div>
-        )}
-        {yankRegister && !isFilterActive && (
-          <div className="text-muted-foreground text-xs">
-            {yankRegister.mode === 'cut' ? '✂' : '⎘'}{' '}
-            <span className="text-foreground font-medium">{yankRegister.paths.length}</span> in register
-          </div>
-        )}
-        <button
-          onClick={onClose}
-          className="p-1 hover:bg-accent rounded-sm text-muted-foreground hover:text-foreground"
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
+      {!isProcessMode && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border">
+          <Breadcrumb onNavigate={navigate} />
+          <div className="flex-1" />
+          {fileConnectionState !== 'connected' && (
+            <div role="status" className={cn('text-muted-foreground text-xs', animations && 'animate-pulse')}>
+              {CONNECTION_STATE_LABEL[fileConnectionState]}
+            </div>
+          )}
+          {isFilterActive && (
+            <div className="text-muted-foreground">
+              filter: <span className="text-foreground">{filterQuery || '...'}</span>
+            </div>
+          )}
+          {selectionCount > 0 && !isFilterActive && (
+            <div className="text-muted-foreground text-xs">
+              <span className="text-foreground font-medium">{selectionCount}</span> selected
+            </div>
+          )}
+          {yankRegister && !isFilterActive && (
+            <div className="text-muted-foreground text-xs">
+              {yankRegister.mode === 'cut' ? '✂' : '⎘'}{' '}
+              <span className="text-foreground font-medium">{yankRegister.paths.length}</span> in register
+            </div>
+          )}
+          <button
+            onClick={onClose}
+            aria-label="Close file browser"
+            className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
@@ -1262,7 +1461,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           className="min-w-0 shrink-0 flex flex-col min-h-0 overflow-hidden"
           style={{ width: `${sidebarRatio * 100}%` }}
         >
-          {isGitMode ? (
+          {isProcessMode ? (
+            <>
+              <ProcessModeHeader connectionState={processConnectionState} animations={animations} />
+              <ProcessTree />
+            </>
+          ) : isGitMode ? (
             gitView === 'log' ? (
               <>
                 <GitModeHeader />
@@ -1293,17 +1497,46 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         {/* Preview */}
         <div className="min-w-0 flex-1 flex flex-col min-h-0 file-preview-scroll file-preview-content">
           <div className="min-h-0 flex-1 flex flex-col">
-            {isGitMode && gitView === 'log' ? <GitCommitDiffPreview /> : <FilePreview fileSend={fileSend} />}
+            {isProcessMode ? (
+              <ProcessDetails />
+            ) : isGitMode && gitView === 'log' ? (
+              <GitCommitDiffPreview />
+            ) : (
+              <FilePreview fileSend={fileSend} />
+            )}
           </div>
         </div>
       </div>
+
+      {isProcessMode && (
+        <button
+          onClick={onClose}
+          aria-label="Close process viewer"
+          className="absolute right-2 top-2 rounded-sm bg-background/80 p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
 
       {/* Footer */}
       <div
         className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
         style={{ fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}
       >
-        {pendingRename ? (
+        {pendingProcessKill ? (
+          <span className="text-foreground">
+            terminate <span className="text-yellow-400">{pendingProcessKill.name}</span>{' '}
+            <span className="text-muted-foreground">(PID {pendingProcessKill.pid})</span>?{' '}
+            <KbdGroup>
+              <Kbd>y</Kbd>
+            </KbdGroup>{' '}
+            confirm{' '}
+            <KbdGroup>
+              <Kbd>n</Kbd>
+            </KbdGroup>{' '}
+            cancel
+          </span>
+        ) : pendingRename ? (
           <span className="flex items-center gap-2 text-foreground w-full">
             <span>rename:</span>
             <input
@@ -1363,6 +1596,76 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             </KbdGroup>{' '}
             cancel
           </span>
+        ) : isProcessMode ? (
+          <>
+            {processMessage && (
+              <span
+                className={
+                  processMessage.type === 'error' || !processMessage.success ? 'text-theme-red' : 'text-theme-green'
+                }
+              >
+                {processMessage.message}
+              </span>
+            )}
+            <span>
+              <KbdGroup>
+                <Kbd>j</Kbd>
+                <Kbd>k</Kbd>
+              </KbdGroup>{' '}
+              navigate
+            </span>
+            {processTreeMode && (
+              <>
+                <span>
+                  <KbdGroup>
+                    <Kbd>h</Kbd>
+                    <Kbd>l</Kbd>
+                  </KbdGroup>{' '}
+                  fold/unfold
+                </span>
+                <span>
+                  <KbdGroup>
+                    <Kbd>Tab</Kbd>
+                    <Kbd>Enter</Kbd>
+                  </KbdGroup>{' '}
+                  toggle
+                </span>
+              </>
+            )}
+            <span>
+              <KbdGroup>
+                <Kbd>x</Kbd>
+              </KbdGroup>{' '}
+              terminate
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>s</Kbd>
+              </KbdGroup>{' '}
+              sort
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>F5</Kbd>
+                <Kbd>V</Kbd>
+              </KbdGroup>{' '}
+              {processTreeMode ? 'flat' : 'tree'}
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>g</Kbd>
+                <Kbd>G</Kbd>
+              </KbdGroup>{' '}
+              top/bottom
+            </span>
+            <span>
+              <KbdGroup>
+                <Kbd>Esc</Kbd>
+                <Kbd>q</Kbd>
+              </KbdGroup>{' '}
+              close
+            </span>
+          </>
         ) : isGitMode ? (
           gitView === 'log' ? (
             <>

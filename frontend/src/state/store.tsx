@@ -15,7 +15,7 @@ export interface PaneNotification {
   timestamp: number;
 }
 
-export type FileBrowserMode = 'files' | 'git';
+export type FileBrowserMode = 'files' | 'git' | 'process';
 
 interface AppStore {
   // All sessions from server (broadcast to all tabs)

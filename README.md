@@ -10,7 +10,7 @@ E.g., `<prefix> + %` create a new vertical split, `<prefix> + "` create a new ho
 
 - Single static binary bundling all assets (including select fonts)
 - Sessions, windows, panes (splits), pane zoom, pane swapping, and preset layouts
-- Searchable session tree, live window and agent thumbnails, file browser and git UI
+- Searchable session tree, live window and agent thumbnails, file browser, git UI, and process viewer
 - Configurable tmux-style keybindings with optional vi-style navigation
 - Rendered LaTeX overlay for math printed in a pane
 - Procedural wallpapers based on [Radiant shaders](https://github.com/pbakaus/radiant)

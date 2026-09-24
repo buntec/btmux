@@ -1815,6 +1815,10 @@ palette:
         let config: FileConfig = toml::from_str("").expect("empty config should parse");
         let resolved = resolve_binds(&config);
 
+        assert!(resolved
+            .binds
+            .iter()
+            .any(|bind| bind.key == "a" && bind.action == "agent-grid"));
         assert!(!config.vi_mode);
         assert_eq!(config.prefix, None);
         assert_eq!(config.shell, None);

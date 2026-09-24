@@ -3,6 +3,7 @@ import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { Overlay, PickerItem } from '../state/types';
 import { paneIdsInOrder } from '../state/layout';
+import { adjacentSession } from '../state/sessionNavigation';
 import { sortWindows } from '../state/windowMru';
 import { PANE_SWITCH_EFFECTS, SHADER_EFFECTS, findPaneSwitchEffect } from '../lib/terminalFxShaders';
 import {
@@ -340,6 +341,13 @@ function runAction(
       if (prevName && prevName !== session?.name && store.allSessions.some((s) => s.name === prevName)) {
         onSwitchToSession(prevName);
       }
+      break;
+    }
+    case 'next-session':
+    case 'prev-session': {
+      const delta = action === 'next-session' ? 1 : -1;
+      const target = adjacentSession(store.allSessions, sessionId, delta);
+      if (target) onSwitchToSession(target.name);
       break;
     }
     case 'next-pane':

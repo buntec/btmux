@@ -243,6 +243,7 @@ async fn main() {
     }
 
     spawn_pane_exit_handler(exit_rx, state.clone());
+    spawn_agent_reaper(state.clone());
     spawn_meta_change_handler(meta_rx, state.clone());
 
     // Persist the session tree to disk on every state change (debounced).
@@ -412,6 +413,47 @@ fn spawn_pane_exit_handler(
             let mut mgr = state.write().await;
             mgr.handle_pane_exit(pane_id).await;
             ws::control::broadcast_state(&mgr);
+        }
+    });
+}
+
+fn spawn_agent_reaper(state: AppState) {
+    use std::collections::HashMap;
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let processes = state.read().await.agent_processes();
+            let starts: HashMap<u32, u64> = if processes.is_empty() {
+                HashMap::new()
+            } else {
+                let pids: Vec<Pid> = processes
+                    .iter()
+                    .map(|process| Pid::from_u32(process.pid))
+                    .collect();
+                let mut system = System::new();
+                system.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&pids),
+                    true,
+                    ProcessRefreshKind::nothing(),
+                );
+                pids.into_iter()
+                    .filter_map(|pid| {
+                        system
+                            .process(pid)
+                            .map(|process| (pid.as_u32(), process.start_time()))
+                    })
+                    .collect()
+            };
+            let mut mgr = state.write().await;
+            if mgr.reap_stale_agents(std::time::Instant::now(), |process| {
+                starts.get(&process.pid) == Some(&process.start_time)
+            }) {
+                ws::control::broadcast_state(&mgr);
+            }
         }
     });
 }

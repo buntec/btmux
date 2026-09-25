@@ -1,19 +1,24 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
-    http::{header, StatusCode},
+    extract::{DefaultBodyLimit, Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use uuid::Uuid;
 
 use crate::file_search::FileIndex;
-use crate::session::{AgentState, AgentStatus};
+use crate::session::{
+    agent::{AgentEvent, AgentProcess, AgentReport},
+    AgentState, AgentStatus,
+};
 use crate::ws;
 use crate::AppState;
 
@@ -44,7 +49,9 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route(
             "/api/panes/{pane_id}/notify",
-            axum::routing::post(api_pane_notify).delete(api_pane_notify_clear),
+            axum::routing::post(api_pane_notify)
+                .delete(api_pane_notify_clear)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
         )
         .route(
             "/api/panes/{pane_id}/open-file-browser",
@@ -149,6 +156,11 @@ async fn api_create_window(
 struct PaneNotifyRequest {
     /// Agent harness hook event name (e.g. "Stop", "AfterAgent").
     hook_event_name: Option<String>,
+    /// Harness identity; shared by every event in one agent session.
+    session_id: Option<String>,
+    /// Turn identity, when the harness provides one.
+    turn_id: Option<String>,
+    tool_use_id: Option<String>,
     /// Explicit event field (custom callers).
     event: Option<String>,
     /// Severity level for UI treatment.
@@ -179,7 +191,8 @@ struct PaneNotifyRequest {
     agent_type: Option<String>,
     /// Optional agent name for semantic status reporting.
     agent: Option<String>,
-    /// Optional reporter identity for semantic status reporting.
+    /// Optional reporter identity for semantic status reporting. SessionStart
+    /// hooks may use this field for their start reason instead.
     source: Option<String>,
 }
 
@@ -189,16 +202,6 @@ impl PaneNotifyRequest {
             .clone()
             .or_else(|| self.event.clone())
             .unwrap_or_else(|| "unknown".to_string())
-    }
-
-    /// Lifecycle events used by the built-in agent integrations. Session hooks
-    /// keep idle agents visible until the agent process exits.
-    fn agent_running(&self, event: &str) -> Option<bool> {
-        match event {
-            "SessionStart" | "UserPromptSubmit" | "BeforeAgent" => Some(true),
-            "SessionEnd" => Some(false),
-            _ => None,
-        }
     }
 
     fn resolve_title_body(&self, event: &str) -> (Option<String>, Option<String>) {
@@ -265,16 +268,33 @@ impl PaneNotifyRequest {
         }
     }
 
-    fn inferred_agent_status(&self, event: &str, body: Option<&str>) -> Option<AgentStatus> {
-        let state = infer_agent_state(event, self.notification_type.as_deref())?;
-        Some(AgentStatus {
-            state,
-            agent: clean_status_field(self.agent.clone().or_else(|| self.agent_type.clone()), 48),
+    fn agent_report(
+        &self,
+        event: &str,
+        body: Option<&str>,
+        process: Option<AgentProcess>,
+    ) -> Option<AgentReport> {
+        Some(AgentReport {
+            event: infer_agent_event(event, self.notification_type.as_deref())?,
+            session_id: clean_status_field(self.session_id.clone(), 128),
+            turn_id: clean_status_field(self.turn_id.clone(), 128),
+            tool_use_id: clean_status_field(self.tool_use_id.clone(), 128),
+            process,
+            agent: clean_status_field(self.agent.clone(), 48),
             source: clean_status_field(
-                self.source.clone().or_else(|| Some("hook".to_string())),
+                self.source
+                    .clone()
+                    .filter(|source| {
+                        event != "SessionStart"
+                            || !matches!(
+                                source.as_str(),
+                                "startup" | "resume" | "clear" | "compact"
+                            )
+                    })
+                    .or_else(|| Some("hook".to_string())),
                 64,
             ),
-            message: body.map(|value| truncate_msg(value, 200)),
+            message: body.and_then(|value| clean_status_field(Some(value.to_string()), 200)),
         })
     }
 }
@@ -297,55 +317,44 @@ fn truncate_msg(s: &str, max: usize) -> String {
 async fn api_pane_notify(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<PaneNotifyRequest>,
 ) -> Response {
     let event = body.resolve_event();
+    let level = body.level.unwrap_or_else(|| infer_level(&event));
+    let (title, notif_body) = body.resolve_title_body(&event);
+    let process = (!matches!(
+        event.as_str(),
+        "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" | "AfterTool" | "SessionEnd"
+    ))
+    .then(|| hook_process(&headers))
+    .flatten();
+    let report = body.agent_report(&event, notif_body.as_deref(), process);
     let mut mgr = state.write().await;
     if mgr.find_pane(pane_id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if let Some(running) = body.agent_running(&event) {
-        mgr.set_agent_running(pane_id, running);
-        if event == "SessionEnd" {
-            mgr.set_agent_status(pane_id, AgentStatus::default());
-            ws::control::broadcast_state(&mgr);
-            return StatusCode::NO_CONTENT.into_response();
+    if let Some(report) = report {
+        match mgr.apply_agent_report(pane_id, report, Instant::now()) {
+            None => return StatusCode::NO_CONTENT.into_response(),
+            Some(true) => ws::control::broadcast_state(&mgr),
+            Some(false) => {}
         }
-        if event == "SessionStart" {
-            mgr.set_agent_status(
-                pane_id,
-                AgentStatus {
-                    state: AgentState::Idle,
-                    agent: clean_status_field(body.agent.clone(), 48),
-                    source: clean_status_field(body.source.clone(), 64)
-                        .or_else(|| Some("hook".to_string())),
-                    message: None,
-                },
-            );
-            ws::control::broadcast_state(&mgr);
-            return StatusCode::NO_CONTENT.into_response();
-        }
-        if let Some(mut status) = body.inferred_agent_status(&event, None) {
-            if let Some(current) = mgr.find_pane(pane_id) {
-                status.agent = status.agent.or_else(|| current.agent_status.agent.clone());
-            }
-            mgr.set_agent_status(pane_id, status);
-        }
-        ws::control::broadcast_state(&mgr);
-        return StatusCode::NO_CONTENT.into_response();
     }
-
-    let level = body.level.unwrap_or_else(|| infer_level(&event));
-    let (title, notif_body) = body.resolve_title_body(&event);
-
-    if let Some(mut status) = body.inferred_agent_status(&event, notif_body.as_deref()) {
-        if let Some(current) = mgr.find_pane(pane_id) {
-            status.agent = status.agent.or_else(|| current.agent_status.agent.clone());
-            status.source = status
-                .source
-                .or_else(|| current.agent_status.source.clone());
-        }
-        mgr.set_agent_status(pane_id, status);
+    if matches!(
+        event.as_str(),
+        "SessionStart"
+            | "SessionEnd"
+            | "UserPromptSubmit"
+            | "BeforeAgent"
+            | "BeforeModel"
+            | "PostToolUse"
+            | "PostToolUseFailure"
+            | "PermissionDenied"
+            | "AfterTool"
+            | "Interrupt"
+    ) {
+        return StatusCode::NO_CONTENT.into_response();
     }
 
     tracing::info!(
@@ -364,9 +373,31 @@ async fn api_pane_notify(
         body: notif_body,
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
-    ws::control::broadcast_state(&mgr);
-
     StatusCode::NO_CONTENT.into_response()
+}
+
+fn hook_process(headers: &HeaderMap) -> Option<AgentProcess> {
+    let pid = headers
+        .get("x-btmux-agent-pid")?
+        .to_str()
+        .ok()?
+        .parse::<u32>()
+        .ok()?;
+    if pid <= 1 {
+        return None;
+    }
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    Some(AgentProcess {
+        pid,
+        start_time: system
+            .process(Pid::from_u32(pid))
+            .map_or(0, |process| process.start_time()),
+    })
 }
 
 #[derive(Deserialize)]
@@ -470,19 +501,30 @@ fn clean_status_field(value: Option<String>, max: usize) -> Option<String> {
     (!value.is_empty()).then(|| truncate_msg(value, max))
 }
 
-fn infer_agent_state(event: &str, notification_type: Option<&str>) -> Option<AgentState> {
+fn infer_agent_event(event: &str, notification_type: Option<&str>) -> Option<AgentEvent> {
     match event {
-        "UserPromptSubmit" | "BeforeAgent" | "BeforeModel" => Some(AgentState::Working),
-        "SubagentStop" => None,
-        "PermissionRequest" => Some(AgentState::Blocked),
-        "Stop" | "AfterAgent" | "TaskCompleted" | "StopFailure" => Some(AgentState::Done),
+        "SessionStart" => Some(AgentEvent::SessionStart),
+        "SessionEnd" => Some(AgentEvent::SessionEnd),
+        "UserPromptSubmit" | "BeforeAgent" | "BeforeModel" => Some(AgentEvent::TurnStart),
+        "PermissionRequest" => Some(AgentEvent::PermissionRequest),
+        "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" | "AfterTool" => {
+            Some(AgentEvent::ToolFinished)
+        }
+        "Stop" | "AfterAgent" | "StopFailure" => Some(AgentEvent::TurnFinished),
+        "Interrupt" => Some(AgentEvent::Interrupt),
         "Notification"
             if notification_type.is_some_and(|value| {
                 let value = value.to_ascii_lowercase();
-                value.contains("permission") || value.contains("approval")
+                matches!(
+                    value.as_str(),
+                    "toolpermission"
+                        | "permission_prompt"
+                        | "approval_request"
+                        | "approval_required"
+                )
             }) =>
         {
-            Some(AgentState::Blocked)
+            Some(AgentEvent::PermissionRequest)
         }
         _ => None,
     }
@@ -555,21 +597,29 @@ mod pane_notification_tests {
     }
 
     #[test]
-    fn infers_semantic_agent_states_from_hook_events() {
+    fn infers_agent_lifecycle_events_from_hooks() {
         assert_eq!(
-            infer_agent_state("UserPromptSubmit", None),
-            Some(AgentState::Working)
+            infer_agent_event("UserPromptSubmit", None),
+            Some(AgentEvent::TurnStart)
         );
         assert_eq!(
-            infer_agent_state("PermissionRequest", None),
-            Some(AgentState::Blocked)
+            infer_agent_event("PermissionRequest", None),
+            Some(AgentEvent::PermissionRequest)
         );
-        assert_eq!(infer_agent_state("Stop", None), Some(AgentState::Done));
         assert_eq!(
-            infer_agent_state("Notification", Some("ToolPermission")),
-            Some(AgentState::Blocked)
+            infer_agent_event("Stop", None),
+            Some(AgentEvent::TurnFinished)
         );
-        assert_eq!(infer_agent_state("Notification", Some("Progress")), None);
+        assert_eq!(
+            infer_agent_event("Notification", Some("ToolPermission")),
+            Some(AgentEvent::PermissionRequest)
+        );
+        assert_eq!(infer_agent_event("Notification", Some("Progress")), None);
+        assert_eq!(infer_agent_event("TaskCompleted", None), None);
+        assert_eq!(
+            infer_agent_event("PostToolUse", None),
+            Some(AgentEvent::ToolFinished)
+        );
     }
 }
 

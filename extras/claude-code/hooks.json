@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true"
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
           }
         ]
       }
@@ -45,7 +45,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
           }
         ]
       }
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
           }
         ]
       }
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
           }
         ]
       }
@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
           }
         ]
       }
@@ -85,7 +85,40 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "description": "Resume a blocked agent after its tool finishes"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "description": "Resume a blocked agent after its tool finishes"
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "description": "Resume a blocked agent after its tool finishes"
           }
         ]
       }

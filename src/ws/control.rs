@@ -142,15 +142,12 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
     }
 
     if let ClientMessage::WritePaneInput { pane_id, text, .. } = &cmd {
-        let mut mgr = state.write().await;
+        let mgr = state.read().await;
         let result = if let Some(pane) = mgr.find_pane(*pane_id) {
             pane.pty.input_tx.send(text.as_bytes().to_vec())
         } else {
             return Err("Pane no longer exists".into());
         };
-        if result.is_ok() && mgr.note_agent_input(*pane_id) {
-            broadcast_state(&mgr);
-        }
         return result;
     }
 

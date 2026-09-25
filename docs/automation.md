@@ -110,15 +110,18 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
 ```
 
 The supported states are `unknown`, `idle`, `working`, `blocked`, and `done`.
-`done` becomes `idle` when the pane is viewed, while input to a `blocked` pane
-automatically moves it back to `working`. The existing `/notify` endpoint also
-maps known hook events: prompt-start events to `working`, permission requests to
-`blocked`, and completion or failure events to `done`.
+`done` becomes `idle` when the pane is viewed. A tool completion or new turn
+moves a blocked agent back to `working`; terminal input alone does not prove
+that an approval was resolved. The existing `/notify` endpoint maps known hook
+events to these transitions. Intermediate `TaskCompleted` events only notify;
+they do not mark the whole turn done.
 
 Use `DELETE` on the same endpoint when the reporter no longer knows which agent
-is in the pane. Status is broadcast through the normal server-authoritative
-state snapshot, so all connected browser tabs see the same value.
-The status resets when btmux restarts.
+is in the pane. Any status other than `unknown` includes the pane in the agent
+grid. Status is broadcast through the normal server-authoritative state snapshot,
+so all connected browser tabs see the same value. Status resets when btmux
+restarts. Explicit reports without a process identity expire after 12 hours
+unless renewed.
 
 ## Agent hook notifications
 
@@ -128,8 +131,10 @@ stops, needs permission, fails, or finishes work—even when another pane or
 session is active.
 
 The generated hooks mark a pane as running on agent session start and clear it
-on session end, so idle agents waiting for input stay visible. Press `prefix + a`
-to open a live grid of those panes. This state is runtime-only and resets when btmux restarts.
+on session end, so idle agents waiting for input stay visible. They also report
+their hook command's parent process ID; btmux clears the status if that process
+exits without an end hook. Press `prefix + a` to open a live grid of those panes.
+This state is runtime-only and resets when btmux restarts.
 Regenerate and install the hooks to enable this for agents that already have an
 older snippet configured.
 

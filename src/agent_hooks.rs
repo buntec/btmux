@@ -248,7 +248,34 @@ mod tests {
     fn generated_hook_snippets_are_valid_json() {
         for snippet in [claude_code(), codex(), gemini_cli()] {
             let parsed: serde_json::Value = serde_json::from_str(snippet).unwrap();
-            assert!(parsed.get("hooks").is_some());
+            let hooks = parsed["hooks"].as_object().unwrap();
+            for event in ["SessionStart", "SessionEnd"] {
+                assert!(hooks.contains_key(event));
+            }
+            for groups in hooks.values() {
+                for group in groups.as_array().unwrap() {
+                    for handler in group["hooks"].as_array().unwrap() {
+                        let command = handler["command"].as_str().unwrap();
+                        assert!(command.contains("X-Btmux-Agent-Pid"));
+                        assert!(command.contains("--max-time 2"));
+                    }
+                }
+            }
+        }
+        let codex: serde_json::Value = serde_json::from_str(codex()).unwrap();
+        for event in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PermissionRequest",
+            "Stop",
+        ] {
+            assert_ne!(codex["hooks"][event][0]["hooks"][0]["async"], true);
+        }
+        assert!(codex["hooks"].get("PostToolUse").is_some());
+        assert!(codex["hooks"].get("Interrupt").is_some());
+        let claude: serde_json::Value = serde_json::from_str(claude_code()).unwrap();
+        for event in ["PostToolUse", "PostToolUseFailure", "PermissionDenied"] {
+            assert!(claude["hooks"].get(event).is_some());
         }
     }
 }

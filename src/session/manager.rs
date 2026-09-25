@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::time::Instant;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 use super::{
+    agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport},
     layout::{Layout, LayoutPreset},
     AgentState, AgentStatus, Pane, PaneSnapshot, Session, SessionSummary, Window,
 };
@@ -24,9 +26,8 @@ pub struct SessionManager {
     /// `file_config` + `overrides`, resolved — this is what the browser sees.
     config: ClientConfig,
     events: broadcast::Sender<String>,
-    /// Pane IDs whose agent hooks indicate a running agent session. Runtime-only:
-    /// this is intentionally not included in persistence snapshots.
-    agent_panes: HashSet<Uuid>,
+    /// Live agent state is runtime-only and is never included in persistence.
+    agents: HashMap<Uuid, AgentLifecycle>,
     exit_tx: mpsc::UnboundedSender<Uuid>,
     meta_tx: mpsc::UnboundedSender<()>,
     port: u16,
@@ -71,7 +72,7 @@ impl SessionManager {
             overrides: ConfigUpdate::default(),
             config,
             events,
-            agent_panes: HashSet::new(),
+            agents: HashMap::new(),
             exit_tx,
             meta_tx,
             port,
@@ -82,28 +83,85 @@ impl SessionManager {
         &self.events
     }
 
-    /// Set whether a pane currently has a running agent session. Returns
-    /// whether the set changed so callers can avoid redundant state broadcasts.
-    pub fn set_agent_running(&mut self, pane_id: Uuid, running: bool) -> bool {
-        if self.find_pane(pane_id).is_none() {
-            return false;
-        }
-        if running {
-            self.agent_panes.insert(pane_id)
-        } else {
-            self.agent_panes.remove(&pane_id)
-        }
-    }
-
-    /// Current agent panes, excluding IDs for panes that have since been
-    /// removed from the session tree.
+    /// The grid and status badges read the same lifecycle record.
     pub fn running_agent_panes(&self) -> Vec<Uuid> {
         self.sessions
             .iter()
             .flat_map(|session| &session.windows)
             .flat_map(|window| &window.panes)
-            .filter_map(|pane| self.agent_panes.contains(&pane.id).then_some(pane.id))
+            .filter_map(|pane| {
+                self.agents
+                    .get(&pane.id)
+                    .is_some_and(AgentLifecycle::is_active)
+                    .then_some(pane.id)
+            })
             .collect()
+    }
+
+    pub fn agent_status(&self, pane_id: Uuid) -> Option<&AgentStatus> {
+        self.agents
+            .get(&pane_id)
+            .filter(|agent| agent.is_active())
+            .map(|agent| &agent.status)
+    }
+
+    pub fn agent_processes(&self) -> Vec<AgentProcess> {
+        self.agents
+            .values()
+            .filter_map(AgentLifecycle::process)
+            .collect()
+    }
+
+    pub fn reap_stale_agents(
+        &mut self,
+        now: Instant,
+        process_alive: impl Fn(AgentProcess) -> bool,
+    ) -> bool {
+        let mut changed = false;
+        self.agents.retain(|_, agent| {
+            if !agent.is_stale(now, &process_alive) {
+                return true;
+            }
+            if agent.is_active() {
+                agent.end(now);
+                changed = true;
+                true
+            } else {
+                false
+            }
+        });
+        changed
+    }
+
+    /// Returns None for stale events and missing panes. A false result means
+    /// the event was accepted but did not change the visible state.
+    pub fn apply_agent_report(
+        &mut self,
+        pane_id: Uuid,
+        report: AgentReport,
+        now: Instant,
+    ) -> Option<bool> {
+        self.find_pane(pane_id)?;
+        if report.event == AgentEvent::SessionEnd {
+            let current = self.agents.get_mut(&pane_id)?;
+            if !current.matches_session(report.session_id.as_deref()) {
+                return None;
+            }
+            current.end(now);
+            return Some(true);
+        }
+        let agent = self.agents.entry(pane_id).or_insert_with(|| {
+            AgentLifecycle::explicit(
+                AgentStatus {
+                    state: AgentState::Idle,
+                    agent: None,
+                    source: None,
+                    message: None,
+                },
+                now,
+            )
+        });
+        agent.apply(report, now)
     }
 
     pub fn config(&self) -> &ClientConfig {
@@ -191,7 +249,6 @@ impl SessionManager {
             id: pane_id,
             pty,
             editor_addr: None,
-            agent_status: AgentStatus::default(),
         };
         let wname = window_name
             .unwrap_or_else(|| self.unique_window_name_in(&[], &shell_name(&self.shell)));
@@ -247,10 +304,15 @@ impl SessionManager {
     }
 
     pub fn set_agent_status(&mut self, pane_id: Uuid, status: AgentStatus) -> bool {
-        let Some(pane) = self.find_pane_mut(pane_id) else {
+        if self.find_pane(pane_id).is_none() {
             return false;
-        };
-        pane.agent_status = status;
+        }
+        if status.state == AgentState::Unknown {
+            self.agents.remove(&pane_id);
+        } else {
+            self.agents
+                .insert(pane_id, AgentLifecycle::explicit(status, Instant::now()));
+        }
         true
     }
 
@@ -258,26 +320,12 @@ impl SessionManager {
     /// lifecycle states remain untouched because focusing a pane does not mean
     /// that work has stopped or that a blocked prompt was answered.
     pub fn acknowledge_agent(&mut self, pane_id: Uuid) -> bool {
-        let Some(pane) = self.find_pane_mut(pane_id) else {
+        let Some(agent) = self.agents.get_mut(&pane_id) else {
             return false;
         };
-        if pane.agent_status.state == AgentState::Done {
-            pane.agent_status.state = AgentState::Idle;
-            pane.agent_status.message = None;
-            return true;
-        }
-        false
-    }
-
-    /// User input is the acknowledgement of a blocked agent prompt. Treat it
-    /// as the next working turn while preserving the reporter identity.
-    pub fn note_agent_input(&mut self, pane_id: Uuid) -> bool {
-        let Some(pane) = self.find_pane_mut(pane_id) else {
-            return false;
-        };
-        if pane.agent_status.state == AgentState::Blocked {
-            pane.agent_status.state = AgentState::Working;
-            pane.agent_status.message = None;
+        if agent.status.state == AgentState::Done {
+            agent.status.state = AgentState::Idle;
+            agent.status.message = None;
             return true;
         }
         false
@@ -310,7 +358,6 @@ impl SessionManager {
             id: new_pane_id,
             pty,
             editor_addr: None,
-            agent_status: AgentStatus::default(),
         };
 
         let Some(session) = self.session_mut(session_id) else {
@@ -339,7 +386,7 @@ impl SessionManager {
             true
         };
         if removed {
-            self.agent_panes.remove(&pane_id);
+            self.agents.remove(&pane_id);
         }
     }
 
@@ -353,7 +400,7 @@ impl SessionManager {
             return;
         };
 
-        self.agent_panes.remove(&pane_id);
+        self.agents.remove(&pane_id);
         let window = &mut self.sessions[si].windows[wi];
         window.remove_pane(pane_id);
         if !window.panes.is_empty() {
@@ -523,7 +570,6 @@ impl SessionManager {
             id: pane_id,
             pty,
             editor_addr: None,
-            agent_status: AgentStatus::default(),
         };
         let base = name.unwrap_or_else(|| shell_name(&self.shell));
 
@@ -656,7 +702,7 @@ impl SessionManager {
                 .collect::<Vec<_>>()
         };
         for pane_id in removed_panes {
-            self.agent_panes.remove(&pane_id);
+            self.agents.remove(&pane_id);
         }
     }
 
@@ -694,7 +740,7 @@ impl SessionManager {
         if let Some(idx) = self.sessions.iter().position(|s| s.id == id) {
             let removed = self.sessions.remove(idx);
             for pane in removed.windows.into_iter().flat_map(|window| window.panes) {
-                self.agent_panes.remove(&pane.id);
+                self.agents.remove(&pane.id);
             }
         }
     }
@@ -706,7 +752,7 @@ impl SessionManager {
     /// recreating "0" when the tree empties), so this resets rather than empties.
     pub async fn clear_sessions(&mut self) {
         self.sessions.clear();
-        self.agent_panes.clear();
+        self.agents.clear();
         self.create_session(Some("0".to_string())).await;
     }
 
@@ -786,7 +832,7 @@ impl SessionManager {
                 }
                 let removed = session.windows.remove(wi);
                 for pane in removed.panes {
-                    self.agent_panes.remove(&pane.id);
+                    self.agents.remove(&pane.id);
                 }
                 if session.active_window >= session.windows.len() {
                     session.active_window = session.windows.len() - 1;
@@ -875,9 +921,6 @@ impl SessionManager {
                     id: p.id,
                     pty,
                     editor_addr: None,
-                    // The restored shell is a new process, so never carry a
-                    // stale status from the saved tree into it.
-                    agent_status: AgentStatus::default(),
                 }
             })
             .collect();
@@ -926,7 +969,7 @@ impl SessionManager {
                             id: p.id,
                             title: p.pty.title.lock().unwrap().clone(),
                             cwd: p.pty.effective_cwd(),
-                            agent_status: p.agent_status.clone(),
+                            agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
                         })
                         .collect(),
                     active_pane: w.active_pane,
@@ -1010,5 +1053,94 @@ fn resolve_index(current: usize, len: usize, index: i32) -> usize {
         }
         i if i >= 0 && (i as usize) < len => i as usize,
         _ => current,
+    }
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    fn report(event: AgentEvent, session: &str) -> AgentReport {
+        AgentReport {
+            event,
+            session_id: Some(session.to_string()),
+            turn_id: None,
+            tool_use_id: None,
+            process: None,
+            agent: Some("codex".to_string()),
+            source: Some("hook".to_string()),
+            message: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn grid_and_snapshot_follow_the_same_lifecycle() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session_id = mgr.create_session(None).await;
+        let pane_id = mgr.sessions[0].windows[0].panes[0].id;
+        assert!(mgr.running_agent_panes().is_empty());
+        mgr.apply_agent_report(
+            pane_id,
+            report(AgentEvent::SessionStart, "first"),
+            Instant::now(),
+        );
+        assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
+        assert_eq!(
+            mgr.snapshot_by_id(session_id).unwrap().windows[0].panes[0]
+                .agent_status
+                .state,
+            AgentState::Idle
+        );
+        mgr.apply_agent_report(
+            pane_id,
+            report(AgentEvent::SessionStart, "second"),
+            Instant::now(),
+        );
+        assert_eq!(
+            mgr.apply_agent_report(
+                pane_id,
+                report(AgentEvent::SessionEnd, "first"),
+                Instant::now()
+            ),
+            None
+        );
+        assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
+        mgr.apply_agent_report(
+            pane_id,
+            report(AgentEvent::SessionEnd, "second"),
+            Instant::now(),
+        );
+        assert!(mgr.running_agent_panes().is_empty());
+        assert_eq!(mgr.agent_status(pane_id), None);
+        assert_eq!(
+            mgr.apply_agent_report(
+                pane_id,
+                report(AgentEvent::TurnFinished, "second"),
+                Instant::now()
+            ),
+            None
+        );
+        assert!(mgr.running_agent_panes().is_empty());
+        mgr.set_agent_status(
+            pane_id,
+            AgentStatus {
+                state: AgentState::Working,
+                agent: Some("custom".to_string()),
+                source: Some("api".to_string()),
+                message: None,
+            },
+        );
+        assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
+        mgr.set_agent_status(pane_id, AgentStatus::default());
+        assert!(mgr.running_agent_panes().is_empty());
     }
 }

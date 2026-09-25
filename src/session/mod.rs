@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod layout;
 pub mod manager;
 
@@ -74,10 +75,6 @@ pub struct Pane {
     /// to remote-open a selected file into that same running editor instead of
     /// spawning a fresh `$EDITOR` in the pane's shell.
     pub editor_addr: Option<String>,
-    /// Server-authoritative semantic status for an agent running in this pane.
-    /// It is separate from transient notifications, which are UI attention
-    /// events rather than durable pane state.
-    pub agent_status: AgentStatus,
 }
 
 /// Lifecycle states for an agent occupying a pane.
@@ -96,7 +93,7 @@ pub enum AgentState {
     Done,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct AgentStatus {
     pub state: AgentState,

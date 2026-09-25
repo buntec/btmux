@@ -97,6 +97,23 @@ just setup
 cargo install --path .
 ```
 
+## Shell completions
+
+`btmux completions <shell>` prints a completion script for bash, fish, zsh,
+PowerShell, or Elvish. Save it in your shell's completion directory. For example:
+
+```sh
+# fish
+mkdir -p ~/.config/fish/completions
+btmux completions fish > ~/.config/fish/completions/btmux.fish
+
+# zsh: add ~/.zfunc to fpath before compinit runs in ~/.zshrc
+mkdir -p ~/.zfunc
+btmux completions zsh > ~/.zfunc/_btmux
+```
+
+Regenerate the script after updating btmux so it includes new commands and flags.
+
 ## Home Manager
 
 The repository's flake exposes a Home Manager module and release package. The

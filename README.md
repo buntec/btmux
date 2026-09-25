@@ -97,7 +97,10 @@ btmux --no-browser      # start without opening a browser tab
 btmux --help            # show all flags and subcommands
 btmux version           # print the installed version
 btmux generate-config   # print a documented default config
+btmux completions zsh   # print a shell completion script
 ```
+
+See [shell completions](docs/installation.md#shell-completions) for installation.
 
 ## Development
 

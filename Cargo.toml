@@ -19,6 +19,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "local-time"] 
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 tracing-appender = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 futures-util = "0.3"
 nix = { version = "0.29", features = ["term"] }
 libc = "0.2"

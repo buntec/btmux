@@ -95,6 +95,12 @@ pub struct CliArgs {
 pub enum SubCommand {
     /// Print the btmux version and exit.
     Version,
+    /// Print shell completions to stdout.
+    Completions {
+        /// Shell to generate completions for.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// Print a default config.toml with all settings documented and commented out.
     GenerateConfig,
     /// Print a Claude Code hooks.json snippet for btmux pane notifications.

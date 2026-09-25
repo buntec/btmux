@@ -19,7 +19,7 @@ mod ws;
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use notify::{RecursiveMode, Watcher};
 use time::UtcOffset;
 use tokio::sync::RwLock;
@@ -58,6 +58,18 @@ fn make_filter(level: &str) -> EnvFilter {
 
 #[tokio::main]
 async fn main() {
+    let args = CliArgs::parse();
+
+    if let Some(config::SubCommand::Completions { shell }) = args.command.as_ref() {
+        clap_complete::generate(
+            *shell,
+            &mut CliArgs::command(),
+            "btmux",
+            &mut std::io::stdout(),
+        );
+        return;
+    }
+
     // Parse config early (before full startup) so we can configure logging from
     // the [log] section. Failures here fall back to defaults silently — the real
     // config load below will log the error.
@@ -97,8 +109,6 @@ async fn main() {
     } else {
         tracing_subscriber::registry().with(console_layer).init();
     }
-
-    let args = CliArgs::parse();
 
     if let Some(config::SubCommand::Version) = args.command {
         println!("btmux {}", config::VERSION);

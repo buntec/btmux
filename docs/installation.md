@@ -145,5 +145,9 @@ default.
 `services.btmux` is accepted as an alias for `programs.btmux`. Set
 `programs.btmux.service.enable = false` to install and configure btmux without
 starting it. Override `package` to use a different build or package source.
+The module installs bash, fish, and zsh completions when the selected package
+supports `btmux completions`. The bundled fallback package currently uses an
+older release, so completions become available after selecting a newer package
+or updating that release.
 
 [Back to the README](../README.md)

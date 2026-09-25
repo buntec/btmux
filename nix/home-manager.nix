@@ -58,6 +58,19 @@ let
   environmentList = lib.mapAttrsToList (name: value: "${name}=${value}") serviceEnvironment;
 
   configFile = settingsFormat.generate "btmux-config.toml" cfg.settings;
+
+  completionPackage = pkgs.runCommand "btmux-shell-completions" { } ''
+    mkdir -p "$out/share/bash-completion/completions" \
+      "$out/share/fish/vendor_completions.d" \
+      "$out/share/zsh/site-functions"
+
+    if ${lib.getExe cfg.package} completions bash > "$out/share/bash-completion/completions/btmux" 2>/dev/null; then
+      ${lib.getExe cfg.package} completions fish > "$out/share/fish/vendor_completions.d/btmux.fish"
+      ${lib.getExe cfg.package} completions zsh > "$out/share/zsh/site-functions/_btmux"
+    else
+      rm "$out/share/bash-completion/completions/btmux"
+    fi
+  '';
 in
 {
   # btmux is both a program and a long-running server. Keep the service-shaped
@@ -197,7 +210,10 @@ in
       }
     ];
 
-    home.packages = lib.optional (cfg.package != null) cfg.package;
+    home.packages = lib.optionals (cfg.package != null) [
+      cfg.package
+      (lib.lowPrio completionPackage)
+    ];
 
     xdg.configFile."btmux/config.toml" = {
       source = configFile;

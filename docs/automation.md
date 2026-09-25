@@ -53,8 +53,9 @@ Its optional `editor_addr` registers an RPC address (currently only a Neovim
 file in the browser then remote-opens it — jumping to the right line — in
 that already-running editor instead of spawning a fresh `$EDITOR` in the
 pane's shell. Without `editor_addr` — or if the remote-open call fails, e.g.
-because that editor already exited — selecting a file falls back to spawning
-`$EDITOR` in the pane's shell, as before this option existed.
+because that editor already exited — selecting a file runs `$EDITOR` only if
+the pane's shell owns the terminal. If another program is in the foreground,
+the browser shows an error and leaves that program's input untouched.
 
 | Method and path                                                 | Purpose                                                   |
 | --------------------------------------------------------------- | --------------------------------------------------------- |

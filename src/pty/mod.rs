@@ -9,18 +9,28 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::unix::io::RawFd;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct InputSender(mpsc::Sender<Vec<u8>>);
+pub struct InputSender(mpsc::Sender<PtyInput>);
+
+enum PtyInput {
+    Raw(Vec<u8>),
+    ShellCommand {
+        data: Vec<u8>,
+        shell_pid: libc::pid_t,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+}
+
 impl InputSender {
     pub async fn send_wait(&self, data: Vec<u8>) -> Result<(), String> {
         if data.len() > 64 * 1024 {
             return Err("PTY input exceeds 64 KiB".into());
         }
         self.0
-            .send(data)
+            .send(PtyInput::Raw(data))
             .await
             .map_err(|e| format!("PTY input unavailable: {e}"))
     }
@@ -29,8 +39,30 @@ impl InputSender {
             return Err("PTY input exceeds 64 KiB; split it into smaller requests".into());
         }
         self.0
-            .try_send(data)
+            .try_send(PtyInput::Raw(data))
             .map_err(|e| format!("PTY input unavailable: {e}"))
+    }
+
+    async fn send_shell_command(
+        &self,
+        data: Vec<u8>,
+        shell_pid: libc::pid_t,
+    ) -> Result<(), String> {
+        if data.len() > 64 * 1024 {
+            return Err("PTY input exceeds 64 KiB".into());
+        }
+        let (reply, result) = oneshot::channel();
+        self.0
+            .send(PtyInput::ShellCommand {
+                data,
+                shell_pid,
+                reply,
+            })
+            .await
+            .map_err(|e| format!("PTY input unavailable: {e}"))?;
+        result
+            .await
+            .map_err(|_| "PTY input unavailable".to_string())?
     }
 }
 
@@ -43,6 +75,7 @@ pub struct PtyHandle {
     viewers: Vec<(Uuid, u16, u16)>,
     size: Arc<Mutex<(u16, u16)>>,
     spawned: Arc<Mutex<bool>>,
+    shell_pid: Option<libc::pid_t>,
     shell: String,
     /// Initial working directory for the shell process.
     spawn_cwd: Option<std::path::PathBuf>,
@@ -81,7 +114,7 @@ impl PtyHandle {
         port: u16,
         scrollback_lines: u32,
     ) -> Self {
-        let (input_tx, _) = mpsc::channel::<Vec<u8>>(32);
+        let (input_tx, _) = mpsc::channel::<PtyInput>(32);
         let (output_tx, _) = broadcast::channel::<Output>(256);
         let (resize_tx, _) = watch::channel((80, 24));
 
@@ -98,6 +131,7 @@ impl PtyHandle {
             viewers: Vec::new(),
             size: Arc::new(Mutex::new((0, 0))),
             spawned: Arc::new(Mutex::new(false)),
+            shell_pid: None,
             shell: shell.to_string(),
             spawn_cwd,
             pane_id,
@@ -181,6 +215,7 @@ impl PtyHandle {
             .slave
             .spawn_command(cmd)
             .map_err(|e| format!("failed to spawn shell: {e}"))?;
+        self.shell_pid = child.process_id().and_then(|pid| pid.try_into().ok());
         drop(pair.slave);
 
         *self.killer.lock().unwrap() = Some(child.clone_killer());
@@ -200,7 +235,7 @@ impl PtyHandle {
             *self.master_fd.lock().unwrap() = Some(fd);
         }
 
-        let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
+        let (input_tx, mut input_rx) = mpsc::channel::<PtyInput>(32);
         let (resize_tx, mut resize_rx) = watch::channel((cols, rows));
         let response_tx = InputSender(input_tx.clone());
 
@@ -253,14 +288,40 @@ impl PtyHandle {
         let pending_cpr_pgrps_writer = self.pending_cpr_pgrps.clone();
         let master_fd_writer = self.master_fd.clone();
         std::thread::spawn(move || {
-            while let Some(data) = input_rx.blocking_recv() {
-                let filtered =
-                    Self::filter_stale_cpr(&data, &pending_cpr_pgrps_writer, &master_fd_writer);
-                if filtered.is_empty() {
-                    continue;
-                }
-                if writer.write_all(&filtered).is_err() {
-                    break;
+            while let Some(input) = input_rx.blocking_recv() {
+                match input {
+                    PtyInput::Raw(data) => {
+                        let filtered = Self::filter_stale_cpr(
+                            &data,
+                            &pending_cpr_pgrps_writer,
+                            &master_fd_writer,
+                        );
+                        if !filtered.is_empty() && writer.write_all(&filtered).is_err() {
+                            break;
+                        }
+                    }
+                    PtyInput::ShellCommand {
+                        data,
+                        shell_pid,
+                        reply,
+                    } => {
+                        let foreground = master_fd_writer
+                            .lock()
+                            .unwrap()
+                            .map(|fd| unsafe { libc::tcgetpgrp(fd) });
+                        let result = if foreground == Some(shell_pid) {
+                            writer
+                                .write_all(&data)
+                                .map_err(|e| format!("PTY input unavailable: {e}"))
+                        } else {
+                            Err("Cannot open file: the pane is not at a shell prompt".into())
+                        };
+                        let write_failed = foreground == Some(shell_pid) && result.is_err();
+                        let _ = reply.send(result);
+                        if write_failed {
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -285,6 +346,13 @@ impl PtyHandle {
         *self.size.lock().unwrap() = (cols, rows);
         *self.spawned.lock().unwrap() = true;
         Ok(())
+    }
+
+    pub async fn send_shell_command(&self, data: Vec<u8>) -> Result<(), String> {
+        let shell_pid = self
+            .shell_pid
+            .ok_or_else(|| "Cannot open file: pane shell is unavailable".to_string())?;
+        self.input_tx.send_shell_command(data, shell_pid).await
     }
 
     /// Record the current foreground process group for a forwarded DSR 6 query.
@@ -591,6 +659,44 @@ mod lifecycle_tests {
         assert!(input.send(vec![0; 65537]).is_err());
         assert!(input.send(vec![0; 65536]).is_ok());
         assert!(input.send(vec![0]).is_err());
+    }
+    #[tokio::test]
+    async fn shell_commands_do_not_reach_foreground_programs() {
+        let mut pane = pane("/bin/bash");
+        pane.ensure_spawned(80, 24).unwrap();
+        let shell_pid = pane.shell_pid.unwrap();
+        let pane_ref = &pane;
+        let wait_for_foreground = |shell_owns_terminal| async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let foreground = pane_ref
+                        .master_fd
+                        .lock()
+                        .unwrap()
+                        .map(|fd| unsafe { libc::tcgetpgrp(fd) });
+                    if (foreground == Some(shell_pid)) == shell_owns_terminal {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+        };
+
+        wait_for_foreground(true).await;
+        pane.input_tx.send(b"cat\r".to_vec()).unwrap();
+        wait_for_foreground(false).await;
+        let result = pane
+            .send_shell_command(b"printf 'SHOULD_NOT_RUN'\r".to_vec())
+            .await;
+        assert!(result.unwrap_err().contains("not at a shell prompt"));
+
+        pane.input_tx.send(vec![3]).unwrap();
+        wait_for_foreground(true).await;
+        pane.send_shell_command(b"printf 'SHELL_READY'\r".to_vec())
+            .await
+            .unwrap();
     }
     #[tokio::test]
     async fn oldest_viewer_owns_size_until_disconnect() {

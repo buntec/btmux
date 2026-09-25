@@ -165,24 +165,29 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             return Err("Pane no longer exists".into());
         };
         if let Some(addr) = pane.editor_addr.clone() {
-            let state = state.clone();
-            let pane_id = *pane_id;
-            let path = path.clone();
-            let line = *line;
             drop(mgr);
-            tokio::spawn(async move {
-                if remote_open_in_editor(&addr, &path, line).await.is_err() {
-                    let mgr = state.read().await;
-                    if let Some(pane) = mgr.find_pane(pane_id) {
-                        let text = shell_editor_open_command(&path, line);
-                        let _ = pane.pty.input_tx.send(text.into_bytes());
+            if remote_open_in_editor(&addr, path, *line).await.is_ok() {
+                return Ok(());
+            }
+            let mgr = state.read().await;
+            let Some(pane) = mgr.find_pane(*pane_id) else {
+                return Err("Pane no longer exists".into());
+            };
+            let text = shell_editor_open_command(path, *line);
+            return pane
+                .pty
+                .send_shell_command(text.into_bytes())
+                .await
+                .map_err(|error| {
+                    if error == "Cannot open file: the pane is not at a shell prompt" {
+                        "Cannot open file: Neovim remote open failed, and the pane is not at a shell prompt".into()
+                    } else {
+                        error
                     }
-                }
-            });
-            return Ok(());
+                });
         }
         let text = shell_editor_open_command(path, *line);
-        return pane.pty.input_tx.send(text.into_bytes());
+        return pane.pty.send_shell_command(text.into_bytes()).await;
     }
 
     // Browser settings (color scheme, font, general settings, shader) are session-only:
@@ -604,7 +609,7 @@ pub(crate) enum ClientMessage {
         text: String,
     },
     /// Open a file (from the file browser) into the pane's registered editor
-    /// (`Pane::editor_addr`) if any, else spawn `$EDITOR` in the pane's shell.
+    /// (`Pane::editor_addr`) if any, else run `$EDITOR` when the shell is foreground.
     OpenFile {
         pane_id: Uuid,
         path: String,

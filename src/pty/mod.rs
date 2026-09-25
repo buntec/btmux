@@ -160,6 +160,10 @@ impl PtyHandle {
             .map(|p| p.to_string_lossy().into_owned())
     }
 
+    pub fn shell_pid(&self) -> Option<u32> {
+        self.shell_pid.and_then(|pid| pid.try_into().ok())
+    }
+
     pub fn ensure_spawned(&mut self, cols: u16, rows: u16) -> Result<(), String> {
         validate_size(cols, rows)?;
         {

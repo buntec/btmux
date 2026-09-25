@@ -47,7 +47,7 @@ function buildEntries(
   return entries;
 }
 
-/** Full-screen live mirrors of panes whose agent hooks report running agents. */
+/** Full-screen live mirrors of panes with detected or reported agents. */
 export function AgentGrid({ send }: Props) {
   const open = useStore((s) => s.agentGridOpen);
   const mounted = useStore((s) => s.agentGridMounted);
@@ -180,7 +180,7 @@ export function AgentGrid({ send }: Props) {
     >
       {entries.length === 0 && (
         <div style={{ color: dimFg, padding: '16px', gridColumn: '1 / -1' }}>
-          No agent sessions reported. Generate and install the agent hooks to populate this grid.
+          No agents detected. Install agent hooks for status and notifications.
         </div>
       )}
       {entries.map((entry, i) => {

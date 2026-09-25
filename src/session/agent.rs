@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+use std::path::Path;
 use std::time::{Duration, Instant};
+
+use uuid::Uuid;
 
 use super::{AgentState, AgentStatus};
 
@@ -8,6 +12,75 @@ pub const UNVERIFIED_AGENT_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 pub struct AgentProcess {
     pub pid: u32,
     pub start_time: u64,
+}
+
+pub struct PaneProcess {
+    pub pid: u32,
+    pub parent: Option<u32>,
+    pub start_time: u64,
+    pub name: String,
+    pub command: Vec<String>,
+}
+
+pub fn detect_pane_agents(
+    processes: &[PaneProcess],
+    pane_shells: &[(Uuid, u32)],
+) -> Vec<(Uuid, AgentProcess, String)> {
+    let parents: HashMap<_, _> = processes.iter().map(|p| (p.pid, p.parent)).collect();
+    let shells: HashMap<_, _> = pane_shells
+        .iter()
+        .map(|(pane, pid)| (*pid, *pane))
+        .collect();
+    let mut found = HashMap::new();
+    for process in processes {
+        let Some(agent) = agent_name(process) else {
+            continue;
+        };
+        let mut current = Some(process.pid);
+        for _ in 0..64 {
+            let Some(pid) = current else { break };
+            if let Some(pane_id) = shells.get(&pid) {
+                let identity = AgentProcess {
+                    pid: process.pid,
+                    start_time: process.start_time,
+                };
+                let entry = found
+                    .entry(*pane_id)
+                    .or_insert_with(|| (identity, agent.to_string()));
+                if (identity.start_time, identity.pid) < (entry.0.start_time, entry.0.pid) {
+                    *entry = (identity, agent.to_string());
+                }
+                break;
+            }
+            current = parents.get(&pid).copied().flatten();
+        }
+    }
+    found
+        .into_iter()
+        .map(|(pane_id, (process, name))| (pane_id, process, name))
+        .collect()
+}
+
+fn agent_name(process: &PaneProcess) -> Option<&'static str> {
+    let executable = process
+        .command
+        .first()
+        .map(String::as_str)
+        .unwrap_or(&process.name);
+    let name = Path::new(executable).file_name()?.to_str()?;
+    match name {
+        "codex"
+            if !matches!(
+                process.command.get(1).map(String::as_str),
+                Some("app-server" | "mcp-server" | "completion")
+            ) =>
+        {
+            Some("codex")
+        }
+        "claude" => Some("claude"),
+        "gemini" => Some("gemini"),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,11 +112,27 @@ pub struct AgentLifecycle {
     turn_complete: bool,
     blocked_tool_id: Option<String>,
     process: Option<AgentProcess>,
+    observed_process: bool,
     last_seen: Instant,
     ended: bool,
 }
 
 impl AgentLifecycle {
+    pub fn detected(process: AgentProcess, name: String, now: Instant) -> Self {
+        let mut lifecycle = Self::explicit(
+            AgentStatus {
+                state: AgentState::Idle,
+                agent: Some(name),
+                source: Some("process".to_string()),
+                message: None,
+            },
+            now,
+        );
+        lifecycle.process = Some(process);
+        lifecycle.observed_process = true;
+        lifecycle
+    }
+
     pub fn explicit(status: AgentStatus, now: Instant) -> Self {
         Self {
             status,
@@ -52,17 +141,21 @@ impl AgentLifecycle {
             turn_complete: false,
             blocked_tool_id: None,
             process: None,
+            observed_process: false,
             last_seen: now,
             ended: false,
         }
     }
 
-    pub fn process(&self) -> Option<AgentProcess> {
-        if self.ended {
-            None
-        } else {
-            self.process
+    pub fn observe_process(&mut self, process: AgentProcess) {
+        if !self.ended {
+            self.process = Some(process);
+            self.observed_process = true;
         }
+    }
+
+    pub fn has_observed_process(&self) -> bool {
+        self.observed_process && !self.ended
     }
 
     pub fn is_stale(&self, now: Instant, process_alive: impl Fn(AgentProcess) -> bool) -> bool {
@@ -221,6 +314,7 @@ impl AgentLifecycle {
         self.turn_complete = true;
         self.blocked_tool_id = None;
         self.process = None;
+        self.observed_process = false;
         self.last_seen = now;
         self.ended = true;
     }
@@ -233,6 +327,34 @@ impl AgentLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_agents_in_each_pane_and_skips_shared_codex_server() {
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let process = |pid, parent, name: &str, command: &[&str]| PaneProcess {
+            pid,
+            parent,
+            start_time: pid as u64,
+            name: name.to_string(),
+            command: command.iter().map(|arg| arg.to_string()).collect(),
+        };
+        let processes = [
+            process(10, Some(1), "fish", &["fish"]),
+            process(11, Some(10), "codex", &["/bin/codex", "--yolo"]),
+            process(12, Some(11), "codex", &["/bin/codex", "app-server"]),
+            process(20, Some(1), "fish", &["fish"]),
+            process(21, Some(20), "codex", &["/bin/codex", "--yolo"]),
+        ];
+        let detected = detect_pane_agents(&processes, &[(first, 10), (second, 20)]);
+        assert_eq!(detected.len(), 2);
+        assert!(detected
+            .iter()
+            .any(|(pane, agent, _)| *pane == first && agent.pid == 11));
+        assert!(detected
+            .iter()
+            .any(|(pane, agent, _)| *pane == second && agent.pid == 21));
+    }
 
     fn report(event: AgentEvent, session: &str, turn: Option<&str>) -> AgentReport {
         AgentReport {
@@ -275,7 +397,7 @@ mod tests {
         });
         agent.apply(resume, now);
         assert_eq!(agent.status.state, AgentState::Idle);
-        assert_eq!(agent.process().unwrap().pid, 43);
+        assert_eq!(agent.process.unwrap().pid, 43);
     }
 
     #[test]

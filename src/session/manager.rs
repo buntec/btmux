@@ -105,11 +105,46 @@ impl SessionManager {
             .map(|agent| &agent.status)
     }
 
-    pub fn agent_processes(&self) -> Vec<AgentProcess> {
-        self.agents
-            .values()
-            .filter_map(AgentLifecycle::process)
+    pub fn pane_shells(&self) -> Vec<(Uuid, u32)> {
+        self.sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+            .filter_map(|pane| pane.pty.shell_pid().map(|pid| (pane.id, pid)))
             .collect()
+    }
+
+    pub fn update_detected_agents(&mut self, detected: &[(Uuid, AgentProcess, String)]) -> bool {
+        let mut changed = false;
+        for (pane_id, process, name) in detected {
+            if let Some(agent) = self
+                .agents
+                .get_mut(pane_id)
+                .filter(|agent| agent.is_active())
+            {
+                agent.observe_process(*process);
+                if agent.status.source.as_deref() == Some("process")
+                    && agent.status.agent.as_deref() != Some(name)
+                {
+                    agent.status.agent = Some(name.clone());
+                    changed = true;
+                }
+                continue;
+            }
+            self.agents.insert(
+                *pane_id,
+                AgentLifecycle::detected(*process, name.clone(), Instant::now()),
+            );
+            changed = true;
+        }
+        let active: std::collections::HashSet<_> = detected.iter().map(|(id, _, _)| *id).collect();
+        for (pane_id, agent) in &mut self.agents {
+            if agent.has_observed_process() && !active.contains(pane_id) {
+                agent.end(Instant::now());
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub fn reap_stale_agents(
@@ -1071,6 +1106,44 @@ mod agent_tests {
             source: Some("hook".to_string()),
             message: None,
         }
+    }
+
+    #[tokio::test]
+    async fn process_detection_fills_multiple_panes_and_clears_departed_agents() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let first_session = mgr.create_session(None).await;
+        let second_session = mgr.create_session(None).await;
+        let first = mgr.snapshot_by_id(first_session).unwrap().windows[0].panes[0].id;
+        let second = mgr.snapshot_by_id(second_session).unwrap().windows[0].panes[0].id;
+        let one = AgentProcess {
+            pid: 11,
+            start_time: 1,
+        };
+        let two = AgentProcess {
+            pid: 21,
+            start_time: 2,
+        };
+        assert!(mgr.update_detected_agents(&[
+            (first, one, "codex".to_string()),
+            (second, two, "codex".to_string()),
+        ]));
+        assert_eq!(mgr.running_agent_panes().len(), 2);
+        mgr.apply_agent_report(
+            first,
+            report(AgentEvent::TurnStart, "session"),
+            Instant::now(),
+        );
+        assert!(mgr.update_detected_agents(&[(second, two, "codex".to_string())]));
+        assert_eq!(mgr.running_agent_panes(), vec![second]);
     }
 
     #[tokio::test]

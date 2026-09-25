@@ -135,6 +135,9 @@ on session end, so idle agents waiting for input stay visible. They also report
 their hook command's parent process ID; btmux clears the status if that process
 exits without an end hook. Press `prefix + a` to open a live grid of those panes.
 This state is runtime-only and resets when btmux restarts.
+btmux also detects Codex, Claude Code, and Gemini CLI processes under each pane's
+shell. This keeps the grid populated when a shared agent runtime runs hooks with
+another pane's environment; hooks still provide richer status and notifications.
 Regenerate and install the hooks to enable this for agents that already have an
 older snippet configured.
 

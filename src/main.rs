@@ -429,39 +429,54 @@ fn spawn_pane_exit_handler(
 
 fn spawn_agent_reaper(state: AppState) {
     use std::collections::HashMap;
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+    use crate::session::agent::{detect_pane_agents, PaneProcess};
 
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            let processes = state.read().await.agent_processes();
-            let starts: HashMap<u32, u64> = if processes.is_empty() {
-                HashMap::new()
-            } else {
-                let pids: Vec<Pid> = processes
-                    .iter()
-                    .map(|process| Pid::from_u32(process.pid))
-                    .collect();
+            let pane_shells = state.read().await.pane_shells();
+            let scan = tokio::task::spawn_blocking(move || {
                 let mut system = System::new();
                 system.refresh_processes_specifics(
-                    ProcessesToUpdate::Some(&pids),
+                    ProcessesToUpdate::All,
                     true,
-                    ProcessRefreshKind::nothing(),
+                    ProcessRefreshKind::nothing().with_cmd(UpdateKind::OnlyIfNotSet),
                 );
-                pids.into_iter()
-                    .filter_map(|pid| {
-                        system
-                            .process(pid)
-                            .map(|process| (pid.as_u32(), process.start_time()))
+                let processes: Vec<PaneProcess> = system
+                    .processes()
+                    .values()
+                    .map(|process| PaneProcess {
+                        pid: process.pid().as_u32(),
+                        parent: process.parent().map(|pid| pid.as_u32()),
+                        start_time: process.start_time(),
+                        name: process.name().to_string_lossy().into_owned(),
+                        command: process
+                            .cmd()
+                            .iter()
+                            .map(|part| part.to_string_lossy().into_owned())
+                            .collect(),
                     })
-                    .collect()
+                    .collect();
+                let starts: HashMap<u32, u64> = processes
+                    .iter()
+                    .map(|process| (process.pid, process.start_time))
+                    .collect();
+                let detected = detect_pane_agents(&processes, &pane_shells);
+                (starts, detected)
+            })
+            .await;
+            let Ok((starts, detected)) = scan else {
+                continue;
             };
             let mut mgr = state.write().await;
-            if mgr.reap_stale_agents(std::time::Instant::now(), |process| {
+            let reaped = mgr.reap_stale_agents(std::time::Instant::now(), |process| {
                 starts.get(&process.pid) == Some(&process.start_time)
-            }) {
+            });
+            if mgr.update_detected_agents(&detected) || reaped {
                 ws::control::broadcast_state(&mgr);
             }
         }

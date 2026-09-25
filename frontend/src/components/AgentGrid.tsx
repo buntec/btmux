@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
+import type { AgentStatus } from '../state/types';
+import { AgentStatusBadge } from './PaneTitleBar';
 import { MirrorPane } from './MirrorPane';
 
 interface Props {
@@ -17,6 +19,7 @@ interface AgentPaneEntry {
   paneId: string;
   paneIndex: number;
   paneTitle: string | null;
+  agentStatus: AgentStatus;
 }
 
 function buildEntries(
@@ -36,6 +39,7 @@ function buildEntries(
           paneId: pane.id,
           paneIndex,
           paneTitle: pane.title,
+          agentStatus: pane.agent_status,
         });
       });
     });
@@ -200,6 +204,7 @@ export function AgentGrid({ send }: Props) {
             <div style={{ position: 'absolute', inset: 0, paddingBottom: '26px', boxSizing: 'border-box' }}>
               {mirrorsReady && <MirrorPane paneId={entry.paneId} visible={open} />}
             </div>
+            <AgentStatusBadge theme={theme ?? null} status={entry.agentStatus} overlay />
             <div
               style={{
                 position: 'absolute',

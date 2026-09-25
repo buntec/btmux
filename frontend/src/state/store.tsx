@@ -51,6 +51,7 @@ interface AppStore {
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
   fileBrowserInitialMode: FileBrowserMode;
+  fileBrowserFocusFile: string | null;
   // The pane whose slot the file browser occupies. Null when closed.
   fileBrowserPaneId: string | null;
   // State of the /ws/control socket. The frontend holds no canonical state, so
@@ -99,6 +100,7 @@ interface AppStore {
     cwd?: string | null,
     paneId?: string | null,
     initialMode?: FileBrowserMode,
+    focusFile?: string | null,
   ) => void;
   setNavigateFn: (fn: ((path: string) => void) | null) => void;
   setControlSendFn: (fn: ((message: ClientMessage) => void) | null) => void;
@@ -127,6 +129,7 @@ export const useStore = create<AppStore>((set, get) => ({
   fileBrowserOpen: false,
   fileBrowserCwd: null,
   fileBrowserInitialMode: 'files',
+  fileBrowserFocusFile: null,
   fileBrowserPaneId: null,
   controlConnectionState: 'connecting',
   terminals: new Map(),
@@ -156,11 +159,12 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   setPrefixActive: (active) => set({ prefixActive: active }),
   setOverlay: (overlay) => set({ overlay }),
-  setFileBrowserOpen: (open, cwd, paneId, initialMode = 'files') =>
+  setFileBrowserOpen: (open, cwd, paneId, initialMode = 'files', focusFile = null) =>
     set({
       fileBrowserOpen: open,
       fileBrowserCwd: cwd ?? null,
       fileBrowserInitialMode: open ? initialMode : 'files',
+      fileBrowserFocusFile: open ? focusFile : null,
       fileBrowserPaneId: paneId ?? null,
     }),
   setWindowGridOpen: (open) => set({ windowGridOpen: open }),

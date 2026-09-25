@@ -46,6 +46,7 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
 matching the `prefix + f` / `prefix + g` / `prefix + t` overlay. It switches
 every connected browser tab
 to the pane's window and session before opening the overlay there.
+For file mode, optional `focus_file` names an entry in `path` to focus on open.
 
 Its optional `editor_addr` registers an RPC address (currently only a Neovim
 `v:servername`/`--listen` address is supported) for that pane. Selecting a

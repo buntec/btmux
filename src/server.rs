@@ -321,6 +321,7 @@ async fn api_pane_notify(
 struct OpenFileBrowserRequest {
     path: String,
     mode: Option<ws::control::FileBrowserMode>,
+    focus_file: Option<String>,
     /// The calling editor's `v:servername` (or equivalent RPC address). When
     /// set, selecting a file in the browser remote-opens it into this editor
     /// instead of spawning a fresh `$EDITOR` in the pane's shell.
@@ -342,6 +343,7 @@ async fn api_open_file_browser(
         pane_id,
         path: body.path,
         mode: body.mode.unwrap_or(ws::control::FileBrowserMode::Files),
+        focus_file: body.focus_file,
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
 

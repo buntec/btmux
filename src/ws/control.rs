@@ -640,6 +640,7 @@ pub enum ServerMessage {
         pane_id: Uuid,
         path: String,
         mode: FileBrowserMode,
+        focus_file: Option<String>,
     },
 }
 

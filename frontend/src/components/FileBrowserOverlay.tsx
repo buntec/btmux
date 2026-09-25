@@ -81,6 +81,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const { send: fileSend, state: fileConnectionState } = useFileSocket();
   const config = useStore((s) => s.config);
   const fileBrowserInitialMode = useStore((s) => s.fileBrowserInitialMode);
+  const fileBrowserFocusFile = useStore((s) => s.fileBrowserFocusFile);
   const fontSize = getTerminalFontSize(config);
   const animations = getAnimations(config);
   const currentPath = useFileStore((s) => s.currentPath);
@@ -145,6 +146,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         store.getState().setCurrentPath(payload.path);
         store.getState().setEntries(payload.entries);
         if (focusTarget) {
+          const target = payload.entries.find((e) => e.name === focusTarget);
+          if (target?.name.startsWith('.')) store.getState().setShowDotFiles(true);
+          if (target?.is_ignored) store.getState().setShowIgnored(true);
           const { showDotFiles, showIgnored } = store.getState();
           const visible = payload.entries.filter(
             (e) => (showDotFiles || !e.name.startsWith('.')) && (showIgnored || !e.is_ignored),
@@ -459,8 +463,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     if (initialized.current) return;
     initialized.current = true;
     const startPath = cwd || '/';
-    void navigate(startPath).then(() => setBrowserReady(true));
-  }, [cwd, navigate]);
+    const focusFile = fileBrowserInitialMode === 'files' ? (fileBrowserFocusFile ?? undefined) : undefined;
+    if (focusFile) {
+      store.getState().setIsFilterActive(false);
+      store.getState().setSearchMode('off');
+    }
+    void navigate(startPath, focusFile).then(() => setBrowserReady(true));
+  }, [cwd, fileBrowserFocusFile, fileBrowserInitialMode, navigate, store]);
 
   useEffect(() => {
     if (!browserReady) return;

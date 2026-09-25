@@ -30,8 +30,14 @@ function M.open_file_browser(dir, mode)
     editor_addr = vim.fn.serverstart()
   end
 
-  dir = dir or vim.fn.expand('%:p:h')
-  local body = vim.json.encode({ path = dir, mode = mode or 'files', editor_addr = editor_addr })
+  local buffer_path = vim.bo.buftype == '' and vim.fn.expand('%:p') or ''
+  local focus_file = nil
+  if not dir and buffer_path ~= '' then
+    dir = vim.fn.fnamemodify(buffer_path, ':h')
+    focus_file = vim.fn.fnamemodify(buffer_path, ':t')
+  end
+  dir = dir or vim.fn.getcwd()
+  local body = vim.json.encode({ path = dir, mode = mode or 'files', editor_addr = editor_addr, focus_file = focus_file })
 
   vim.system({
     'curl',

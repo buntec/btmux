@@ -47,7 +47,9 @@ Or add `extras/neovim/btmux.nvim` to `runtimepath` yourself and call
 ## Usage
 
 - `require('btmux').open_file_browser(dir?, mode?)` — `dir` defaults to the
-  current buffer's directory, `mode` is `'files'` (default) or `'git'`.
+  current buffer's directory. File mode initially focuses that buffer's file.
+  `mode` is `'files'` (default) or `'git'`. An explicit `dir` opens at that
+  directory without selecting a file.
 - `:BtmuxOpenFileBrowser [dir]`, `:BtmuxOpenGitBrowser [dir]` — same, as
   user commands.
 

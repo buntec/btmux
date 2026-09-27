@@ -365,7 +365,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => error_response(id, &e),
             }
         }
-        "git_discard" => {
+        "git_discard" | "git_delete_untracked" => {
             let path = request
                 .payload
                 .get("path")
@@ -378,13 +378,18 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .unwrap_or(".");
             let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
-            if let Err(e) = file_git::git_discard_file(&status_root, path).await {
+            let result = if request.msg_type == "git_delete_untracked" {
+                file_git::git_delete_untracked_file(&status_root, path).await
+            } else {
+                file_git::git_discard_file(&status_root, path).await
+            };
+            if let Err(e) = result {
                 return error_response(id, &e);
             }
             match file_git::git_status(&status_root, true).await {
                 Ok(status) => ServerMessage {
                     id,
-                    msg_type: "git_discard_result".to_string(),
+                    msg_type: format!("{}_result", request.msg_type),
                     payload: serde_json::json!({ "status": status }),
                 },
                 Err(e) => error_response(id, &e),

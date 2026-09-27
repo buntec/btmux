@@ -116,7 +116,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
     null,
   );
-  const [pendingDiscard, setPendingDiscard] = useState<{ path: string } | null>(null);
+  const [pendingDiscard, setPendingDiscard] = useState<{ path: string; untracked: boolean } | null>(null);
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -285,13 +285,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   );
 
   const gitDiscard = useCallback(
-    async (path: string) => {
+    async (path: string, untracked: boolean) => {
       try {
-        const resp = await fileSend('git_discard', { path, cwd: currentPath });
+        const resp = await fileSend(untracked ? 'git_delete_untracked' : 'git_discard', { path, cwd: currentPath });
         const payload = resp.payload as { status: GitStatusResult };
         store.getState().setGitStatus(payload.status);
+        if (untracked && store.getState().gitDiff?.path === path) store.getState().setGitDiff(null);
       } catch (e) {
-        console.error('git_discard failed:', e);
+        console.error(`${untracked ? 'git_delete_untracked' : 'git_discard'} failed:`, e);
       }
     },
     [fileSend, currentPath, store],
@@ -624,9 +625,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         e.preventDefault();
         e.stopPropagation();
         if (e.key === 'y' || e.key === 'Y') {
-          const { path } = pendingDiscard;
+          const { path, untracked } = pendingDiscard;
           setPendingDiscard(null);
-          gitDiscard(path);
+          gitDiscard(path, untracked);
         } else if (e.key === 'n' || e.key === 'N') {
           setPendingDiscard(null);
         }
@@ -811,8 +812,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           case 'x': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
-            if (item?.kind === 'file' && item.path && item.section === 'unstaged') {
-              setPendingDiscard({ path: item.path });
+            if (item?.kind === 'file' && item.path && (item.section === 'unstaged' || item.section === 'untracked')) {
+              setPendingDiscard({ path: item.path, untracked: item.section === 'untracked' });
             }
             break;
           }
@@ -1311,7 +1312,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           </span>
         ) : pendingDiscard ? (
           <span className="text-foreground">
-            discard changes to <span className="text-yellow-400">{pendingDiscard.path}</span>?{' '}
+            {pendingDiscard.untracked ? 'permanently delete untracked file' : 'discard changes to'}{' '}
+            <span className="text-yellow-400">{pendingDiscard.path}</span>?{' '}
             <KbdGroup>
               <Kbd>y</Kbd>
             </KbdGroup>{' '}

@@ -162,6 +162,14 @@ pub async fn git_discard_file(root: &Path, path: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+pub async fn git_delete_untracked_file(root: &Path, path: &str) -> Result<(), String> {
+    let root = root.to_path_buf();
+    let path = path.to_string();
+    tokio::task::spawn_blocking(move || git_delete_untracked_file_sync(&root, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 pub async fn git_commit(root: &Path, subject: &str, body: &str) -> Result<(), String> {
     let root = root.to_path_buf();
     let subject = subject.to_string();
@@ -823,6 +831,20 @@ fn git_discard_file_sync(root: &Path, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn git_delete_untracked_file_sync(root: &Path, path: &str) -> Result<(), String> {
+    let status = git_status_sync(root, false)?;
+    if !status.untracked.iter().any(|untracked| untracked == path) {
+        return Err("File is no longer untracked".to_string());
+    }
+
+    let repo = open_repo(root)?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "Repository has no working directory".to_string())?;
+    std::fs::remove_file(workdir.join(path))
+        .map_err(|e| format!("Failed to delete untracked file: {}", e))
+}
+
 fn git_commit_sync(root: &Path, subject: &str, body: &str) -> Result<(), String> {
     let subject = subject.trim();
     if subject.is_empty() {
@@ -876,8 +898,8 @@ fn git_commit_sync(root: &Path, subject: &str, body: &str) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::{
-        count_untracked_lines, git_commit_diff_sync, git_commit_sync, git_diff_file_sync,
-        git_log_sync, git_status_sync,
+        count_untracked_lines, git_commit_diff_sync, git_commit_sync,
+        git_delete_untracked_file_sync, git_diff_file_sync, git_log_sync, git_status_sync,
     };
     use git2::{Repository, Signature};
     use std::fs;
@@ -894,6 +916,28 @@ mod tests {
 
         fs::write(&path, [0, 1, 2]).unwrap();
         assert_eq!(count_untracked_lines(&path).additions, 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn delete_untracked_file_from_nested_directory() {
+        let root = std::env::temp_dir().join(format!("btmux-git-delete-{}", uuid::Uuid::new_v4()));
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let repo = Repository::init(&root).unwrap();
+        let tracked = nested.join("tracked.txt");
+        let untracked = nested.join("untracked.txt");
+        fs::write(&tracked, "keep").unwrap();
+        fs::write(&untracked, "delete").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("nested/tracked.txt")).unwrap();
+        index.write().unwrap();
+
+        assert!(git_delete_untracked_file_sync(&nested, "nested/tracked.txt").is_err());
+        assert!(tracked.exists());
+        git_delete_untracked_file_sync(&nested, "nested/untracked.txt").unwrap();
+        assert!(!untracked.exists());
 
         fs::remove_dir_all(root).unwrap();
     }

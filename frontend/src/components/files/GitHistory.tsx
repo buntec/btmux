@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, GitCommitHorizontal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -30,14 +30,12 @@ function laneX(lane: number): number {
   return GRAPH_LEFT + lane * LANE_GAP;
 }
 
-function transitionPath(transition: GitGraphTransition, row: number): string {
+function transitionPath(transition: GitGraphTransition, fromY: number, toY: number): string {
   const fromX = laneX(transition.fromLane);
   const toX = laneX(transition.toLane);
-  const fromY = row * ROW_HEIGHT + ROW_HEIGHT / 2;
-  const toY = (row + 1) * ROW_HEIGHT + ROW_HEIGHT / 2;
   if (fromX === toX) return `M ${fromX} ${fromY} V ${toY}`;
 
-  const bendY = fromY + ROW_HEIGHT * 0.46;
+  const bendY = fromY + (toY - fromY) * 0.46;
   return `M ${fromX} ${fromY} C ${fromX} ${bendY}, ${toX} ${bendY}, ${toX} ${toY}`;
 }
 
@@ -77,12 +75,40 @@ export function GitHistory() {
   const listRef = useRef<HTMLDivElement>(null);
   const layout = useMemo(() => layoutGitGraph<GitLogCommit>(gitLog?.commits ?? []), [gitLog]);
   const graphWidth = GRAPH_LEFT + Math.max(layout.maxLanes - 1, 0) * LANE_GAP + GRAPH_RIGHT;
-  const graphHeight = layout.rows.length * ROW_HEIGHT;
+  const [rowHeights, setRowHeights] = useState<number[]>([]);
+  const rowCenters: number[] = [];
+  let graphHeight = 0;
+  for (let rowIndex = 0; rowIndex < layout.rows.length; rowIndex += 1) {
+    const height = Math.max(ROW_HEIGHT, rowHeights[rowIndex] ?? ROW_HEIGHT);
+    rowCenters.push(graphHeight + height / 2);
+    graphHeight += height;
+  }
 
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-git-log-index="${gitLogFocusedIndex}"]`);
     el?.scrollIntoView({ block: 'nearest' });
   }, [gitLogFocusedIndex]);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+
+    const rows = Array.from(list.querySelectorAll<HTMLDivElement>('[data-git-log-index]'));
+    const updateRowHeights = () => {
+      const nextHeights = rows.map((row) => row.getBoundingClientRect().height);
+      setRowHeights((current) =>
+        current.length === nextHeights.length &&
+        current.every((height, index) => Math.abs(height - nextHeights[index]) < 0.5)
+          ? current
+          : nextHeights,
+      );
+    };
+
+    const observer = new ResizeObserver(updateRowHeights);
+    rows.forEach((row) => observer.observe(row));
+    updateRowHeights();
+    return () => observer.disconnect();
+  }, [layout.rows]);
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -119,7 +145,7 @@ export function GitHistory() {
                 row.transitions.map((transition, transitionIndex) => (
                   <path
                     key={`${row.commit.id}-${transitionIndex}`}
-                    d={transitionPath(transition, rowIndex)}
+                    d={transitionPath(transition, rowCenters[rowIndex], rowCenters[rowIndex + 1] ?? graphHeight)}
                     fill="none"
                     stroke={graphColor(transition.colorIndex)}
                     strokeLinecap="round"
@@ -170,20 +196,19 @@ export function GitHistory() {
                           commit.is_head ? 'text-theme-yellow' : 'text-muted-foreground',
                         )}
                       />
-                      <span className="min-w-0 flex-1 truncate font-medium text-foreground">{commit.summary}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                        {commit.summary}
+                      </span>
                       {commit.is_head && (
                         <Badge variant="secondary" className="px-1.5 py-0 text-[0.65rem] font-normal">
                           HEAD
                         </Badge>
                       )}
-                      {commit.refs.slice(0, 3).map((ref) => (
+                    </div>
+                    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[0.7rem] text-muted-foreground">
+                      {commit.refs.map((ref) => (
                         <RefLabel key={`${ref.kind}-${ref.name}`} ref={ref} />
                       ))}
-                      {commit.refs.length > 3 && (
-                        <span className="shrink-0 text-[0.65rem] text-muted-foreground">+{commit.refs.length - 3}</span>
-                      )}
-                    </div>
-                    <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[0.7rem] text-muted-foreground">
                       <span className="shrink-0 font-mono">{commit.short_id}</span>
                       <span className="truncate">{commit.author}</span>
                       <span className="shrink-0">·</span>

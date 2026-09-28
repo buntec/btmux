@@ -174,7 +174,12 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
                         return Ok(());
                     }
                 }
-                return Err("Cannot open file: Neovim RPC server is unavailable".into());
+                let command = terminal_editor_open_command(path, *line)?;
+                let mgr = state.read().await;
+                let Some(pane) = mgr.find_pane(*pane_id) else {
+                    return Err("Pane no longer exists".into());
+                };
+                return pane.pty.send_foreground_editor_command(command, pgrp).await;
             }
         }
         let mgr = state.read().await;
@@ -414,13 +419,7 @@ fn vimscript_string(s: &str) -> String {
 /// itself as an RPC client (`--remote-expr`) rather than linking an RPC
 /// client crate — the editor doing the listening is already `nvim`.
 async fn remote_open_in_editor(addr: &str, path: &str, line: Option<u32>) -> Result<(), ()> {
-    let path_literal = vimscript_string(path);
-    let expr = match line.filter(|&l| l >= 1) {
-        Some(line) => {
-            format!("execute(['edit '.fnameescape({path_literal}), 'normal! {line}Gzz'])")
-        }
-        None => format!("execute('edit '.fnameescape({path_literal}))"),
-    };
+    let expr = editor_open_expr(path, line);
     let status = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio::process::Command::new("nvim")
@@ -444,6 +443,24 @@ async fn remote_open_in_editor(addr: &str, path: &str, line: Option<u32>) -> Res
         }
         Err(_) => Err(()),
     }
+}
+
+fn editor_open_expr(path: &str, line: Option<u32>) -> String {
+    let path_literal = vimscript_string(path);
+    match line.filter(|&l| l >= 1) {
+        Some(line) => {
+            format!("execute(['edit '.fnameescape({path_literal}), 'normal! {line}Gzz'])")
+        }
+        None => format!("execute('edit '.fnameescape({path_literal}))"),
+    }
+}
+
+fn terminal_editor_open_command(path: &str, line: Option<u32>) -> Result<Vec<u8>, String> {
+    if path.chars().any(char::is_control) {
+        return Err("Cannot open file: path contains control characters".into());
+    }
+    // Ctrl-\ Ctrl-N returns Neovim to Normal mode before entering Ex mode.
+    Ok(format!("\x1c\x0e:call {}\r", editor_open_expr(path, line)).into_bytes())
 }
 
 async fn foreground_neovim(pgrp: libc::pid_t) -> Option<u32> {
@@ -800,6 +817,16 @@ pub enum NotificationLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_editor_command_escapes_paths_and_rejects_control_characters() {
+        let command = terminal_editor_open_command("/tmp/O' Brien.txt", Some(3)).unwrap();
+        assert_eq!(
+            command,
+            b"\x1c\x0e:call execute(['edit '.fnameescape('/tmp/O'' Brien.txt'), 'normal! 3Gzz'])\r"
+        );
+        assert!(terminal_editor_open_command("/tmp/name\r:quit", None).is_err());
+    }
 
     #[test]
     fn lsof_socket_paths_only_include_local_socket_names() {

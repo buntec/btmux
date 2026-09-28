@@ -17,9 +17,10 @@ pub struct InputSender(mpsc::Sender<PtyInput>);
 
 enum PtyInput {
     Raw(Vec<u8>),
-    ShellCommand {
+    GuardedCommand {
         data: Vec<u8>,
-        shell_pid: libc::pid_t,
+        pgrp: libc::pid_t,
+        mismatch_error: &'static str,
         reply: oneshot::Sender<Result<(), String>>,
     },
 }
@@ -43,19 +44,21 @@ impl InputSender {
             .map_err(|e| format!("PTY input unavailable: {e}"))
     }
 
-    async fn send_shell_command(
+    async fn send_guarded_command(
         &self,
         data: Vec<u8>,
-        shell_pid: libc::pid_t,
+        pgrp: libc::pid_t,
+        mismatch_error: &'static str,
     ) -> Result<(), String> {
         if data.len() > 64 * 1024 {
             return Err("PTY input exceeds 64 KiB".into());
         }
         let (reply, result) = oneshot::channel();
         self.0
-            .send(PtyInput::ShellCommand {
+            .send(PtyInput::GuardedCommand {
                 data,
-                shell_pid,
+                pgrp,
+                mismatch_error,
                 reply,
             })
             .await
@@ -314,23 +317,24 @@ impl PtyHandle {
                             break;
                         }
                     }
-                    PtyInput::ShellCommand {
+                    PtyInput::GuardedCommand {
                         data,
-                        shell_pid,
+                        pgrp,
+                        mismatch_error,
                         reply,
                     } => {
                         let foreground = master_fd_writer
                             .lock()
                             .unwrap()
                             .map(|fd| unsafe { libc::tcgetpgrp(fd) });
-                        let result = if foreground == Some(shell_pid) {
+                        let result = if foreground == Some(pgrp) {
                             writer
                                 .write_all(&data)
                                 .map_err(|e| format!("PTY input unavailable: {e}"))
                         } else {
-                            Err("Cannot open file: the pane is not at a shell prompt".into())
+                            Err(mismatch_error.into())
                         };
-                        let write_failed = foreground == Some(shell_pid) && result.is_err();
+                        let write_failed = foreground == Some(pgrp) && result.is_err();
                         let _ = reply.send(result);
                         if write_failed {
                             break;
@@ -366,7 +370,27 @@ impl PtyHandle {
         let shell_pid = self
             .shell_pid
             .ok_or_else(|| "Cannot open file: pane shell is unavailable".to_string())?;
-        self.input_tx.send_shell_command(data, shell_pid).await
+        self.input_tx
+            .send_guarded_command(
+                data,
+                shell_pid,
+                "Cannot open file: the pane is not at a shell prompt",
+            )
+            .await
+    }
+
+    pub async fn send_foreground_editor_command(
+        &self,
+        data: Vec<u8>,
+        pgrp: libc::pid_t,
+    ) -> Result<(), String> {
+        self.input_tx
+            .send_guarded_command(
+                data,
+                pgrp,
+                "Cannot open file: Neovim is no longer foreground",
+            )
+            .await
     }
 
     /// Record the current foreground process group for a forwarded DSR 6 query.

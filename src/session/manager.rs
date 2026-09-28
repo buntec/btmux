@@ -280,11 +280,7 @@ impl SessionManager {
             self.scrollback_lines(),
         );
 
-        let pane = Pane {
-            id: pane_id,
-            pty,
-            editor_addr: None,
-        };
+        let pane = Pane { id: pane_id, pty };
         let wname = window_name
             .unwrap_or_else(|| self.unique_window_name_in(&[], &shell_name(&self.shell)));
         let window = Window {
@@ -392,7 +388,6 @@ impl SessionManager {
         let new_pane = Pane {
             id: new_pane_id,
             pty,
-            editor_addr: None,
         };
 
         let Some(session) = self.session_mut(session_id) else {
@@ -601,11 +596,7 @@ impl SessionManager {
             self.port,
             self.scrollback_lines(),
         );
-        let pane = Pane {
-            id: pane_id,
-            pty,
-            editor_addr: None,
-        };
+        let pane = Pane { id: pane_id, pty };
         let base = name.unwrap_or_else(|| shell_name(&self.shell));
 
         let Some(session) = self.session_mut(session_id) else {
@@ -952,11 +943,7 @@ impl SessionManager {
                     self.port,
                     self.scrollback_lines(),
                 );
-                Pane {
-                    id: p.id,
-                    pty,
-                    editor_addr: None,
-                }
+                Pane { id: p.id, pty }
             })
             .collect();
         if panes.is_empty() {

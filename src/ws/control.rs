@@ -7,6 +7,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use uuid::Uuid;
 
 use crate::config::ClientConfig;
@@ -161,28 +162,25 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         let Some(pane) = mgr.find_pane(*pane_id) else {
             return Err("Pane no longer exists".into());
         };
-        if let Some(addr) = pane.editor_addr.clone() {
-            drop(mgr);
-            if remote_open_in_editor(&addr, path, *line).await.is_ok() {
-                return Ok(());
-            }
-            let mgr = state.read().await;
-            let Some(pane) = mgr.find_pane(*pane_id) else {
-                return Err("Pane no longer exists".into());
-            };
-            let text = shell_editor_open_command(path, *line);
-            return pane
-                .pty
-                .send_shell_command(text.into_bytes())
-                .await
-                .map_err(|error| {
-                    if error == "Cannot open file: the pane is not at a shell prompt" {
-                        "Cannot open file: Neovim remote open failed, and the pane is not at a shell prompt".into()
-                    } else {
-                        error
+        let foreground = pane.pty.foreground_pgrp();
+        drop(mgr);
+
+        if let Some(pgrp) = foreground {
+            if let Some(pid) = foreground_neovim(pgrp).await {
+                for addr in neovim_socket_paths(pid).await {
+                    if neovim_server_pid(&addr).await == Some(pid)
+                        && remote_open_in_editor(&addr, path, *line).await.is_ok()
+                    {
+                        return Ok(());
                     }
-                });
+                }
+                return Err("Cannot open file: Neovim RPC server is unavailable".into());
+            }
         }
+        let mgr = state.read().await;
+        let Some(pane) = mgr.find_pane(*pane_id) else {
+            return Err("Pane no longer exists".into());
+        };
         let text = shell_editor_open_command(path, *line);
         return pane.pty.send_shell_command(text.into_bytes()).await;
     }
@@ -423,24 +421,136 @@ async fn remote_open_in_editor(addr: &str, path: &str, line: Option<u32>) -> Res
         }
         None => format!("execute('edit '.fnameescape({path_literal}))"),
     };
-    let status = tokio::process::Command::new("nvim")
-        .args(["--server", addr, "--remote-expr", &expr])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await;
+    let status = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("nvim")
+            .args(["--server", addr, "--remote-expr", &expr])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status(),
+    )
+    .await;
     match status {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => {
             tracing::warn!(%addr, %status, "nvim --remote-expr exited with an error");
             Err(())
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             tracing::warn!(%addr, %error, "failed to run nvim --remote-expr");
             Err(())
         }
+        Err(_) => Err(()),
     }
+}
+
+async fn foreground_neovim(pgrp: libc::pid_t) -> Option<u32> {
+    tokio::task::spawn_blocking(move || {
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        system.processes().values().find_map(|process| {
+            let pid = process.pid().as_u32();
+            let name = process.name().to_string_lossy();
+            (name == "nvim" && unsafe { libc::getpgid(pid as libc::pid_t) } == pgrp).then_some(pid)
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+async fn neovim_socket_paths(pid: u32) -> Vec<String> {
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("lsof")
+            .args(["-nP", "-a", "-p", &pid.to_string(), "-U", "-Fn"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
+    let paths = match result {
+        Ok(Ok(output)) if output.status.success() => parse_lsof_socket_paths(&output.stdout),
+        _ => Vec::new(),
+    };
+    #[cfg(target_os = "linux")]
+    {
+        let mut paths = paths;
+        let linux_paths = tokio::task::spawn_blocking(move || linux_socket_paths(pid))
+            .await
+            .unwrap_or_default();
+        for path in linux_paths {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        return paths;
+    }
+    #[cfg(not(target_os = "linux"))]
+    paths
+}
+
+#[cfg(target_os = "linux")]
+fn linux_socket_paths(pid: u32) -> Vec<String> {
+    use std::collections::HashSet;
+    let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return Vec::new();
+    };
+    let inodes: HashSet<String> = fds
+        .flatten()
+        .filter_map(|fd| std::fs::read_link(fd.path()).ok())
+        .filter_map(|link| {
+            let link = link.to_string_lossy();
+            link.strip_prefix("socket:[")?
+                .strip_suffix(']')
+                .map(str::to_owned)
+        })
+        .collect();
+    let Ok(sockets) = std::fs::read_to_string("/proc/net/unix") else {
+        return Vec::new();
+    };
+    sockets
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let inode = fields.nth(6)?;
+            let path = fields.next()?;
+            (inodes.contains(inode) && path.starts_with('/')).then(|| path.to_owned())
+        })
+        .collect()
+}
+
+fn parse_lsof_socket_paths(output: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .filter(|name| name.starts_with('/') && !name.contains(" -> "))
+        .map(str::to_owned)
+        .collect()
+}
+
+async fn neovim_server_pid(addr: &str) -> Option<u32> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("nvim")
+            .args(["--server", addr, "--remote-expr", "getpid()"])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().parse().ok())
+        .flatten()
 }
 
 /// Run a built-in command-palette entry (`prefix + :`). Unlike the structural
@@ -605,8 +715,8 @@ pub(crate) enum ClientMessage {
         pane_id: Uuid,
         text: String,
     },
-    /// Open a file (from the file browser) into the pane's registered editor
-    /// (`Pane::editor_addr`) if any, else run `$EDITOR` when the shell is foreground.
+    /// Open a file in the pane's foreground Neovim, or run `$EDITOR` when the
+    /// shell is foreground.
     OpenFile {
         pane_id: Uuid,
         path: String,
@@ -690,6 +800,16 @@ pub enum NotificationLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lsof_socket_paths_only_include_local_socket_names() {
+        let output = b"p123\nf4u\nn/var/folders/tmp/nvim/socket\nf5u\nn/other -> /target\nf6u\nn127.0.0.1:1234\n";
+        assert_eq!(
+            parse_lsof_socket_paths(output),
+            vec!["/var/folders/tmp/nvim/socket"]
+        );
+    }
+
     #[tokio::test]
     async fn lag_recovery_uses_current_state_then_continues_streaming() {
         let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();

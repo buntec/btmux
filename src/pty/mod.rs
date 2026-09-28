@@ -164,6 +164,16 @@ impl PtyHandle {
         self.shell_pid.and_then(|pid| pid.try_into().ok())
     }
 
+    pub fn foreground_pgrp(&self) -> Option<libc::pid_t> {
+        self.master_fd
+            .lock()
+            .unwrap()
+            .and_then(|fd| match unsafe { libc::tcgetpgrp(fd) } {
+                pgrp if pgrp > 0 => Some(pgrp),
+                _ => None,
+            })
+    }
+
     pub fn ensure_spawned(&mut self, cols: u16, rows: u16) -> Result<(), String> {
         validate_size(cols, rows)?;
         {

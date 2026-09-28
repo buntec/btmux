@@ -48,14 +48,11 @@ every connected browser tab
 to the pane's window and session before opening the overlay there.
 For file mode, optional `focus_file` names an entry in `path` to focus on open.
 
-Its optional `editor_addr` registers an RPC address (currently only a Neovim
-`v:servername`/`--listen` address is supported) for that pane. Selecting a
-file in the browser then remote-opens it — jumping to the right line — in
-that already-running editor instead of spawning a fresh `$EDITOR` in the
-pane's shell. Without `editor_addr` — or if the remote-open call fails, e.g.
-because that editor already exited — selecting a file runs `$EDITOR` only if
-the pane's shell owns the terminal. If another program is in the foreground,
-the browser shows an error and leaves that program's input untouched.
+When Neovim owns the pane's terminal, selecting a file opens it in that
+instance through its RPC server. Otherwise, selecting a file runs `$EDITOR`
+only if the pane's shell owns the terminal. If another program is in the
+foreground, the browser shows an error and leaves that program's input
+untouched.
 
 | Method and path                                                 | Purpose                                                   |
 | --------------------------------------------------------------- | --------------------------------------------------------- |
@@ -170,12 +167,5 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
   -X POST --data-binary @- \
   "$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/notify"
 ```
-
-## Editor integration
-
-[`extras/neovim/btmux.nvim`](../extras/neovim/btmux.nvim) is a small Neovim
-plugin that opens the btmux file browser at the current buffer's directory,
-using the same `BTMUX_PANE_ID`/`BTMUX_API_URL`/`BTMUX_AUTH_TOKEN` environment
-variables. See its README for installation with lazy.nvim/packer.
 
 [Back to the README](../README.md)

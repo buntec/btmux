@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from './ui/field';
-import { desktopVibrancy } from '../lib/desktopVibrancy';
+import { desktopTransparency } from '../lib/desktopTransparency';
 
 // Vite serves the development HTML itself, so it cannot issue the backend's
 // browser password challenge. This gate authenticates before opening sockets.
@@ -35,7 +35,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (authenticated) return children;
   return (
     <main
-      className={`flex min-h-screen items-center justify-center text-foreground p-6 ${desktopVibrancy ? '' : 'bg-background'}`}
+      className={`flex min-h-screen items-center justify-center text-foreground p-6 ${desktopTransparency ? '' : 'bg-background'}`}
     >
       <form
         className="flex w-full max-w-sm flex-col gap-6"

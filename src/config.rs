@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use serde::{de::Error, Deserialize, Deserializer, Serialize};
 
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8004;
@@ -17,6 +17,7 @@ pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
 pub const DEFAULT_WALLPAPER_SHADER: &str = "radiant:aurora-curtain";
 pub const DEFAULT_WALLPAPER_OPACITY: f32 = 0.10;
+pub const DEFAULT_DESKTOP_BACKGROUND_OPACITY: f32 = 0.65;
 pub const DEFAULT_WALLPAPER_BLUR: f32 = 0.0;
 pub const DEFAULT_WALLPAPER_SATURATE: f32 = 0.05;
 pub const DEFAULT_WALLPAPER_SPEED: f32 = 0.20;
@@ -46,6 +47,14 @@ pub const MAX_FONT_SIZE: f32 = 72.0;
 
 pub const DEFAULT_CONSOLE_LOG: &str = "warn";
 pub const DEFAULT_FILE_LOG: &str = "info";
+
+fn unit_opacity<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f32>, D::Error> {
+    let value = Option::<f32>::deserialize(deserializer)?;
+    if value.is_some_and(|value| !(0.0..=1.0).contains(&value)) {
+        return Err(D::Error::custom("opacity must be between 0 and 1"));
+    }
+    Ok(value)
+}
 
 /// Resolve the shell used for newly-created panes when no CLI override exists.
 pub fn resolve_shell(configured: Option<&str>) -> String {
@@ -222,6 +231,13 @@ pub struct FileConfig {
     /// Defaults to 0.10 when a wallpaper is configured.
     #[serde(rename = "wallpaper-opacity")]
     pub wallpaper_opacity: Option<f32>,
+    /// Opacity of the macOS desktop window's theme tint. 0 = clear, 1 = opaque.
+    #[serde(
+        rename = "desktop-background-opacity",
+        default,
+        deserialize_with = "unit_opacity"
+    )]
+    pub desktop_background_opacity: Option<f32>,
     /// Gaussian blur radius in pixels applied to the wallpaper.
     /// 0 = no blur, higher values = more blur. Defaults to 0.0.
     #[serde(rename = "wallpaper-blur")]
@@ -322,6 +338,7 @@ impl Default for FileConfig {
             wallpaper: None,
             wallpaper_shader: Some(DEFAULT_WALLPAPER_SHADER.to_string()),
             wallpaper_opacity: Some(DEFAULT_WALLPAPER_OPACITY),
+            desktop_background_opacity: Some(DEFAULT_DESKTOP_BACKGROUND_OPACITY),
             wallpaper_blur: Some(DEFAULT_WALLPAPER_BLUR),
             wallpaper_saturate: Some(DEFAULT_WALLPAPER_SATURATE),
             wallpaper_speed: Some(DEFAULT_WALLPAPER_SPEED),
@@ -698,6 +715,8 @@ pub struct ClientConfig {
     /// Opacity of the wallpaper: 0.0 = invisible, 1.0 = fully visible.
     /// Always `Some` when a wallpaper is configured (defaults to 0.10).
     pub wallpaper_opacity: Option<f32>,
+    /// Opacity of the macOS desktop window's theme tint.
+    pub desktop_background_opacity: f32,
     /// Blur radius in pixels for the wallpaper. `None` when no wallpaper.
     pub wallpaper_blur: Option<f32>,
     /// Saturation multiplier for the wallpaper: 0.0 = grayscale, 1.0 = normal.
@@ -1070,6 +1089,8 @@ pub fn generate_config_toml() -> String {
 # wallpaper-shader = "{DEFAULT_WALLPAPER_SHADER}"
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = {DEFAULT_WALLPAPER_OPACITY:.2}
+# macOS desktop window theme tint: 0.0 = clear, 1.0 = opaque.
+# desktop-background-opacity = {DEFAULT_DESKTOP_BACKGROUND_OPACITY:.2}
 # Gaussian blur radius in pixels applied to the wallpaper. 0 = no blur.
 # wallpaper-blur = {DEFAULT_WALLPAPER_BLUR:.1}
 # Saturation multiplier: 0.0 = grayscale, 1.0 = normal color.
@@ -1373,6 +1394,9 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_shader: file.wallpaper_shader.clone(),
         wallpaper_path,
         wallpaper_opacity,
+        desktop_background_opacity: file
+            .desktop_background_opacity
+            .unwrap_or(DEFAULT_DESKTOP_BACKGROUND_OPACITY),
         wallpaper_blur,
         wallpaper_saturate,
         wallpaper_speed,
@@ -1447,6 +1471,7 @@ pub struct ConfigUpdate {
     pub wallpaper: Option<String>,
     pub wallpaper_shader: Option<String>,
     pub wallpaper_opacity: Option<f32>,
+    pub desktop_background_opacity: Option<f32>,
     pub wallpaper_blur: Option<f32>,
     pub wallpaper_saturate: Option<f32>,
     pub wallpaper_speed: Option<f32>,
@@ -1553,6 +1578,9 @@ impl ConfigUpdate {
         }
         if other.wallpaper_opacity.is_some() {
             self.wallpaper_opacity = other.wallpaper_opacity;
+        }
+        if other.desktop_background_opacity.is_some() {
+            self.desktop_background_opacity = other.desktop_background_opacity;
         }
         if other.wallpaper_blur.is_some() {
             self.wallpaper_blur = other.wallpaper_blur;
@@ -1688,6 +1716,9 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(opacity) = overrides.wallpaper_opacity {
         file.wallpaper_opacity = Some(opacity.clamp(0.0, 1.0));
+    }
+    if let Some(opacity) = overrides.desktop_background_opacity {
+        file.desktop_background_opacity = Some(opacity.clamp(0.0, 1.0));
     }
     if let Some(blur) = overrides.wallpaper_blur {
         file.wallpaper_blur = Some(blur.clamp(0.0, 50.0));
@@ -1839,6 +1870,7 @@ palette:
             Some("radiant:aurora-curtain")
         );
         assert_eq!(resolved.wallpaper_opacity, Some(0.10));
+        assert_eq!(resolved.desktop_background_opacity, 0.65);
         assert_eq!(resolved.wallpaper_saturate, Some(0.05));
         assert_eq!(resolved.wallpaper_blur, Some(0.0));
         assert_eq!(resolved.wallpaper_speed, 0.20);
@@ -1855,6 +1887,18 @@ palette:
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.10);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
+    }
+
+    #[test]
+    fn desktop_background_opacity_accepts_only_unit_interval() {
+        for value in ["0", "0.5", "1"] {
+            let toml = format!("desktop-background-opacity = {value}");
+            assert!(toml::from_str::<FileConfig>(&toml).is_ok());
+        }
+        for value in ["-0.1", "1.1", "nan"] {
+            let toml = format!("desktop-background-opacity = {value}");
+            assert!(toml::from_str::<FileConfig>(&toml).is_err());
+        }
     }
 
     #[test]

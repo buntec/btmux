@@ -105,6 +105,10 @@ wallpaper_shader: string | null,
  */
 wallpaper_opacity: number | null, 
 /**
+ * Opacity of the macOS desktop window's theme tint.
+ */
+desktop_background_opacity: number, 
+/**
  * Blur radius in pixels for the wallpaper. `None` when no wallpaper.
  */
 wallpaper_blur: number | null, 
@@ -191,7 +195,7 @@ active_color_scheme: string | null,
 fonts: Array<FontEntry>, };
 
 // prettier-ignore
-export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, wallpaper?: string, wallpaper_shader?: string, wallpaper_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, 
+export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, wallpaper?: string, wallpaper_shader?: string, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, 
 /**
  * Post-process effect name; the empty string clears it.
  */

@@ -18,6 +18,7 @@ import { TooltipProvider } from './components/ui/tooltip';
 import { DEFAULT_THEME } from './state/defaultTheme';
 import {
   getAnimations,
+  getDesktopBackgroundOpacity,
   getTerminalFontFamily,
   getTerminalFontWeight,
   getWallpaperBlur,
@@ -39,7 +40,7 @@ import {
 } from './lib/terminalFxShaders';
 import { baseShaderSrc } from './lib/baseShader';
 import { pumpRenders } from './lib/pumpRenders';
-import { pageBackground } from './lib/desktopVibrancy';
+import { pageBackground } from './lib/desktopTransparency';
 
 // Must match the ramp shaders' own rampSeconds constants in terminalFxShaders.ts.
 const PIX_RAMP_IN_MS = 250;
@@ -375,9 +376,12 @@ export function App() {
   }, [effectiveConfig?.terminal?.fontFamily, effectiveConfig?.terminal?.fontWeight]);
 
   useEffect(() => {
-    document.body.style.background = pageBackground(effectiveConfig?.theme?.background ?? DEFAULT_THEME.background);
+    document.body.style.background = pageBackground(
+      effectiveConfig?.theme?.background ?? DEFAULT_THEME.background,
+      getDesktopBackgroundOpacity(effectiveConfig),
+    );
     applyThemeVars(effectiveConfig?.theme ?? DEFAULT_THEME);
-  }, [effectiveConfig?.theme]);
+  }, [effectiveConfig?.theme, effectiveConfig?.desktop_background_opacity]);
 
   if (allSessions.length === 0 || !config) {
     const cached = (() => {
@@ -394,7 +398,7 @@ export function App() {
     return (
       <div
         style={{
-          background: pageBackground(bg),
+          background: pageBackground(bg, getDesktopBackgroundOpacity(config)),
           height: '100vh',
           display: 'flex',
           alignItems: 'center',

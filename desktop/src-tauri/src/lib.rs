@@ -3,10 +3,10 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 use tauri::webview::cookie::SameSite;
 use tauri::webview::{Cookie, WebviewWindowBuilder};
-#[cfg(target_os = "macos")]
-use tauri::window::{Effect, EffectsBuilder};
 use tauri::{Manager, RunEvent, WebviewUrl};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -80,8 +80,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let window_builder = window_builder
                 .transparent(true)
-                .effects(EffectsBuilder::new().effect(Effect::UnderWindowBackground).build())
-                .initialization_script("window.__btmuxDesktopVibrancy = true;");
+                .title_bar_style(TitleBarStyle::Transparent)
+                .initialization_script("window.__btmuxDesktopTransparency = true;");
             let window = window_builder.build()?;
 
             std::thread::spawn(move || {

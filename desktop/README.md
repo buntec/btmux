@@ -4,7 +4,7 @@
 
 The desktop app starts its bundled btmux server on an available loopback port with the `desktop` profile. It creates a fresh access token for each launch and installs it as an HTTP-only cookie in its webview before opening the server UI. The browser version and its default profile remain available separately. Closing the desktop app stops its server, which saves the session tree; running shells are not restored on the next launch.
 
-On macOS, the window uses a translucent backdrop and requires Tauri's `macos-private-api` feature. The Linux window remains opaque. The macOS build cannot be distributed through the Mac App Store while that feature is enabled.
+On macOS, the window is transparent with a theme-colored tint. Set `desktop-background-opacity = 0.65` in `config.toml` to adjust the tint from clear (`0`) to opaque (`1`); changes reload live. The Linux window remains opaque. macOS transparency requires Tauri's `macos-private-api` feature, so this build cannot be distributed through the Mac App Store.
 
 Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users.
 

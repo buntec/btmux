@@ -8,6 +8,7 @@ import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import {
+  getDesktopBackgroundOpacity,
   getFontWeightRange,
   getPaneSwitchBorderSpeed,
   getPaneSwitchDuration,
@@ -70,6 +71,7 @@ type Draft = {
   wallpaper: string;
   wallpaperShader: string;
   wallpaperOpacity: number;
+  desktopBackgroundOpacity: number;
   wallpaperBlur: number;
   wallpaperSaturate: number;
   wallpaperSpeed: number;
@@ -201,6 +203,7 @@ function initialDraft(config: ClientConfig): Draft {
     wallpaper: config.wallpaper ?? '',
     wallpaperShader: config.wallpaper_shader ?? '',
     wallpaperOpacity: getWallpaperOpacity(config),
+    desktopBackgroundOpacity: getDesktopBackgroundOpacity(config),
     wallpaperBlur: getWallpaperBlur(config),
     wallpaperSaturate: getWallpaperSaturate(config),
     wallpaperSpeed: getWallpaperSpeed(config),
@@ -235,6 +238,7 @@ const TOML_DEFAULTS = {
   windowGridCount: 4,
   wallpaperShader: 'radiant:aurora-curtain',
   wallpaperOpacity: 0.1,
+  desktopBackgroundOpacity: 0.65,
   wallpaperBlur: 0,
   wallpaperSaturate: 0.05,
   wallpaperSpeed: 0.2,
@@ -303,6 +307,7 @@ function toToml(draft: Draft): string {
     optLine('wallpaper', draft.wallpaper),
     strLine('wallpaper-shader', draft.wallpaperShader, TOML_DEFAULTS.wallpaperShader),
     numLine('wallpaper-opacity', draft.wallpaperOpacity, TOML_DEFAULTS.wallpaperOpacity, 2),
+    numLine('desktop-background-opacity', draft.desktopBackgroundOpacity, TOML_DEFAULTS.desktopBackgroundOpacity, 2),
     numLine('wallpaper-blur', draft.wallpaperBlur, TOML_DEFAULTS.wallpaperBlur, 1),
     numLine('wallpaper-saturate', draft.wallpaperSaturate, TOML_DEFAULTS.wallpaperSaturate, 2),
     numLine('wallpaper-speed', draft.wallpaperSpeed, TOML_DEFAULTS.wallpaperSpeed, 2),
@@ -381,6 +386,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('wallpaper')) update.wallpaper = draft.wallpaper;
   if (dirty.has('wallpaperShader')) update.wallpaper_shader = draft.wallpaperShader;
   if (dirty.has('wallpaperOpacity')) update.wallpaper_opacity = draft.wallpaperOpacity;
+  if (dirty.has('desktopBackgroundOpacity')) update.desktop_background_opacity = draft.desktopBackgroundOpacity;
   if (dirty.has('wallpaperBlur')) update.wallpaper_blur = draft.wallpaperBlur;
   if (dirty.has('wallpaperSaturate')) update.wallpaper_saturate = draft.wallpaperSaturate;
   if (dirty.has('wallpaperSpeed')) update.wallpaper_speed = draft.wallpaperSpeed;
@@ -471,6 +477,7 @@ export function ConfigPage({ config, send }: Props) {
       wallpaper: draft.wallpaper || null,
       wallpaper_shader: draft.wallpaperShader || null,
       wallpaper_opacity: draft.wallpaperOpacity,
+      desktop_background_opacity: draft.desktopBackgroundOpacity,
       wallpaper_blur: draft.wallpaperBlur,
       wallpaper_saturate: draft.wallpaperSaturate,
       wallpaper_speed: draft.wallpaperSpeed,
@@ -707,6 +714,18 @@ export function ConfigPage({ config, send }: Props) {
                         />
                       </Field>
                     </FieldGroup>
+                  </FieldSet>
+                  <FieldSet>
+                    <FieldLegend>Desktop window</FieldLegend>
+                    <FieldDescription>macOS only. Set the theme tint from clear (0) to opaque (1).</FieldDescription>
+                    <RangeField
+                      label="Background opacity"
+                      value={draft.desktopBackgroundOpacity}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      onChange={(value) => update('desktopBackgroundOpacity', value)}
+                    />
                   </FieldSet>
                 </FieldGroup>
               </TabsContent>

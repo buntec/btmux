@@ -95,8 +95,22 @@ clean:
 # Bump version (patch by default; `just bump minor` or `just bump major`)
 # Requires cargo-edit: `cargo install cargo-edit`
 bump level="patch":
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo set-version --bump {{level}}
-    @echo "bumped to $(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')"
+    version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+    cargo set-version --manifest-path desktop/src-tauri/Cargo.toml "$version"
+    python3 - "$version" <<'PY'
+    import json
+    import pathlib
+    import sys
+
+    path = pathlib.Path('desktop/src-tauri/tauri.conf.json')
+    config = json.loads(path.read_text())
+    config['version'] = sys.argv[1]
+    path.write_text(json.dumps(config, indent=2) + '\n')
+    PY
+    echo "bumped to $version"
 
 # Update the Nix package to the latest published GitHub release.
 update-nix-package:

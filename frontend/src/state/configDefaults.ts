@@ -11,7 +11,7 @@ export const CONFIG_DEFAULTS = {
   showPaneTitles: false,
   wallpaperShader: 'radiant:aurora-curtain',
   wallpaperOpacity: 0.1,
-  desktopBackgroundOpacity: 0.65,
+  desktopBackgroundOpacity: 0.8,
   wallpaperBlur: 0,
   wallpaperSaturate: 0.05,
   wallpaperSpeed: 0.2,

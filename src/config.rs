@@ -17,7 +17,7 @@ pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
 pub const DEFAULT_WALLPAPER_SHADER: &str = "radiant:aurora-curtain";
 pub const DEFAULT_WALLPAPER_OPACITY: f32 = 0.10;
-pub const DEFAULT_DESKTOP_BACKGROUND_OPACITY: f32 = 0.65;
+pub const DEFAULT_DESKTOP_BACKGROUND_OPACITY: f32 = 0.8;
 pub const DEFAULT_WALLPAPER_BLUR: f32 = 0.0;
 pub const DEFAULT_WALLPAPER_SATURATE: f32 = 0.05;
 pub const DEFAULT_WALLPAPER_SPEED: f32 = 0.20;
@@ -1870,7 +1870,7 @@ palette:
             Some("radiant:aurora-curtain")
         );
         assert_eq!(resolved.wallpaper_opacity, Some(0.10));
-        assert_eq!(resolved.desktop_background_opacity, 0.65);
+        assert_eq!(resolved.desktop_background_opacity, 0.8);
         assert_eq!(resolved.wallpaper_saturate, Some(0.05));
         assert_eq!(resolved.wallpaper_blur, Some(0.0));
         assert_eq!(resolved.wallpaper_speed, 0.20);

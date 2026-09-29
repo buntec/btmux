@@ -4,6 +4,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
+use std::ffi::CStr;
+#[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
 use tauri::webview::cookie::SameSite;
 use tauri::webview::{Cookie, WebviewWindowBuilder};
@@ -12,6 +14,34 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
 struct Server(Mutex<Option<CommandChild>>);
+
+#[cfg(target_os = "macos")]
+fn login_shell() -> Option<String> {
+    let user = unsafe { libc::getpwuid(libc::getuid()) };
+    if user.is_null() || unsafe { (*user).pw_shell.is_null() } {
+        return None;
+    }
+    let shell = unsafe { CStr::from_ptr((*user).pw_shell) };
+    let shell = shell.to_str().ok()?;
+    (!shell.is_empty()).then(|| shell.to_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn login_path(shell: &str) -> Option<String> {
+    let output = std::process::Command::new(shell)
+        .args(["-l", "-i", "-c", "exec /usr/bin/printenv PATH"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    stdout
+        .lines()
+        .last()
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+}
 
 fn unused_loopback_port() -> std::io::Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
@@ -41,9 +71,20 @@ pub fn run() {
         .setup(|app| {
             let port = unused_loopback_port()?;
             let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
-            let (mut events, child) = app
-                .shell()
-                .sidecar("btmux")?
+            #[cfg(target_os = "macos")]
+            let user_shell = login_shell();
+            let mut sidecar = app.shell().sidecar("btmux")?;
+            #[cfg(target_os = "macos")]
+            if let Some(shell) = user_shell.as_deref() {
+                // GUI launches miss PATH additions from interactive shell startup.
+                if let Some(path) = login_path(shell) {
+                    sidecar = sidecar.env("PATH", path);
+                }
+                if std::env::var_os("SHELL").is_none() {
+                    sidecar = sidecar.env("SHELL", shell);
+                }
+            }
+            let (mut events, child) = sidecar
                 .args([
                     "--host",
                     "127.0.0.1",

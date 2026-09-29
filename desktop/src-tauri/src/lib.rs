@@ -127,10 +127,11 @@ pub fn run() {
             {
                 #[cfg(unix)]
                 {
-                    if unsafe { libc::kill(child.pid() as i32, libc::SIGTERM) } == 0 {
-                        std::thread::sleep(Duration::from_secs(3));
+                    if unsafe { libc::kill(child.pid() as i32, libc::SIGTERM) } != 0 {
+                        let _ = child.kill();
                     }
                 }
+                #[cfg(not(unix))]
                 let _ = child.kill();
             }
         });

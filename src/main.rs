@@ -287,6 +287,11 @@ async fn main() {
         }
     }
 
+    let drain_timeout = if args.desktop_parent_pid.is_some() {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(2)
+    };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
         shutdown_signal(args.desktop_parent_pid).await;
@@ -296,7 +301,7 @@ async fn main() {
         result = serve => result.unwrap(),
         _ = async {
             let _ = shutdown_rx.await;
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(drain_timeout).await;
         } => tracing::warn!("timed out waiting for connections to close"),
     }
     if let Some(path) = state_file {

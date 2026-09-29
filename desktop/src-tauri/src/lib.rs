@@ -72,7 +72,7 @@ pub fn run() {
             });
 
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("btmux")
+                .title("")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(640.0, 400.0)
                 .build()?;

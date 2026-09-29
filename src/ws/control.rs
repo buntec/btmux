@@ -7,7 +7,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use uuid::Uuid;
 
 use crate::config::ClientConfig;
@@ -166,12 +166,15 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         drop(mgr);
 
         if let Some(pgrp) = foreground {
-            if let Some(pid) = foreground_neovim(pgrp).await {
-                for addr in neovim_socket_paths(pid).await {
-                    if neovim_server_pid(&addr).await == Some(pid)
-                        && remote_open_in_editor(&addr, path, *line).await.is_ok()
-                    {
-                        return Ok(());
+            let neovim_pids = foreground_neovim_pids(pgrp).await;
+            if !neovim_pids.is_empty() {
+                for pid in neovim_pids {
+                    for addr in neovim_socket_paths(pid).await {
+                        if neovim_server_pid(&addr).await == Some(pid)
+                            && remote_open_in_editor(&addr, path, *line).await.is_ok()
+                        {
+                            return Ok(());
+                        }
                     }
                 }
                 let command = terminal_editor_open_command(path, *line)?;
@@ -463,23 +466,37 @@ fn terminal_editor_open_command(path: &str, line: Option<u32>) -> Result<Vec<u8>
     Ok(format!("\x1c\x0e:call {}\r", editor_open_expr(path, line)).into_bytes())
 }
 
-async fn foreground_neovim(pgrp: libc::pid_t) -> Option<u32> {
+async fn foreground_neovim_pids(pgrp: libc::pid_t) -> Vec<u32> {
     tokio::task::spawn_blocking(move || {
         let mut system = System::new();
         system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            ProcessRefreshKind::nothing(),
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::OnlyIfNotSet),
         );
-        system.processes().values().find_map(|process| {
-            let pid = process.pid().as_u32();
-            let name = process.name().to_string_lossy();
-            (name == "nvim" && unsafe { libc::getpgid(pid as libc::pid_t) } == pgrp).then_some(pid)
-        })
+        let processes = system.processes();
+        let mut editors = Vec::new();
+        for tui in processes.values().filter(|process| {
+            process.name().to_string_lossy() == "nvim"
+                && unsafe { libc::getpgid(process.pid().as_u32() as libc::pid_t) } == pgrp
+        }) {
+            // Current Neovim runs the editor as a child server of the TUI.
+            for child in processes.values().filter(|process| {
+                process.parent() == Some(tui.pid())
+                    && process.name().to_string_lossy() == "nvim"
+                    && process
+                        .cmd()
+                        .iter()
+                        .any(|arg| arg.to_string_lossy() == "--embed")
+            }) {
+                editors.push(child.pid().as_u32());
+            }
+            editors.push(tui.pid().as_u32());
+        }
+        editors
     })
     .await
-    .ok()
-    .flatten()
+    .unwrap_or_default()
 }
 
 async fn neovim_socket_paths(pid: u32) -> Vec<String> {
@@ -817,6 +834,50 @@ pub enum NotificationLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use portable_pty::PtySystem;
+
+    #[tokio::test]
+    async fn finds_rpc_server_in_neovim_tui_child() {
+        if std::process::Command::new("nvim")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let pair = portable_pty::NativePtySystem::default()
+            .openpty(portable_pty::PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut command = portable_pty::CommandBuilder::new("nvim");
+        command.arg("-u");
+        command.arg("NONE");
+        command.env("TERM", "xterm-256color");
+        let mut tui = pair.slave.spawn_command(command).unwrap();
+        let tui_pid = tui.process_id().unwrap();
+        let pgrp = unsafe { libc::getpgid(tui_pid as libc::pid_t) };
+        let detected = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                for pid in foreground_neovim_pids(pgrp).await {
+                    for addr in neovim_socket_paths(pid).await {
+                        if neovim_server_pid(&addr).await == Some(pid) {
+                            return Some(pid);
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+        let _ = tui.kill();
+        assert!(detected.is_some());
+    }
 
     #[test]
     fn terminal_editor_command_escapes_paths_and_rejects_control_characters() {

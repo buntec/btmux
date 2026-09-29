@@ -15,6 +15,7 @@ import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
 import { LatexOverlay } from './LatexOverlay';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
 import { cn } from '../lib/utils';
+import { desktopVibrancy } from '../lib/desktopVibrancy';
 import {
   CONFIG_DEFAULTS,
   getAnimations,
@@ -93,10 +94,9 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   // number of lines even for wide/colored output (10000 lines → 10 MB, matching
   // upstream Ghostty's default).
   if (t?.scrollback != null) opts.scrollback = t.scrollback * SCROLLBACK_BYTES_PER_LINE;
-  // When a wallpaper is configured, enable transparency so it shows through
-  // the terminal background; explicit allow-transparency still wins.
+  // Let wallpapers and the desktop backdrop show through the terminal.
   const hasWallpaper = config?.wallpaper != null || config?.wallpaper_shader != null;
-  const allowTransparency = t?.allowTransparency ?? (hasWallpaper ? true : null);
+  const allowTransparency = t?.allowTransparency ?? (hasWallpaper || desktopVibrancy ? true : null);
   if (allowTransparency != null) opts.allowTransparency = allowTransparency;
   if (t?.convertEol != null) opts.convertEol = t.convertEol;
   if (t?.disableStdin != null) opts.disableStdin = t.disableStdin;

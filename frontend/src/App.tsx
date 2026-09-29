@@ -39,6 +39,7 @@ import {
 } from './lib/terminalFxShaders';
 import { baseShaderSrc } from './lib/baseShader';
 import { pumpRenders } from './lib/pumpRenders';
+import { pageBackground } from './lib/desktopVibrancy';
 
 // Must match the ramp shaders' own rampSeconds constants in terminalFxShaders.ts.
 const PIX_RAMP_IN_MS = 250;
@@ -374,7 +375,7 @@ export function App() {
   }, [effectiveConfig?.terminal?.fontFamily, effectiveConfig?.terminal?.fontWeight]);
 
   useEffect(() => {
-    document.body.style.background = effectiveConfig?.theme?.background ?? DEFAULT_THEME.background;
+    document.body.style.background = pageBackground(effectiveConfig?.theme?.background ?? DEFAULT_THEME.background);
     applyThemeVars(effectiveConfig?.theme ?? DEFAULT_THEME);
   }, [effectiveConfig?.theme]);
 
@@ -393,7 +394,7 @@ export function App() {
     return (
       <div
         style={{
-          background: bg,
+          background: pageBackground(bg),
           height: '100vh',
           display: 'flex',
           alignItems: 'center',

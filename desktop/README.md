@@ -4,6 +4,8 @@
 
 The desktop app starts its bundled btmux server on an available loopback port with the `desktop` profile. It creates a fresh access token for each launch and installs it as an HTTP-only cookie in its webview before opening the server UI. The browser version and its default profile remain available separately. Closing the desktop app stops its server, which saves the session tree; running shells are not restored on the next launch.
 
+On macOS, the window uses a translucent backdrop and requires Tauri's `macos-private-api` feature. The Linux window remains opaque. The macOS build cannot be distributed through the Mac App Store while that feature is enabled.
+
 Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users.
 
 `app-icon.svg` is the desktop icon source. After editing it, run `cd desktop && bunx tauri icon app-icon.svg` to regenerate the bundled icons.

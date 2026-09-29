@@ -4,6 +4,7 @@ import { Activity, FolderOpen, GitBranch, Keyboard, Settings2 } from 'lucide-rea
 import { useStore, type FileBrowserMode, type PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette, mix } from '../lib/chrome-colors';
+import { pageBackground } from '../lib/desktopVibrancy';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { AgentState, AgentStatus, PaneState, Theme } from '../state/types';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -281,7 +282,7 @@ export function StatusBar({ sessionId, send }: Props) {
         height: `${barH}px`,
         display: 'flex',
         alignItems: 'stretch',
-        background: c.barBg,
+        background: pageBackground(c.barBg),
         color: c.fg,
         fontSize: `${font}px`,
         fontFamily: 'var(--btmux-font)',

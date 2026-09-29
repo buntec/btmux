@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 use tauri::webview::cookie::SameSite;
 use tauri::webview::{Cookie, WebviewWindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::window::{Effect, EffectsBuilder};
 use tauri::{Manager, RunEvent, WebviewUrl};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -71,11 +73,16 @@ pub fn run() {
                 }
             });
 
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let window_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("")
                 .inner_size(1200.0, 800.0)
-                .min_inner_size(640.0, 400.0)
-                .build()?;
+                .min_inner_size(640.0, 400.0);
+            #[cfg(target_os = "macos")]
+            let window_builder = window_builder
+                .transparent(true)
+                .effects(EffectsBuilder::new().effect(Effect::UnderWindowBackground).build())
+                .initialization_script("window.__btmuxDesktopVibrancy = true;");
+            let window = window_builder.build()?;
 
             std::thread::spawn(move || {
                 let deadline = Instant::now() + Duration::from_secs(15);

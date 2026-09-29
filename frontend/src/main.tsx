@@ -55,6 +55,7 @@ import '@fontsource/cascadia-code/400-italic.css';
 import '@fontsource/cascadia-code/500-italic.css';
 import '@fontsource/cascadia-code/600-italic.css';
 import '@fontsource/cascadia-code/700-italic.css';
+import { pageBackground } from './lib/desktopVibrancy';
 
 // Set the same typography defaults used by terminal and chrome components
 // before React mounts, so CSS custom-property fallbacks do not become a second
@@ -70,7 +71,7 @@ const cachedTheme = (() => {
     return null;
   }
 })();
-document.body.style.background = cachedTheme?.background ?? DEFAULT_THEME.background;
+document.body.style.background = pageBackground(cachedTheme?.background ?? DEFAULT_THEME.background);
 
 async function main() {
   try {

@@ -49,8 +49,8 @@ to the pane's window and session before opening the overlay there.
 For file mode, optional `focus_file` names an entry in `path` to focus on open.
 
 When Neovim owns the pane's terminal, selecting a file opens it in that
-instance through its RPC server, or sends an editor command if it has no
-listening server. Otherwise, selecting a file runs `$EDITOR` only if the pane's
+instance through its RPC server. If the server is unavailable, the browser
+shows an error. Otherwise, selecting a file runs `$EDITOR` only if the pane's
 shell owns the terminal. If another program is in the foreground, the browser
 shows an error and leaves that program's input untouched.
 

@@ -177,12 +177,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
                         }
                     }
                 }
-                let command = terminal_editor_open_command(path, *line)?;
-                let mgr = state.read().await;
-                let Some(pane) = mgr.find_pane(*pane_id) else {
-                    return Err("Pane no longer exists".into());
-                };
-                return pane.pty.send_foreground_editor_command(command, pgrp).await;
+                return Err("Cannot open file: Neovim RPC server is unavailable".into());
             }
         }
         let mgr = state.read().await;
@@ -456,14 +451,6 @@ fn editor_open_expr(path: &str, line: Option<u32>) -> String {
         }
         None => format!("execute('edit '.fnameescape({path_literal}))"),
     }
-}
-
-fn terminal_editor_open_command(path: &str, line: Option<u32>) -> Result<Vec<u8>, String> {
-    if path.chars().any(char::is_control) {
-        return Err("Cannot open file: path contains control characters".into());
-    }
-    // Ctrl-\ Ctrl-N returns Neovim to Normal mode before entering Ex mode.
-    Ok(format!("\x1c\x0e:call {}\r", editor_open_expr(path, line)).into_bytes())
 }
 
 async fn foreground_neovim_pids(pgrp: libc::pid_t) -> Vec<u32> {
@@ -837,7 +824,7 @@ mod tests {
     use portable_pty::PtySystem;
 
     #[tokio::test]
-    async fn finds_rpc_server_in_neovim_tui_child() {
+    async fn opens_file_in_neovim_tui_child() {
         if std::process::Command::new("nvim")
             .arg("--version")
             .output()
@@ -865,7 +852,7 @@ mod tests {
                 for pid in foreground_neovim_pids(pgrp).await {
                     for addr in neovim_socket_paths(pid).await {
                         if neovim_server_pid(&addr).await == Some(pid) {
-                            return Some(pid);
+                            return Some(addr);
                         }
                     }
                 }
@@ -875,18 +862,32 @@ mod tests {
         .await
         .ok()
         .flatten();
+        let file = std::env::temp_dir().join(format!("btmux-{}' test.txt", Uuid::new_v4()));
+        std::fs::write(&file, "one\ntwo\nthree\n").unwrap();
+        let opened = if let Some(addr) = detected {
+            let path = file.to_str().unwrap();
+            if remote_open_in_editor(&addr, path, Some(3)).await.is_ok() {
+                let result = tokio::process::Command::new("nvim")
+                    .args([
+                        "--server",
+                        &addr,
+                        "--remote-expr",
+                        "expand('%:p').'|'.line('.')",
+                    ])
+                    .output()
+                    .await
+                    .unwrap();
+                result.status.success()
+                    && String::from_utf8_lossy(&result.stdout).trim() == format!("{path}|3")
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         let _ = tui.kill();
-        assert!(detected.is_some());
-    }
-
-    #[test]
-    fn terminal_editor_command_escapes_paths_and_rejects_control_characters() {
-        let command = terminal_editor_open_command("/tmp/O' Brien.txt", Some(3)).unwrap();
-        assert_eq!(
-            command,
-            b"\x1c\x0e:call execute(['edit '.fnameescape('/tmp/O'' Brien.txt'), 'normal! 3Gzz'])\r"
-        );
-        assert!(terminal_editor_open_command("/tmp/name\r:quit", None).is_err());
+        let _ = std::fs::remove_file(file);
+        assert!(opened);
     }
 
     #[test]

@@ -6,4 +6,6 @@ The desktop app starts its bundled btmux server on an available loopback port wi
 
 Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users.
 
+`app-icon.svg` is the desktop icon source. After editing it, run `cd desktop && bunx tauri icon app-icon.svg` to regenerate the bundled icons.
+
 Release CI uploads a zipped macOS app and Linux `.deb` packages alongside the server binaries. The macOS CI app uses an ad-hoc signature; users may need to allow it in Privacy & Security until a Developer ID signature and notarization are configured.

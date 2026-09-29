@@ -80,7 +80,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let window_builder = window_builder
                 .transparent(true)
-                .title_bar_style(TitleBarStyle::Transparent)
+                .title_bar_style(TitleBarStyle::Visible)
                 .initialization_script("window.__btmuxDesktopTransparency = true;");
             let window = window_builder.build()?;
 

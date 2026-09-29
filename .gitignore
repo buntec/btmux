@@ -1,6 +1,9 @@
 target/
 node_modules/
 frontend/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/node_modules/
 .DS_Store
 .playwright-cli/
 .playwright-mcp/

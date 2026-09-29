@@ -31,6 +31,29 @@ build:
     cd frontend && bun install && bun run build
     cargo build --release
 
+_desktop-sidecar-debug:
+    cd frontend && bun install && bun run build
+    cargo build
+    mkdir -p desktop/src-tauri/binaries
+    cp target/debug/btmux desktop/src-tauri/binaries/btmux-$(rustc --print host-tuple)
+
+# Build and run the standalone desktop app with a bundled debug server.
+desktop-dev: _desktop-sidecar-debug
+    cd desktop && bun install && bun run dev
+
+# Package the standalone desktop app with a release server.
+desktop-build:
+    cd frontend && bun install && bun run build
+    cargo build --release
+    mkdir -p desktop/src-tauri/binaries
+    cp target/release/btmux desktop/src-tauri/binaries/btmux-$(rustc --print host-tuple)
+    cd desktop && bun install
+    if [ "$(uname -s)" = "Darwin" ]; then cd desktop && bun run build -- --bundles app; else cd desktop && bun run build; fi
+
+# Compile the Tauri launcher with its bundled debug server.
+desktop-check: _desktop-sidecar-debug
+    cd desktop/src-tauri && cargo check
+
 # Type-check the frontend without emitting
 check-frontend:
     cd frontend && bunx tsc --noEmit
@@ -45,6 +68,7 @@ check: check-backend check-frontend
 # Format the whole codebase
 fmt:
     cargo fmt
+    cargo fmt --manifest-path desktop/src-tauri/Cargo.toml
     cd frontend && bunx prettier --write "src/**/*.{ts,tsx}"
 
 format: fmt
@@ -71,8 +95,22 @@ clean:
 # Bump version (patch by default; `just bump minor` or `just bump major`)
 # Requires cargo-edit: `cargo install cargo-edit`
 bump level="patch":
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo set-version --bump {{level}}
-    @echo "bumped to $(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')"
+    version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+    cargo set-version --manifest-path desktop/src-tauri/Cargo.toml "$version"
+    python3 - "$version" <<'PY'
+    import json
+    import pathlib
+    import sys
+
+    path = pathlib.Path('desktop/src-tauri/tauri.conf.json')
+    config = json.loads(path.read_text())
+    config['version'] = sys.argv[1]
+    path.write_text(json.dumps(config, indent=2) + '\n')
+    PY
+    echo "bumped to $version"
 
 # Update the Nix package to the latest published GitHub release.
 update-nix-package:

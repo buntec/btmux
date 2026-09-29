@@ -26,6 +26,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+
+          def cargo_version(path):
+              match = re.search(r'^version = "([^"]+)"', pathlib.Path(path).read_text(), re.MULTILINE)
+              assert match, f"no version in {path}"
+              return match.group(1)
+
+          version = os.environ['RELEASE_TAG'].removeprefix('v')
+          assert cargo_version('Cargo.toml') == version
+          assert cargo_version('desktop/src-tauri/Cargo.toml') == version
+          assert json.loads(pathlib.Path('desktop/src-tauri/tauri.conf.json').read_text())['version'] == version
+          PY
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -38,8 +59,15 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+            desktop/src-tauri/target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock', 'desktop/src-tauri/Cargo.lock') }}
           restore-keys: ${{ matrix.target }}-cargo-
+
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -63,6 +91,49 @@ jobs:
         with:
           name: btmux-${{ matrix.target }}
           path: btmux-${{ matrix.target }}
+          if-no-files-found: error
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
+      - name: Prepare desktop sidecar
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+          cp btmux-${{ matrix.target }} desktop/src-tauri/binaries/btmux-${{ matrix.target }}
+
+      - name: Build macOS desktop app
+        if: runner.os == 'macOS'
+        working-directory: desktop
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: bun run build -- --target ${{ matrix.target }} --bundles app
+
+      - name: Build Linux desktop package
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: bun run build -- --target ${{ matrix.target }} --bundles deb
+
+      - name: Package macOS desktop app
+        if: runner.os == 'macOS'
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/btmux.app \
+            btmux-desktop-${{ matrix.target }}.zip
+
+      - name: Package Linux desktop app
+        if: runner.os == 'Linux'
+        run: |
+          debs=(desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb)
+          test -f "${debs[0]}"
+          test "${#debs[@]}" -eq 1
+          cp "${debs[0]}" btmux-desktop-${{ matrix.target }}.deb
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: btmux-desktop-${{ matrix.target }}
+          path: btmux-desktop-${{ matrix.target }}.*
           if-no-files-found: error
 
   release:

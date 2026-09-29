@@ -257,8 +257,8 @@ async fn main() {
     spawn_meta_change_handler(meta_rx, state.clone());
 
     // Persist the session tree to disk on every state change (debounced).
-    if let Some(path) = state_file {
-        spawn_state_saver(path, state.clone()).await;
+    if let Some(path) = &state_file {
+        spawn_state_saver(path.clone(), state.clone()).await;
     }
 
     // Watch the config file and live-reload on change.
@@ -269,8 +269,8 @@ async fn main() {
     let addr = format!("{}:{}", args.host, args.port);
     tracing::info!("btmux listening on {}", addr);
 
-    let app =
-        server::create_app(state).layer(axum::middleware::from_fn_with_state(auth, auth::protect));
+    let app = server::create_app(state.clone())
+        .layer(axum::middleware::from_fn_with_state(auth, auth::protect));
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap_or_else(|e| {
         eprintln!("error: cannot bind to {addr}: {e}");
         if e.kind() == std::io::ErrorKind::AddrInUse {
@@ -287,7 +287,63 @@ async fn main() {
         }
     }
 
-    axum::serve(listener, app).await.unwrap();
+    let drain_timeout = if args.desktop_parent_pid.is_some() {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(2)
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
+        shutdown_signal(args.desktop_parent_pid).await;
+        let _ = shutdown_tx.send(());
+    });
+    tokio::select! {
+        result = serve => result.unwrap(),
+        _ = async {
+            let _ = shutdown_rx.await;
+            tokio::time::sleep(drain_timeout).await;
+        } => tracing::warn!("timed out waiting for connections to close"),
+    }
+    if let Some(path) = state_file {
+        let snapshots = state.read().await.all_snapshots();
+        if let Err(error) = persistence::save(&path, &snapshots) {
+            tracing::warn!("failed to persist state to {}: {}", path.display(), error);
+        }
+    }
+}
+
+async fn shutdown_signal(parent_pid: Option<u32>) {
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = term.recv() => {},
+            _ = desktop_parent_exit(parent_pid) => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = parent_pid;
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl-C handler");
+    }
+}
+
+#[cfg(unix)]
+async fn desktop_parent_exit(parent_pid: Option<u32>) {
+    let Some(parent_pid) = parent_pid else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    loop {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if unsafe { libc::getppid() } as u32 != parent_pid {
+            return;
+        }
+    }
 }
 
 /// Watch the config file's parent directory (so editor atomic rename-on-save is

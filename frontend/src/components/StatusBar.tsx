@@ -4,13 +4,19 @@ import { Activity, FolderOpen, GitBranch, Keyboard, Settings2 } from 'lucide-rea
 import { useStore, type FileBrowserMode, type PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette, mix } from '../lib/chrome-colors';
+import { pageBackground } from '../lib/desktopTransparency';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { AgentState, AgentStatus, PaneState, Theme } from '../state/types';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { SysStatBar } from './SysStatBar';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
-import { getAnimations, getTerminalFontSize, getWindowSort } from '../state/configDefaults';
+import {
+  getAnimations,
+  getDesktopBackgroundOpacity,
+  getTerminalFontSize,
+  getWindowSort,
+} from '../state/configDefaults';
 
 /**
  * Subscribe to window-MRU changes so an `mru` window sort re-orders the always-
@@ -281,7 +287,7 @@ export function StatusBar({ sessionId, send }: Props) {
         height: `${barH}px`,
         display: 'flex',
         alignItems: 'stretch',
-        background: c.barBg,
+        background: pageBackground(c.barBg, getDesktopBackgroundOpacity(config)),
         color: c.fg,
         fontSize: `${font}px`,
         fontFamily: 'var(--btmux-font)',

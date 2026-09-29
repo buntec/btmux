@@ -11,6 +11,7 @@ export const CONFIG_DEFAULTS = {
   showPaneTitles: false,
   wallpaperShader: 'radiant:aurora-curtain',
   wallpaperOpacity: 0.1,
+  desktopBackgroundOpacity: 0.8,
   wallpaperBlur: 0,
   wallpaperSaturate: 0.05,
   wallpaperSpeed: 0.2,
@@ -83,6 +84,10 @@ export function getWallpaperShader(config: ConfigLike): string | null {
 
 export function getWallpaperOpacity(config: ConfigLike): number {
   return config?.wallpaper_opacity ?? CONFIG_DEFAULTS.wallpaperOpacity;
+}
+
+export function getDesktopBackgroundOpacity(config: ConfigLike): number {
+  return config?.desktop_background_opacity ?? CONFIG_DEFAULTS.desktopBackgroundOpacity;
 }
 
 export function getWallpaperBlur(config: ConfigLike): number {

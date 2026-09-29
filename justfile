@@ -31,6 +31,29 @@ build:
     cd frontend && bun install && bun run build
     cargo build --release
 
+_desktop-sidecar-debug:
+    cd frontend && bun install && bun run build
+    cargo build
+    mkdir -p desktop/src-tauri/binaries
+    cp target/debug/btmux desktop/src-tauri/binaries/btmux-$(rustc --print host-tuple)
+
+# Build and run the standalone desktop app with a bundled debug server.
+desktop-dev: _desktop-sidecar-debug
+    cd desktop && bun install && bun run dev
+
+# Package the standalone desktop app with a release server.
+desktop-build:
+    cd frontend && bun install && bun run build
+    cargo build --release
+    mkdir -p desktop/src-tauri/binaries
+    cp target/release/btmux desktop/src-tauri/binaries/btmux-$(rustc --print host-tuple)
+    cd desktop && bun install
+    if [ "$(uname -s)" = "Darwin" ]; then cd desktop && bun run build -- --bundles app; else cd desktop && bun run build; fi
+
+# Compile the Tauri launcher with its bundled debug server.
+desktop-check: _desktop-sidecar-debug
+    cd desktop/src-tauri && cargo check
+
 # Type-check the frontend without emitting
 check-frontend:
     cd frontend && bunx tsc --noEmit
@@ -45,6 +68,7 @@ check: check-backend check-frontend
 # Format the whole codebase
 fmt:
     cargo fmt
+    cargo fmt --manifest-path desktop/src-tauri/Cargo.toml
     cd frontend && bunx prettier --write "src/**/*.{ts,tsx}"
 
 format: fmt

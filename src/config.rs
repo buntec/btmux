@@ -89,6 +89,9 @@ pub struct CliArgs {
     /// Do not open a browser tab on startup.
     #[arg(long)]
     pub no_browser: bool,
+
+    #[arg(long, hide = true)]
+    pub desktop_parent_pid: Option<u32>,
 }
 
 #[derive(clap::Subcommand, Clone)]

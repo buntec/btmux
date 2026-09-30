@@ -16,6 +16,7 @@
     {
       packages = forAllSystems (system: {
         default = nixpkgs.legacyPackages.${system}.callPackage ./nix/package.nix { };
+        desktop = nixpkgs.legacyPackages.${system}.callPackage ./nix/desktop-package.nix { };
       });
 
       homeManagerModules = {

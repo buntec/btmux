@@ -101,6 +101,22 @@ in
       '';
     };
 
+    desktop = {
+      enable = lib.mkEnableOption "the btmux desktop app with its bundled server";
+
+      package = lib.mkOption {
+        type = with lib.types; nullOr package;
+        default =
+          if builtins.elem pkgs.stdenv.hostPlatform.system supportedPackageSystems then
+            pkgs.callPackage ./desktop-package.nix { }
+          else
+            null;
+        defaultText = lib.literalExpression "pkgs.callPackage ./nix/desktop-package.nix { }";
+        example = lib.literalExpression "inputs.btmux.packages.\${pkgs.system}.desktop";
+        description = "Desktop app package to install when desktop.enable is set.";
+      };
+    };
+
     settings = lib.mkOption {
       inherit (settingsFormat) type;
       default = { };
@@ -201,6 +217,10 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
+        assertion = !cfg.desktop.enable || cfg.desktop.package != null;
+        message = "programs.btmux.desktop.package must be set on unsupported platforms";
+      }
+      {
         assertion = cfg.package != null;
         message = "programs.btmux.package must be set because this nixpkgs does not provide a btmux package";
       }
@@ -210,10 +230,12 @@ in
       }
     ];
 
-    home.packages = lib.optionals (cfg.package != null) [
-      cfg.package
-      (lib.lowPrio completionPackage)
-    ];
+    home.packages =
+      lib.optionals (cfg.package != null) [
+        cfg.package
+        (lib.lowPrio completionPackage)
+      ]
+      ++ lib.optionals (cfg.desktop.enable && cfg.desktop.package != null) [ cfg.desktop.package ];
 
     xdg.configFile."btmux/config.toml" = {
       source = configFile;

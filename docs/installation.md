@@ -116,7 +116,8 @@ Regenerate the script after updating btmux so it includes new commands and flags
 
 ## Home Manager
 
-The repository's flake exposes a Home Manager module and release package. The
+The repository's flake exposes a Home Manager module, a CLI release package
+(`packages.<system>.default`), and a desktop package (`packages.<system>.desktop`). The
 module writes `config.toml`, installs btmux, and enables a per-user service by
 default.
 
@@ -149,5 +150,23 @@ The module installs bash, fish, and zsh completions when the selected package
 supports `btmux completions`. The bundled fallback package currently uses an
 older release, so completions become available after selecting a newer package
 or updating that release.
+
+To also install the desktop app:
+
+```nix
+programs.btmux = {
+  enable = true;
+  desktop.enable = true;
+  service.enable = false;
+};
+```
+
+The desktop app runs its bundled server using the separate `desktop` profile.
+It reads the same `config.toml`; it does not need the Home Manager background
+service. Leave `service.enable = true` if you also want the browser service.
+Both packages support Apple Silicon macOS and x86-64/ARM64 Linux. Override
+`desktop.package` to select another desktop build. On macOS, Home Manager
+makes the app available in `~/Applications/Home Manager Apps`; on Linux, it installs a
+desktop menu entry. You can also launch it with `btmux-desktop`.
 
 [Back to the README](../README.md)

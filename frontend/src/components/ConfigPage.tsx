@@ -575,7 +575,7 @@ export function ConfigPage({ config, send }: Props) {
       <Tabs defaultValue="general" className="mx-auto flex min-h-0 w-full flex-1 flex-col gap-0">
         <div className="shrink-0 border-b border-border bg-background/75 px-4 pt-5 pb-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-2">
-            <TabsList className="grid min-w-0 flex-1 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">
+            <TabsList className="min-w-0 flex-1 justify-start overflow-x-auto [scrollbar-width:none] [&>*]:flex-none">
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="keybinds">Key binds</TabsTrigger>
               <TabsTrigger value="logging">Logging</TabsTrigger>

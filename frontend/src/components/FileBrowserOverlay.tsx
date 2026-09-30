@@ -259,11 +259,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   }, [onClose, store]);
 
   const gitStage = useCallback(
-    async (path: string) => {
+    async (paths: string | string[]) => {
       try {
-        const resp = await fileSend('git_stage', { path, cwd: currentPath });
-        const payload = resp.payload as { status: GitStatusResult };
-        store.getState().setGitStatus(payload.status);
+        for (const path of typeof paths === 'string' ? [paths] : paths) {
+          const resp = await fileSend('git_stage', { path, cwd: currentPath });
+          const payload = resp.payload as { status: GitStatusResult };
+          store.getState().setGitStatus(payload.status);
+        }
       } catch (e) {
         console.error('git_stage failed:', e);
       }
@@ -798,6 +800,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             const item = items[gitFocusedIndex];
             if (item?.kind === 'file' && item.path && item.section !== 'staged') {
               gitStage(item.path);
+            } else if (item?.kind === 'section-header' && gitStatus) {
+              if (item.section === 'unstaged') {
+                gitStage(gitStatus.unstaged.map((entry) => entry.path));
+              } else if (item.section === 'untracked') {
+                gitStage([...gitStatus.untracked]);
+              }
             }
             break;
           }

@@ -1,6 +1,6 @@
 # btmux
 
-A browser-based terminal manager with a tmux-inspired interface, powered by [ghostty-web](https://github.com/rcarmo/ghostty-web).
+A terminal manager for the browser and desktop with a tmux-inspired interface, powered by [ghostty-web](https://github.com/rcarmo/ghostty-web).
 
 Client-server architecture means you can connect and reconnect from any number of browsers/tabs without losing state.
 Default key bindings very closely resemble tmux defaults.
@@ -25,7 +25,21 @@ https://github.com/user-attachments/assets/9180b2ed-43cb-4dbb-bccd-ac5f0cfc4944
 
 ## Get started
 
-### Install and launch
+### Desktop app
+
+Download a `btmux-desktop-*` package from [Releases](https://github.com/buntec/btmux/releases/latest):
+
+- **macOS (Apple Silicon):** unzip the `.zip` and move `btmux.app` to Applications.
+  The app is not signed with an Apple Developer certificate. If macOS blocks it,
+  open **System Settings → Privacy & Security → Open Anyway**, then confirm.
+- **Linux (x86-64 or ARM64, Debian/Ubuntu):** install the `.deb` with `sudo apt install ./btmux-desktop-*.deb`.
+
+Launch btmux from your applications menu. The app bundles its own local server and
+signs you in automatically. It uses a separate `desktop` session profile and the
+same configuration file as the browser version. Quitting the app stops its server
+and running shells; the saved session layout is restored on the next launch.
+
+### Browser / CLI
 
 On macOS (Apple Silicon) or Linux:
 
@@ -51,7 +65,7 @@ btmux uninstall # uninstall service
 There is also a [nix Home Manager](https://github.com/nix-community/home-manager) module.
 See [Installation](docs/installation.md).
 
-### Sign in
+### Browser sign-in
 
 btmux requires an access token, including on localhost.
 Unless `BTMUX_AUTH_TOKEN` is set, on first launch it creates `~/.local/state/btmux/state.token` and prints the file's path.
@@ -112,7 +126,11 @@ just dev    # backend on :8044, frontend on :5173
 just check  # check Rust and TypeScript
 just build  # build the frontend and release binary
 just run    # serve the production build on :8004
+just desktop-dev   # build and run the desktop app
+just desktop-build # package the desktop app
 ```
+
+Desktop builds also require the [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 Develop against `http://localhost:5173`; Vite proxies API and WebSocket traffic
 to the development backend. `just dev` uses the separate `dev` profile. Read its

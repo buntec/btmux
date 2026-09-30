@@ -408,8 +408,29 @@ export function TerminalPane({
 
     observer.observe(container);
 
+    // ghostty-web's WebGL render() adopts a new devicePixelRatio (e.g. window
+    // moved to another screen) without resetting the glyph atlas, so glyphs stay
+    // rasterized at the old scale and overlap. Reset it explicitly.
+    let dprQuery: MediaQueryList | null = null;
+    const onDprChange = () => {
+      const r = term.renderer as unknown as {
+        vendored?: { setDevicePixelRatio?: (dpr: number) => void };
+      } | null;
+      if (r?.vendored?.setDevicePixelRatio) r.vendored.setDevicePixelRatio(window.devicePixelRatio);
+      else term.remeasureFont();
+      if (visibleRef.current) fitAddon.fit();
+      watchDpr();
+    };
+    const watchDpr = () => {
+      dprQuery?.removeEventListener('change', onDprChange);
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      dprQuery.addEventListener('change', onDprChange, { once: true });
+    };
+    watchDpr();
+
     return () => {
       disposed = true;
+      dprQuery?.removeEventListener('change', onDprChange);
       clearTimeout(reconnectTimer);
       onData.dispose();
       onResize.dispose();

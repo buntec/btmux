@@ -11,6 +11,7 @@ import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { SysStatBar } from './SysStatBar';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import {
   getAnimations,
   getDesktopBackgroundOpacity,
@@ -262,6 +263,10 @@ export function StatusBar({ sessionId, send }: Props) {
     setSwitcherOpen(false);
     setWindowGridOpen(false);
     setSettingsOpen(false);
+    if (initialMode === 'files') {
+      void openFileBrowserFiles(activePane.id, activePane.cwd ?? null);
+      return;
+    }
     setFileBrowserOpen(true, activePane.cwd ?? null, activePane.id, initialMode);
   };
 

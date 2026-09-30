@@ -443,6 +443,38 @@ async fn remote_open_in_editor(addr: &str, path: &str, line: Option<u32>) -> Res
     }
 }
 
+/// Absolute path of the file in the current buffer of the pane's foreground
+/// Neovim, if any. Non-file buffers (terminals, scratch) yield `None`.
+pub async fn pane_neovim_file(pane_id: uuid::Uuid, state: &AppState) -> Option<String> {
+    let pgrp = {
+        let mgr = state.read().await;
+        mgr.find_pane(pane_id)?.pty.foreground_pgrp()?
+    };
+    for pid in foreground_neovim_pids(pgrp).await {
+        for addr in neovim_socket_paths(pid).await {
+            if neovim_server_pid(&addr).await != Some(pid) {
+                continue;
+            }
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                tokio::process::Command::new("nvim")
+                    .args(["--server", &addr, "--remote-expr", "expand('%:p')"])
+                    .kill_on_drop(true)
+                    .stdin(std::process::Stdio::null())
+                    .output(),
+            )
+            .await;
+            if let Ok(Ok(output)) = output {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                if output.status.success() && path.starts_with('/') {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn editor_open_expr(path: &str, line: Option<u32>) -> String {
     let path_literal = vimscript_string(path);
     match line.filter(|&l| l >= 1) {

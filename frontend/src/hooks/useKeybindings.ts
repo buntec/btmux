@@ -15,6 +15,8 @@ import {
   FONT_WEIGHT_STEP,
 } from '../state/configDefaults';
 
+import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
+
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
 
@@ -452,7 +454,7 @@ function runAction(
       const win = session?.windows[session.active_window];
       const pane = win?.panes[win.active_pane];
       const cwd = pane?.cwd ?? null;
-      store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'files');
+      void openFileBrowserFiles(pane?.id ?? null, cwd);
       break;
     }
     case 'git-view': {

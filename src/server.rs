@@ -58,6 +58,10 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_open_file_browser),
         )
         .route(
+            "/api/panes/{pane_id}/editor-file",
+            axum::routing::get(api_pane_editor_file),
+        )
+        .route(
             "/api/panes/{pane_id}/agent-status",
             axum::routing::post(api_pane_agent_status).delete(api_pane_agent_status_clear),
         )
@@ -405,6 +409,18 @@ struct OpenFileBrowserRequest {
     path: String,
     mode: Option<ws::control::FileBrowserMode>,
     focus_file: Option<String>,
+}
+
+/// Current file of the pane's foreground Neovim, or `{"path": null}`.
+async fn api_pane_editor_file(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+) -> Response {
+    if state.read().await.find_pane(pane_id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let path = ws::control::pane_neovim_file(pane_id, &state).await;
+    Json(serde_json::json!({ "path": path })).into_response()
 }
 
 async fn api_open_file_browser(

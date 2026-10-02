@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#05060a}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Hidden-line ridge plot: stacked noise-displaced lines, nearer lines occlude
+// farther ones, with the relief concentrated around a drifting center.
+var VERT = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}';
+var FRAG = [
+'precision highp float;',
+'uniform vec2 res;uniform float t;uniform float c;uniform float ph;',
+'uniform float count;uniform float amp;uniform vec2 freq;uniform float opacity;uniform float lw;',
+'float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}',
+'float vnoise(vec2 p){',
+'  vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);',
+'  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);',
+'}',
+'float relief(float x,float row){',
+'  vec2 q=vec2((x-0.5)*200.0*freq.x,row*freq.y+t*0.25+ph);',
+'  float n=(vnoise(q)+0.55*vnoise(q*2.0+7.3)+0.3025*vnoise(q*4.0+19.1))/1.8525;',
+'  float d=clamp((x-c)/0.62,-0.5,0.5);',
+'  float env=pow(cos(3.14159265*d),2.0);',
+'  return amp*(0.76/176.0)*env*(n-0.5)*2.0;',
+'}',
+'void main(){',
+'  vec2 p=(gl_FragCoord.xy-0.5*res)/res.y;',
+'  float px=1.0/res.y;',
+'  float w=max(0.0012*lw,0.6*px);',
+'  float fade=min(1.0,0.0012*lw/(0.6*px));',
+'  float ink=0.0;',
+'  for(int i=0;i<170;i++){',
+'    if(float(i)>=count)break;',
+'    float row=float(i);',
+'    float base=-0.38+0.76*row/max(count-1.0,1.0);',
+'    float dy=base+relief(gl_FragCoord.x/res.x,row)-p.y;',
+'    if(dy>-w){ink=(1.0-smoothstep(w,w+px,abs(dy)))*fade;break;}',
+'  }',
+'  vec3 col=vec3(0.02,0.025,0.04)+ink*opacity*vec3(0.85,0.9,1.0);',
+'  gl_FragColor=vec4(col,1.0);',
+'}'
+].join('\n');
+
+var canvas = document.getElementById('c');
+var gl = canvas.getContext('webgl', { antialias: false, alpha: false });
+function compile(type, src) {
+  var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+var prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog); gl.useProgram(prog);
+var buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
+var loc = gl.getAttribLocation(prog, 'a');
+gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+var U = {};
+['res','t','c','ph','count','amp','freq','opacity','lw'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+
+var seed = new URLSearchParams(location.search).get('seed') || 'btmux', hash = 2166136261;
+for (var i = 0; i < seed.length; i++) { hash ^= seed.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+var phase = (hash >>> 0) / 4294967296 * 100;
+
+// Defaults match the params' catalog ranges; the host overrides via 'param'.
+var P = { LINE_COUNT: 120, NOISE_FREQ_X: 0.04, NOISE_FREQ_Y: 0.018, AMPLITUDE: 28, CLUSTER_SIDE: 0.12, PEN_OPACITY: 0.72, LINE_WIDTH: 1 };
+var animated = true, speed = 1, maxFps = 30, time = 0, last = 0, rafId = 0;
+var pointerX = null, center = P.CLUSTER_SIDE;
+
+function resize() {
+  var w = Math.max(1, Math.round(innerWidth * devicePixelRatio)), h = Math.max(1, Math.round(innerHeight * devicePixelRatio));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; gl.viewport(0, 0, w, h); }
+}
+function draw() {
+  resize();
+  // Relief follows the pointer when active, else sways on its own.
+  var target = pointerX === null ? Math.max(0, Math.min(1, P.CLUSTER_SIDE + 0.05 * Math.sin(time * 0.06))) : pointerX;
+  center = animated ? center + (target - center) * 0.05 : target;
+  gl.uniform2f(U.res, canvas.width, canvas.height);
+  gl.uniform1f(U.t, time); gl.uniform1f(U.c, center); gl.uniform1f(U.ph, phase);
+  gl.uniform1f(U.count, Math.min(170, P.LINE_COUNT)); gl.uniform1f(U.amp, P.AMPLITUDE);
+  gl.uniform2f(U.freq, P.NOISE_FREQ_X, P.NOISE_FREQ_Y);
+  gl.uniform1f(U.opacity, P.PEN_OPACITY); gl.uniform1f(U.lw, P.LINE_WIDTH);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function frame(now) {
+  rafId = 0;
+  if (!animated) return;
+  if (now - last >= 1000 / maxFps - 1) {
+    time += Math.min(0.1, (now - last) / 1000) * speed;
+    last = now; draw();
+  }
+  rafId = requestAnimationFrame(frame);
+}
+function sync() {
+  if (animated && !rafId) { last = performance.now(); rafId = requestAnimationFrame(frame); }
+  else if (!animated) draw();
+}
+addEventListener('resize', draw);
+addEventListener('message', function (e) {
+  var d = e.data; if (!d) return;
+  if (d.type === 'btmux-runtime') {
+    animated = !!d.animated; speed = d.speed; maxFps = Math.max(1, d.maxFps || 30); sync();
+  } else if (d.type === 'param') {
+    if (d.name in P) { P[d.name] = d.value; if (!animated) draw(); }
+  } else if (d.type === 'btmux-pointer') {
+    pointerX = d.active ? d.x : null;
+  }
+});
+draw(); sync();
+</script>
+</body>
+</html>

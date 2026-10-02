@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { randomizeRadiantColor, randomizeRadiantParams } from '../lib/wallpaperRandom';
-import { findRadiantShader } from '../lib/wallpaperCatalog';
+import { findWallpaperShader } from '../lib/wallpaperCatalog';
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
 
 interface WallpaperBudget {
@@ -97,7 +97,7 @@ function RadiantShaderWallpaper({
   followsKeyboardInput,
 }: ShaderWallpaperProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const shader = findRadiantShader(shaderId);
+  const shader = findWallpaperShader(shaderId);
   const budget = useWallpaperBudget(animated && !paused);
 
   useLayoutEffect(() => {
@@ -178,7 +178,7 @@ function RadiantShaderWallpaper({
     >
       <iframe
         ref={iframeRef}
-        src={`/radiant/${shader.file}?seed=${encodeURIComponent(seed)}`}
+        src={`${shader.src}?seed=${encodeURIComponent(seed)}`}
         title={shader.title}
         sandbox="allow-scripts"
         style={{
@@ -208,5 +208,5 @@ function RadiantShaderWallpaper({
 }
 
 export function ShaderWallpaper(props: ShaderWallpaperProps) {
-  return findRadiantShader(props.shaderId) ? <RadiantShaderWallpaper {...props} /> : null;
+  return findWallpaperShader(props.shaderId) ? <RadiantShaderWallpaper {...props} /> : null;
 }

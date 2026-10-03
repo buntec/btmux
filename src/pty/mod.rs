@@ -1,4 +1,5 @@
 pub mod replay;
+pub mod screen;
 #[allow(dead_code)]
 pub mod vt_query;
 use axum::body::Bytes;
@@ -158,6 +159,10 @@ impl PtyHandle {
         self.spawn_cwd
             .as_ref()
             .map(|p| p.to_string_lossy().into_owned())
+    }
+
+    pub fn screen_snapshot(&self) -> screen::ScreenSnapshot {
+        self.scrollback.lock().unwrap().screen_snapshot()
     }
 
     pub fn shell_pid(&self) -> Option<u32> {

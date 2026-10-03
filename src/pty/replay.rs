@@ -26,6 +26,7 @@ impl Output {
 
 pub struct Replay {
     head: vt100::Parser,
+    live: super::screen::LiveScreen,
     events: VecDeque<Output>,
     bytes: usize,
     cap: usize,
@@ -38,6 +39,7 @@ impl Replay {
     pub fn new(cols: u16, rows: u16, cap: usize) -> Self {
         Self {
             head: vt100::Parser::new(rows, cols, 0),
+            live: super::screen::LiveScreen::new(cols, rows),
             events: VecDeque::new(),
             bytes: 0,
             cap: cap.min(PER_PANE_BYTES),
@@ -46,6 +48,7 @@ impl Replay {
     }
 
     pub fn push(&mut self, event: Output) {
+        self.live.push(&event);
         let cost = event.cost();
         while !self.events.is_empty()
             && (self.bytes + cost > self.cap
@@ -95,6 +98,10 @@ impl Replay {
                 }
             }
         }
+    }
+
+    pub fn screen_snapshot(&self) -> super::screen::ScreenSnapshot {
+        self.live.snapshot()
     }
 
     pub fn snapshot(&self) -> Vec<Output> {

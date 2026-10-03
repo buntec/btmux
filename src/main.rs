@@ -511,55 +511,94 @@ fn spawn_pane_exit_handler(
 }
 
 fn spawn_agent_reaper(state: AppState) {
+    use crate::session::agent::{agent_name, detect_pane_agents, PaneProcess};
+    use crate::session::detection::Detector;
     use std::collections::HashMap;
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
-    use crate::session::agent::{detect_pane_agents, PaneProcess};
-
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let directory =
+            config::config_path().and_then(|path| path.parent().map(|p| p.join("agent-detection")));
+        let mut detector = tokio::task::spawn_blocking(move || Detector::new(directory))
+            .await
+            .unwrap();
+        let mut interval = tokio::time::interval(Duration::from_millis(300));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut process_checked = None;
+        let mut manifests_checked = std::time::Instant::now();
         loop {
             interval.tick().await;
-            let pane_shells = state.read().await.pane_shells();
-            let scan = tokio::task::spawn_blocking(move || {
-                let mut system = System::new();
-                system.refresh_processes_specifics(
-                    ProcessesToUpdate::All,
-                    true,
-                    ProcessRefreshKind::nothing().with_cmd(UpdateKind::OnlyIfNotSet),
-                );
-                let processes: Vec<PaneProcess> = system
-                    .processes()
-                    .values()
-                    .map(|process| PaneProcess {
-                        pid: process.pid().as_u32(),
-                        parent: process.parent().map(|pid| pid.as_u32()),
-                        start_time: process.start_time(),
-                        name: process.name().to_string_lossy().into_owned(),
-                        command: process
-                            .cmd()
-                            .iter()
-                            .map(|part| part.to_string_lossy().into_owned())
-                            .collect(),
-                    })
-                    .collect();
-                let starts: HashMap<u32, u64> = processes
-                    .iter()
-                    .map(|process| (process.pid, process.start_time))
-                    .collect();
-                let detected = detect_pane_agents(&processes, &pane_shells);
-                (starts, detected)
-            })
-            .await;
-            let Ok((starts, detected)) = scan else {
-                continue;
+            let now = std::time::Instant::now();
+            let reload = if now.duration_since(manifests_checked) >= Duration::from_secs(5) {
+                manifests_checked = now;
+                let result = tokio::task::spawn_blocking(move || {
+                    let changed = detector.reload();
+                    (detector, changed)
+                })
+                .await;
+                let Ok((loaded, changed)) = result else {
+                    return;
+                };
+                detector = loaded;
+                changed
+            } else {
+                false
             };
+            let mut changed = false;
+            if process_checked.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1))
+            {
+                process_checked = Some(now);
+                let pane_shells = state.read().await.pane_shells();
+                let scan = tokio::task::spawn_blocking(move || {
+                    let mut system = System::new();
+                    system.refresh_processes_specifics(
+                        ProcessesToUpdate::All,
+                        true,
+                        ProcessRefreshKind::nothing().with_cmd(UpdateKind::OnlyIfNotSet),
+                    );
+                    let processes: Vec<PaneProcess> = system
+                        .processes()
+                        .values()
+                        .map(|process| {
+                            let mut pane_process = PaneProcess {
+                                pid: process.pid().as_u32(),
+                                parent: process.parent().map(|pid| pid.as_u32()),
+                                start_time: process.start_time(),
+                                name: process.name().to_string_lossy().into_owned(),
+                                command: process
+                                    .cmd()
+                                    .iter()
+                                    .map(|part| part.to_string_lossy().into_owned())
+                                    .collect(),
+                                process_group: None,
+                            };
+                            if agent_name(&pane_process).is_some() {
+                                let group =
+                                    unsafe { libc::getpgid(pane_process.pid as libc::pid_t) };
+                                pane_process.process_group = (group > 0).then_some(group as u32);
+                            }
+                            pane_process
+                        })
+                        .collect();
+                    let starts: HashMap<u32, u64> = processes
+                        .iter()
+                        .map(|process| (process.pid, process.start_time))
+                        .collect();
+                    let detected = detect_pane_agents(&processes, &pane_shells);
+                    (starts, detected)
+                })
+                .await;
+                if let Ok((starts, detected)) = scan {
+                    let mut mgr = state.write().await;
+                    changed |= mgr.reap_stale_agents(now, |process| {
+                        starts.get(&process.pid) == Some(&process.start_time)
+                    });
+                    changed |= mgr.update_detected_agents(&detected);
+                }
+            }
             let mut mgr = state.write().await;
-            let reaped = mgr.reap_stale_agents(std::time::Instant::now(), |process| {
-                starts.get(&process.pid) == Some(&process.start_time)
-            });
-            if mgr.update_detected_agents(&detected) || reaped {
+            changed |= mgr.scan_agent_screens(&detector, now, reload);
+            if changed {
                 ws::control::broadcast_state(&mgr);
             }
         }
@@ -625,5 +664,80 @@ mod tests {
             log_directives("btmux=trace,tower_http=info"),
             "off,btmux=trace,tower_http=info"
         );
+    }
+
+    #[tokio::test]
+    async fn screen_detection_and_ctrl_c_exit_work_without_hooks_or_viewers() {
+        use super::*;
+        use crate::session::AgentState;
+        use tokio::sync::mpsc;
+        let directory = std::env::temp_dir().join(format!("btmux-agent-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let executable = directory.join("codex");
+        std::os::unix::fs::symlink("/bin/cat", &executable).unwrap();
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut manager = SessionManager::new(
+            "/bin/sh".into(),
+            config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane_id = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let pane = manager.find_pane_mut(pane_id).unwrap();
+        pane.pty.ensure_spawned(80, 24).unwrap();
+        let input = pane.pty.input_tx.clone();
+        let shell_pid = pane.pty.shell_pid().unwrap();
+        let command = format!(
+            "printf '\\033]2;Action Required\\007'; '{}'\r",
+            executable.display()
+        );
+        input.send_wait(command.into_bytes()).await.unwrap();
+        let state = Arc::new(RwLock::new(manager));
+        spawn_agent_reaper(state.clone());
+        let detected = tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                if state
+                    .read()
+                    .await
+                    .agent_status(pane_id)
+                    .is_some_and(|status| status.state == AgentState::Blocked)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        assert!(
+            detected.is_ok(),
+            "screen manifest detects approval without hooks"
+        );
+        input.send_wait(vec![3]).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                if state.read().await.running_agent_panes().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("Ctrl-C clears agent presence without an end hook");
+        assert_eq!(
+            state
+                .read()
+                .await
+                .find_pane(pane_id)
+                .unwrap()
+                .pty
+                .shell_pid(),
+            Some(shell_pid)
+        );
+        state.write().await.kill_pane(session, pane_id);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

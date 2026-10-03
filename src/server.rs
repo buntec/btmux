@@ -86,7 +86,9 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route(
             "/api/panes/{pane_id}/agent-status",
-            axum::routing::post(api_pane_agent_status).delete(api_pane_agent_status_clear),
+            axum::routing::get(api_pane_agent_diagnostics)
+                .post(api_pane_agent_status)
+                .delete(api_pane_agent_status_clear),
         )
         .route("/api/file", get(serve_raw_file))
         .route("/wallpaper", get(serve_wallpaper))
@@ -490,6 +492,17 @@ struct PaneAgentStatusRequest {
     message: Option<String>,
 }
 
+async fn api_pane_agent_diagnostics(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+) -> Response {
+    let mgr = state.read().await;
+    if mgr.find_pane(pane_id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    Json(mgr.agent_diagnostics(pane_id)).into_response()
+}
+
 async fn api_pane_agent_status(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -630,6 +643,65 @@ mod pane_notification_tests {
             assert_eq!(info["token_file"], "/state/btmux/dev/state.token");
             assert_eq!(info["version"], crate::config::VERSION);
             assert!(!String::from_utf8_lossy(&body).contains(&token));
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_diagnostics_are_authenticated_and_keep_unknown_agents_present() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        manager.update_detected_agents(&[(
+            pane,
+            AgentProcess {
+                pid: 42,
+                start_time: 1,
+            },
+            "codex".into(),
+        )]);
+        assert_eq!(manager.running_agent_panes(), vec![pane]);
+        let state = Arc::new(tokio::sync::RwLock::new(manager));
+        let token = "a".repeat(64);
+        let auth = Arc::new(crate::auth::Auth::new(token.clone(), "127.0.0.1", 8004, &[]).unwrap());
+        let app = create_app(state).layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::protect,
+        ));
+        for authenticated in [false, true] {
+            let mut request = Request::builder()
+                .uri(format!("/api/panes/{pane}/agent-status"))
+                .header(header::HOST, "localhost:8004");
+            if authenticated {
+                request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            if !authenticated {
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                continue;
+            }
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let diagnostics: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(diagnostics["status"]["state"], "unknown");
+            assert_eq!(diagnostics["process"]["pid"], 42);
+            assert!(diagnostics["detection"].is_null());
         }
     }
 

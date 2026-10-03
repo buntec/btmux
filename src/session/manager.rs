@@ -105,36 +105,48 @@ impl SessionManager {
             .map(|agent| &agent.status)
     }
 
-    pub fn pane_shells(&self) -> Vec<(Uuid, u32)> {
+    pub fn pane_shells(&self) -> Vec<(Uuid, u32, Option<u32>)> {
         self.sessions
             .iter()
             .flat_map(|session| &session.windows)
             .flat_map(|window| &window.panes)
-            .filter_map(|pane| pane.pty.shell_pid().map(|pid| (pane.id, pid)))
+            .filter_map(|pane| {
+                pane.pty.shell_pid().map(|pid| {
+                    (
+                        pane.id,
+                        pid,
+                        pane.pty
+                            .foreground_pgrp()
+                            .and_then(|group| group.try_into().ok()),
+                    )
+                })
+            })
             .collect()
     }
 
     pub fn update_detected_agents(&mut self, detected: &[(Uuid, AgentProcess, String)]) -> bool {
         let mut changed = false;
         for (pane_id, process, name) in detected {
-            if let Some(agent) = self
+            let Some(pane) = self.find_pane(*pane_id) else {
+                continue;
+            };
+            let revision = pane.pty.screen_snapshot().revision;
+            if self
                 .agents
-                .get_mut(pane_id)
-                .filter(|agent| agent.is_active())
+                .get(pane_id)
+                .is_some_and(|agent| !agent.is_active() && agent.ended_process() == Some(*process))
             {
-                agent.observe_process(*process);
-                if agent.status.source.as_deref() == Some("process")
-                    && agent.status.agent.as_deref() != Some(name)
-                {
-                    agent.status.agent = Some(name.clone());
-                    changed = true;
-                }
                 continue;
             }
-            self.agents.insert(
-                *pane_id,
-                AgentLifecycle::detected(*process, name.clone(), Instant::now()),
-            );
+            if let Some(agent) = self.agents.get_mut(pane_id) {
+                changed |= agent.observe_process(*process, name, revision, Instant::now());
+                continue;
+            }
+            let mut agent = AgentLifecycle::detected(*process, name.clone(), Instant::now());
+            if self.agents.contains_key(pane_id) {
+                agent.suppress_old_screen(revision);
+            }
+            self.agents.insert(*pane_id, agent);
             changed = true;
         }
         let active: std::collections::HashSet<_> = detected.iter().map(|(id, _, _)| *id).collect();
@@ -145,6 +157,49 @@ impl SessionManager {
             }
         }
         changed
+    }
+
+    pub fn scan_agent_screens(
+        &mut self,
+        detector: &super::detection::Detector,
+        now: Instant,
+        reload: bool,
+    ) -> bool {
+        let screens: Vec<_> = self
+            .sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+            .filter_map(|pane| {
+                let agent = self
+                    .agents
+                    .get(&pane.id)
+                    .filter(|agent| agent.is_active())?;
+                let process = agent.process()?;
+                let group = unsafe { libc::getpgid(process.pid as libc::pid_t) };
+                let foreground = group > 0 && pane.pty.foreground_pgrp() == Some(group);
+                Some((pane.id, pane.pty.screen_snapshot(), foreground))
+            })
+            .collect();
+        let mut changed = false;
+        for (pane, screen, foreground) in screens {
+            if let Some(agent) = self.agents.get_mut(&pane) {
+                if reload {
+                    agent.invalidate_screen();
+                }
+                changed |= agent.scan_screen(detector, &screen, foreground, now);
+            }
+        }
+        changed
+    }
+
+    pub fn agent_diagnostics(&self, pane_id: Uuid) -> serde_json::Value {
+        let agent = self.agents.get(&pane_id).filter(|agent| agent.is_active());
+        serde_json::json!({
+            "status": agent.map(|agent| &agent.status),
+            "process": agent.and_then(AgentLifecycle::process),
+            "detection": agent.and_then(|agent| agent.detection.as_ref()),
+        })
     }
 
     pub fn reap_stale_agents(
@@ -176,7 +231,7 @@ impl SessionManager {
         report: AgentReport,
         now: Instant,
     ) -> Option<bool> {
-        self.find_pane(pane_id)?;
+        let revision = self.find_pane(pane_id)?.pty.screen_snapshot().revision;
         if report.event == AgentEvent::SessionEnd {
             let current = self.agents.get_mut(&pane_id)?;
             if !current.matches_session(report.session_id.as_deref()) {
@@ -196,7 +251,11 @@ impl SessionManager {
                 now,
             )
         });
-        agent.apply(report, now)
+        let changed = agent.apply(report, now)?;
+        if changed {
+            agent.suppress_old_screen(revision);
+        }
+        Some(changed)
     }
 
     pub fn config(&self) -> &ClientConfig {

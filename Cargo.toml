@@ -39,6 +39,7 @@ strip-ansi-escapes = "0.2.1"
 schemars = "1.2.1"
 sysinfo = "0.33"
 vt100 = "0.16"
+regex = "1"
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

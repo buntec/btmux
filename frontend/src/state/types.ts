@@ -57,6 +57,7 @@ export interface PickerItem {
 }
 
 export type Overlay =
+  | { mode: 'info'; title: string }
   | { mode: 'prompt'; title: string; value: string; action: PromptAction; targetSessionId?: string }
   | { mode: 'keys'; title: string; binds: Bind[] }
   | { mode: 'command'; title: string; commands: Command[] }

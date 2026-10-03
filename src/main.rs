@@ -261,6 +261,32 @@ async fn main() {
         spawn_state_saver(path.clone(), state.clone()).await;
     }
 
+    let absolute_path = |path: &std::path::Path| {
+        std::path::absolute(path)
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned())
+    };
+    let info = server::ServerInfo {
+        version: config::VERSION.to_string(),
+        profile: args.profile.clone(),
+        config_file: config_path.as_deref().and_then(absolute_path),
+        state_file: state_file.as_deref().and_then(absolute_path),
+        token_file: state_file
+            .as_ref()
+            .and_then(|path| absolute_path(&path.with_extension("token"))),
+        token_source: if std::env::var("BTMUX_AUTH_TOKEN").is_ok() {
+            "BTMUX_AUTH_TOKEN"
+        } else {
+            "token file"
+        }
+        .to_string(),
+        listen_address: format!("{}:{}", args.host, args.port),
+        executable: std::env::current_exe()
+            .ok()
+            .as_deref()
+            .and_then(absolute_path),
+    };
+
     // Watch the config file and live-reload on change.
     if let Some(path) = config_path {
         spawn_config_watcher(path, state.clone());
@@ -270,6 +296,7 @@ async fn main() {
     tracing::info!("btmux listening on {}", addr);
 
     let app = server::create_app(state.clone())
+        .merge(server::info_routes(info))
         .layer(axum::middleware::from_fn_with_state(auth, auth::protect));
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap_or_else(|e| {
         eprintln!("error: cannot bind to {addr}: {e}");

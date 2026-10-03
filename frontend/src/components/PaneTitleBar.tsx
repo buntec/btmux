@@ -1,6 +1,7 @@
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
 import type { AgentState, AgentStatus, Theme } from '../state/types';
 import { DEFAULT_THEME } from '../state/defaultTheme';
+import { Badge } from './ui/badge';
 
 /**
  * Height of a pane title bar for a given terminal font size. TerminalPane insets
@@ -44,7 +45,7 @@ interface Props {
 
 /**
  * The per-pane title bar from the "btmux Chrome" design: an accent stripe +
- * numbered badge, the pane title/shell, its working directory, and the live cols×rows. The active pane gets a filled accent badge and a
+ * pane title/shell, working directory, live cols×rows, and a right-aligned numbered badge. The active pane gets an accent outline and a
  * brighter fill; inactive panes get a muted badge and a status dot. Fully
  * theme-driven via `chromePalette`.
  */
@@ -77,12 +78,12 @@ export function PaneTitleBar({
     minWidth: `${badgeSize}px`,
     height: `${Math.round(badgeSize * 0.9)}px`,
     padding: '0 4px',
-    borderRadius: '5px',
+    borderRadius: '4px',
     fontSize: `${Math.max(9, font - 2)}px`,
     fontWeight: 800,
     flex: 'none',
-    background: isActive ? c.accent : withAlpha(c.fgMuted, 0.22),
-    color: isActive ? c.accentInk : c.fgMuted,
+    border: `1px solid ${withAlpha(isActive ? c.accent : c.fgMuted, 0.45)}`,
+    color: isActive ? c.accent : c.fgMuted,
   };
 
   return (
@@ -102,12 +103,13 @@ export function PaneTitleBar({
       }}
     >
       {isActive && <div style={{ width: '3px', alignSelf: 'stretch', background: c.accent, flex: 'none' }} />}
-      <span style={badge}>{index}</span>
       <span
         style={{
           color: isActive ? c.fgBright : c.fgMuted,
           fontWeight: isActive ? 700 : 500,
-          flex: 'none',
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
         }}
       >
         {label}
@@ -145,7 +147,6 @@ export function PaneTitleBar({
           ∑ {latexCount}
         </button>
       )}
-      <AgentStatusBadge theme={theme} status={agentStatus} />
       {notificationColor ? (
         <span
           style={{
@@ -165,6 +166,54 @@ export function PaneTitleBar({
           {cols}×{rows}
         </span>
       ) : null}
+      <AgentStatusBadge theme={theme} status={agentStatus} />
+      <span aria-label={`Pane ${index}`} style={badge}>
+        {index}
+      </span>
+    </div>
+  );
+}
+
+export function PaneCorner({
+  theme,
+  index,
+  status,
+  isActive,
+}: {
+  theme: Theme | null;
+  index: number;
+  status?: AgentStatus;
+  isActive: boolean;
+}) {
+  const c = chromePalette(theme);
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: '8px',
+        right: '8px',
+        zIndex: 3,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '7px',
+        borderRadius: '4px',
+        fontSize: '11px',
+        pointerEvents: 'none',
+      }}
+    >
+      <AgentStatusBadge theme={theme} status={status} />
+      <Badge
+        variant="outline"
+        aria-label={`Pane ${index}`}
+        style={{
+          background: 'transparent',
+          borderRadius: '4px',
+          borderColor: withAlpha(isActive ? c.accent : c.fgMuted, 0.45),
+          color: isActive ? c.accent : c.fgMuted,
+        }}
+      >
+        {index}
+      </Badge>
     </div>
   );
 }

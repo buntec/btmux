@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, FolderOpen, GitBranch, Keyboard, Settings2 } from 'lucide-react';
+import { Activity, FolderOpen, GitBranch, Info, Keyboard, Settings2 } from 'lucide-react';
 import { useStore, type FileBrowserMode, type PaneNotification } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { chromePalette, mix } from '../lib/chrome-colors';
@@ -500,6 +500,19 @@ export function StatusBar({ sessionId, send }: Props) {
         </ToolbarButton>
         <ToolbarButton label="Key bindings" barH={barH} onClick={openKeyBindings}>
           <Keyboard data-icon="inline-start" aria-hidden="true" />
+        </ToolbarButton>
+        <ToolbarButton
+          label="About btmux"
+          barH={barH}
+          onClick={() => {
+            setSwitcherOpen(false);
+            setWindowGridOpen(false);
+            setFileBrowserOpen(false);
+            setSettingsOpen(false);
+            setOverlay({ mode: 'info', title: 'About btmux' });
+          }}
+        >
+          <Info data-icon="inline-start" aria-hidden="true" />
         </ToolbarButton>
       </div>
     </div>

@@ -29,6 +29,7 @@ fn generated_protocol_is_current() {
         Theme::decl(&config),
         TerminalOptions::decl(&config),
         ClientConfig::decl(&config),
+        crate::server::ServerInfo::decl(&config),
         ConfigUpdate::decl(&config),
         ClientMessage::decl(&config),
         ServerMessage::decl(&config),

@@ -26,6 +26,29 @@ use crate::AppState;
 #[folder = "frontend/dist"]
 struct Assets;
 
+#[derive(Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ServerInfo {
+    pub version: String,
+    pub profile: Option<String>,
+    pub config_file: Option<String>,
+    pub state_file: Option<String>,
+    pub token_file: Option<String>,
+    pub token_source: String,
+    pub listen_address: String,
+    pub executable: Option<String>,
+}
+
+pub fn info_routes(info: ServerInfo) -> Router {
+    Router::new().route(
+        "/api/info",
+        get(move || {
+            let info = info.clone();
+            async move { Json(info) }
+        }),
+    )
+}
+
 pub fn create_app(state: AppState) -> Router {
     let files_state = Arc::new(ws::files::FilesState {
         file_index: Arc::new(FileIndex::new()),
@@ -559,6 +582,56 @@ fn infer_level(event: &str) -> ws::control::NotificationLevel {
 #[cfg(test)]
 mod pane_notification_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn runtime_info_requires_authentication() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let token = "a".repeat(64);
+        let auth = Arc::new(crate::auth::Auth::new(token.clone(), "127.0.0.1", 8004, &[]).unwrap());
+        let app = info_routes(ServerInfo {
+            version: crate::config::VERSION.into(),
+            profile: Some("dev".into()),
+            config_file: Some("/config/btmux/config.toml".into()),
+            state_file: Some("/state/btmux/dev/state.json".into()),
+            token_file: Some("/state/btmux/dev/state.token".into()),
+            token_source: "token file".into(),
+            listen_address: "127.0.0.1:8004".into(),
+            executable: None,
+        })
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::protect,
+        ));
+
+        for authenticated in [false, true] {
+            let mut request = Request::builder()
+                .uri("/api/info")
+                .header(header::HOST, "localhost:8004");
+            if authenticated {
+                request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            if !authenticated {
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                continue;
+            }
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(info["profile"], "dev");
+            assert_eq!(info["token_file"], "/state/btmux/dev/state.token");
+            assert_eq!(info["version"], crate::config::VERSION);
+            assert!(!String::from_utf8_lossy(&body).contains(&token));
+        }
+    }
 
     #[test]
     fn truncates_unicode_at_a_character_boundary() {

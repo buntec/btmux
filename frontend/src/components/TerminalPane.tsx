@@ -4,7 +4,7 @@ import { useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage, NotificationLevel } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
-import { AgentStatusBadge, PaneTitleBar } from './PaneTitleBar';
+import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
@@ -710,7 +710,9 @@ export function TerminalPane({
           onToggleLatex={toggleLatex}
         />
       )}
-      {!showTitle && <AgentStatusBadge theme={config?.theme ?? null} status={agentStatus} overlay />}
+      {!showTitle && (
+        <PaneCorner theme={config?.theme ?? null} index={paneIndex ?? 0} status={agentStatus} isActive={isActive} />
+      )}
       {/* Focus ring — only rendered on the active/zoomed pane so mounting it
           replays btm-bloom on every focus change without needing a key trick. */}
       {(isActive || isZoomed) && (

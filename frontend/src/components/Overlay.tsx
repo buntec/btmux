@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { InfoDialog } from './InfoDialog';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
@@ -165,6 +166,8 @@ export function Overlay({ sessionId, send, config }: Props) {
   if (!overlay && !closing) return null;
   // Use the frozen snapshot during the exit animation so content stays visible.
   const activeOverlay = pendingOverlay!;
+
+  if (activeOverlay.mode === 'info') return <InfoDialog onClose={() => setOverlay(null)} />;
 
   const runCommand = (cmdId: string) => {
     if (cmdId === 'open-config') {

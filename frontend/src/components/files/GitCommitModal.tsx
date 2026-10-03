@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { Kbd, KbdGroup } from '@/components/ui/kbd';
-import { Textarea } from '@/components/ui/textarea';
+import { useEffect, useRef, useState } from 'react';
+import { Button } from '@astryxdesign/core/Button';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { FormLayout } from '@astryxdesign/core/FormLayout';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { TextArea } from '@astryxdesign/core/TextArea';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Layout, LayoutContent, LayoutFooter, HStack } from '@astryxdesign/core/Layout';
 
 interface GitCommitModalProps {
   open: boolean;
@@ -26,7 +27,6 @@ export function GitCommitModal({ open, onOpenChange, onCommit }: GitCommitModalP
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
   const longLines = longBodyLines(body);
   const subjectInvalid = attempted && !subject.trim();
 
@@ -60,113 +60,81 @@ export function GitCommitModal({ open, onOpenChange, onCommit }: GitCommitModalP
     }
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      if (document.activeElement === subjectRef.current) bodyRef.current?.focus();
-      else subjectRef.current?.focus();
-      return;
-    }
-
-    if (event.key === 'Enter' && event.ctrlKey) {
-      event.preventDefault();
-      void commit();
-    }
-  };
-
   const handleOpenChange = (nextOpen: boolean) => {
     if (!committing) onOpenChange(nextOpen);
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="sm:max-w-xl"
-        onOpenAutoFocus={(event) => {
+    <Dialog
+      isOpen={open}
+      onOpenChange={handleOpenChange}
+      purpose="form"
+      width={640}
+      onMouseDown={(event) => event.stopPropagation()}
+      onKeyDownCapture={(event) => {
+        if (event.key === 'Enter' && event.ctrlKey && !event.nativeEvent.isComposing && !committing) {
           event.preventDefault();
-          subjectRef.current?.focus();
-        }}
-        onKeyDownCapture={handleKeyDown}
-      >
-        <DialogHeader>
-          <DialogTitle>Commit staged changes</DialogTitle>
-        </DialogHeader>
-
-        <FieldGroup>
-          <Field data-invalid={subjectInvalid}>
-            <FieldLabel htmlFor="git-commit-subject">Subject</FieldLabel>
-            <Input
-              ref={subjectRef}
-              id="git-commit-subject"
-              value={subject}
-              onChange={(event) => setSubject(event.target.value)}
-              placeholder="Short summary of the change"
-              aria-invalid={subjectInvalid}
-              required
-              disabled={committing}
-            />
-            {subject.length > 50 && (
-              <FieldDescription className="text-[var(--color-yellow)]" aria-live="polite">
-                Subject is {subject.length} characters; keep it within 50 when possible.
-              </FieldDescription>
-            )}
-            {subjectInvalid && <FieldError>Subject is required.</FieldError>}
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="git-commit-body">Body</FieldLabel>
-            <Textarea
-              ref={bodyRef}
-              id="git-commit-body"
-              value={body}
-              onChange={(event) => setBody(event.target.value)}
-              placeholder="Explain the change in more detail (optional)"
-              rows={8}
-              className="resize-y font-mono"
-              disabled={committing}
-            />
-            {longLines.length > 0 && (
-              <FieldDescription className="text-[var(--color-yellow)]" aria-live="polite">
-                {longLines.length === 1 ? 'One body line' : `${longLines.length} body lines`} exceed 72 columns
-                {longLines.length <= 3 ? ` (line${longLines.length === 1 ? '' : 's'} ${longLines.join(', ')})` : ''}.
-              </FieldDescription>
-            )}
-          </Field>
-        </FieldGroup>
-
-        {error && <FieldError>{error}</FieldError>}
-
-        <DialogFooter className="items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <KbdGroup>
-                <Kbd>Tab</Kbd>
-              </KbdGroup>{' '}
-              fields
-            </span>
-            <span className="flex items-center gap-1">
-              <KbdGroup>
-                <Kbd>Ctrl+Enter</Kbd>
-              </KbdGroup>{' '}
-              commit
-            </span>
-            <span className="flex items-center gap-1">
-              <KbdGroup>
-                <Kbd>Esc</Kbd>
-              </KbdGroup>{' '}
-              cancel
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={committing}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={() => void commit()} disabled={committing || !subject.trim()}>
-              {committing ? 'Committing…' : 'Commit'}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
+          void commit();
+        }
+      }}
+    >
+      <Layout
+        header={<DialogHeader title="Commit staged changes" onOpenChange={handleOpenChange} />}
+        content={
+          <LayoutContent padding={4}>
+            <FormLayout>
+              <TextInput
+                ref={subjectRef}
+                label="Subject"
+                value={subject}
+                onChange={setSubject}
+                hasAutoFocus
+                isRequired
+                isDisabled={committing}
+                placeholder="Short summary of the change"
+                status={
+                  subjectInvalid
+                    ? { type: 'error', message: 'Subject is required.' }
+                    : subject.length > 50
+                      ? {
+                          type: 'warning',
+                          message: `Subject is ${subject.length} characters; keep it within 50 when possible.`,
+                        }
+                      : undefined
+                }
+              />
+              <TextArea
+                label="Body"
+                value={body}
+                onChange={setBody}
+                rows={8}
+                isDisabled={committing}
+                placeholder="Explain the change in more detail (optional)"
+                status={
+                  longLines.length
+                    ? { type: 'warning', message: `${longLines.length} body lines exceed 72 columns.` }
+                    : undefined
+                }
+              />
+              {error && <Banner status="error" title={error} />}
+            </FormLayout>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter hasDivider>
+            <HStack gap={2} hAlign="end">
+              <Button label="Cancel" onClick={() => handleOpenChange(false)} isDisabled={committing} />
+              <Button
+                label="Commit"
+                variant="primary"
+                onClick={() => void commit()}
+                isLoading={committing}
+                isDisabled={!subject.trim()}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   );
 }

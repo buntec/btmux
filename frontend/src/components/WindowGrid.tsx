@@ -1,3 +1,4 @@
+import { Dialog } from '@astryxdesign/core/Dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
@@ -230,121 +231,131 @@ export function WindowGrid({ send }: Props) {
   const labelBg = theme?.background ?? DEFAULT_THEME.background;
 
   return (
-    <div
-      ref={containerRef}
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: open ? 'grid' : 'none',
-        gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        gridTemplateRows: `repeat(${rows}, 1fr)`,
-        gap: '8px',
-        padding: '8px',
-        background: bg,
-        outline: 'none',
-        zIndex: 30,
-        boxSizing: 'border-box',
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
+    <Dialog
+      isOpen={open}
+      onOpenChange={(value) => {
+        if (!value) cancel();
       }}
+      aria-label="Window overview"
+      variant="fullscreen"
+      padding={0}
     >
-      {entries.length === 0 && <div style={{ color: dimFg, padding: '16px' }}>No windows.</div>}
-      {entries.map((entry, i) => {
-        const isSelected = i === clampedIdx;
-        const { rects, dividers } = computeRectsAndDividers(
-          entry.layout,
-          { top: 0, left: 0, width: 100, height: 100 },
-          EMPTY_RATIOS,
-        );
-        return (
-          <div
-            key={entry.windowId}
-            onClick={() => select(entry)}
-            style={{
-              position: 'relative',
-              overflow: 'hidden',
-              cursor: 'pointer',
-              border: `2px solid ${isSelected ? ringColor : cellBorder}`,
-              boxShadow: isSelected ? `0 0 0 2px ${ringColor}` : undefined,
-              boxSizing: 'border-box',
-              background: bg,
-            }}
-          >
-            {/* Live thumbnail of the full split layout. */}
-            {rects.map((r) => (
-              <div
-                key={r.paneId}
-                style={{
-                  position: 'absolute',
-                  top: `${r.top}%`,
-                  left: `${r.left}%`,
-                  width: `${r.width}%`,
-                  height: `${r.height}%`,
-                  padding: '2px',
-                  boxSizing: 'border-box',
-                }}
-              >
-                <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
-                  {mirrorsReady && <MirrorPane paneId={r.paneId} visible={open} />}
-                </div>
-              </div>
-            ))}
-            {/* Pane dividers */}
-            {dividers.map((d) => (
-              <div
-                key={d.id}
-                style={
-                  d.orientation === 'vertical'
-                    ? {
-                        position: 'absolute',
-                        top: `${d.crossStart}%`,
-                        left: `${d.position}%`,
-                        transform: 'translateX(-50%)',
-                        width: '1px',
-                        height: `${d.crossSize}%`,
-                        background: cellBorder,
-                        pointerEvents: 'none',
-                        zIndex: 1,
-                      }
-                    : {
-                        position: 'absolute',
-                        top: `${d.position}%`,
-                        left: `${d.crossStart}%`,
-                        transform: 'translateY(-50%)',
-                        width: `${d.crossSize}%`,
-                        height: '1px',
-                        background: cellBorder,
-                        pointerEvents: 'none',
-                        zIndex: 1,
-                      }
-                }
-              />
-            ))}
-            {/* Label over the bottom edge. */}
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        style={{
+          position: 'relative',
+          height: '100dvh',
+          display: open ? 'grid' : 'none',
+          gridTemplateColumns: `repeat(${cols}, 1fr)`,
+          gridTemplateRows: `repeat(${rows}, 1fr)`,
+          gap: '8px',
+          padding: '8px',
+          background: bg,
+          outline: 'none',
+          zIndex: 30,
+          boxSizing: 'border-box',
+          fontFamily: 'var(--btmux-font)',
+          fontWeight: 'var(--btmux-font-weight)',
+        }}
+      >
+        {entries.length === 0 && <div style={{ color: dimFg, padding: '16px' }}>No windows.</div>}
+        {entries.map((entry, i) => {
+          const isSelected = i === clampedIdx;
+          const { rects, dividers } = computeRectsAndDividers(
+            entry.layout,
+            { top: 0, left: 0, width: 100, height: 100 },
+            EMPTY_RATIOS,
+          );
+          return (
             <div
+              key={entry.windowId}
+              onClick={() => select(entry)}
               style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                padding: '2px 6px',
-                fontSize: '11px',
-                color: fg,
-                background: `${labelBg}cc`,
-                whiteSpace: 'nowrap',
+                position: 'relative',
                 overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                pointerEvents: 'none',
+                cursor: 'pointer',
+                border: `2px solid ${isSelected ? ringColor : cellBorder}`,
+                boxShadow: isSelected ? `0 0 0 2px ${ringColor}` : undefined,
+                boxSizing: 'border-box',
+                background: bg,
               }}
             >
-              <span style={{ opacity: 0.5 }}>{i + 1}. </span>
-              {entry.sessionName} <span style={{ opacity: 0.5 }}>›</span> {entry.windowName}
+              {/* Live thumbnail of the full split layout. */}
+              {rects.map((r) => (
+                <div
+                  key={r.paneId}
+                  style={{
+                    position: 'absolute',
+                    top: `${r.top}%`,
+                    left: `${r.left}%`,
+                    width: `${r.width}%`,
+                    height: `${r.height}%`,
+                    padding: '2px',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+                    {mirrorsReady && <MirrorPane paneId={r.paneId} visible={open} />}
+                  </div>
+                </div>
+              ))}
+              {/* Pane dividers */}
+              {dividers.map((d) => (
+                <div
+                  key={d.id}
+                  style={
+                    d.orientation === 'vertical'
+                      ? {
+                          position: 'absolute',
+                          top: `${d.crossStart}%`,
+                          left: `${d.position}%`,
+                          transform: 'translateX(-50%)',
+                          width: '1px',
+                          height: `${d.crossSize}%`,
+                          background: cellBorder,
+                          pointerEvents: 'none',
+                          zIndex: 1,
+                        }
+                      : {
+                          position: 'absolute',
+                          top: `${d.position}%`,
+                          left: `${d.crossStart}%`,
+                          transform: 'translateY(-50%)',
+                          width: `${d.crossSize}%`,
+                          height: '1px',
+                          background: cellBorder,
+                          pointerEvents: 'none',
+                          zIndex: 1,
+                        }
+                  }
+                />
+              ))}
+              {/* Label over the bottom edge. */}
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  padding: '2px 6px',
+                  fontSize: '11px',
+                  color: fg,
+                  background: `${labelBg}cc`,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  pointerEvents: 'none',
+                }}
+              >
+                <span style={{ opacity: 0.5 }}>{i + 1}. </span>
+                {entry.sessionName} <span style={{ opacity: 0.5 }}>›</span> {entry.windowName}
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </Dialog>
   );
 }

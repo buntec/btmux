@@ -1,12 +1,7 @@
 import type { Theme } from '../state/types';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 
-// The btmux chrome — status bar, pane title bars, command/help/switcher overlays —
-// is styled after the "btmux Chrome" design mock. That mock hardcodes a teal +
-// orange palette over teal-tinted darks, but btmux is theme-driven: colors follow
-// the user's base16/base24 config. This module maps the mock's palette roles onto
-// the resolved `Theme` so the chrome recolors with any theme while keeping the
-// design's structure and contrast relationships.
+// Palette roles for specialized terminal, file, and preview rendering.
 
 function clampByte(v: number): number {
   return Math.max(0, Math.min(255, Math.round(v)));

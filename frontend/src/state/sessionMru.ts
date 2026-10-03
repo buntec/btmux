@@ -1,5 +1,7 @@
 import { SessionState, SessionSort } from './types';
 
+export const SESSION_MRU_EVENT = 'btmux-session-mru-change';
+
 const SESSION_MRU_KEY = 'btmux-session-mru';
 
 export function getSessionMruOrder(): string[] {
@@ -15,6 +17,7 @@ export function recordSessionMruVisit(sessionId: string): void {
   const order = getSessionMruOrder().filter((id) => id !== sessionId);
   order.unshift(sessionId);
   localStorage.setItem(SESSION_MRU_KEY, JSON.stringify(order.slice(0, 64)));
+  window.dispatchEvent(new Event(SESSION_MRU_EVENT));
 }
 
 export function sortSessions(sessions: SessionState[], sort: SessionSort | string): SessionState[] {

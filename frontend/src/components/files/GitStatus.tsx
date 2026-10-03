@@ -129,15 +129,15 @@ export function filterGitItems(items: GitItem[], query: string): GitItem[] {
 function statusIcon(status: FileStatus) {
   switch (status) {
     case 'added':
-      return <Plus className="size-3 text-[var(--color-green)] shrink-0" />;
+      return <Plus className="size-3 text-[var(--color-text-green)] shrink-0" />;
     case 'modified':
-      return <Pencil className="size-3 text-[var(--color-yellow)] shrink-0" />;
+      return <Pencil className="size-3 text-[var(--color-text-yellow)] shrink-0" />;
     case 'deleted':
-      return <Trash2 className="size-3 text-[var(--color-red)] shrink-0" />;
+      return <Trash2 className="size-3 text-[var(--color-text-red)] shrink-0" />;
     case 'renamed':
-      return <GitBranch className="size-3 text-[var(--color-magenta)] shrink-0" />;
+      return <GitBranch className="size-3 text-[var(--color-text-purple)] shrink-0" />;
     case 'typechange':
-      return <FileQuestion className="size-3 text-[var(--color-yellow)] shrink-0" />;
+      return <FileQuestion className="size-3 text-[var(--color-text-yellow)] shrink-0" />;
   }
 }
 
@@ -156,12 +156,12 @@ function DiffStat({ additions, deletions, showZeroes = false }: LineStats & { sh
     >
       {total > 0 && (
         <span className="inline-flex h-1.5 w-8 overflow-hidden rounded-full bg-muted/60" aria-hidden="true">
-          {additions > 0 && <span className="bg-[var(--color-green)]" style={{ width: additionsWidth }} />}
-          {deletions > 0 && <span className="bg-[var(--color-red)]" style={{ width: deletionsWidth }} />}
+          {additions > 0 && <span className="bg-[var(--color-text-green)]" style={{ width: additionsWidth }} />}
+          {deletions > 0 && <span className="bg-[var(--color-text-red)]" style={{ width: deletionsWidth }} />}
         </span>
       )}
-      {(additions > 0 || showZeroes) && <span className="text-[var(--color-green)]">+{additions}</span>}
-      {(deletions > 0 || showZeroes) && <span className="text-[var(--color-red)]">-{deletions}</span>}
+      {(additions > 0 || showZeroes) && <span className="text-[var(--color-text-green)]">+{additions}</span>}
+      {(deletions > 0 || showZeroes) && <span className="text-[var(--color-text-red)]">-{deletions}</span>}
     </span>
   );
 }

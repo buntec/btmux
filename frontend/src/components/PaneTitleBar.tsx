@@ -1,7 +1,7 @@
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
 import type { AgentState, AgentStatus, Theme } from '../state/types';
 import { DEFAULT_THEME } from '../state/defaultTheme';
-import { Badge } from './ui/badge';
+import { Token } from '@astryxdesign/core/Token';
 
 /**
  * Height of a pane title bar for a given terminal font size. TerminalPane insets
@@ -202,18 +202,7 @@ export function PaneCorner({
       }}
     >
       <AgentStatusBadge theme={theme} status={status} />
-      <Badge
-        variant="outline"
-        aria-label={`Pane ${index}`}
-        style={{
-          background: 'transparent',
-          borderRadius: '4px',
-          borderColor: withAlpha(isActive ? c.accent : c.fgMuted, 0.45),
-          color: isActive ? c.accent : c.fgMuted,
-        }}
-      >
-        {index}
-      </Badge>
+      <Token color="gray" aria-label={`Pane ${index}`} label={String(index)} />
     </div>
   );
 }

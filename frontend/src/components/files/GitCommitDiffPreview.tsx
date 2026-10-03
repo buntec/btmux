@@ -53,12 +53,20 @@ export function GitCommitDiffPreview() {
             ) : (
               file.hunks.map((hunk, hunkIndex) => (
                 <div key={hunkIndex} className="mb-4 last:mb-0">
-                  <div className="mb-1 text-[var(--color-magenta)]">{hunk.header}</div>
+                  <div className="mb-1 text-[var(--color-text-purple)]">{hunk.header}</div>
                   {hunk.lines.map((line, lineIndex) => {
                     const added = line.origin === '+';
                     const removed = line.origin === '-';
-                    const bgClass = added ? 'bg-[var(--color-green)]/15' : removed ? 'bg-[var(--color-red)]/15' : '';
-                    const textClass = added ? 'text-[var(--color-green)]' : removed ? 'text-[var(--color-red)]' : '';
+                    const bgClass = added
+                      ? 'bg-[var(--color-text-green)]/15'
+                      : removed
+                        ? 'bg-[var(--color-text-red)]/15'
+                        : '';
+                    const textClass = added
+                      ? 'text-[var(--color-text-green)]'
+                      : removed
+                        ? 'text-[var(--color-text-red)]'
+                        : '';
 
                     return (
                       <div key={lineIndex} className={`${bgClass} ${textClass} whitespace-pre-wrap break-all px-2`}>

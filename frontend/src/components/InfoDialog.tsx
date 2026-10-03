@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ServerInfo } from '../generated/protocol';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
-import { Alert, AlertDescription } from './ui/alert';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Text } from '@astryxdesign/core/Text';
+import { Layout, LayoutContent, VStack } from '@astryxdesign/core/Layout';
 
 export function InfoDialog({ onClose }: { onClose: () => void }) {
   const [info, setInfo] = useState<ServerInfo | null>(null);
@@ -34,37 +36,40 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
       ]
     : [];
 
+  const changeOpen = (open: boolean) => {
+    if (!open) onClose();
+  };
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent className="max-h-[85dvh] overflow-y-auto" onKeyDown={(event) => event.stopPropagation()}>
-        <DialogHeader>
-          <DialogTitle>About btmux</DialogTitle>
-          <DialogDescription>Server version and runtime configuration.</DialogDescription>
-        </DialogHeader>
-        {error ? (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : !info ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            Loading server information…
-          </p>
-        ) : (
-          <dl className="flex flex-col gap-4 text-sm">
-            {rows.map(([label, value]) => (
-              <div key={label} className="flex flex-col gap-1">
-                <dt className="text-muted-foreground">{label}</dt>
-                <dd className="break-all font-mono select-text">{value ?? 'Unavailable'}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-      </DialogContent>
+    <Dialog isOpen onOpenChange={changeOpen} maxHeight="85dvh" width={640}>
+      <Layout
+        header={
+          <DialogHeader
+            title="About btmux"
+            subtitle="Server version and runtime configuration."
+            onOpenChange={changeOpen}
+          />
+        }
+        content={
+          <LayoutContent padding={4}>
+            {error ? (
+              <Banner status="error" title={error} />
+            ) : !info ? (
+              <Text role="status">Loading server information…</Text>
+            ) : (
+              <VStack gap={4}>
+                {rows.map(([label, value]) => (
+                  <VStack key={label} gap={1}>
+                    <Text color="secondary">{label}</Text>
+                    <Text type="code" className="break-all select-text">
+                      {value ?? 'Unavailable'}
+                    </Text>
+                  </VStack>
+                ))}
+              </VStack>
+            )}
+          </LayoutContent>
+        }
+      />
     </Dialog>
   );
 }

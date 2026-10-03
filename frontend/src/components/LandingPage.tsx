@@ -1,19 +1,19 @@
+import { Layout, LayoutHeader, LayoutContent, LayoutFooter, HStack, VStack } from '@astryxdesign/core/Layout';
+import { Heading } from '@astryxdesign/core/Heading';
+import { Text } from '@astryxdesign/core/Text';
+import { Button } from '@astryxdesign/core/Button';
+import { Kbd } from '@astryxdesign/core/Kbd';
+import { List, ListItem } from '@astryxdesign/core/List';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
-import { DEFAULT_THEME } from '../state/defaultTheme';
 import { buildTreeNodes } from '../state/treeNodes';
 import { TreeNode } from '../state/types';
 import { recordSessionMruVisit, sortSessions } from '../state/sessionMru';
-import { getSessionSort, getTerminalFontSize, getWindowSort, MIN_FONT_SIZE } from '../state/configDefaults';
+import { getSessionSort, getWindowSort } from '../state/configDefaults';
 
 export { recordSessionMruVisit as recordMruVisit };
-
-function hexToRgb(hex: string): string {
-  const h = hex.replace('#', '');
-  return `${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}`;
-}
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -101,7 +101,6 @@ export function LandingPage({ send, currentSessionId }: Props) {
   const config = useStore((s) => s.config);
   const setOverlay = useStore((s) => s.setOverlay);
   const navigate = useNavigate();
-  const fontSize = getTerminalFontSize(config);
 
   const sortedSessions = sortSessions(allSessions, getSessionSort(config));
   const allNodes = buildTreeNodes(sortedSessions, currentSessionId, getWindowSort(config));
@@ -134,7 +133,7 @@ export function LandingPage({ send, currentSessionId }: Props) {
   );
   const [selectedIdx, setSelectedIdx] = useState(initialIdx);
   const containerRef = useRef<HTMLDivElement>(null);
-  const selectedRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
     containerRef.current?.focus();
@@ -151,15 +150,6 @@ export function LandingPage({ send, currentSessionId }: Props) {
 
   // Clamp selectedIdx if tree changes (e.g. session killed)
   const clampedIdx = Math.min(selectedIdx, Math.max(0, visibleNodes.length - 1));
-
-  const theme = config?.theme;
-  const bg = theme?.background ?? DEFAULT_THEME.background;
-  const fg = theme?.foreground ?? DEFAULT_THEME.foreground;
-  const dimFg = theme?.brightBlack ?? DEFAULT_THEME.brightBlack;
-  const activeFg = theme?.green ?? DEFAULT_THEME.green;
-  const accentFg = theme?.yellow ?? DEFAULT_THEME.yellow;
-  const selBg = theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
-  const winFg = theme?.white ?? DEFAULT_THEME.white;
 
   const exitSearch = () => {
     setSearchMode(false);
@@ -357,126 +347,66 @@ export function LandingPage({ send, currentSessionId }: Props) {
   };
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        background: `rgba(${hexToRgb(bg)}, 0.50)`,
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        color: fg,
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
-        fontSize: `${fontSize}px`,
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: '8px 16px',
-          borderBottom: `1px solid ${selBg}`,
-          color: accentFg,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <span>btmux{config?.version ? ` v${config.version}` : ''}</span>
-        <span style={{ color: dimFg, fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}>
-          j/k ↑/↓ navigate · l/h →/← expand/collapse · enter select · (0-9)/(M-a…) jump · / search · n/c new · x kill
-          {currentSessionId ? ' · esc back' : ''}
-        </span>
-      </div>
-
-      {/* Tree */}
-      <div
-        ref={containerRef}
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        style={{
-          flex: 1,
-          outline: 'none',
-          overflowY: 'auto',
-          padding: '8px 0',
-        }}
-      >
-        {visibleNodes.length === 0 && (
-          <div style={{ color: dimFg, padding: '8px 16px' }}>
-            {query ? `No sessions matching "${searchQuery.trim()}".` : 'No sessions. Press n to create one.'}
-          </div>
-        )}
-        {visibleNodes.map((node, i) => {
-          const isSelected = i === clampedIdx;
-          let indent: number;
-          let prefix: string;
-          let label: string;
-          let color: string;
-
-          if (node.kind === 'session') {
-            indent = 0;
-            const arrow = expandedSessions.has(node.id) ? '▾' : '▸';
-            const tag = sessionKeyTag(sessionNumbers.get(node.id) ?? 0);
-            prefix = tag ? `${arrow} (${tag}) ` : `${arrow} `;
-            label = node.name;
-            color = node.id === currentSessionId ? activeFg : fg;
-          } else if (node.kind === 'window') {
-            indent = 16;
-            const arrow = expandedWindows.has(node.id) ? '▾' : '▸';
-            prefix = `${arrow} ${node.displayIndex}: `;
-            label = node.name + (node.active ? ' *' : '');
-            color = node.active ? winFg : fg;
-          } else {
-            indent = 32;
-            prefix = `[${node.index}] `;
-            const cwdShort = node.cwd ? node.cwd.replace(/^.*\//, '') || node.cwd : null;
-            label = (node.title || cwdShort || 'pane') + (node.active ? ' *' : '');
-            color = dimFg;
-          }
-
-          return (
-            <div
-              key={`${node.kind}-${node.id}`}
-              ref={isSelected ? selectedRef : null}
-              onClick={() => {
-                setSelectedIdx(i);
-                navigateToNode(node, allNodes, send, navigate);
-              }}
-              style={{
-                padding: `1px 16px 1px ${16 + indent}px`,
-                cursor: 'pointer',
-                background: isSelected ? selBg : 'transparent',
-                color,
-                userSelect: 'none',
-              }}
-            >
-              <span style={{ opacity: 0.5 }}>{prefix}</span>
-              {label}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Search bar (tmux-style), shown only while searching */}
-      {searchMode && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '4px 16px',
-            borderTop: `1px solid ${selBg}`,
-            color: fg,
-          }}
-        >
-          <span style={{ color: accentFg, marginRight: '8px' }}>/</span>
-          <span>{searchQuery}</span>
-          <span style={{ color: accentFg }}>▏</span>
-          <span style={{ marginLeft: 'auto', color: dimFg, fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}>
-            ↑/↓ C-n/C-p select · enter open · esc cancel
-          </span>
-        </div>
-      )}
-    </div>
+    <Layout
+      header={
+        <LayoutHeader hasDivider>
+          <HStack gap={4} hAlign="between" vAlign="center">
+            <Heading level={1}>All sessions</Heading>
+            <Button
+              label="New session"
+              variant="primary"
+              onClick={() => setOverlay({ mode: 'prompt', title: 'New session', value: '', action: 'new-session' })}
+            />
+          </HStack>
+        </LayoutHeader>
+      }
+      content={
+        <LayoutContent ref={containerRef} tabIndex={0} onKeyDown={onKeyDown} className="outline-none">
+          <List hasDividers>
+            {!visibleNodes.length && (
+              <Text color="secondary">
+                {query ? `No sessions matching "${searchQuery.trim()}".` : 'No sessions. Press n to create one.'}
+              </Text>
+            )}
+            {visibleNodes.map((node, index) => {
+              const selected = index === clampedIdx;
+              const expanded = node.kind === 'session' ? expandedSessions.has(node.id) : expandedWindows.has(node.id);
+              const prefix = node.kind === 'pane' ? `[${node.index}]` : expanded ? '▾' : '▸';
+              const label = node.kind === 'pane' ? node.title || node.cwd?.replace(/^.*\//, '') || 'pane' : node.name;
+              return (
+                <ListItem
+                  key={`${node.kind}-${node.id}`}
+                  ref={selected ? selectedRef : null}
+                  label={label}
+                  isSelected={selected}
+                  className={node.kind === 'window' ? 'pl-8' : node.kind === 'pane' ? 'pl-12' : undefined}
+                  startContent={<Text color="secondary">{prefix}</Text>}
+                  endContent={
+                    node.kind === 'session' ? (
+                      <Kbd keys={sessionKeyTag(sessionNumbers.get(node.id) ?? 0) ?? ''} />
+                    ) : undefined
+                  }
+                  onClick={() => {
+                    setSelectedIdx(index);
+                    navigateToNode(node, allNodes, send, navigate);
+                  }}
+                />
+              );
+            })}
+          </List>
+        </LayoutContent>
+      }
+      footer={
+        <LayoutFooter hasDivider>
+          <VStack gap={2}>
+            {searchMode && <Text>Search: {searchQuery}▏</Text>}
+            <Text color="secondary">
+              ↑/↓ navigate · →/← expand · Enter open · / search · n new · x close
+              {currentSessionId ? ' · Escape back' : ''}
+            </Text>
+          </VStack>
+        </LayoutFooter>
+      }
+    />
   );
 }

@@ -1,520 +1,157 @@
-import { useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, FolderOpen, GitBranch, Info, Keyboard, Settings2 } from 'lucide-react';
-import { useStore, type FileBrowserMode, type PaneNotification } from '../state/store';
-import { DEFAULT_THEME } from '../state/defaultTheme';
-import { chromePalette, mix } from '../lib/chrome-colors';
-import { pageBackground } from '../lib/desktopTransparency';
-import type { ClientMessage, NotificationLevel } from '../protocol/messages';
-import type { AgentState, AgentStatus, PaneState, Theme } from '../state/types';
+import { TabList, Tab } from '@astryxdesign/core/TabList';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { Button } from '@astryxdesign/core/Button';
+import { StatusDot } from '@astryxdesign/core/StatusDot';
+import { Kbd } from '@astryxdesign/core/Kbd';
+import { HStack } from '@astryxdesign/core/Layout';
+import { Activity, FolderOpen, GitBranch, Settings2, Grid2X2 } from 'lucide-react';
+import { useStore, type FileBrowserMode } from '../state/store';
+import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
-import { SysStatBar } from './SysStatBar';
-import { Button } from './ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { getAnimations, getWindowSort } from '../state/configDefaults';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
-import {
-  getAnimations,
-  getDesktopBackgroundOpacity,
-  getTerminalFontSize,
-  getWindowSort,
-} from '../state/configDefaults';
+import type { ClientMessage } from '../protocol/messages';
+import { SysStatBar } from './SysStatBar';
 
-/**
- * Subscribe to window-MRU changes so an `mru` window sort re-orders the always-
- * visible status bar the instant the active window changes (the order lives in
- * localStorage, which isn't reactive; `recordWindowMruVisit` dispatches a
- * same-tab event). Returns a bump counter used only to force a re-render.
- */
-function useWindowMruTick(): number {
-  return useSyncExternalStore(
-    (cb) => {
-      window.addEventListener(WINDOW_MRU_EVENT, cb);
-      return () => window.removeEventListener(WINDOW_MRU_EVENT, cb);
+let mruVersion = 0;
+window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
+
+export function StatusBar({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
+  const sessions = useStore((state) => state.allSessions);
+  const config = useStore((state) => state.config);
+  const notifications = useStore((state) => state.notifications);
+  const prefixActive = useStore((state) => state.prefixActive);
+  const navigate = useNavigate();
+  useSyncExternalStore(
+    (callback) => {
+      window.addEventListener(WINDOW_MRU_EVENT, callback);
+      return () => window.removeEventListener(WINDOW_MRU_EVENT, callback);
     },
-    () => mruTick,
+    () => mruVersion,
   );
-}
-// A monotonic counter bumped on each MRU change; getSnapshot must return a
-// stable value between changes, so we can't read localStorage directly here.
-let mruTick = 0;
-if (typeof window !== 'undefined') {
-  window.addEventListener(WINDOW_MRU_EVENT, () => {
-    mruTick += 1;
-  });
-}
-
-function prefixLabel(prefix: string): string {
-  const parts = prefix.split('-');
-  const key = parts.pop() ?? '';
-  const mods = parts.map((m) => (m.toUpperCase() === 'C' ? '⌃' : m.toUpperCase() === 'M' ? '⌥' : m)).join('');
-  return `${mods}${key.toUpperCase()}`;
-}
-
-interface Props {
-  sessionId: string;
-  send: (msg: ClientMessage) => void;
-}
-
-function notificationColor(level: NotificationLevel, theme: Theme | null): string {
-  const t = theme ?? DEFAULT_THEME;
-  switch (level) {
-    case 'attention':
-      return t.yellow;
-    case 'error':
-      return t.red;
-    case 'success':
-      return t.green;
-    default:
-      return t.blue;
-  }
-}
-
-function windowNotificationLevel(
-  paneIds: string[],
-  notifications: Map<string, PaneNotification>,
-): NotificationLevel | null {
-  let highest: NotificationLevel | null = null;
-  const priority: NotificationLevel[] = ['error', 'attention', 'success', 'info'];
-  for (const id of paneIds) {
-    const n = notifications.get(id);
-    if (!n) continue;
-    if (!highest) {
-      highest = n.level;
-      continue;
-    }
-    if (priority.indexOf(n.level) < priority.indexOf(highest)) highest = n.level;
-  }
-  return highest;
-}
-
-function windowAgentStatus(panes: PaneState[]): AgentStatus | null {
-  const priority: AgentState[] = ['blocked', 'working', 'done', 'idle', 'unknown'];
-  let highest: AgentStatus | null = null;
-  for (const pane of panes) {
-    const status = pane.agent_status;
-    if (!highest || priority.indexOf(status.state) < priority.indexOf(highest.state)) {
-      highest = status;
-    }
-  }
-  return highest && highest.state !== 'unknown' ? highest : null;
-}
-
-function agentStatusColor(status: AgentStatus, theme: Theme | null): string {
-  const t = theme ?? DEFAULT_THEME;
-  switch (status.state) {
-    case 'blocked':
-      return t.yellow;
-    case 'working':
-      return t.blue;
-    case 'done':
-      return t.green;
-    default:
-      return t.brightBlack;
-  }
-}
-
-/**
- * A powerline separator. `color` is the triangle's fill color. `direction`
- * controls which way the arrow points: `'right'` (default, ▶) for left-side
- * transitions (session→window), `'left'` (◀) for right-side entries like the
- * PREFIX indicator. When `fill` is given the triangle sits on a `fill`-colored
- * box for seamless session→active-window joins; only valid for `'right'`.
- */
-function Arrow({
-  color,
-  size,
-  fill,
-  direction = 'right',
-}: {
-  color: string;
-  size: number;
-  fill?: string;
-  direction?: 'right' | 'left';
-}) {
-  const w = Math.round(size * 0.34);
-  if (fill) {
-    return (
-      <div style={{ width: `${w}px`, height: '100%', flex: 'none', position: 'relative', background: fill }}>
-        <div
-          style={{ position: 'absolute', inset: 0, background: color, clipPath: 'polygon(0 0, 100% 50%, 0 100%)' }}
-        />
-      </div>
-    );
-  }
-  if (direction === 'left') {
-    return (
-      <div
-        style={{
-          width: 0,
-          height: '100%',
-          borderTop: `${size / 2}px solid transparent`,
-          borderBottom: `${size / 2}px solid transparent`,
-          borderRight: `${w}px solid ${color}`,
-          flex: 'none',
+  const session = sessions.find((session) => session.id === sessionId);
+  if (!session) return null;
+  const activeWindow = session.windows[session.active_window];
+  const pane = activeWindow?.panes[activeWindow.active_pane];
+  const state = useStore.getState;
+  const openFiles = (mode: FileBrowserMode) => {
+    if (!pane) return;
+    state().setOverlay(null);
+    state().setSettingsOpen(false);
+    state().setSwitcherOpen(false);
+    state().setWindowGridOpen(false);
+    state().setAgentGridOpen(false);
+    if (mode === 'files') void openFileBrowserFiles(pane.id, pane.cwd ?? null);
+    else state().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
+  };
+  return (
+    <HStack gap={2} padding={2} vAlign="center" className="min-w-0" role="toolbar" aria-label="Terminal controls">
+      <Button label={session.name} variant="ghost" size="sm" onClick={() => state().setSwitcherOpen(true)} />
+      <TabList
+        value={activeWindow?.id ?? ''}
+        onChange={(id) => {
+          const index = session.windows.findIndex((item) => item.id === id);
+          if (index < 0) return;
+          state().setSettingsOpen(false);
+          send({ type: 'switch_window', session_id: session.id, index });
+          navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(session.windows[index].name)}`);
+        }}
+        size="sm"
+        className="min-w-0 flex-1"
+      >
+        {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }) => {
+          const notification = win.panes
+            .map((pane) => notifications.get(pane.id))
+            .filter((item) => item != null)
+            .sort(
+              (a, b) =>
+                ['error', 'attention', 'success', 'info'].indexOf(a.level) -
+                ['error', 'attention', 'success', 'info'].indexOf(b.level),
+            )[0];
+          const agent = [...win.panes].sort(
+            (a, b) =>
+              ['blocked', 'working', 'done', 'idle', 'unknown'].indexOf(a.agent_status.state) -
+              ['blocked', 'working', 'done', 'idle', 'unknown'].indexOf(b.agent_status.state),
+          )[0];
+          const level =
+            notification?.level ??
+            (agent?.agent_status.state === 'blocked'
+              ? 'attention'
+              : agent?.agent_status.state === 'working'
+                ? 'info'
+                : agent?.agent_status.state === 'done'
+                  ? 'success'
+                  : null);
+          return (
+            <Tab
+              key={win.id}
+              value={win.id}
+              label={`${index} · ${win.name}${win.zoomed_pane ? ' ⛶' : ''}`}
+              endContent={
+                level ? (
+                  <StatusDot
+                    label={notification?.body ?? `Agent ${agent?.agent_status.state}`}
+                    variant={level === 'attention' ? 'warning' : level === 'info' ? 'accent' : level}
+                  />
+                ) : undefined
+              }
+            />
+          );
+        })}
+      </TabList>
+      {prefixActive && <Kbd keys={config?.prefix ?? 'C-b'} />}
+      <HStack gap={1} className="hidden lg:flex">
+        <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
+      </HStack>
+      <IconButton
+        label="Window overview"
+        tooltip="Window overview"
+        variant="ghost"
+        size="sm"
+        icon={<Grid2X2 />}
+        onClick={() => state().setWindowGridOpen(true)}
+      />
+      <IconButton
+        label="File browser"
+        tooltip="File browser"
+        variant="ghost"
+        size="sm"
+        icon={<FolderOpen />}
+        onClick={() => openFiles('files')}
+      />
+      <IconButton
+        label="Git mode"
+        tooltip="Git mode"
+        variant="ghost"
+        size="sm"
+        icon={<GitBranch />}
+        onClick={() => openFiles('git')}
+      />
+      <IconButton
+        label="Process viewer"
+        tooltip="Process viewer"
+        variant="ghost"
+        size="sm"
+        icon={<Activity />}
+        onClick={() => openFiles('process')}
+      />
+      <IconButton
+        label="Settings"
+        tooltip="Settings"
+        variant="ghost"
+        size="sm"
+        icon={<Settings2 />}
+        onClick={() => {
+          state().setOverlay(null);
+          state().setSwitcherOpen(false);
+          state().setWindowGridOpen(false);
+          state().setAgentGridOpen(false);
+          state().setFileBrowserOpen(false);
+          state().setSettingsOpen(true);
         }}
       />
-    );
-  }
-  return (
-    <div
-      style={{
-        width: 0,
-        height: '100%',
-        borderTop: `${size / 2}px solid transparent`,
-        borderBottom: `${size / 2}px solid transparent`,
-        borderLeft: `${w}px solid ${color}`,
-        flex: 'none',
-      }}
-    />
-  );
-}
-
-function ToolbarButton({
-  label,
-  barH,
-  onClick,
-  children,
-}: {
-  label: string;
-  barH: number;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={label}
-          title={label}
-          onClick={onClick}
-          style={{ width: `${barH}px`, height: '100%', borderRadius: 0, color: 'inherit', cursor: 'pointer' }}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="top">{label}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-export function StatusBar({ sessionId, send }: Props) {
-  const allSessions = useStore((s) => s.allSessions);
-  const config = useStore((s) => s.config);
-  const prefixActive = useStore((s) => s.prefixActive);
-  const notifications = useStore((s) => s.notifications);
-  const setSwitcherOpen = useStore((s) => s.setSwitcherOpen);
-  const setWindowGridOpen = useStore((s) => s.setWindowGridOpen);
-  const setFileBrowserOpen = useStore((s) => s.setFileBrowserOpen);
-  const setSettingsOpen = useStore((s) => s.setSettingsOpen);
-  const setOverlay = useStore((s) => s.setOverlay);
-  const navigate = useNavigate();
-  const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
-  // Re-render when the window MRU changes so an `mru` sort re-orders live.
-  useWindowMruTick();
-
-  // Chrome is compact relative to the terminal font (the design's bar/font ratio),
-  // clamped so it stays legible at tiny sizes and doesn't dominate at huge ones.
-  const termFont = getTerminalFontSize(config);
-  const font = Math.max(10, Math.min(17, Math.round(termFont * 0.68)));
-  const barH = Math.round(font * 2.15);
-
-  const session = allSessions.find((s) => s.id === sessionId);
-  if (!session) return null;
-
-  const c = chromePalette(config?.theme ?? null);
-  const animations = getAnimations(config);
-  const activeWindow = session.windows[session.active_window];
-  const activeZoomed = !!activeWindow?.zoomed_pane;
-  const activePane = activeWindow?.panes[activeWindow.active_pane];
-  // Windows are shown in the configured display order; each keeps its backend
-  // index (the switch_window index) while its display position doubles as the
-  // shown number and prefix+digit hotkey — see useKeybindings.
-  const orderedWindows = sortWindows(session.windows, getWindowSort(config));
-  // Seamless powerline: when the active window sits first in the *displayed*
-  // order, its segment sits directly after the session segment, so the
-  // session→window chevron fills into the active-window color (no bar-background
-  // gap). Otherwise a plain accent triangle trails into the bar.
-  const firstWindowActive = orderedWindows[0]?.index === session.active_window;
-
-  const segPadY = 0;
-
-  // Clicking a window must both switch the backend's active window (the URL
-  // alone doesn't — SessionView only sends switch_window on first mount) and
-  // navigate, mirroring WindowGrid/SessionSwitcher.
-  const goToWindow = (index: number, name: string) => {
-    setSettingsOpen(false);
-    if (index !== session.active_window) {
-      send({ type: 'switch_window', session_id: session.id, index });
-    }
-    navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(name)}`);
-  };
-
-  const goToSession = () => {
-    setSettingsOpen(false);
-    setSwitcherOpen(true);
-  };
-
-  const openFileBrowser = (initialMode: FileBrowserMode) => {
-    if (!activePane) return;
-    setOverlay(null);
-    setSwitcherOpen(false);
-    setWindowGridOpen(false);
-    setSettingsOpen(false);
-    if (initialMode === 'files') {
-      void openFileBrowserFiles(activePane.id, activePane.cwd ?? null);
-      return;
-    }
-    setFileBrowserOpen(true, activePane.cwd ?? null, activePane.id, initialMode);
-  };
-
-  const openSettings = () => {
-    setOverlay(null);
-    setSwitcherOpen(false);
-    setWindowGridOpen(false);
-    setFileBrowserOpen(false);
-    setSettingsOpen(true);
-  };
-
-  const openKeyBindings = () => {
-    setSwitcherOpen(false);
-    setWindowGridOpen(false);
-    setFileBrowserOpen(false);
-    setSettingsOpen(false);
-    setOverlay({ mode: 'keys', title: 'Key bindings', binds: config?.binds ?? [] });
-  };
-
-  return (
-    <div
-      style={{
-        height: `${barH}px`,
-        display: 'flex',
-        alignItems: 'stretch',
-        background: pageBackground(c.barBg, getDesktopBackgroundOpacity(config)),
-        color: c.fg,
-        fontSize: `${font}px`,
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
-        borderTop: `1px solid ${c.border}`,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {/* Session segment */}
-      <div
-        onClick={goToSession}
-        onMouseEnter={() => setHoveredSegment('session')}
-        onMouseLeave={() => setHoveredSegment(null)}
-        style={{ display: 'flex', height: '100%', cursor: 'pointer' }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '7px',
-            height: '100%',
-            padding: `${segPadY}px 11px ${segPadY}px 13px`,
-            background: hoveredSegment === 'session' ? mix(c.accent, c.fgBright, 0.12) : c.accent,
-            color: c.accentInk,
-            fontWeight: 800,
-            letterSpacing: '.03em',
-            transition: 'background-color 140ms ease',
-          }}
-        >
-          <span
-            style={{
-              width: '6px',
-              height: '6px',
-              borderRadius: '50%',
-              background: c.accentInk,
-              opacity: 0.7,
-            }}
-          />
-          <span>{session.name}</span>
-        </div>
-        <Arrow
-          color={hoveredSegment === 'session' ? mix(c.accent, c.fgBright, 0.12) : c.accent}
-          size={barH}
-          fill={firstWindowActive ? c.titleActiveBg : undefined}
-        />
-      </div>
-
-      {/* Windows (in display order; `index` is the backend switch index, the
-          array position is the shown number + prefix+digit hotkey). */}
-      {orderedWindows.map(({ win: w, index }, displayIndex) => {
-        const isActive = index === session.active_window;
-        const isHovered = hoveredSegment === w.id;
-        const winLevel = windowNotificationLevel(
-          w.panes.map((p) => p.id),
-          notifications,
-        );
-        const agentStatus = windowAgentStatus(w.panes);
-        const zoomGlyph = w.zoomed_pane ? <span style={{ color: c.zoom, marginLeft: '3px' }}>⛶</span> : null;
-        const dot =
-          winLevel || (agentStatus && agentStatus.state !== 'idle') ? (
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                goToWindow(index, w.name);
-              }}
-              title={
-                agentStatus
-                  ? `Agent ${agentStatus.agent ? `${agentStatus.agent} ` : ''}${agentStatus.state}`
-                  : undefined
-              }
-              style={{
-                color: winLevel
-                  ? notificationColor(winLevel, config?.theme ?? null)
-                  : agentStatusColor(agentStatus!, config?.theme ?? null),
-                marginLeft: '4px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-              }}
-            >
-              ●
-            </span>
-          ) : null;
-
-        if (isActive) {
-          return (
-            <div
-              key={w.id}
-              onClick={() => goToWindow(index, w.name)}
-              onMouseEnter={() => setHoveredSegment(w.id)}
-              onMouseLeave={() => setHoveredSegment(null)}
-              style={{ display: 'flex', height: '100%', cursor: 'pointer' }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '7px',
-                  height: '100%',
-                  padding: '0 12px',
-                  background: isHovered ? mix(c.titleActiveBg, c.accent, 0.14) : c.titleActiveBg,
-                  color: c.fgBright,
-                  fontWeight: 700,
-                  transition: 'background-color 140ms ease',
-                }}
-              >
-                <span style={{ color: c.accent }}>{displayIndex}</span>
-                <span>{w.name}</span>
-                <span style={{ color: c.accent }}>*</span>
-                {zoomGlyph}
-                {dot}
-              </div>
-              <Arrow color={isHovered ? mix(c.titleActiveBg, c.accent, 0.14) : c.titleActiveBg} size={barH} />
-            </div>
-          );
-        }
-        return (
-          <div
-            key={w.id}
-            onClick={() => goToWindow(index, w.name)}
-            onMouseEnter={() => setHoveredSegment(w.id)}
-            onMouseLeave={() => setHoveredSegment(null)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              height: '100%',
-              padding: '0 12px',
-              background: isHovered ? mix(c.barBg, c.titleActiveBg, 0.4) : c.barBg,
-              color: c.fgMuted,
-              cursor: 'pointer',
-              transition: 'background-color 140ms ease',
-            }}
-          >
-            <span style={{ color: c.fgDim }}>{displayIndex}</span>
-            <span>{w.name}</span>
-            {zoomGlyph}
-            {dot}
-          </div>
-        );
-      })}
-
-      <span style={{ flex: 1 }} />
-
-      {/* Right cluster */}
-      {prefixActive && (
-        <div
-          style={{
-            display: 'flex',
-            height: '100%',
-            animation: animations ? 'btm-prefix-in .22s ease both' : undefined,
-          }}
-        >
-          <Arrow color={c.warn} size={barH} direction="left" />
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '7px',
-              height: '100%',
-              padding: '0 12px',
-              background: c.warn,
-              color: c.warnInk,
-              fontWeight: 800,
-              letterSpacing: '.04em',
-              animation: animations ? 'btm-prefix-pulse 1.5s ease-in-out .3s infinite' : undefined,
-            }}
-          >
-            PREFIX <span style={{ opacity: 0.75, fontWeight: 700 }}>{config ? prefixLabel(config.prefix) : '⌃B'}</span>
-          </div>
-        </div>
-      )}
-      {activeZoomed && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            height: '100%',
-            padding: '0 13px',
-            color: c.zoom,
-            borderLeft: `1px solid ${c.borderDim}`,
-          }}
-        >
-          ⛶ <span style={{ fontWeight: 700 }}>ZOOM</span>
-        </div>
-      )}
-      <SysStatBar c={c} barH={barH} font={font} animations={animations} />
-      <div
-        role="toolbar"
-        aria-label="Navigation"
-        style={{ display: 'flex', alignItems: 'center', height: '100%', borderLeft: `1px solid ${c.borderDim}` }}
-      >
-        <ToolbarButton label="File browser" barH={barH} onClick={() => openFileBrowser('files')}>
-          <FolderOpen data-icon="inline-start" aria-hidden="true" />
-        </ToolbarButton>
-        <ToolbarButton label="Git mode" barH={barH} onClick={() => openFileBrowser('git')}>
-          <GitBranch data-icon="inline-start" aria-hidden="true" />
-        </ToolbarButton>
-        <ToolbarButton label="Process viewer" barH={barH} onClick={() => openFileBrowser('process')}>
-          <Activity data-icon="inline-start" aria-hidden="true" />
-        </ToolbarButton>
-        <ToolbarButton label="Settings" barH={barH} onClick={openSettings}>
-          <Settings2 data-icon="inline-start" aria-hidden="true" />
-        </ToolbarButton>
-        <ToolbarButton label="Key bindings" barH={barH} onClick={openKeyBindings}>
-          <Keyboard data-icon="inline-start" aria-hidden="true" />
-        </ToolbarButton>
-        <ToolbarButton
-          label="About btmux"
-          barH={barH}
-          onClick={() => {
-            setSwitcherOpen(false);
-            setWindowGridOpen(false);
-            setFileBrowserOpen(false);
-            setSettingsOpen(false);
-            setOverlay({ mode: 'info', title: 'About btmux' });
-          }}
-        >
-          <Info data-icon="inline-start" aria-hidden="true" />
-        </ToolbarButton>
-      </div>
-    </div>
+    </HStack>
   );
 }

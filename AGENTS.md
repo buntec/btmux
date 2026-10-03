@@ -28,9 +28,9 @@ wire types; the tests reject stale generated types. `just check` and `just lint`
 remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
 reconnect/replay, config updates, correlated command errors, and multiple viewers
-against an isolated dev stack (`BTMUX_AUTH_TOKEN=... just test-browser`).
-`just test-frontend` runs the frontend unit tests (`bun test`, currently the
-LaTeX detector). `just record-demo` drives the production UI with Playwright.
+against an isolated dev stack, followed by Astryx interaction and theme checks
+(`BTMUX_AUTH_TOKEN=... just test-browser`).
+`just test-frontend` runs the frontend unit tests (`bun test`, the LaTeX detector and theme mapping). `just record-demo` drives the production UI with Playwright.
 
 The CLI also accepts `--host`, `--port`, `--profile`, `--shell`, `--public-url`,
 and `--no-browser`; `install`, `uninstall`, and `restart` manage a per-user
@@ -92,6 +92,16 @@ back to `$HOME/.local/state/btmux/state.json`). `--profile NAME` uses a separate
 restored; restored panes spawn fresh shells lazily in their saved cwd. A
 per-profile OS file lock prevents two btmux processes from owning the same
 profile.
+
+### UI and theme
+
+Astryx provides the app shell, navigation, forms, dialogs, tabs, and notifications.
+Follow `frontend/AGENTS.md` and inspect component docs with `cd frontend && npx
+astryx component <Name>`. `BtmuxTheme.tsx` derives the Astryx theme from the same
+resolved terminal palette and font family, including settings previews. Keep
+body, heading, and code fonts synchronized; semantic colors and contrast belong
+in `lib/astryx-theme.ts`. Terminal geometry, live mirrors, and file previews retain
+specialized rendering. UI navigation must preserve terminal and socket lifetimes.
 
 ### Frontend lifetime and routing
 

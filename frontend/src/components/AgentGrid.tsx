@@ -1,3 +1,4 @@
+import { Dialog } from '@astryxdesign/core/Dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
@@ -157,84 +158,94 @@ export function AgentGrid({ send }: Props) {
   const cellBorder = theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
 
   return (
-    <div
-      ref={containerRef}
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: open ? 'grid' : 'none',
-        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${rows}, minmax(160px, 1fr))`,
-        gap: '8px',
-        padding: '8px',
-        background: bg,
-        outline: 'none',
-        overflow: 'auto',
-        zIndex: 31,
-        boxSizing: 'border-box',
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
+    <Dialog
+      isOpen={open}
+      onOpenChange={(value) => {
+        if (!value) cancel();
       }}
+      aria-label="Agent overview"
+      variant="fullscreen"
+      padding={0}
     >
-      {entries.length === 0 && (
-        <div style={{ color: dimFg, padding: '16px', gridColumn: '1 / -1' }}>
-          No agents detected. Install agent hooks for status and notifications.
-        </div>
-      )}
-      {entries.map((entry, i) => {
-        const isSelected = i === clampedIdx;
-        return (
-          <div
-            key={entry.paneId}
-            onClick={() => select(entry)}
-            style={{
-              position: 'relative',
-              minWidth: 0,
-              minHeight: 0,
-              overflow: 'hidden',
-              cursor: 'pointer',
-              border: `2px solid ${isSelected ? ringColor : cellBorder}`,
-              boxShadow: isSelected ? `0 0 0 2px ${ringColor}` : undefined,
-              boxSizing: 'border-box',
-              background: bg,
-            }}
-          >
-            <div style={{ position: 'absolute', inset: 0, paddingBottom: '26px', boxSizing: 'border-box' }}>
-              {mirrorsReady && <MirrorPane paneId={entry.paneId} visible={open} />}
-            </div>
-            <AgentStatusBadge theme={theme ?? null} status={entry.agentStatus} overlay />
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        style={{
+          position: 'relative',
+          height: '100dvh',
+          display: open ? 'grid' : 'none',
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${rows}, minmax(160px, 1fr))`,
+          gap: '8px',
+          padding: '8px',
+          background: bg,
+          outline: 'none',
+          overflow: 'auto',
+          zIndex: 31,
+          boxSizing: 'border-box',
+          fontFamily: 'var(--btmux-font)',
+          fontWeight: 'var(--btmux-font-weight)',
+        }}
+      >
+        {entries.length === 0 && (
+          <div style={{ color: dimFg, padding: '16px', gridColumn: '1 / -1' }}>
+            No agents detected. Install agent hooks for status and notifications.
+          </div>
+        )}
+        {entries.map((entry, i) => {
+          const isSelected = i === clampedIdx;
+          return (
             <div
+              key={entry.paneId}
+              onClick={() => select(entry)}
               style={{
-                position: 'absolute',
-                insetInline: 0,
-                bottom: 0,
-                height: '26px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '0 8px',
+                position: 'relative',
+                minWidth: 0,
+                minHeight: 0,
+                overflow: 'hidden',
+                cursor: 'pointer',
+                border: `2px solid ${isSelected ? ringColor : cellBorder}`,
+                boxShadow: isSelected ? `0 0 0 2px ${ringColor}` : undefined,
                 boxSizing: 'border-box',
                 background: bg,
-                color: theme?.foreground ?? DEFAULT_THEME.foreground,
-                fontSize: '12px',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                zIndex: 2,
               }}
             >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {entry.sessionName} / {entry.windowName}
-              </span>
-              <span style={{ color: dimFg, marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {entry.paneTitle || `pane ${entry.paneIndex + 1}`}
-              </span>
+              <div style={{ position: 'absolute', inset: 0, paddingBottom: '26px', boxSizing: 'border-box' }}>
+                {mirrorsReady && <MirrorPane paneId={entry.paneId} visible={open} />}
+              </div>
+              <AgentStatusBadge theme={theme ?? null} status={entry.agentStatus} overlay />
+              <div
+                style={{
+                  position: 'absolute',
+                  insetInline: 0,
+                  bottom: 0,
+                  height: '26px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '0 8px',
+                  boxSizing: 'border-box',
+                  background: bg,
+                  color: theme?.foreground ?? DEFAULT_THEME.foreground,
+                  fontSize: '12px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  zIndex: 2,
+                }}
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {entry.sessionName} / {entry.windowName}
+                </span>
+                <span style={{ color: dimFg, marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {entry.paneTitle || `pane ${entry.paneIndex + 1}`}
+                </span>
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </Dialog>
   );
 }

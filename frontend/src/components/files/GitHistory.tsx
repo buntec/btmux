@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, GitCommitHorizontal } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Token } from '@astryxdesign/core/Token';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { layoutGitGraph, type GitGraphTransition } from '@/lib/gitGraph';
@@ -12,14 +12,14 @@ const LANE_GAP = 18;
 const GRAPH_LEFT = 18;
 const GRAPH_RIGHT = 16;
 const GRAPH_COLORS = [
-  'var(--muted-foreground)',
-  'var(--color-cyan)',
-  'var(--color-magenta)',
-  'var(--color-green)',
-  'var(--color-orange)',
-  'var(--color-red)',
-  'var(--color-yellow)',
-  'var(--color-brown)',
+  'var(--color-text-secondary)',
+  'var(--color-text-cyan)',
+  'var(--color-text-purple)',
+  'var(--color-text-green)',
+  'var(--color-text-orange)',
+  'var(--color-text-red)',
+  'var(--color-text-yellow)',
+  'var(--color-text-gray)',
 ];
 
 function graphColor(colorIndex: number): string {
@@ -49,22 +49,13 @@ function formatDate(timestamp: number): string {
   }).format(date);
 }
 
-function refClassName(ref: GitLogRef): string {
-  switch (ref.kind) {
-    case 'tag':
-      return 'border-theme-yellow/50 text-theme-yellow';
-    case 'remote':
-      return 'border-theme-cyan/50 text-theme-cyan';
-    default:
-      return 'border-theme-green/50 text-theme-green';
-  }
-}
-
 function RefLabel({ ref }: { ref: GitLogRef }) {
   return (
-    <Badge variant="outline" className={cn('px-1.5 py-0 text-[0.65rem] font-normal', refClassName(ref))}>
-      {ref.kind === 'tag' ? `tag: ${ref.name}` : ref.name}
-    </Badge>
+    <Token
+      size="sm"
+      color={ref.kind === 'tag' ? 'yellow' : ref.kind === 'remote' ? 'cyan' : 'green'}
+      label={ref.kind === 'tag' ? `tag: ${ref.name}` : ref.name}
+    />
   );
 }
 
@@ -161,9 +152,16 @@ export function GitHistory() {
                 return (
                   <g key={row.commit.id}>
                     {row.commit.is_head && (
-                      <circle cx={x} cy={y} r="8" fill="none" stroke="var(--color-yellow)" strokeWidth="1" />
+                      <circle cx={x} cy={y} r="8" fill="none" stroke="var(--color-text-yellow)" strokeWidth="1" />
                     )}
-                    <circle cx={x} cy={y} r="4.5" fill="var(--background)" stroke={color} strokeWidth="2.5" />
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r="4.5"
+                      fill="var(--color-background-body)"
+                      stroke={color}
+                      strokeWidth="2.5"
+                    />
                   </g>
                 );
               })}
@@ -199,11 +197,7 @@ export function GitHistory() {
                       <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
                         {commit.summary}
                       </span>
-                      {commit.is_head && (
-                        <Badge variant="secondary" className="px-1.5 py-0 text-[0.65rem] font-normal">
-                          HEAD
-                        </Badge>
-                      )}
+                      {commit.is_head && <Token size="sm" label="HEAD" />}
                     </div>
                     <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[0.7rem] text-muted-foreground">
                       {commit.refs.map((ref) => (

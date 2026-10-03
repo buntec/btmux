@@ -1,8 +1,9 @@
 import { createRoot } from 'react-dom/client';
 import { init } from 'ghostty-web';
 import { App } from './App';
+import { BtmuxTheme } from './components/BtmuxTheme';
 import { AuthGate } from './components/AuthGate';
-import { DEFAULT_THEME } from './state/defaultTheme';
+import { STARTUP_THEME } from './state/startupTheme';
 import { CONFIG_DEFAULTS } from './state/configDefaults';
 import './fonts.css';
 import './index.css';
@@ -63,18 +64,7 @@ import { pageBackground } from './lib/desktopTransparency';
 document.documentElement.style.setProperty('--btmux-font', `"${CONFIG_DEFAULTS.terminal.fontFamily}", monospace`);
 document.documentElement.style.setProperty('--btmux-font-weight', String(CONFIG_DEFAULTS.terminal.fontWeight));
 
-const cachedTheme = (() => {
-  try {
-    const s = localStorage.getItem('btmux-theme');
-    return s ? JSON.parse(s) : null;
-  } catch {
-    return null;
-  }
-})();
-document.body.style.background = pageBackground(
-  cachedTheme?.background ?? DEFAULT_THEME.background,
-  CONFIG_DEFAULTS.desktopBackgroundOpacity,
-);
+document.body.style.background = pageBackground(STARTUP_THEME.background, CONFIG_DEFAULTS.desktopBackgroundOpacity);
 
 async function main() {
   try {
@@ -84,9 +74,11 @@ async function main() {
   }
   const root = createRoot(document.getElementById('root')!);
   root.render(
-    <AuthGate>
-      <App />
-    </AuthGate>,
+    <BtmuxTheme>
+      <AuthGate>
+        <App />
+      </AuthGate>
+    </BtmuxTheme>,
   );
 }
 

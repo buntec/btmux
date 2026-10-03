@@ -1,3 +1,4 @@
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
@@ -585,7 +586,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Keyboard handler — only active while this overlay (or a child) has focus.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!rootRef.current?.contains(document.activeElement)) return;
+      if (commitModalOpen || !rootRef.current?.contains(document.activeElement)) return;
 
       // Rename input eats its own keys — let it handle Escape/Enter only
       if (pendingRename && document.activeElement === renameInputRef.current) {
@@ -1165,6 +1166,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     deleteFile,
     pendingDiscard,
     pendingDelete,
+    commitModalOpen,
     pendingRename,
     renameValue,
     commitRename,
@@ -1231,13 +1233,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             <span className="text-foreground font-medium">{yankRegister.paths.length}</span> in register
           </div>
         )}
-        <button
-          onClick={onClose}
-          aria-label="Close file browser"
-          className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <X className="size-3.5" />
-        </button>
+        <IconButton label="Close file browser" icon={<X />} variant="ghost" size="sm" onClick={onClose} />
       </div>
 
       {/* Body */}

@@ -26,16 +26,16 @@ export function DiffPreview() {
         </div>
         {gitDiff.hunks.map((hunk, hunkIdx) => (
           <div key={hunkIdx} className="mb-4">
-            <div className="text-[var(--color-magenta)] mb-1">{hunk.header}</div>
+            <div className="text-[var(--color-text-purple)] mb-1">{hunk.header}</div>
             {hunk.lines.map((line, lineIdx) => {
               let bgClass = '';
               let textClass = '';
               if (line.origin === '+') {
-                bgClass = 'bg-[var(--color-green)]/15';
-                textClass = 'text-[var(--color-green)]';
+                bgClass = 'bg-[var(--color-text-green)]/15';
+                textClass = 'text-[var(--color-text-green)]';
               } else if (line.origin === '-') {
-                bgClass = 'bg-[var(--color-red)]/15';
-                textClass = 'text-[var(--color-red)]';
+                bgClass = 'bg-[var(--color-text-red)]/15';
+                textClass = 'text-[var(--color-text-red)]';
               }
 
               return (

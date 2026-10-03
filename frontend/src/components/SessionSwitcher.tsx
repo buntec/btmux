@@ -1,3 +1,4 @@
+import { Dialog } from '@astryxdesign/core/Dialog';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
@@ -440,87 +441,129 @@ export function SessionSwitcher({ send }: Props) {
   const animations = getAnimations(config);
 
   return (
-    <div
-      ref={containerRef}
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      onFocus={(e) => {
-        // MirrorPane's ghostty-web Terminal.open() calls element.focus() which
-        // steals keyboard focus away from this container. Reclaim it immediately
-        // by checking if focus arrived from a child element.
-        if (e.target !== e.currentTarget) {
-          e.currentTarget.focus();
-        }
+    <Dialog
+      isOpen={open && !overlay}
+      onOpenChange={(value) => {
+        if (!value) cancel();
       }}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) cancel();
-      }}
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: open || closing ? 'flex' : 'none',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: withAlpha(c.bodyBg, 0.55),
-        backdropFilter: 'blur(3px)',
-        WebkitBackdropFilter: 'blur(3px)',
-        outline: 'none',
-        zIndex: 30,
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
-        fontSize: `${font}px`,
-        animation: animations ? (closing ? 'btm-fade-out .16s ease forwards' : 'btm-fade .15s ease') : undefined,
-      }}
+      aria-label="Session switcher"
+      width={960}
+      maxHeight="85dvh"
+      padding={0}
     >
       <div
-        style={{
-          width: '760px',
-          maxWidth: '94%',
-          height: '440px',
-          maxHeight: '88%',
-          display: 'flex',
-          borderRadius: '12px',
-          overflow: 'hidden',
-          background: c.panelBg,
-          border: `1px solid ${c.border}`,
-          boxShadow: `0 30px 80px ${withAlpha(c.bodyBg, 0.55)}`,
-          animation: animations ? (closing ? 'btm-out .17s ease forwards' : 'btm-in .18s ease') : undefined,
+        ref={containerRef}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onFocus={(e) => {
+          // MirrorPane's ghostty-web Terminal.open() calls element.focus() which
+          // steals keyboard focus away from this container. Reclaim it immediately
+          // by checking if focus arrived from a child element.
+          if (e.target !== e.currentTarget) {
+            e.currentTarget.focus();
+          }
         }}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) cancel();
+        }}
+        className="flex min-h-0 outline-none"
       >
-        {/* Tree */}
         <div
           style={{
-            width: '340px',
-            flex: 'none',
-            borderRight: `1px solid ${c.borderDim}`,
+            width: '100%',
+            maxWidth: '100%',
+            height: '440px',
+            maxHeight: '80dvh',
             display: 'flex',
-            flexDirection: 'column',
+            borderRadius: 'var(--radius-container)',
+            overflow: 'hidden',
+            background: c.panelBg,
+            border: 'none',
+            boxShadow: 'none',
+            animation: animations ? (closing ? 'btm-out .17s ease forwards' : 'btm-in .18s ease') : undefined,
           }}
         >
+          {/* Tree */}
           <div
             style={{
-              padding: '14px 16px 10px',
-              color: c.fgDim,
-              fontSize: '11px',
-              letterSpacing: '.14em',
-              textTransform: 'uppercase',
-              fontWeight: 700,
+              width: '340px',
+              flex: 'none',
+              borderRight: `1px solid ${c.borderDim}`,
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
-            Sessions
-          </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: '0 8px 12px' }}>
-            {rows.length === 0 && (
-              <div style={{ color: c.fgDim, padding: '8px 10px', fontSize: '12.5px' }}>
-                {query ? `No sessions matching "${filterQuery.trim()}".` : 'No sessions.'}
-              </div>
-            )}
-            {rows.map((row, i) => {
-              const isSelected = i === clampedIdx;
-              const sess = sessionById.get(row.sessionId);
-              if (!sess) return null;
-              if (row.kind === 'session') {
-                const rowKey = `s-${row.sessionId}`;
+            <div
+              style={{
+                padding: '14px 16px 10px',
+                color: c.fgDim,
+                fontSize: '11px',
+                letterSpacing: '.14em',
+                textTransform: 'uppercase',
+                fontWeight: 700,
+              }}
+            >
+              Sessions
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: '0 8px 12px' }}>
+              {rows.length === 0 && (
+                <div style={{ color: c.fgDim, padding: '8px 10px', fontSize: '12.5px' }}>
+                  {query ? `No sessions matching "${filterQuery.trim()}".` : 'No sessions.'}
+                </div>
+              )}
+              {rows.map((row, i) => {
+                const isSelected = i === clampedIdx;
+                const sess = sessionById.get(row.sessionId);
+                if (!sess) return null;
+                if (row.kind === 'session') {
+                  const rowKey = `s-${row.sessionId}`;
+                  const isHovered = hoveredRowKey === rowKey;
+                  return (
+                    <div
+                      key={rowKey}
+                      ref={isSelected ? selectedRef : null}
+                      onMouseEnter={() => setHoveredRowKey(rowKey)}
+                      onMouseLeave={() => setHoveredRowKey(null)}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setSelectedIdx(i);
+                      }}
+                      onClick={() => setSessionExpanded(row.sessionId, !row.expanded)}
+                      onDoubleClick={() => activate(row)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 10px 7px',
+                        color: c.fgBright,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        borderRadius: '7px',
+                        background: isSelected
+                          ? withAlpha(c.accent, 0.12)
+                          : isHovered
+                            ? withAlpha(c.fgBright, 0.055)
+                            : 'transparent',
+                        boxShadow: isHovered
+                          ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.09)}`
+                          : undefined,
+                        transition: animations ? 'background 100ms ease, box-shadow 100ms ease' : undefined,
+                      }}
+                    >
+                      <span style={{ color: row.expanded ? c.accent : c.fgDim }}>{row.expanded ? '▾' : '▸'}</span>
+                      {sess.name}
+                      <span style={{ color: c.fgDim, fontWeight: 500, fontSize: '11.5px' }}>
+                        {sess.id === activeSession?.id ? 'attached · ' : ''}
+                        {sess.windows.length} win
+                      </span>
+                    </div>
+                  );
+                }
+                const win = sess.windows[row.windowIndex];
+                if (!win) return null;
+                const isActiveWin = win.id === activeWindowId;
+                const paneCount = win.panes.length;
+                const rowKey = `w-${row.windowId}`;
                 const isHovered = hoveredRowKey === rowKey;
                 return (
                   <div
@@ -532,210 +575,164 @@ export function SessionSwitcher({ send }: Props) {
                       e.preventDefault();
                       setSelectedIdx(i);
                     }}
-                    onClick={() => setSessionExpanded(row.sessionId, !row.expanded)}
                     onDoubleClick={() => activate(row)}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 10px 7px',
-                      color: c.fgBright,
-                      fontWeight: 700,
-                      cursor: 'pointer',
+                      gap: '9px',
+                      padding: '6px 10px 6px 30px',
+                      margin: '2px 0',
                       borderRadius: '7px',
-                      background: isSelected
-                        ? withAlpha(c.accent, 0.12)
-                        : isHovered
-                          ? withAlpha(c.fgBright, 0.055)
-                          : 'transparent',
+                      cursor: 'pointer',
+                      fontSize: '12.5px',
+                      background: isSelected ? c.accent : isHovered ? withAlpha(c.fgBright, 0.065) : 'transparent',
+                      color: isSelected ? c.accentInk : isHovered ? c.fg : c.fgMuted,
+                      fontWeight: isSelected ? 700 : 400,
                       boxShadow: isHovered
-                        ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.09)}`
+                        ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.1)}`
                         : undefined,
-                      transition: animations ? 'background 100ms ease, box-shadow 100ms ease' : undefined,
+                      transition: animations
+                        ? 'background 100ms ease, color 100ms ease, box-shadow 100ms ease'
+                        : undefined,
                     }}
                   >
-                    <span style={{ color: row.expanded ? c.accent : c.fgDim }}>{row.expanded ? '▾' : '▸'}</span>
-                    {sess.name}
-                    <span style={{ color: c.fgDim, fontWeight: 500, fontSize: '11.5px' }}>
-                      {sess.id === activeSession?.id ? 'attached · ' : ''}
-                      {sess.windows.length} win
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minWidth: '16px',
+                        height: '16px',
+                        padding: '0 4px',
+                        borderRadius: '4px',
+                        background: isSelected ? c.accentInk : withAlpha(c.fgMuted, 0.22),
+                        color: isSelected ? c.accent : c.fgMuted,
+                        fontSize: '11px',
+                        fontWeight: 800,
+                      }}
+                    >
+                      {row.displayIndex}
+                    </span>
+                    {win.name}
+                    {isActiveWin && <span style={{ color: isSelected ? c.accentInk : c.accent }}>*</span>}
+                    {win.zoomed_pane && <span style={{ color: isSelected ? c.accentInk : c.zoom }}>⛶</span>}
+                    <span style={{ flex: 1 }} />
+                    <span
+                      style={{
+                        color: isSelected ? withAlpha(c.accentInk, 0.7) : c.fgDim,
+                        fontSize: '11px',
+                      }}
+                    >
+                      {paneCount} {paneCount === 1 ? 'pane' : 'panes'}
                     </span>
                   </div>
                 );
-              }
-              const win = sess.windows[row.windowIndex];
-              if (!win) return null;
-              const isActiveWin = win.id === activeWindowId;
-              const paneCount = win.panes.length;
-              const rowKey = `w-${row.windowId}`;
-              const isHovered = hoveredRowKey === rowKey;
-              return (
-                <div
-                  key={rowKey}
-                  ref={isSelected ? selectedRef : null}
-                  onMouseEnter={() => setHoveredRowKey(rowKey)}
-                  onMouseLeave={() => setHoveredRowKey(null)}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setSelectedIdx(i);
-                  }}
-                  onDoubleClick={() => activate(row)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '9px',
-                    padding: '6px 10px 6px 30px',
-                    margin: '2px 0',
-                    borderRadius: '7px',
-                    cursor: 'pointer',
-                    fontSize: '12.5px',
-                    background: isSelected ? c.accent : isHovered ? withAlpha(c.fgBright, 0.065) : 'transparent',
-                    color: isSelected ? c.accentInk : isHovered ? c.fg : c.fgMuted,
-                    fontWeight: isSelected ? 700 : 400,
-                    boxShadow: isHovered
-                      ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.1)}`
-                      : undefined,
-                    transition: animations
-                      ? 'background 100ms ease, color 100ms ease, box-shadow 100ms ease'
-                      : undefined,
-                  }}
-                >
+              })}
+            </div>
+            {/* Filter bar (tmux-style), shown while filtering. */}
+            {filterMode && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 14px',
+                  borderTop: `1px solid ${c.borderDim}`,
+                  color: c.fg,
+                }}
+              >
+                <span style={{ color: c.accent }}>/</span>
+                <span>
+                  {filterQuery}
                   <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      minWidth: '16px',
-                      height: '16px',
-                      padding: '0 4px',
-                      borderRadius: '4px',
-                      background: isSelected ? c.accentInk : withAlpha(c.fgMuted, 0.22),
-                      color: isSelected ? c.accent : c.fgMuted,
-                      fontSize: '11px',
-                      fontWeight: 800,
-                    }}
+                    style={{ color: c.accent, animation: animations ? 'btm-blink 1.05s steps(1) infinite' : undefined }}
                   >
-                    {row.displayIndex}
+                    ▏
                   </span>
-                  {win.name}
-                  {isActiveWin && <span style={{ color: isSelected ? c.accentInk : c.accent }}>*</span>}
-                  {win.zoomed_pane && <span style={{ color: isSelected ? c.accentInk : c.zoom }}>⛶</span>}
-                  <span style={{ flex: 1 }} />
-                  <span
-                    style={{
-                      color: isSelected ? withAlpha(c.accentInk, 0.7) : c.fgDim,
-                      fontSize: '11px',
-                    }}
-                  >
-                    {paneCount} {paneCount === 1 ? 'pane' : 'panes'}
-                  </span>
-                </div>
-              );
-            })}
+                </span>
+              </div>
+            )}
           </div>
-          {/* Filter bar (tmux-style), shown while filtering. */}
-          {filterMode && (
+
+          {/* Preview */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px 18px', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', marginBottom: '12px' }}>
+              <span style={{ color: c.fgBright, fontWeight: 700 }}>
+                {previewWindowIndex >= 0 ? `${previewWindowIndex}: ` : ''}
+                {debouncedPreviewWindow?.name ?? '—'}
+              </span>
+              <span style={{ color: c.fgDim, fontSize: '12px' }}>preview</span>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div
+                style={{
+                  aspectRatio: `${viewportAspect}`,
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  width: '100%',
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+              >
+                {debouncedPreviewWindow ? (
+                  <WindowThumbnail
+                    window={debouncedPreviewWindow}
+                    visible={open}
+                    c={c}
+                    activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
+                    hoveredPaneId={hoveredPaneId}
+                    onHoveredPaneChange={setHoveredPaneId}
+                    onSelectPane={(paneId) => {
+                      if (debouncedPreviewContext) {
+                        switchToPane(debouncedPreviewContext.sess, debouncedPreviewContext.windowIndex, paneId);
+                      }
+                    }}
+                    animations={animations}
+                  />
+                ) : (
+                  <div style={{ color: c.fgDim }}>No window.</div>
+                )}
+              </div>
+            </div>
             <div
               style={{
+                marginTop: '12px',
                 display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 14px',
-                borderTop: `1px solid ${c.borderDim}`,
-                color: c.fg,
+                flexWrap: 'wrap',
+                columnGap: '16px',
+                rowGap: '6px',
+                color: c.fgDim,
+                fontSize: '11.5px',
               }}
             >
-              <span style={{ color: c.accent }}>/</span>
               <span>
-                {filterQuery}
-                <span
-                  style={{ color: c.accent, animation: animations ? 'btm-blink 1.05s steps(1) infinite' : undefined }}
-                >
-                  ▏
-                </span>
+                <span style={{ color: c.fgMuted }}>↑↓</span> navigate
+              </span>
+              <span>
+                <span style={{ color: c.fgMuted }}>←→</span> fold
+              </span>
+              <span>
+                <span style={{ color: c.fgMuted }}>/</span> filter
+              </span>
+              <span>
+                <span style={{ color: c.fgMuted }}>↵</span> switch
+              </span>
+              <span>
+                <span style={{ color: c.fgMuted }}>c</span> new
+              </span>
+              <span>
+                <span style={{ color: c.fgMuted }}>m</span> rename
+              </span>
+              <span>
+                <span style={{ color: c.fgMuted }}>x</span> kill
+              </span>
+              <span>
+                <span style={{ color: c.fgMuted }}>esc</span> close
               </span>
             </div>
-          )}
-        </div>
-
-        {/* Preview */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px 18px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', marginBottom: '12px' }}>
-            <span style={{ color: c.fgBright, fontWeight: 700 }}>
-              {previewWindowIndex >= 0 ? `${previewWindowIndex}: ` : ''}
-              {debouncedPreviewWindow?.name ?? '—'}
-            </span>
-            <span style={{ color: c.fgDim, fontSize: '12px' }}>preview</span>
-          </div>
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div
-              style={{
-                aspectRatio: `${viewportAspect}`,
-                maxWidth: '100%',
-                maxHeight: '100%',
-                width: '100%',
-                position: 'relative',
-                overflow: 'hidden',
-              }}
-            >
-              {debouncedPreviewWindow ? (
-                <WindowThumbnail
-                  window={debouncedPreviewWindow}
-                  visible={open}
-                  c={c}
-                  activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
-                  hoveredPaneId={hoveredPaneId}
-                  onHoveredPaneChange={setHoveredPaneId}
-                  onSelectPane={(paneId) => {
-                    if (debouncedPreviewContext) {
-                      switchToPane(debouncedPreviewContext.sess, debouncedPreviewContext.windowIndex, paneId);
-                    }
-                  }}
-                  animations={animations}
-                />
-              ) : (
-                <div style={{ color: c.fgDim }}>No window.</div>
-              )}
-            </div>
-          </div>
-          <div
-            style={{
-              marginTop: '12px',
-              display: 'flex',
-              flexWrap: 'wrap',
-              columnGap: '16px',
-              rowGap: '6px',
-              color: c.fgDim,
-              fontSize: '11.5px',
-            }}
-          >
-            <span>
-              <span style={{ color: c.fgMuted }}>↑↓</span> navigate
-            </span>
-            <span>
-              <span style={{ color: c.fgMuted }}>←→</span> fold
-            </span>
-            <span>
-              <span style={{ color: c.fgMuted }}>/</span> filter
-            </span>
-            <span>
-              <span style={{ color: c.fgMuted }}>↵</span> switch
-            </span>
-            <span>
-              <span style={{ color: c.fgMuted }}>c</span> new
-            </span>
-            <span>
-              <span style={{ color: c.fgMuted }}>m</span> rename
-            </span>
-            <span>
-              <span style={{ color: c.fgMuted }}>x</span> kill
-            </span>
-            <span>
-              <span style={{ color: c.fgMuted }}>esc</span> close
-            </span>
           </div>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

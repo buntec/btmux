@@ -112,6 +112,16 @@ bump level="patch":
     PY
     echo "bumped to $version"
 
+# Bump version, commit the version files, and tag the release.
+bump-and-commit level="patch": (bump level)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+    git commit --only -m "bump version to $version" -- \
+        Cargo.toml Cargo.lock desktop/src-tauri/Cargo.toml \
+        desktop/src-tauri/Cargo.lock desktop/src-tauri/tauri.conf.json
+    git tag "v$version"
+
 # Update the Nix package to the latest published GitHub release.
 update-nix-package:
     ./scripts/update-nix-package.sh

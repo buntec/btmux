@@ -459,7 +459,9 @@ impl SessionManager {
             return;
         };
         let window = &mut session.windows[session.active_window];
-        let current_pane_id = window.panes[window.active_pane].id;
+        let current_pane_id = window
+            .zoomed_pane
+            .unwrap_or(window.panes[window.active_pane].id);
 
         if let Some(next_id) = window.layout.navigate_from(current_pane_id, &direction) {
             if let Some(idx) = window.panes.iter().position(|p| p.id == next_id) {
@@ -467,6 +469,9 @@ impl SessionManager {
                 if idx != prev {
                     window.prev_pane = Some(prev);
                     window.active_pane = idx;
+                }
+                if window.zoomed_pane.is_some() {
+                    window.zoomed_pane = Some(next_id);
                 }
             }
         }
@@ -1075,6 +1080,56 @@ fn resolve_index(current: usize, len: usize, index: i32) -> usize {
         }
         i if i >= 0 && (i as usize) < len => i as usize,
         _ => current,
+    }
+}
+
+#[cfg(test)]
+mod pane_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn zoomed_navigation_follows_the_full_layout() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session_id = mgr.create_session(None).await;
+        let top_left = mgr.sessions[0].windows[0].panes[0].id;
+        mgr.split_pane(session_id, top_left, "v".to_string()).await;
+        let top_right = mgr.sessions[0].windows[0].panes[1].id;
+        mgr.split_pane(session_id, top_left, "h".to_string()).await;
+        let bottom_left = mgr.sessions[0].windows[0].panes[2].id;
+        mgr.split_pane(session_id, top_right, "h".to_string()).await;
+        let bottom_right = mgr.sessions[0].windows[0].panes[3].id;
+        mgr.select_pane(session_id, top_left);
+        mgr.zoom_pane(session_id, top_left);
+
+        for (direction, expected) in [
+            ("right", top_right),
+            ("down", bottom_right),
+            ("left", bottom_left),
+            ("up", top_left),
+            ("left", bottom_right),
+        ] {
+            let previous = mgr.sessions[0].windows[0].active_pane;
+            mgr.navigate(session_id, direction.to_string());
+            let window = &mgr.snapshot_by_id(session_id).unwrap().windows[0];
+            assert_eq!(window.panes[window.active_pane].id, expected);
+            assert_eq!(window.zoomed_pane, Some(expected));
+            assert_eq!(mgr.sessions[0].windows[0].prev_pane, Some(previous));
+        }
+
+        mgr.zoom_pane(session_id, bottom_right);
+        let window = &mgr.snapshot_by_id(session_id).unwrap().windows[0];
+        assert_eq!(window.zoomed_pane, None);
+        assert_eq!(window.panes[window.active_pane].id, bottom_right);
+        assert_eq!(window.layout.pane_ids().len(), 4);
     }
 }
 

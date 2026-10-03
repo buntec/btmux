@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './state/store';
 import { useControlSocket } from './hooks/useControlSocket';
-import { LandingPage, recordMruVisit } from './components/LandingPage';
+import { getSessionMruOrder, recordSessionMruVisit } from './state/sessionMru';
 import { SessionView } from './components/SessionView';
 import { SessionPool } from './components/SessionPool';
 import { StatusBar } from './components/StatusBar';
@@ -207,31 +207,24 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
     };
   }, [navigate, send, setNavigateFn, setControlSendFn]);
 
-  // On cold load at /, auto-redirect to the last known session for this tab.
-  // If sessionStorage already has a last-session entry, the user has visited a
-  // session in this tab before — a navigation back to / is intentional (show
-  // the landing page). Only redirect when the tab is brand-new.
-  const didAutoRedirect = useRef(false);
+  // / has no view of its own: open this tab's last session, else the most recently used one.
   useEffect(() => {
-    if (allSessions.length === 0) return;
-    if (location.pathname !== '/') return;
-    if (didAutoRedirect.current) return;
-    didAutoRedirect.current = true;
+    if (location.pathname !== '/' || allSessions.length === 0) return;
+    const byName = (name: string | null) => allSessions.find((s) => s.name === name);
+    const target =
+      byName(sessionStorage.getItem('btmux-last-session')) ??
+      byName(sessionStorage.getItem('btmux-prev-session')) ??
+      getSessionMruOrder()
+        .map((id) => allSessions.find((s) => s.id === id))
+        .find((s) => s != null) ??
+      allSessions[0];
+    const activeWin = target.windows[target.active_window];
+    const url = activeWin
+      ? `/s/${encodeURIComponent(target.name)}/w/${encodeURIComponent(activeWin.name)}`
+      : `/s/${encodeURIComponent(target.name)}`;
+    navigate(url, { replace: true });
+  }, [allSessions, location.pathname, navigate]);
 
-    // If this tab already visited a session, honour the / navigation (landing page).
-    if (sessionStorage.getItem('btmux-last-session')) return;
-
-    const target = allSessions[0];
-    if (target) {
-      const activeWin = target.windows[target.active_window];
-      const url = activeWin
-        ? `/s/${encodeURIComponent(target.name)}/w/${encodeURIComponent(activeWin.name)}`
-        : `/s/${encodeURIComponent(target.name)}`;
-      navigate(url, { replace: true });
-    }
-  }, [allSessions.length, location.pathname, navigate]);
-
-  // Track current session name for the landing page (so it can highlight the active session)
   const currentSessionNameMatch = location.pathname.match(/^\/s\/([^/]+)/);
   const currentSessionName = currentSessionNameMatch ? decodeURIComponent(currentSessionNameMatch[1]) : null;
   const lastSessionName = currentSessionName ?? sessionStorage.getItem('btmux-last-session');
@@ -239,7 +232,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 
   // The session shown right now is derived from the URL. Settings is an
   // in-place overlay, so opening it never changes the session route.
-  const onLanding = location.pathname === '/';
   const activeSessionId = currentSessionName
     ? (allSessions.find((s) => s.name === currentSessionName)?.id ?? null)
     : null;
@@ -274,7 +266,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 
   // Record MRU visit whenever the active session changes.
   useEffect(() => {
-    if (activeSessionId) recordMruVisit(activeSessionId);
+    if (activeSessionId) recordSessionMruVisit(activeSessionId);
   }, [activeSessionId]);
 
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
@@ -334,14 +326,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           <LayoutContent isScrollable={false} padding={0} className="relative min-h-0 overflow-hidden">
             <SessionPool send={send} />
             <Routes>
-              <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
+              <Route path="/" element={null} />
               <Route path="/s/:sessionName" element={<SessionView send={send} />} />
               <Route path="/s/:sessionName/w/:windowName" element={<SessionView send={send} />} />
             </Routes>
             {settingsOpen && config && <ConfigPage config={config} send={send} />}
-            {/* Single Overlay for both landing and session views. On landing,
-            activeSessionId is null, so anchor to the last-visited session (its
-            prompts — rename/new — target that session; new-session ignores it). */}
+            {/* Single Overlay. While / redirects, activeSessionId is null, so
+            anchor to the last-visited session. */}
             {!settingsOpen && (
               <Overlay
                 sessionId={activeSessionId ?? currentSessionId ?? allSessions[0]?.id ?? ''}
@@ -359,8 +350,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           </LayoutContent>
         }
         footer={
-          /* No status bar on the landing page (it has its own full-height chrome). */
-          !onLanding ? (
+          activeSessionId ? (
             <LayoutFooter padding={0} hasDivider>
               <StatusBar sessionId={activeSessionId ?? ''} send={send} />
             </LayoutFooter>

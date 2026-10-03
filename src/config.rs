@@ -147,7 +147,7 @@ pub enum SubCommand {
 /// `version` subcommand and sent to the browser in `ClientConfig` for display.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Sort order for the session list on the landing page.
+/// Sort order for the session list.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -298,7 +298,7 @@ pub struct FileConfig {
     /// Clamped to 0.05–3.0.
     #[serde(rename = "pane-switch-border-speed")]
     pub pane_switch_border_speed: Option<f32>,
-    /// Sort order for the session list on the landing page.
+    /// Sort order for the session list.
     #[serde(rename = "session-sort", default)]
     pub session_sort: SessionSort,
     /// Sort order for the window list (status bar, choose-tree, switcher).
@@ -748,7 +748,7 @@ pub struct ClientConfig {
     /// Resolved seconds for the pane-switch border draw (default 0.10, clamped
     /// 0.05–3.0).
     pub pane_switch_border_speed: f32,
-    /// Sort order for the session list on the landing page.
+    /// Sort order for the session list.
     pub session_sort: SessionSort,
     /// Sort order for the window list (status bar, choose-tree, switcher).
     pub window_sort: WindowSort,
@@ -1139,7 +1139,7 @@ pub fn generate_config_toml() -> String {
 # Clamped to 0.05-3.0.
 # pane-switch-border-speed = {DEFAULT_PANE_SWITCH_BORDER_SPEED:.2}
 
-# Sort order for the session list on the landing page.
+# Sort order for the session list.
 # "created" = creation order, "mru" = most recently visited first (default),
 # "alphabetical" = sorted by name.
 # session-sort = "mru"

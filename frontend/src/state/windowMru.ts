@@ -1,5 +1,5 @@
 // Per-window most-recently-viewed order, persisted in localStorage. Mirrors the
-// session-level MRU in LandingPage (`recordMruVisit`), but keyed by window id and
+// session-level MRU in sessionMru.ts, but keyed by window id and
 // spanning all sessions — it drives the window-grid (prefix + w) ordering.
 // Window ids are globally-unique UUIDs, so a single flat list across sessions is
 // collision-free. Stale ids (closed windows) are tolerated: the grid filters the

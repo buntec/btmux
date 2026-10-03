@@ -158,7 +158,7 @@ export function WindowGrid({ send }: Props) {
     if (!entry) return;
     send({ type: 'switch_window', session_id: entry.sessionId, index: entry.windowIndex });
     // Cross-session switches are driven by the URL (SessionPool derives the active
-    // session from it); this mirrors LandingPage.navigateToNode's window branch.
+    // session from it).
     navigate(`/s/${encodeURIComponent(entry.sessionName)}/w/${encodeURIComponent(entry.windowName)}`);
     setOpen(false);
   };
@@ -183,7 +183,7 @@ export function WindowGrid({ send }: Props) {
       select(entries[clampedIdx]);
       return;
     }
-    // Arrow keys and vi-style h/j/k/l both move the highlight (mirrors LandingPage).
+    // Arrow keys and vi-style h/j/k/l both move the highlight.
     const right = e.key === 'ArrowRight' || e.key === 'l';
     const left = e.key === 'ArrowLeft' || e.key === 'h';
     const down = e.key === 'ArrowDown' || e.key === 'j';

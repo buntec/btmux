@@ -149,7 +149,7 @@ async function main() {
   const page = await context.newPage();
 
   try {
-    // ── 1. Landing page ──────────────────────────────────────────────────────
+    // ── 1. Open a session ────────────────────────────────────────────────────
     console.log('Navigating to btmux…');
     const sessionName = await resolveSessionName();
     await page.goto(`${BASE_URL}/s/${encodeURIComponent(sessionName)}`, { waitUntil: 'networkidle' });

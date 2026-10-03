@@ -4,7 +4,8 @@ import { AppShell } from '@astryxdesign/core/AppShell';
 import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Badge } from '@astryxdesign/core/Badge';
-import { Terminal, Plus, Search, Settings2, Keyboard, Info, Grid2X2 } from 'lucide-react';
+import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2 } from 'lucide-react';
+import type { IconType } from '@astryxdesign/core/Icon';
 import { useStore } from '../state/store';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -14,6 +15,42 @@ import appIconUrl from '../../../desktop/app-icon.svg?url';
 
 let mruVersion = 0;
 for (const event of [SESSION_MRU_EVENT, WINDOW_MRU_EVENT]) window.addEventListener(event, () => mruVersion++);
+
+// Monogram icon so sessions stay distinguishable in the collapsed rail.
+const sessionIcons = new Map<string, IconType>();
+function sessionIcon(name: string): IconType {
+  let icon = sessionIcons.get(name);
+  if (!icon) {
+    const glyph = Array.from(name).slice(0, 2).join('') || '?';
+    icon = (props) => (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        {...props}
+      >
+        <rect x="3" y="3" width="18" height="18" rx="4" />
+        <text
+          x="12"
+          y="12.5"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={glyph.length > 1 ? 10 : 13}
+          fontWeight={700}
+          fill="currentColor"
+          stroke="none"
+        >
+          {glyph}
+        </text>
+      </svg>
+    );
+    sessionIcons.set(name, icon);
+  }
+  return icon;
+}
 
 export function WorkspaceShell({ children, send }: { children: ReactNode; send: (message: ClientMessage) => void }) {
   const sessions = useStore((state) => state.allSessions);
@@ -108,15 +145,6 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
         >
           <SideNavSection title="Workspace">
             <SideNavItem
-              label="All sessions"
-              icon={Grid2X2}
-              isSelected={!active}
-              onClick={() => {
-                closeSurfaces();
-                navigate('/');
-              }}
-            />
-            <SideNavItem
               label="Switch session"
               icon={Search}
               onClick={() => {
@@ -136,7 +164,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
             )}
             <SideNavItem
               label="Commands"
-              icon={Terminal}
+              icon={Command}
               onClick={() => {
                 closeSurfaces();
                 setOverlay({ mode: 'command', title: 'Commands', commands: config?.commands ?? [] });
@@ -163,7 +191,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
               <SideNavItem
                 key={session.id}
                 label={session.name}
-                icon={Terminal}
+                icon={sessionIcon(session.name)}
                 collapsible
                 isSelected={session.id === active?.id}
                 endContent={<Badge variant="neutral" label={session.windows.length} />}

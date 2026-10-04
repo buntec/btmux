@@ -13,6 +13,7 @@ import {
   getPaneSwitchDuration,
   getPaneSwitchIntensity,
   getShowPaneTitles,
+  getShowNavHeader,
   getTerminalFontFamily,
   getTerminalFontSize,
   getTerminalFontWeight,
@@ -55,6 +56,7 @@ type Draft = {
   fontSize: number;
   animations: boolean;
   showPaneTitles: boolean;
+  showNavHeader: boolean;
   sessionSort: ClientConfig['session_sort'];
   windowSort: ClientConfig['window_sort'];
   windowGridCount: number;
@@ -159,6 +161,7 @@ function initialDraft(config: ClientConfig): Draft {
     fontSize: getTerminalFontSize(config),
     animations: config.animations,
     showPaneTitles: getShowPaneTitles(config),
+    showNavHeader: getShowNavHeader(config),
     sessionSort: config.session_sort,
     windowSort: config.window_sort,
     windowGridCount: config.window_grid_count,
@@ -209,10 +212,11 @@ const TOML_DEFAULTS = {
   viMode: false,
   animations: true,
   showPaneTitles: false,
+  showNavHeader: true,
   sessionSort: 'mru',
   windowSort: 'alphabetical',
   windowGridCount: 4,
-  wallpaperShader: 'radiant:aurora-curtain',
+  wallpaperShader: '',
   wallpaperOpacity: 0.1,
   desktopBackgroundOpacity: 0.8,
   wallpaperBlur: 0,
@@ -276,6 +280,7 @@ function toToml(draft: Draft): string {
     boolLine('vi-mode', draft.viMode, TOML_DEFAULTS.viMode),
     boolLine('animations', draft.animations, TOML_DEFAULTS.animations),
     boolLine('show-pane-titles', draft.showPaneTitles, TOML_DEFAULTS.showPaneTitles),
+    boolLine('show-nav-header', draft.showNavHeader, TOML_DEFAULTS.showNavHeader),
     strLine('session-sort', draft.sessionSort, TOML_DEFAULTS.sessionSort),
     strLine('window-sort', draft.windowSort, TOML_DEFAULTS.windowSort),
     intLine('window-grid-count', draft.windowGridCount, TOML_DEFAULTS.windowGridCount),
@@ -339,6 +344,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('shell')) update.shell = draft.shell;
   if (dirty.has('viMode')) update.vi_mode = draft.viMode;
   if (dirty.has('showPaneTitles')) update.show_pane_titles = draft.showPaneTitles;
+  if (dirty.has('showNavHeader')) update.show_nav_header = draft.showNavHeader;
   if (dirty.has('sessionSort')) update.session_sort = draft.sessionSort;
   if (dirty.has('windowSort')) update.window_sort = draft.windowSort;
   if (dirty.has('windowGridCount')) update.window_grid_count = draft.windowGridCount;
@@ -452,6 +458,7 @@ export function ConfigPage({ config, send }: Props) {
       theme: previewTheme(config, draft, colorSchemeTouched),
       animations: draft.animations,
       show_pane_titles: draft.showPaneTitles,
+      show_nav_header: draft.showNavHeader,
       terminal: {
         ...config.terminal,
         renderer: draft.renderer,
@@ -658,6 +665,7 @@ export function ConfigPage({ config, send }: Props) {
                     {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
                     {toggle('animations', 'Animations')}
                     {toggle('showPaneTitles', 'Show pane titles')}
+                    {toggle('showNavHeader', 'Show sidebar header', 'Display the app icon and name.')}
                     {choose('sessionSort', 'Session sort', ordering)}
                     {choose('windowSort', 'Window sort', ordering)}
                     <NumberInput

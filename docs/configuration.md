@@ -27,6 +27,13 @@ title bars, vi-style navigation, bundled font families and weights, image or
 procedural wallpapers, and steady-state, session-switch, and pane-switch WebGL
 effects.
 
+Wallpapers are disabled by default. Set `wallpaper` to an image URL or path,
+or `wallpaper-shader` to a shader ID to enable one.
+
+The sidebar shows its app icon and name by default. Set `show-nav-header = false`
+to hide that header and move the navigation items up. The same option is available
+in the editor's General tab as **Show sidebar header**.
+
 The `colors` option accepts:
 
 - the name of a base16/base24 YAML file in `$XDG_CONFIG_HOME/btmux/colors/`

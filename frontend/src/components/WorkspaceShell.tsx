@@ -7,7 +7,7 @@ import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2 } from 'lucid
 import { useStore } from '../state/store';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
-import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
+import { getAnimations, getSessionSort, getShowNavHeader, getWindowSort } from '../state/configDefaults';
 import { AnimatedAppIcon } from './AnimatedAppIcon';
 import { SessionNavItem } from './SessionNavItem';
 import { useTerminalPalette } from './BtmuxTheme';
@@ -19,6 +19,9 @@ for (const event of [SESSION_MRU_EVENT, WINDOW_MRU_EVENT]) window.addEventListen
 export function WorkspaceShell({ children, send }: { children: ReactNode; send: (message: ClientMessage) => void }) {
   const sessions = useStore((state) => state.allSessions);
   const config = useStore((state) => state.config);
+  const configPreview = useStore((state) => state.configPreview);
+  const settingsOpen = useStore((state) => state.settingsOpen);
+  const showNavHeader = getShowNavHeader(settingsOpen ? (configPreview ?? config) : config);
   const animations = getAnimations(config);
   const palette = useTerminalPalette();
   const setOverlay = useStore((state) => state.setOverlay);
@@ -61,6 +64,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
       height="fill"
       contentPadding={0}
       variant="section"
+      className="isolate bg-transparent"
       sideNav={
         <SideNav
           aria-label="Sessions and windows"
@@ -74,16 +78,18 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
             },
           }}
           header={
-            <SideNavHeading
-              heading="btmux"
-              icon={
-                <AnimatedAppIcon
-                  animated={animations}
-                  palette={palette}
-                  className={`-my-2 size-12 shrink-0 saturate-0 rotate-30 ${collapsed ? '' : '-ml-4'}`}
-                />
-              }
-            />
+            showNavHeader ? (
+              <SideNavHeading
+                heading="btmux"
+                icon={
+                  <AnimatedAppIcon
+                    animated={animations}
+                    palette={palette}
+                    className={`-my-2 size-12 shrink-0 saturate-0 rotate-30 ${collapsed ? '' : '-ml-4'}`}
+                  />
+                }
+              />
+            ) : undefined
           }
           footerIcons={
             <>

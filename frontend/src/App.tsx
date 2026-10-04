@@ -271,8 +271,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
   const wallpaper = effectiveConfig?.wallpaper ?? null;
-  // Preserve an explicitly disabled shader (`null`) after config loads while
-  // still showing the built-in default during the initial connection.
   const wallpaperShader = getWallpaperShader(effectiveConfig);
   const wallpaperOpacity = getWallpaperOpacity(effectiveConfig);
   const wallpaperBlur = getWallpaperBlur(effectiveConfig);

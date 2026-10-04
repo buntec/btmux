@@ -15,7 +15,7 @@ pub const DEFAULT_PREFIX: &str = "C-b";
 pub const DEFAULT_VI_MODE: bool = false;
 pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
-pub const DEFAULT_WALLPAPER_SHADER: &str = "radiant:aurora-curtain";
+pub const DEFAULT_SHOW_NAV_HEADER: bool = true;
 pub const DEFAULT_WALLPAPER_OPACITY: f32 = 0.10;
 pub const DEFAULT_DESKTOP_BACKGROUND_OPACITY: f32 = 0.8;
 pub const DEFAULT_WALLPAPER_BLUR: f32 = 0.0;
@@ -221,10 +221,13 @@ pub struct FileConfig {
     /// each pane. Defaults to false; set to true to show pane metadata.
     #[serde(rename = "show-pane-titles")]
     pub show_pane_titles: bool,
+    /// Show the sidebar's app icon and name. Defaults to true.
+    #[serde(rename = "show-nav-header")]
+    pub show_nav_header: bool,
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
     /// Name of a procedural WebGL background displayed behind the app.
-    /// Defaults to `radiant:aurora-curtain`.
+    /// Disabled by default.
     #[serde(rename = "wallpaper-shader")]
     pub wallpaper_shader: Option<String>,
     /// How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
@@ -335,8 +338,9 @@ impl Default for FileConfig {
             vi_mode: DEFAULT_VI_MODE,
             animations: DEFAULT_ANIMATIONS,
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
+            show_nav_header: DEFAULT_SHOW_NAV_HEADER,
             wallpaper: None,
-            wallpaper_shader: Some(DEFAULT_WALLPAPER_SHADER.to_string()),
+            wallpaper_shader: None,
             wallpaper_opacity: Some(DEFAULT_WALLPAPER_OPACITY),
             desktop_background_opacity: Some(DEFAULT_DESKTOP_BACKGROUND_OPACITY),
             wallpaper_blur: Some(DEFAULT_WALLPAPER_BLUR),
@@ -703,6 +707,8 @@ pub struct ClientConfig {
     pub animations: bool,
     /// Whether panes render a per-pane title bar.
     pub show_pane_titles: bool,
+    /// Whether the sidebar renders the app icon and name.
+    pub show_nav_header: bool,
     /// URL of a background image displayed behind all terminal panes, or `null`.
     /// When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
     pub wallpaper: Option<String>,
@@ -1081,12 +1087,16 @@ pub fn generate_config_toml() -> String {
 # tag) above each pane. Disabled by default.
 # show-pane-titles = {DEFAULT_SHOW_PANE_TITLES}
 
+# Show the app icon and name at the top of the sidebar.
+# show-nav-header = {DEFAULT_SHOW_NAV_HEADER}
+
 # Background wallpaper image displayed behind all terminal panes.
+# No image or shader is enabled by default; the following are examples.
 # Accepts a URL or a local file path (absolute or ~/relative).
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
 # Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "{DEFAULT_WALLPAPER_SHADER}"
+# wallpaper-shader = "radiant:aurora-curtain"
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = {DEFAULT_WALLPAPER_OPACITY:.2}
 # macOS desktop window theme tint: 0.0 = clear, 1.0 = opaque.
@@ -1390,6 +1400,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         vi_mode: file.vi_mode,
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
+        show_nav_header: file.show_nav_header,
         wallpaper: wallpaper_url,
         wallpaper_shader: file.wallpaper_shader.clone(),
         wallpaper_path,
@@ -1444,6 +1455,7 @@ pub struct ConfigUpdate {
     pub shell: Option<String>,
     pub vi_mode: Option<bool>,
     pub show_pane_titles: Option<bool>,
+    pub show_nav_header: Option<bool>,
     pub keys: Option<BTreeMap<String, String>>,
     pub session_sort: Option<SessionSort>,
     pub window_sort: Option<WindowSort>,
@@ -1506,6 +1518,9 @@ impl ConfigUpdate {
         }
         if other.show_pane_titles.is_some() {
             self.show_pane_titles = other.show_pane_titles;
+        }
+        if other.show_nav_header.is_some() {
+            self.show_nav_header = other.show_nav_header;
         }
         if let Some(keys) = &other.keys {
             self.keys
@@ -1642,6 +1657,9 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(show_pane_titles) = overrides.show_pane_titles {
         file.show_pane_titles = show_pane_titles;
+    }
+    if let Some(show_nav_header) = overrides.show_nav_header {
+        file.show_nav_header = show_nav_header;
     }
     if let Some(keys) = &overrides.keys {
         file.keys.extend(keys.clone());
@@ -1865,14 +1883,13 @@ palette:
         assert_eq!(config.shell, None);
         assert!(config.animations);
         assert!(!resolved.show_pane_titles);
-        assert_eq!(
-            resolved.wallpaper_shader.as_deref(),
-            Some("radiant:aurora-curtain")
-        );
-        assert_eq!(resolved.wallpaper_opacity, Some(0.10));
+        assert!(resolved.show_nav_header);
+        assert_eq!(resolved.wallpaper, None);
+        assert_eq!(resolved.wallpaper_shader, None);
+        assert_eq!(resolved.wallpaper_opacity, None);
         assert_eq!(resolved.desktop_background_opacity, 0.8);
-        assert_eq!(resolved.wallpaper_saturate, Some(0.05));
-        assert_eq!(resolved.wallpaper_blur, Some(0.0));
+        assert_eq!(resolved.wallpaper_saturate, None);
+        assert_eq!(resolved.wallpaper_blur, None);
         assert_eq!(resolved.wallpaper_speed, 0.20);
         assert_eq!(resolved.wallpaper_seed, "mellow-nebula-dream");
         assert!(resolved.wallpaper_shader_follows_mouse_cursor);
@@ -1887,6 +1904,38 @@ palette:
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.10);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
+    }
+
+    #[test]
+    fn nav_header_config_and_overrides_preserve_false() {
+        let file: FileConfig = toml::from_str("show-nav-header = false").unwrap();
+        assert!(!resolve_binds(&file).show_nav_header);
+
+        let mut overrides = ConfigUpdate::default();
+        overrides.merge(&ConfigUpdate {
+            show_nav_header: Some(true),
+            ..ConfigUpdate::default()
+        });
+        overrides.merge(&ConfigUpdate::default());
+        assert!(resolve_with_overrides(&file, &overrides).show_nav_header);
+
+        overrides.merge(&ConfigUpdate {
+            show_nav_header: Some(false),
+            ..ConfigUpdate::default()
+        });
+        assert!(!resolve_with_overrides(&file, &overrides).show_nav_header);
+        assert!(!file.show_nav_header);
+    }
+
+    #[test]
+    fn generated_config_keeps_wallpapers_disabled() {
+        let example = generate_config_toml();
+        assert!(example.contains("# show-nav-header = true"));
+        let file: FileConfig = toml::from_str(&example).unwrap();
+        let resolved = resolve_binds(&file);
+        assert!(resolved.show_nav_header);
+        assert_eq!(resolved.wallpaper, None);
+        assert_eq!(resolved.wallpaper_shader, None);
     }
 
     #[test]
@@ -1912,6 +1961,7 @@ palette:
                 shell: Some("/bin/zsh".to_string()),
                 vi_mode: Some(true),
                 show_pane_titles: Some(true),
+                show_nav_header: Some(false),
                 keys: Some(keys),
                 session_sort: Some(SessionSort::Alphabetical),
                 window_sort: Some(WindowSort::Created),
@@ -1935,6 +1985,7 @@ palette:
         assert_eq!(resolved.shell.as_deref(), Some("/bin/zsh"));
         assert!(resolved.vi_mode);
         assert!(resolved.show_pane_titles);
+        assert!(!resolved.show_nav_header);
         assert_eq!(
             resolved.keys.get("new-window").map(String::as_str),
             Some("N")
@@ -2015,10 +2066,7 @@ palette:
         assert_eq!(resolved.pane_switch_border, None);
         assert_eq!(resolved.pane_switch_border_speed, 1.2);
 
-        assert_eq!(
-            file.wallpaper_shader.as_deref(),
-            Some("radiant:aurora-curtain")
-        );
+        assert_eq!(file.wallpaper_shader, None);
         assert_eq!(file.terminal.font_size, Some(18.0));
         assert!(file.animations);
     }

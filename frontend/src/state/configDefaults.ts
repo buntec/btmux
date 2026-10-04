@@ -9,7 +9,8 @@ export const CONFIG_DEFAULTS = {
   prefix: 'C-b',
   animations: true,
   showPaneTitles: false,
-  wallpaperShader: 'radiant:aurora-curtain',
+  showNavHeader: true,
+  wallpaperShader: null,
   wallpaperOpacity: 0.1,
   desktopBackgroundOpacity: 0.8,
   wallpaperBlur: 0,
@@ -61,6 +62,10 @@ export function getAnimations(config: ConfigLike): boolean {
 
 export function getShowPaneTitles(config: ConfigLike): boolean {
   return config?.show_pane_titles ?? CONFIG_DEFAULTS.showPaneTitles;
+}
+
+export function getShowNavHeader(config: ConfigLike): boolean {
+  return config?.show_nav_header ?? CONFIG_DEFAULTS.showNavHeader;
 }
 
 export function getTerminalFontSize(config: ConfigLike): number {

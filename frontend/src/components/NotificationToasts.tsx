@@ -23,7 +23,7 @@ export function NotificationToasts() {
                 />
                 <Text>{message}</Text>
               </HStack>
-              {body && <Text color="secondary">{body}</Text>}
+              {body && <Text>{body}</Text>}
             </VStack>
           ),
           endContent: paneId ? (

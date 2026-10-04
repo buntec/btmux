@@ -16,12 +16,15 @@ export function NotificationToasts() {
           type: level === 'error' ? 'error' : 'info',
           body: (
             <VStack gap={1}>
-              <HStack gap={2}>
-                <StatusDot
-                  label={level}
-                  variant={level === 'attention' ? 'warning' : level === 'info' ? 'accent' : level}
-                />
-                <Text>{message}</Text>
+              <HStack gap={2} align="start">
+                {/* Center the dot on the first title line. */}
+                <HStack align="center" className="h-lh shrink-0">
+                  <StatusDot
+                    label={level}
+                    variant={level === 'attention' ? 'warning' : level === 'info' ? 'accent' : level}
+                  />
+                </HStack>
+                <Text weight="semibold">{message}</Text>
               </HStack>
               {body && <Text>{body}</Text>}
             </VStack>

@@ -107,6 +107,19 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight:
     },
     ...(animations ? {} : { motion: { fast: 0, medium: 0, ratio: 1 } }),
     tokens,
+    components: {
+      // Palette surfaces instead of the inverted foreground slab.
+      toast: {
+        base: {
+          backgroundColor: 'var(--color-background-popover)',
+          border: '1px solid var(--color-border)',
+        },
+        'type:error': {
+          backgroundColor: 'var(--color-error-muted)',
+          borderColor: 'var(--color-border-red)',
+        },
+      },
+    },
     localTokens: {
       '--astryx-theme-neutral-color-status-fill-accent': palette.blue,
       '--astryx-theme-neutral-color-status-fill-success': palette.green,

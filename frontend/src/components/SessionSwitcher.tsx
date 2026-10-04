@@ -17,6 +17,7 @@ import { ClientMessage } from '../protocol/messages';
 import { chromePalette } from '../lib/chrome-colors';
 import { SessionState } from '../state/types';
 import { WindowThumbnail } from './WindowThumbnail';
+import { SessionIcon } from './SessionIcon';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
@@ -435,7 +436,12 @@ export function SessionSwitcher({ send }: Props) {
                   ref={isSelected ? selectedRef : null}
                   label={sess.name}
                   isSelected={isSelected}
-                  startContent={<Icon icon={row.expanded ? ChevronDown : ChevronRight} size="sm" color="secondary" />}
+                  startContent={
+                    <HStack gap={2} vAlign="center">
+                      <Icon icon={row.expanded ? ChevronDown : ChevronRight} size="sm" color="secondary" />
+                      <SessionIcon session={sess} />
+                    </HStack>
+                  }
                   endContent={
                     <HStack gap={1} vAlign="center">
                       {sess.id === activeSession?.id && <Token label="attached" size="sm" color="blue" />}

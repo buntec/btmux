@@ -26,6 +26,9 @@ impl Output {
 
 pub struct Replay {
     head: vt100::Parser,
+    /// Present only while agent detection reads this pane.
+    live: Option<super::screen::LiveScreen>,
+    revision: u64,
     events: VecDeque<Output>,
     bytes: usize,
     cap: usize,
@@ -38,6 +41,8 @@ impl Replay {
     pub fn new(cols: u16, rows: u16, cap: usize) -> Self {
         Self {
             head: vt100::Parser::new(rows, cols, 0),
+            live: None,
+            revision: 0,
             events: VecDeque::new(),
             bytes: 0,
             cap: cap.min(PER_PANE_BYTES),
@@ -46,6 +51,10 @@ impl Replay {
     }
 
     pub fn push(&mut self, event: Output) {
+        self.revision = self.revision.wrapping_add(1);
+        if let Some(live) = &mut self.live {
+            live.push(&event, self.revision);
+        }
         let cost = event.cost();
         while !self.events.is_empty()
             && (self.bytes + cost > self.cap
@@ -97,6 +106,32 @@ impl Replay {
         }
     }
 
+    pub fn screen_revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn screen_snapshot(&self) -> Option<super::screen::ScreenSnapshot> {
+        self.live.as_ref().map(|live| live.snapshot())
+    }
+
+    /// Starts or stops the live screen. A started screen is rebuilt from the
+    /// checkpoint and journal; replayed titles carry the current revision.
+    pub fn track_screen(&mut self, enabled: bool) {
+        if !enabled {
+            self.live = None;
+            return;
+        }
+        if self.live.is_some() {
+            return;
+        }
+        let (rows, cols) = self.head.screen().size();
+        let mut live = super::screen::LiveScreen::new(cols, rows);
+        for event in self.snapshot() {
+            live.push(&event, self.revision);
+        }
+        self.live = Some(live);
+    }
+
     pub fn snapshot(&self) -> Vec<Output> {
         let (rows, cols) = self.head.screen().size();
         let mut reset = b"\x1bc\x1b[3J".to_vec();
@@ -135,6 +170,25 @@ mod tests {
             }
         }
         parser
+    }
+    #[test]
+    fn late_screen_tracking_rebuilds_from_the_journal() {
+        let mut replay = Replay::new(20, 5, 60);
+        replay.push(Output::Data(Bytes::from_static(b"\x1b]2;old\x07first ")));
+        replay.push(Output::Data(Bytes::from_static(b"second")));
+        assert!(replay.screen_snapshot().is_none());
+        replay.track_screen(true);
+        let screen = replay.screen_snapshot().unwrap();
+        assert_eq!(screen.text.trim(), "first second");
+        // Replayed signals are no newer than the moment tracking began.
+        assert_eq!(screen.revision, 2);
+        assert!(screen.title_revision <= 2);
+        replay.push(Output::Data(Bytes::from_static(b"\x1b]2;new\x07")));
+        let screen = replay.screen_snapshot().unwrap();
+        assert_eq!((screen.title.as_str(), screen.title_revision), ("new", 3));
+        replay.track_screen(false);
+        assert!(replay.screen_snapshot().is_none());
+        assert_eq!(replay.screen_revision(), 3);
     }
     #[test]
     fn eviction_preserves_screen_and_input_modes() {

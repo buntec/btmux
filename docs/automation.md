@@ -69,7 +69,7 @@ shows an error and leaves that program's input untouched.
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification            |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
-| `POST/DELETE /api/panes/<pane-id>/agent-status`                 | Set or clear semantic agent status                       |
+| `GET/POST/DELETE /api/panes/<pane-id>/agent-status`                 | Explain, set, or clear semantic agent status                       |
 
 ## MCP server
 
@@ -114,8 +114,8 @@ events to these transitions. Intermediate `TaskCompleted` events only notify;
 they do not mark the whole turn done.
 
 Use `DELETE` on the same endpoint when the reporter no longer knows which agent
-is in the pane. Any status other than `unknown` includes the pane in the agent
-grid. Status is broadcast through the normal server-authoritative state snapshot,
+is in the pane. Detected processes stay in the agent grid even when their
+activity is `unknown`; explicit reports without a process need another state. Status is broadcast through the normal server-authoritative state snapshot,
 so all connected browser tabs see the same value. Status resets when btmux
 restarts. Explicit reports without a process identity expire after 12 hours
 unless renewed.
@@ -127,16 +127,97 @@ running in the pane can use them to display a colored dot or toast when it
 stops, needs permission, fails, or finishes work—even when another pane or
 session is active.
 
-The generated hooks mark a pane as running on agent session start and clear it
-on session end, so idle agents waiting for input stay visible. They also report
-their hook command's parent process ID; btmux clears the status if that process
-exits without an end hook. Press `prefix + a` to open a live grid of those panes.
-This state is runtime-only and resets when btmux restarts.
-btmux also detects Codex, Claude Code, and Gemini CLI processes under each pane's
-shell. This keeps the grid populated when a shared agent runtime runs hooks with
-another pane's environment; hooks still provide richer status and notifications.
-Regenerate and install the hooks to enable this for agents that already have an
-older snippet configured.
+btmux detects interactive Codex, Claude Code, and Gemini CLI processes under each
+pane's shell, including known Node/Bun entry points. It checks process identity
+roughly every second and uses the foreground job to select the agent whose
+screen it reads. A confirmed process exit clears status even when Ctrl-C skips
+the end hook. Suspended or background agents remain present with unknown activity.
+When another agent takes the foreground, a suspended agent keeps its hook session
+and resumes it after `fg`.
+Press `prefix + a` to open the agent grid.
+
+While a pane has a detected agent, the backend reconstructs its live terminal
+screen from ordered PTY output and resize events, independently of browser
+viewers. Tracking starts from the replay checkpoint and journal, so panes without
+an agent pay no parsing cost. About every
+300 ms, it evaluates bundled TOML manifests against the screen and OSC title and
+progress signals. Rules recognize working indicators, approval dialogs, and idle
+prompts. They scope matches to the current UI to avoid old transcript text.
+Screen-only working/blocked transitions to idle or unknown settle for 700 ms to
+avoid redraw flicker. Missing indicators do not prove completion: only
+completion reports set `done`, and idle screens do not acknowledge it.
+
+When hooks and screens disagree, the more reliable evidence wins:
+
+1. `POST /agent-status` reports are reporter-controlled; screen detection never
+   overrides them.
+2. Hook reports outrank screens. A hook ignores screen evidence produced before
+   it. An unmatched or `unknown` screen never overrides a hook, and a screen that
+   agrees keeps the hook's source and message.
+3. A matched screen rule that contradicts a hook for 1.5 s wins, which corrects
+   missed hooks such as an interrupt without `Stop`. The next hook takes over again.
+4. Process presence alone reports `unknown` activity.
+
+Hooks may report a wrapper's child process; the process scan's own choice
+identifies the agent and selects its manifest. Names reported by hooks take
+precedence over process names. A newly detected agent ignores OSC titles that a
+previous program left behind.
+
+The generated hooks remain useful for session/turn identities, completion
+messages, and notifications. Reinstall older hook snippets to receive those
+reports. Agent status is runtime-only and resets when btmux restarts.
+
+### Detection manifests and diagnostics
+
+The bundled rules are adapted from Herdr revision
+`5da0a01e1eedda054db0c81dd3a780000c40d9f0`; attribution and the upstream license
+live in `third-party/herdr`. Codex's generic title-idle rule is omitted: an ordinary
+title or composer does not establish that a turn ended. Unmatched screens produce
+unknown activity rather than an inferred successful completion.
+
+Local overrides replace each agent's bundled manifest:
+
+```text
+~/.config/btmux/agent-detection/claude.toml
+~/.config/btmux/agent-detection/codex.toml
+~/.config/btmux/agent-detection/gemini.toml
+```
+
+The directory follows `XDG_CONFIG_HOME`, like `config.toml`. Edits are checked
+every five seconds. Invalid overrides log a warning and fall back to bundled
+rules. Rules support priorities, scoped regions, `contains` (case-insensitive),
+`regex`, per-line `line_regex`, nested `all`/`any`/`not`, visible evidence flags,
+and `skip_state_update` for transcript viewers. Engine versions through 3 are
+supported. Manifests are local; btmux does not fetch remote rule updates.
+
+For example, a custom Codex approval rule:
+
+```toml
+id = "codex"
+version = "local.1"
+min_engine_version = 3
+
+[[rules]]
+id = "custom_approval"
+state = "blocked"
+priority = 900
+region = "after_last_prompt_marker"
+visible_blocker = true
+contains = ["enter to approve", "esc to cancel"]
+```
+
+Inspect status and detection evidence through the authenticated REST API:
+
+```sh
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
+  "${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/agent-status"
+```
+
+The response includes `status`, the `authority` that set it (`explicit`, `hook`,
+`screen`, or `process`), tracked `process` identity, and the most recent
+`detection`: matched rule, region, priority, manifest version/source, screen
+revision, and visible evidence flags. It excludes terminal contents. A null rule
+means no rule matched; a null detection means no screen evaluation is available.
 
 Print ready-to-paste hook configuration with:
 

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod detection;
 pub mod layout;
 pub mod manager;
 

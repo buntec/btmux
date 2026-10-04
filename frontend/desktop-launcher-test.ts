@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 
-type Choice = { address: string; profile: string; url: string };
+type Choice = { address: string; profile: string; url: string; bundled: boolean };
 type Call = { command: string; args?: { address: string } };
 type LauncherWindow = Window & {
   launcherTest: {
@@ -16,11 +16,11 @@ const url = new URL('../desktop/ui/index.html', import.meta.url).href;
 const browser = await chromium.launch({ headless: true });
 const errors: string[] = [];
 const choices = [
-  { address: '127.0.0.1:8004', profile: 'default', url: 'http://127.0.0.1:8004/' },
-  { address: '[::1]:9234', profile: '<work>', url: 'http://[::1]:9234/' },
+  { address: '127.0.0.1:8004', profile: 'default', url: 'http://127.0.0.1:8004/', bundled: false },
+  { address: '[::1]:9234', profile: '<work>', url: 'http://[::1]:9234/', bundled: false },
 ];
 
-async function open(servers: Choice[], failures: Record<string, string> = {}) {
+async function open(servers: Choice[], failures: Record<string, string> = {}, query = '') {
   const page = await browser.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
   await page.addInitScript(
@@ -41,7 +41,7 @@ async function open(servers: Choice[], failures: Record<string, string> = {}) {
     },
     { servers, failures },
   );
-  await page.goto(url);
+  await page.goto(url + query);
   return page;
 }
 
@@ -92,8 +92,23 @@ try {
   await failed.getByRole('alert').filter({ hasText: 'Desktop profile is in use.' }).waitFor();
   assert(await failed.getByRole('button', { name: 'Refresh', exact: true }).isEnabled());
   await failed.close();
+
+  const lost = await open([], {}, '?return=lost');
+  await lost.getByRole('alert').filter({ hasText: 'stopped responding' }).waitFor();
+  assert.deepEqual(
+    (await calls(lost)).map((call) => call.command),
+    ['discover_servers'],
+  );
+  await lost.close();
+
+  const bundled = { address: '127.0.0.1:9300', profile: 'desktop', url: 'http://127.0.0.1:9300/', bundled: true };
+  const switcher = await open([bundled], {}, '?return=switch');
+  await switcher.getByRole('button', { name: 'Connect to desktop' }).waitFor();
+  assert.equal(await switcher.getByText('stops when you quit').count(), 1);
+  assert.equal(await switcher.getByRole('alert').isHidden(), true);
+  await switcher.close();
   assert.deepEqual(errors, []);
-  console.log('PASS desktop discovery choices, automatic startup, connection, refresh, and error recovery');
+  console.log('PASS desktop discovery choices, automatic startup, connection, refresh, return, and error recovery');
 } finally {
   await browser.close();
 }

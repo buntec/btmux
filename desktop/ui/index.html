@@ -99,7 +99,7 @@
             const name = document.createElement("strong");
             name.textContent = `Connect to ${server.profile}`;
             const address = document.createElement("small");
-            address.textContent = server.url;
+            address.textContent = server.bundled ? `${server.url} · stops when you quit` : server.url;
             button.append(name, address);
             button.addEventListener("click", () => connect(server));
             item.append(button);
@@ -107,7 +107,7 @@
           }
           heading.textContent = choices.length ? "Connect to btmux" : "No running servers found";
           description.textContent = choices.length
-            ? "Connected servers keep running when you quit."
+            ? "Servers started outside the app keep running when you quit."
             : "Start a desktop server or refresh.";
           if (autoStart && !choices.length) {
             await start();
@@ -123,7 +123,11 @@
 
       document.getElementById("start").addEventListener("click", start);
       document.getElementById("refresh").addEventListener("click", () => refresh());
-      refresh(true);
+      // Set when returning from a server; only a fresh launch starts one.
+      const returned = new URLSearchParams(location.search).get("return");
+      refresh(!returned).then(() => {
+        if (returned === "lost" && error.hidden) showError("The btmux server stopped responding.");
+      });
     </script>
   </body>
 </html>

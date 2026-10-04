@@ -310,8 +310,11 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let _registration =
-        state_file.as_ref().and_then(|path| {
+    // Bundled desktop servers stop with their app, so only it lists them.
+    let _registration = state_file
+        .as_ref()
+        .filter(|_| args.desktop_parent_pid.is_none())
+        .and_then(|path| {
             match discovery::Registration::publish(
                 path,
                 listener.local_addr().ok()?,

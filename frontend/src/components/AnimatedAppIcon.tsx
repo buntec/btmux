@@ -1,8 +1,10 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useMemo, useRef } from 'react';
+import { mix } from '../lib/chrome-colors';
+import type { Theme } from '../state/types';
 
 // Animated app mark: the icon's thread bundle swayed like the aurora-curtain
 // wallpaper (per-thread speed/frequency, center-weighted displacement,
-// amber-to-teal gradient).
+// gradient from the scheme's yellow to cyan).
 const THREADS = 7;
 const SAMPLES = 36;
 const X0 = 110;
@@ -10,18 +12,11 @@ const X1 = 914;
 const AMPLITUDE = 150;
 const PHASE_RATE = 0.9;
 const MAX_FPS = 30;
-const AMBER = [0.85, 0.55, 0.25] as const;
-const TEAL = [0.2, 0.6, 0.65] as const;
 
 const smoothstep = (edge0: number, edge1: number, x: number) => {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 };
-
-function rgb(mixT: number, gain: number): string {
-  const channel = (i: number) => Math.round(Math.min(1, (AMBER[i] + (TEAL[i] - AMBER[i]) * mixT) * gain) * 255);
-  return `rgb(${channel(0)},${channel(1)},${channel(2)})`;
-}
 
 function threadY(i: number, u: number, phase: number): number {
   const frac = i / (THREADS - 1);
@@ -41,14 +36,28 @@ function threadPath(i: number, phase: number): string {
   return d;
 }
 
-const THREAD_STOPS = Array.from({ length: THREADS }, (_, i) => {
-  const frac = i / (THREADS - 1);
-  const gain = 0.75 + frac * 0.45;
-  return [rgb(frac * 0.4, gain), rgb(0.4 + frac * 0.4, gain), rgb(0.6 + frac * 0.4, gain)];
-});
+// Per-thread stops: warm-to-cool along the thread, shifted cooler and
+// brighter for later threads.
+function threadStops(palette: Theme): string[][] {
+  const color = (t: number, bright: number) =>
+    mix(mix(palette.yellow, palette.cyan, t), mix(palette.brightYellow, palette.brightCyan, t), bright);
+  return Array.from({ length: THREADS }, (_, i) => {
+    const frac = i / (THREADS - 1);
+    return [color(frac * 0.4, frac), color(0.4 + frac * 0.4, frac), color(0.6 + frac * 0.4, frac)];
+  });
+}
 
-export function AnimatedAppIcon({ animated, className }: { animated: boolean; className?: string }) {
+export function AnimatedAppIcon({
+  animated,
+  palette,
+  className,
+}: {
+  animated: boolean;
+  palette: Theme;
+  className?: string;
+}) {
   const id = useId().replace(/:/g, '');
+  const stops = useMemo(() => threadStops(palette), [palette]);
   const threadsRef = useRef<(SVGPathElement | null)[]>([]);
   const glowRef = useRef<SVGPathElement>(null);
 
@@ -92,10 +101,10 @@ export function AnimatedAppIcon({ animated, className }: { animated: boolean; cl
         <mask id={`${id}ends`}>
           <rect x="100" y="100" width="824" height="824" fill={`url(#${id}fade)`} />
         </mask>
-        {THREAD_STOPS.map((stops, i) => (
+        {stops.map((threadStops, i) => (
           <linearGradient key={i} id={`${id}t${i}`} x1={X0} y1="0" x2={X1} y2="0" gradientUnits="userSpaceOnUse">
-            {stops.map((color, s) => (
-              <stop key={s} offset={s / (stops.length - 1)} stopColor={color} />
+            {threadStops.map((color, s) => (
+              <stop key={s} offset={s / (threadStops.length - 1)} stopColor={color} />
             ))}
           </linearGradient>
         ))}
@@ -110,7 +119,7 @@ export function AnimatedAppIcon({ animated, className }: { animated: boolean; cl
           filter={`url(#${id}soft)`}
         />
         <g mask={`url(#${id}ends)`} strokeWidth="9" opacity="0.85">
-          {THREAD_STOPS.map((_, i) => (
+          {stops.map((_, i) => (
             <path
               key={i}
               ref={(el) => {

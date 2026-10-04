@@ -124,7 +124,11 @@ impl SessionManager {
             .collect()
     }
 
-    pub fn update_detected_agents(&mut self, detected: &[(Uuid, AgentProcess, String)]) -> bool {
+    pub fn update_detected_agents(
+        &mut self,
+        detected: &[(Uuid, AgentProcess, String)],
+        alive: impl Fn(AgentProcess) -> bool,
+    ) -> bool {
         let mut changed = false;
         for (pane_id, process, name) in detected {
             let Some(pane) = self.find_pane(*pane_id) else {
@@ -139,7 +143,7 @@ impl SessionManager {
                 continue;
             }
             if let Some(agent) = self.agents.get_mut(pane_id) {
-                changed |= agent.observe_process(*process, name, revision, Instant::now());
+                changed |= agent.observe_process(*process, name, revision, Instant::now(), &alive);
                 continue;
             }
             let mut agent = AgentLifecycle::detected(*process, name.clone(), Instant::now());
@@ -154,6 +158,7 @@ impl SessionManager {
                 changed = true;
             }
         }
+        self.sync_screen_tracking();
         changed
     }
 
@@ -163,32 +168,53 @@ impl SessionManager {
         now: Instant,
         reload: bool,
     ) -> bool {
-        let screens: Vec<_> = self
+        let mut changed = false;
+        let panes = self
+            .sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes);
+        for pane in panes {
+            let Some(agent) = self.agents.get_mut(&pane.id) else {
+                continue;
+            };
+            let Some(process) = agent.observed_process().filter(|_| agent.is_active()) else {
+                continue;
+            };
+            let group = unsafe { libc::getpgid(process.pid as libc::pid_t) };
+            let revision = pane.pty.screen_revision();
+            if group <= 0 || pane.pty.foreground_pgrp() != Some(group) {
+                changed |= agent.observe_background(revision);
+                continue;
+            }
+            if reload {
+                agent.invalidate_screen();
+            }
+            // Text is built only for screens that can change the status.
+            if !agent.wants_screen(revision) {
+                continue;
+            }
+            if let Some(screen) = pane.pty.screen_snapshot() {
+                changed |= agent.scan_screen(detector, &screen, now);
+            }
+        }
+        changed
+    }
+
+    /// Live screens are parsed only for panes with a detected agent.
+    fn sync_screen_tracking(&self) {
+        for pane in self
             .sessions
             .iter()
             .flat_map(|session| &session.windows)
             .flat_map(|window| &window.panes)
-            .filter_map(|pane| {
-                let agent = self
-                    .agents
-                    .get(&pane.id)
-                    .filter(|agent| agent.is_active())?;
-                let process = agent.observed_process()?;
-                let group = unsafe { libc::getpgid(process.pid as libc::pid_t) };
-                let foreground = group > 0 && pane.pty.foreground_pgrp() == Some(group);
-                Some((pane.id, pane.pty.screen_snapshot(), foreground))
-            })
-            .collect();
-        let mut changed = false;
-        for (pane, screen, foreground) in screens {
-            if let Some(agent) = self.agents.get_mut(&pane) {
-                if reload {
-                    agent.invalidate_screen();
-                }
-                changed |= agent.scan_screen(detector, &screen, foreground, now);
-            }
+        {
+            let tracked = self
+                .agents
+                .get(&pane.id)
+                .is_some_and(AgentLifecycle::has_observed_process);
+            pane.pty.track_screen(tracked);
         }
-        changed
     }
 
     pub fn agent_diagnostics(&self, pane_id: Uuid) -> serde_json::Value {
@@ -1220,17 +1246,20 @@ mod agent_tests {
             pid: 21,
             start_time: 2,
         };
-        assert!(mgr.update_detected_agents(&[
-            (first, one, "codex".to_string()),
-            (second, two, "codex".to_string()),
-        ]));
+        assert!(mgr.update_detected_agents(
+            &[
+                (first, one, "codex".to_string()),
+                (second, two, "codex".to_string()),
+            ],
+            |_| true,
+        ));
         assert_eq!(mgr.running_agent_panes().len(), 2);
         mgr.apply_agent_report(
             first,
             report(AgentEvent::TurnStart, "session"),
             Instant::now(),
         );
-        assert!(mgr.update_detected_agents(&[(second, two, "codex".to_string())]));
+        assert!(mgr.update_detected_agents(&[(second, two, "codex".to_string())], |_| true));
         assert_eq!(mgr.running_agent_panes(), vec![second]);
     }
 

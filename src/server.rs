@@ -662,14 +662,17 @@ mod pane_notification_tests {
         );
         let session = manager.create_session(None).await;
         let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
-        manager.update_detected_agents(&[(
-            pane,
-            AgentProcess {
-                pid: 42,
-                start_time: 1,
-            },
-            "codex".into(),
-        )]);
+        manager.update_detected_agents(
+            &[(
+                pane,
+                AgentProcess {
+                    pid: 42,
+                    start_time: 1,
+                },
+                "codex".into(),
+            )],
+            |_| true,
+        );
         assert_eq!(manager.running_agent_panes(), vec![pane]);
         let state = Arc::new(tokio::sync::RwLock::new(manager));
         let token = "a".repeat(64);

@@ -50,17 +50,14 @@ impl LiveScreen {
         }
     }
 
-    pub fn push(&mut self, event: &Output) {
-        self.revision = self.revision.wrapping_add(1);
-        self.parser.callbacks_mut().revision = self.revision;
+    /// `revision` orders this event among all of the pane's output.
+    pub fn push(&mut self, event: &Output, revision: u64) {
+        self.revision = revision;
+        self.parser.callbacks_mut().revision = revision;
         match event {
             Output::Data(bytes) => self.parser.process(bytes),
             Output::Size(cols, rows) => self.parser.screen_mut().set_size(*rows, *cols),
         }
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision
     }
 
     pub fn snapshot(&self) -> ScreenSnapshot {
@@ -93,33 +90,39 @@ mod tests {
     #[test]
     fn reconstructs_redraws_wrapping_and_split_osc_sequences() {
         let mut screen = LiveScreen::new(12, 5);
-        screen.push(&Output::Data(Bytes::from_static(
-            b"Waiting for approval\r\x1b[2K\x1b[H\x1b[2JWorking",
-        )));
+        screen.push(
+            &Output::Data(Bytes::from_static(
+                b"Waiting for approval\r\x1b[2K\x1b[H\x1b[2JWorking",
+            )),
+            1,
+        );
         assert_eq!(screen.snapshot().text.trim(), "Working");
-        screen.push(&Output::Data(Bytes::from_static(b"\x1b]2;\xe2\xa0")));
-        screen.push(&Output::Data(Bytes::from_static(
-            b"\x8b Codex\x1b\\\x1b]9;4;0\x07",
-        )));
+        screen.push(&Output::Data(Bytes::from_static(b"\x1b]2;\xe2\xa0")), 2);
+        screen.push(
+            &Output::Data(Bytes::from_static(b"\x8b Codex\x1b\\\x1b]9;4;0\x07")),
+            3,
+        );
         let snapshot = screen.snapshot();
         assert_eq!(snapshot.title, "⠋ Codex");
         assert_eq!(snapshot.progress, "4;0");
-        screen.push(&Output::Data(Bytes::from_static(
-            b"\x1b[H\x1b[2Jabcdefghijklmnop",
-        )));
+        screen.push(
+            &Output::Data(Bytes::from_static(b"\x1b[H\x1b[2Jabcdefghijklmnop")),
+            4,
+        );
         assert_eq!(screen.snapshot().text.trim(), "abcdefghijklmnop");
-        screen.push(&Output::Size(40, 10));
+        screen.push(&Output::Size(40, 10), 5);
         assert!(screen.snapshot().revision > snapshot.revision);
     }
 
     #[test]
     fn alternate_screen_exit_restores_shell() {
         let mut screen = LiveScreen::new(80, 24);
-        screen.push(&Output::Data(Bytes::from_static(
-            b"shell\x1b[?1049happroval",
-        )));
+        screen.push(
+            &Output::Data(Bytes::from_static(b"shell\x1b[?1049happroval")),
+            1,
+        );
         assert!(screen.snapshot().text.contains("approval"));
-        screen.push(&Output::Data(Bytes::from_static(b"\x1b[?1049l")));
+        screen.push(&Output::Data(Bytes::from_static(b"\x1b[?1049l")), 2);
         assert_eq!(screen.snapshot().text.trim(), "shell");
     }
 }

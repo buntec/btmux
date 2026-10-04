@@ -165,8 +165,12 @@ impl PtyHandle {
         self.scrollback.lock().unwrap().screen_revision()
     }
 
-    pub fn screen_snapshot(&self) -> screen::ScreenSnapshot {
+    pub fn screen_snapshot(&self) -> Option<screen::ScreenSnapshot> {
         self.scrollback.lock().unwrap().screen_snapshot()
+    }
+
+    pub fn track_screen(&self, enabled: bool) {
+        self.scrollback.lock().unwrap().track_screen(enabled);
     }
 
     pub fn shell_pid(&self) -> Option<u32> {

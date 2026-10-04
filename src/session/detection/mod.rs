@@ -241,9 +241,13 @@ impl CompiledManifest {
 
     fn detect(&self, input: DetectionInput<'_>) -> Detection {
         let mut matched = None;
+        let mut cache: HashMap<&str, (&str, String)> = HashMap::new();
         for (rule, gate) in self.manifest.rules.iter().zip(&self.gates) {
-            let text = regions::region(DetectionInput { ..input }, &rule.region);
-            if gate.matches(text, &text.to_lowercase())
+            let (text, lower) = cache.entry(&rule.region).or_insert_with(|| {
+                let text = regions::region(DetectionInput { ..input }, &rule.region);
+                (text, text.to_lowercase())
+            });
+            if gate.matches(text, lower)
                 && matched.is_none_or(|previous: &Rule| rule.priority > previous.priority)
             {
                 matched = Some(rule);
@@ -309,7 +313,13 @@ impl Detector {
                 continue;
             }
             self.overrides.insert((*name).into(), modified);
-            let loaded = load_override(name, &path).unwrap_or_else(|| {
+            // A panicking override must not take detection down with it.
+            let loaded = std::panic::catch_unwind(|| load_override(name, &path))
+                .unwrap_or_else(|_| {
+                    tracing::warn!(path = %path.display(), "agent manifest panicked; using bundled rules");
+                    None
+                })
+                .unwrap_or_else(|| {
                 CompiledManifest::parse(name, bundled, "bundled".into()).expect("bundled manifest")
             });
             self.manifests.insert((*name).into(), loaded);

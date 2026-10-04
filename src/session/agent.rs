@@ -9,6 +9,8 @@ use super::{AgentState, AgentStatus};
 use crate::pty::screen::ScreenSnapshot;
 
 pub const UNVERIFIED_AGENT_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+const MAX_RETIRED: usize = 8;
+const MAX_PARKED: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct AgentProcess {
@@ -186,6 +188,8 @@ pub struct AgentLifecycle {
     ended: bool,
     ended_process: Option<AgentProcess>,
     retired_sessions: Vec<String>,
+    /// Other live agents in the pane, outside the foreground.
+    parked: Vec<AgentLifecycle>,
     pub detection: Option<Detection>,
     screen_revision: Option<u64>,
     signal_floor: u64,
@@ -241,6 +245,7 @@ impl AgentLifecycle {
             ended: false,
             ended_process: None,
             retired_sessions: Vec::new(),
+            parked: Vec::new(),
             detection: None,
             screen_revision: None,
             signal_floor: 0,
@@ -255,20 +260,33 @@ impl AgentLifecycle {
         name: &str,
         revision: u64,
         now: Instant,
+        alive: impl Fn(AgentProcess) -> bool,
     ) -> bool {
         // Hooks may report a wrapper's child; only the scan's own choice
         // identifies a replacement.
         let replaced = self.ended || self.observed.is_some_and(|current| current != process);
         if replaced {
-            let mut retired_sessions = std::mem::take(&mut self.retired_sessions);
-            if let Some(session) = self.session_id.take() {
-                retired_sessions.push(session);
+            let mut previous = std::mem::replace(self, Self::detected(process, name.into(), now));
+            let mut parked = std::mem::take(&mut previous.parked);
+            let mut retired = std::mem::take(&mut previous.retired_sessions);
+            parked.retain(|agent| agent.observed.is_some_and(&alive));
+            // A live agent that left the foreground (e.g. suspended) keeps its
+            // hook session until it returns.
+            if !previous.ended && previous.observed.is_some_and(&alive) {
+                parked.push(previous);
+            } else if let Some(session) = previous.session_id {
+                retired.push(session);
             }
-            if retired_sessions.len() > 8 {
-                retired_sessions.remove(0);
+            if let Some(index) = parked
+                .iter()
+                .position(|agent| agent.observed == Some(process))
+            {
+                *self = parked.remove(index);
             }
-            *self = Self::detected(process, name.to_string(), now);
-            self.retired_sessions = retired_sessions;
+            parked.drain(..parked.len().saturating_sub(MAX_PARKED));
+            retired.drain(..retired.len().saturating_sub(MAX_RETIRED));
+            self.parked = parked;
+            self.retired_sessions = retired;
             self.suppress_old_screen(revision);
             return true;
         }
@@ -294,36 +312,43 @@ impl AgentLifecycle {
         self.authority
     }
 
+    fn reads_screen(&self) -> bool {
+        !self.ended && self.observed.is_some() && self.authority != Authority::Explicit
+    }
+
+    /// Whether a screen at `revision` could change this lifecycle.
+    pub fn wants_screen(&self, revision: u64) -> bool {
+        self.reads_screen()
+            && !self.screen_floor.is_some_and(|floor| revision <= floor)
+            && (self.screen_revision != Some(revision) || self.pending_screen.is_some())
+    }
+
+    /// A suspended or background agent's activity is unknown, and the screen
+    /// belongs to another program.
+    pub fn observe_background(&mut self, revision: u64) -> bool {
+        if !self.reads_screen() {
+            return false;
+        }
+        self.screen_revision = None;
+        self.pending_screen = None;
+        self.signal_floor = revision;
+        self.screen_floor = Some(revision);
+        let previous = self.status.clone();
+        self.status.state = AgentState::Unknown;
+        self.status.source = Some("process".into());
+        self.status.message = None;
+        self.authority = Authority::Process;
+        self.detection = None;
+        self.status != previous
+    }
+
     pub fn scan_screen(
         &mut self,
         detector: &Detector,
         screen: &ScreenSnapshot,
-        foreground: bool,
         now: Instant,
     ) -> bool {
-        if self.ended || self.observed.is_none() || self.authority == Authority::Explicit {
-            return false;
-        }
-        if !foreground {
-            self.screen_revision = None;
-            self.pending_screen = None;
-            self.signal_floor = screen.revision;
-            self.screen_floor = Some(screen.revision);
-            let previous = self.status.clone();
-            self.status.state = AgentState::Unknown;
-            self.status.source = Some("process".into());
-            self.status.message = None;
-            self.authority = Authority::Process;
-            self.detection = None;
-            return self.status != previous;
-        }
-        if self
-            .screen_floor
-            .is_some_and(|floor| screen.revision <= floor)
-        {
-            return false;
-        }
-        if self.screen_revision == Some(screen.revision) && self.pending_screen.is_none() {
+        if !self.wants_screen(screen.revision) {
             return false;
         }
         self.screen_floor = None;
@@ -465,6 +490,14 @@ impl AgentLifecycle {
                 .retain(|session| Some(session) != report.session_id.as_ref());
         }
         if self.session_id.is_some() && report.session_id.is_none() {
+            return None;
+        }
+        if report.session_id.is_some()
+            && self
+                .parked
+                .iter()
+                .any(|agent| agent.session_id == report.session_id)
+        {
             return None;
         }
         let different_session = self.session_id.is_some()
@@ -718,16 +751,16 @@ mod tests {
         );
         assert!(agent.is_active());
         assert_eq!(agent.status.state, AgentState::Unknown);
-        assert!(agent.scan_screen(&detector, &screen("", "⠋ Claude", 1), true, now));
+        assert!(agent.scan_screen(&detector, &screen("", "⠋ Claude", 1), now));
         assert_eq!(agent.status.state, AgentState::Working);
         let idle = screen("──────\n❯\n──────", "", 2);
-        assert!(!agent.scan_screen(&detector, &idle, true, now));
-        assert!(!agent.scan_screen(&detector, &idle, true, now + Duration::from_millis(300)));
-        assert!(agent.scan_screen(&detector, &idle, true, now + Duration::from_millis(700)));
+        assert!(!agent.scan_screen(&detector, &idle, now));
+        assert!(!agent.scan_screen(&detector, &idle, now + Duration::from_millis(300)));
+        assert!(agent.scan_screen(&detector, &idle, now + Duration::from_millis(700)));
         assert_eq!(agent.status.state, AgentState::Idle);
         agent.apply(report(AgentEvent::TurnStart, "s", None), 0, now);
         agent.apply(report(AgentEvent::TurnFinished, "s", None), 0, now);
-        assert!(!agent.scan_screen(&detector, &screen(&idle.text, "", 3), true, now));
+        assert!(!agent.scan_screen(&detector, &screen(&idle.text, "", 3), now));
         assert_eq!(agent.status.state, AgentState::Done);
     }
 
@@ -746,7 +779,7 @@ mod tests {
         agent.apply(report(AgentEvent::TurnStart, "old", None), 0, now);
         let working = screen("", "⠋ Codex", 3);
         agent.suppress_old_screen(3);
-        assert!(!agent.scan_screen(&detector, &working, true, now));
+        assert!(!agent.scan_screen(&detector, &working, now));
         assert!(agent.observe_process(
             AgentProcess {
                 pid: 2,
@@ -754,15 +787,16 @@ mod tests {
             },
             "codex",
             3,
-            now
+            now,
+            |process| process.pid != 1
         ));
         assert_eq!(agent.status.state, AgentState::Unknown);
-        assert!(!agent.scan_screen(&detector, &working, true, now));
+        assert!(!agent.scan_screen(&detector, &working, now));
         let new_screen = ScreenSnapshot {
             revision: 4,
             ..working
         };
-        assert!(!agent.scan_screen(&detector, &new_screen, true, now));
+        assert!(!agent.scan_screen(&detector, &new_screen, now));
         assert_eq!(agent.status.state, AgentState::Unknown);
         assert_eq!(
             agent.apply(report(AgentEvent::TurnFinished, "old", None), 0, now),
@@ -803,7 +837,7 @@ mod tests {
             start_time: 6,
         });
         assert_eq!(agent.apply(start, 0, now), Some(true));
-        assert!(!agent.observe_process(wrapper, "claude", 1, now));
+        assert!(!agent.observe_process(wrapper, "claude", 1, now, |_| true));
         assert_eq!(
             agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 1, now),
             Some(true)
@@ -820,12 +854,7 @@ mod tests {
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let unmatched = screen("some unrelated redraw", "", 1);
         for ms in [0, 800, 5000] {
-            assert!(!agent.scan_screen(
-                &detector,
-                &unmatched,
-                true,
-                now + Duration::from_millis(ms)
-            ));
+            assert!(!agent.scan_screen(&detector, &unmatched, now + Duration::from_millis(ms)));
         }
         assert_eq!(agent.status.state, AgentState::Working);
         assert_eq!(agent.authority(), Authority::Hook);
@@ -840,7 +869,7 @@ mod tests {
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
         permission.message = Some("needs Bash".into());
         agent.apply(permission, 0, now);
-        assert!(!agent.scan_screen(&detector, &screen(CLAUDE_BLOCKED, "", 1), true, now));
+        assert!(!agent.scan_screen(&detector, &screen(CLAUDE_BLOCKED, "", 1), now));
         assert_eq!(agent.status.source.as_deref(), Some("hook"));
         assert_eq!(agent.status.message.as_deref(), Some("needs Bash"));
         assert_eq!(
@@ -856,20 +885,19 @@ mod tests {
         let mut agent = claude(now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let idle = screen(CLAUDE_IDLE, "", 1);
-        assert!(!agent.scan_screen(&detector, &idle, true, now));
+        assert!(!agent.scan_screen(&detector, &idle, now));
         assert!(!agent.scan_screen(
             &detector,
             &idle,
-            true,
             now + SCREEN_SETTLE + Duration::from_millis(100)
         ));
         assert_eq!(agent.status.state, AgentState::Working);
-        assert!(agent.scan_screen(&detector, &idle, true, now + HOOK_OVERRIDE_SETTLE));
+        assert!(agent.scan_screen(&detector, &idle, now + HOOK_OVERRIDE_SETTLE));
         assert_eq!(agent.status.state, AgentState::Idle);
         assert_eq!(agent.authority(), Authority::Screen);
         // A fresh hook outranks the screen again.
         agent.apply(report(AgentEvent::TurnStart, "s", Some("u")), 1, now);
-        assert!(!agent.scan_screen(&detector, &idle, true, now + HOOK_OVERRIDE_SETTLE * 2));
+        assert!(!agent.scan_screen(&detector, &idle, now + HOOK_OVERRIDE_SETTLE * 2));
         assert_eq!(agent.status.state, AgentState::Working);
     }
 
@@ -878,7 +906,7 @@ mod tests {
         let now = Instant::now();
         let detector = Detector::new(None);
         let mut agent = claude(now);
-        assert!(agent.scan_screen(&detector, &screen(CLAUDE_BLOCKED, "", 1), true, now));
+        assert!(agent.scan_screen(&detector, &screen(CLAUDE_BLOCKED, "", 1), now));
         assert_eq!(agent.status.state, AgentState::Blocked);
         let finished = report(AgentEvent::ToolFinished, "s", None);
         assert_eq!(agent.apply(finished, 1, now), Some(false));
@@ -902,10 +930,10 @@ mod tests {
             pid: 10,
             start_time: 5,
         };
-        agent.observe_process(process, "claude", 0, now);
+        agent.observe_process(process, "claude", 0, now, |_| true);
         let idle = screen(CLAUDE_IDLE, "", 1);
-        assert!(!agent.scan_screen(&detector, &idle, true, now));
-        assert!(!agent.scan_screen(&detector, &idle, true, now + Duration::from_secs(5)));
+        assert!(!agent.scan_screen(&detector, &idle, now));
+        assert!(!agent.scan_screen(&detector, &idle, now + Duration::from_secs(5)));
         assert_eq!(agent.status.state, AgentState::Blocked);
         assert_eq!(agent.status.message.as_deref(), Some("awaiting approval"));
 
@@ -913,12 +941,62 @@ mod tests {
         let mut start = report(AgentEvent::SessionStart, "s", None);
         start.agent = Some("claude-code".into());
         agent.apply(start, 0, now);
-        assert!(!agent.observe_process(process, "claude", 0, now));
+        assert!(!agent.observe_process(process, "claude", 0, now, |_| true));
         assert_eq!(agent.status.agent.as_deref(), Some("claude-code"));
         let working = screen("", "⠋ Claude", 1);
-        assert!(!agent.scan_screen(&detector, &working, true, now));
-        assert!(agent.scan_screen(&detector, &working, true, now + HOOK_OVERRIDE_SETTLE));
+        assert!(!agent.scan_screen(&detector, &working, now));
+        assert!(agent.scan_screen(&detector, &working, now + HOOK_OVERRIDE_SETTLE));
         assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn a_suspended_agent_keeps_its_hook_session() {
+        let now = Instant::now();
+        let first = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        let second = AgentProcess {
+            pid: 20,
+            start_time: 9,
+        };
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::TurnStart, "claude", Some("t")), 0, now);
+        assert!(agent.observe_background(1));
+        assert!(agent.observe_process(second, "codex", 2, now, |_| true));
+        assert_eq!(agent.status.agent.as_deref(), Some("codex"));
+        assert_eq!(
+            agent.apply(
+                report(AgentEvent::TurnFinished, "claude", Some("t")),
+                2,
+                now
+            ),
+            None
+        );
+        agent.apply(report(AgentEvent::TurnStart, "codex", None), 2, now);
+        // `fg` restores the first agent and its session.
+        assert!(agent.observe_process(first, "claude", 3, now, |_| true));
+        assert_eq!(agent.status.agent.as_deref(), Some("claude"));
+        assert_eq!(
+            agent.apply(
+                report(AgentEvent::TurnFinished, "claude", Some("t")),
+                3,
+                now
+            ),
+            Some(true)
+        );
+        assert_eq!(agent.status.state, AgentState::Done);
+        assert_eq!(
+            agent.apply(report(AgentEvent::TurnFinished, "codex", None), 3, now),
+            None
+        );
+        // An agent that exits retires its session.
+        assert!(agent.observe_process(second, "codex", 4, now, |p| p != first));
+        assert_eq!(agent.status.agent.as_deref(), Some("codex"));
+        assert_eq!(
+            agent.apply(report(AgentEvent::TurnStart, "claude", Some("u")), 4, now),
+            None
+        );
     }
 
     #[test]
@@ -927,9 +1005,9 @@ mod tests {
         let detector = Detector::new(None);
         let mut agent = claude(now);
         agent.suppress_old_signals(1);
-        assert!(!agent.scan_screen(&detector, &screen("", "⠋ Claude", 1), true, now));
+        assert!(!agent.scan_screen(&detector, &screen("", "⠋ Claude", 1), now));
         assert_eq!(agent.status.state, AgentState::Unknown);
-        assert!(agent.scan_screen(&detector, &screen(CLAUDE_IDLE, "", 2), true, now));
+        assert!(agent.scan_screen(&detector, &screen(CLAUDE_IDLE, "", 2), now));
         assert_eq!(agent.status.state, AgentState::Idle);
     }
 

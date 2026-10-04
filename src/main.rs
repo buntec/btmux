@@ -253,7 +253,7 @@ async fn main() {
     }
 
     spawn_pane_exit_handler(exit_rx, state.clone());
-    spawn_agent_reaper(state.clone());
+    spawn_agent_reaper(state.clone(), agent_manifest_dir());
     spawn_meta_change_handler(meta_rx, state.clone());
 
     // Persist the session tree to disk on every state change (debounced).
@@ -510,18 +510,23 @@ fn spawn_pane_exit_handler(
     });
 }
 
-fn spawn_agent_reaper(state: AppState) {
+fn agent_manifest_dir() -> Option<std::path::PathBuf> {
+    config::config_path().and_then(|path| path.parent().map(|p| p.join("agent-detection")))
+}
+
+fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
     use crate::session::agent::{agent_name, detect_pane_agents, PaneProcess};
     use crate::session::detection::Detector;
     use std::collections::HashMap;
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
     tokio::spawn(async move {
-        let directory =
-            config::config_path().and_then(|path| path.parent().map(|p| p.join("agent-detection")));
-        let mut detector = tokio::task::spawn_blocking(move || Detector::new(directory))
-            .await
-            .unwrap();
+        // Overrides cannot panic here; only a bad bundled manifest can.
+        let Ok(mut detector) = tokio::task::spawn_blocking(move || Detector::new(manifests)).await
+        else {
+            tracing::error!("agent detection failed to start");
+            return;
+        };
         let mut interval = tokio::time::interval(Duration::from_millis(300));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut process_checked = None;
@@ -537,6 +542,7 @@ fn spawn_agent_reaper(state: AppState) {
                 })
                 .await;
                 let Ok((loaded, changed)) = result else {
+                    tracing::error!("agent manifest reload failed; detection stopped");
                     return;
                 };
                 detector = loaded;
@@ -590,10 +596,11 @@ fn spawn_agent_reaper(state: AppState) {
                 .await;
                 if let Ok((starts, detected)) = scan {
                     let mut mgr = state.write().await;
-                    changed |= mgr.reap_stale_agents(now, |process| {
+                    let alive = |process: crate::session::agent::AgentProcess| {
                         starts.get(&process.pid) == Some(&process.start_time)
-                    });
-                    changed |= mgr.update_detected_agents(&detected);
+                    };
+                    changed |= mgr.reap_stale_agents(now, alive);
+                    changed |= mgr.update_detected_agents(&detected, alive);
                 }
             }
             let mut mgr = state.write().await;
@@ -698,7 +705,7 @@ mod tests {
         );
         input.send_wait(command.into_bytes()).await.unwrap();
         let state = Arc::new(RwLock::new(manager));
-        spawn_agent_reaper(state.clone());
+        spawn_agent_reaper(state.clone(), None);
         tokio::time::timeout(Duration::from_secs(8), async {
             while state.read().await.running_agent_panes().is_empty() {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -745,6 +752,14 @@ mod tests {
         })
         .await
         .expect("Ctrl-C clears agent presence without an end hook");
+        let pane_screen = state
+            .read()
+            .await
+            .find_pane(pane_id)
+            .unwrap()
+            .pty
+            .screen_snapshot();
+        assert!(pane_screen.is_none(), "screen parsing stops with the agent");
         assert_eq!(
             state
                 .read()

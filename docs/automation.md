@@ -132,10 +132,14 @@ pane's shell, including known Node/Bun entry points. It checks process identity
 roughly every second and uses the foreground job to select the agent whose
 screen it reads. A confirmed process exit clears status even when Ctrl-C skips
 the end hook. Suspended or background agents remain present with unknown activity.
+When another agent takes the foreground, a suspended agent keeps its hook session
+and resumes it after `fg`.
 Press `prefix + a` to open the agent grid.
 
-The backend reconstructs the live terminal screen from ordered PTY output and
-resize events, independently of browser viewers and replay history. About every
+While a pane has a detected agent, the backend reconstructs its live terminal
+screen from ordered PTY output and resize events, independently of browser
+viewers. Tracking starts from the replay checkpoint and journal, so panes without
+an agent pay no parsing cost. About every
 300 ms, it evaluates bundled TOML manifests against the screen and OSC title and
 progress signals. Rules recognize working indicators, approval dialogs, and idle
 prompts. They scope matches to the current UI to avoid old transcript text.

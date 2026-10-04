@@ -8,10 +8,10 @@ import { Placeholder } from '../files/Placeholder';
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <HStack gap={3} className="min-w-0">
-      <Text size="sm" color="secondary" className="w-28 flex-none">
+      <Text color="secondary" className="w-32 flex-none">
         {label}
       </Text>
-      <Text size="sm" maxLines={1} className="min-w-0 flex-1">
+      <Text maxLines={1} className="min-w-0 flex-1">
         {value}
       </Text>
     </HStack>

@@ -531,7 +531,7 @@ function chromaticFlashSrc(intensity: number, duration: number): string {
 export interface PaneSwitchEffect {
   id: string;
   label: string;
-  /** GLSL, or null for the "(none)" entry — nothing is installed at all. */
+  /** GLSL, or null for the "None" entry — nothing is installed at all. */
   src: string | null;
   durationMs: number;
 }
@@ -549,7 +549,7 @@ const DEFAULT_PANE_SWITCH_EFFECT_ID = 'none';
 const PANE_SWITCH_EFFECT_ENTRIES: PaneSwitchEffectEntry[] = [
   {
     id: 'none',
-    label: '(none)',
+    label: 'None',
     build: () => ({ src: null, durationMs: 0 }),
   },
   {

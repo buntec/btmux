@@ -1230,26 +1230,28 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const selectionCount = selectedPaths.size;
 
   const hints: Hint[] = isGitMode
-    ? gitView === 'log'
-      ? GIT_LOG_HINTS
-      : [
-          ...GIT_STATUS_HINTS,
-          {
-            keys: ['w'],
-            label: (
-              <Text
-                type="code"
-                size="sm"
-                color={ignoreAllSpace ? 'inherit' : 'disabled'}
-                className={cn(ignoreAllSpace && 'text-cyan-vivid')}
-                style={{ fontVariantLigatures: 'none' }}
-              >
-                -w/--ignore-all-space
-              </Text>
-            ),
-          },
-          ...GIT_STATUS_TAIL_HINTS,
-        ]
+    ? gitStatus && !gitStatus.is_repo
+      ? GIT_EXIT_HINTS
+      : gitView === 'log'
+        ? GIT_LOG_HINTS
+        : [
+            ...GIT_STATUS_HINTS,
+            {
+              keys: ['w'],
+              label: (
+                <Text
+                  type="code"
+                  size="sm"
+                  color={ignoreAllSpace ? 'inherit' : 'disabled'}
+                  className={cn(ignoreAllSpace && 'text-cyan-vivid')}
+                  style={{ fontVariantLigatures: 'none' }}
+                >
+                  -w/--ignore-all-space
+                </Text>
+              ),
+            },
+            ...GIT_STATUS_TAIL_HINTS,
+          ]
     : searchMode !== 'off'
       ? [
           { keys: ['up', 'down'], label: 'navigate' },
@@ -1330,7 +1332,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         </VStack>
       </HStack>
 
-      <HStack gap={4} vAlign="center" className="flex-none overflow-hidden border-t border-border px-3 py-1">
+      <HStack gap={4} vAlign="center" wrap="wrap" className="flex-none gap-y-1 border-t border-border px-3 py-1">
         {pendingRename ? (
           <HStack gap={3} vAlign="center" className="w-full">
             <TextInput
@@ -1386,6 +1388,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     </VStack>
   );
 }
+
+const GIT_EXIT_HINTS: Hint[] = [{ keys: ['esc', 'q'], label: 'exit git' }];
 
 const GIT_LOG_HINTS: Hint[] = [
   { keys: ['j', 'k'], label: 'navigate commits' },

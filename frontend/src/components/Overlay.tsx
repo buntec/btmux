@@ -13,10 +13,11 @@ import { Layout, LayoutContent, LayoutFooter, HStack, VStack, Section } from '@a
 import { InfoDialog } from './InfoDialog';
 import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
-import type { ClientConfig } from '../state/types';
+import type { Bind, ClientConfig, Command } from '../state/types';
 import { getPrefix } from '../state/configDefaults';
 import { KeyCap } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
+import { runAction } from '../hooks/useKeybindings';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -89,6 +90,35 @@ interface Props {
   config: ClientConfig | null;
 }
 
+const ACTION_ID_PREFIX = 'action:';
+
+/** Keybinding actions as palette entries, after the server's own commands. */
+function actionCommands(commands: Command[], config: ClientConfig | null): Command[] {
+  const keys = new Map<string, string[]>();
+  for (const bind of config?.binds ?? []) keys.set(bind.action, [...(keys.get(bind.action) ?? []), bind.key]);
+  const actions = new Set([...KEY_SECTIONS.flatMap((section) => section.actions), ...keys.keys()]);
+  const prefix = getPrefix(config);
+  return [...actions]
+    .filter((action) => action !== 'command-palette' && !commands.some((command) => command.id === action))
+    .map((action) => {
+      const bound = keys.get(action);
+      return {
+        id: `${ACTION_ID_PREFIX}${action}`,
+        label: actionLabel(action),
+        description: bound ? `${prefix}, then ${bound.join(' or ')}` : '',
+        confirm: null,
+      };
+    });
+}
+
+/** Unique actions of a keybinding-help section, each with all of its keys. */
+function sectionBinds(actions: string[], binds: Bind[]): { action: string; keys: string[] }[] {
+  return actions.flatMap((action) => {
+    const keys = binds.filter((bind) => bind.action === action).map((bind) => bind.key);
+    return keys.length ? [{ action, keys }] : [];
+  });
+}
+
 /** Palette input that keeps the first result highlighted whenever the results change. */
 function TopHighlightedInput() {
   const palette = useCommandPaletteContext();
@@ -108,7 +138,11 @@ export function Overlay({ sessionId, send, config }: Props) {
   const [pickerIndex, setPickerIndex] = useState(0);
   const [applied, setApplied] = useState<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
-  const source = useMemo(() => createStaticSource(overlay?.mode === 'command' ? overlay.commands : []), [overlay]);
+  const commands = useMemo(
+    () => (overlay?.mode === 'command' ? [...overlay.commands, ...actionCommands(overlay.commands, config)] : []),
+    [overlay, config],
+  );
+  const source = useMemo(() => createStaticSource(commands), [commands]);
   useEffect(() => {
     if (overlay?.mode !== 'picker') return;
     setPickerIndex(
@@ -161,15 +195,25 @@ export function Overlay({ sessionId, send, config }: Props) {
       <CommandPalette
         isOpen
         label={overlay.title}
+        // Fixed height keeps the input still while results change.
+        className="h-120"
         searchSource={source}
         input={<TopHighlightedInput />}
         onOpenChange={(open) => {
           if (!open && useStore.getState().overlay === overlay) setOverlay(null);
         }}
         onValueChange={(id) => {
-          const command = overlay.commands.find((item) => item.id === id);
+          const command = commands.find((item) => item.id === id);
           if (!command) return;
           const state = useStore.getState();
+          if (id.startsWith(ACTION_ID_PREFIX)) {
+            // Close first: actions may open their own overlay.
+            setOverlay(null);
+            runAction(id.slice(ACTION_ID_PREFIX.length), sessionId, send, (name) =>
+              navigate(`/s/${encodeURIComponent(name)}`),
+            );
+            return;
+          }
           if (id === 'open-config') {
             setOverlay(null);
             state.setSettingsOpen(true);
@@ -191,7 +235,7 @@ export function Overlay({ sessionId, send, config }: Props) {
         renderItem={(item) => (
           <VStack gap={0.5}>
             <Text>{item.label}</Text>
-            <Text color="secondary">{item.description}</Text>
+            {item.description && <Text color="secondary">{item.description}</Text>}
           </VStack>
         )}
       />
@@ -293,7 +337,7 @@ export function Overlay({ sessionId, send, config }: Props) {
                 ))}
               </List>
               {!overlay.items.length && (
-                <Section>
+                <Section variant="transparent">
                   <Text color="secondary">No items available.</Text>
                 </Section>
               )}
@@ -315,9 +359,13 @@ export function Overlay({ sessionId, send, config }: Props) {
     ...KEY_SECTIONS,
     {
       title: 'Other',
-      actions: overlay.binds
-        .filter((bind) => !KEY_SECTIONS.some((section) => section.actions.includes(bind.action)))
-        .map((bind) => bind.action),
+      actions: [
+        ...new Set(
+          overlay.binds
+            .filter((bind) => !KEY_SECTIONS.some((section) => section.actions.includes(bind.action)))
+            .map((bind) => bind.action),
+        ),
+      ],
     },
   ];
   return (
@@ -333,23 +381,30 @@ export function Overlay({ sessionId, send, config }: Props) {
           <DialogHeader
             title={overlay.title}
             subtitle={`Press ${getPrefix(config)}, then a key`}
+            hasDivider
             onOpenChange={changeOpen}
           />
         }
         content={
           <LayoutContent padding={4}>
-            <VStack gap={6}>
+            <VStack gap={0}>
               {sections.map((section) => {
-                const binds = overlay.binds.filter((bind) => section.actions.includes(bind.action));
+                const binds = sectionBinds(section.actions, overlay.binds);
                 return binds.length ? (
-                  <Section key={section.title}>
+                  <Section key={section.title} variant="transparent">
                     <Heading level={3}>{section.title}</Heading>
                     <List density="compact" hasDividers>
-                      {binds.map((bind) => (
+                      {binds.map(({ action, keys }) => (
                         <ListItem
-                          key={`${bind.action}:${bind.key}`}
-                          label={actionLabel(bind.action)}
-                          endContent={<KeyCap keys={bind.key} />}
+                          key={action}
+                          label={actionLabel(action)}
+                          endContent={
+                            <HStack gap={1}>
+                              {keys.map((key) => (
+                                <KeyCap key={key} keys={key} />
+                              ))}
+                            </HStack>
+                          }
                         />
                       ))}
                     </List>

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
-import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
+import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS, findPaneSwitchEffect } from '../lib/terminalFxShaders';
+import { colorSchemeLabel } from '../lib/colorSchemeLabel';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import { DEFAULT_THEME } from '../state/defaultTheme';
@@ -206,6 +207,13 @@ function initialDraft(config: ClientConfig): Draft {
     paneSwitchBorderStyle: config.pane_switch_border ?? 'none',
     paneSwitchBorderSpeed: getPaneSwitchBorderSpeed(config),
   };
+}
+
+/** Fixed-width slider value, so every track in the form has the same length. */
+function formatSliderValue(value: number, step: number): string {
+  const decimals = Math.min(2, step < 1 ? (String(step).split('.')[1]?.length ?? 0) : 0);
+  // Figure spaces are digit-wide and don't collapse.
+  return value.toFixed(decimals).padStart(5, '\u2007');
 }
 
 function quote(value: string): string {
@@ -593,6 +601,7 @@ export function ConfigPage({ config, send }: Props) {
     min: number,
     max: number,
     step = 1,
+    isDisabled = false,
   ) => (
     <Slider
       key={key}
@@ -603,6 +612,8 @@ export function ConfigPage({ config, send }: Props) {
       step={step}
       onChange={(value: number) => update(key, value)}
       valueDisplay="text"
+      formatValue={(value) => formatSliderValue(value, step)}
+      isDisabled={isDisabled}
     />
   );
   const choose = (
@@ -626,6 +637,8 @@ export function ConfigPage({ config, send }: Props) {
     { value: 'alphabetical', label: 'Alphabetical' },
   ];
   const effects = SHADER_EFFECTS.map((item) => ({ value: item.id, label: item.label }));
+  const paneSwitchOff = findPaneSwitchEffect(draft.paneSwitchShader).id === 'none';
+  const paneBorderOff = !draft.paneSwitchBorderStyle || draft.paneSwitchBorderStyle === 'none';
 
   const tomlPanel = (
     <LayoutPanel
@@ -717,7 +730,11 @@ export function ConfigPage({ config, send }: Props) {
                         {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
                         {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
                         {toggle('animations', 'Animations')}
-                        {toggle('showPaneTitles', 'Show pane titles')}
+                        {toggle(
+                          'showPaneTitles',
+                          'Show pane titles',
+                          'Title bar with command, directory, and size above each pane.',
+                        )}
                         {toggle('showNavHeader', 'Show sidebar header', 'Display the app icon and name.')}
                         {choose('sessionSort', 'Session sort', ordering)}
                         {choose('windowSort', 'Window sort', ordering)}
@@ -743,7 +760,7 @@ export function ConfigPage({ config, send }: Props) {
                           presentation="adaptive"
                           options={[
                             { value: 'none', label: 'Built-in default' },
-                            ...config.color_schemes.map((value) => ({ value, label: value })),
+                            ...config.color_schemes.map((value) => ({ value, label: colorSchemeLabel(value) })),
                           ]}
                           onChange={(value) => {
                             setColorSchemeTouched(true);
@@ -820,13 +837,20 @@ export function ConfigPage({ config, send }: Props) {
                           'Pane switch shader',
                           PANE_SWITCH_EFFECTS.map((item) => ({ value: item.id, label: item.label })),
                         )}
-                        {range('paneSwitchIntensity', 'Pane switch intensity', 0, 3, 0.05)}
-                        {range('paneSwitchDuration', 'Pane switch duration', 0.1, 5, 0.05)}
+                        {range('paneSwitchIntensity', 'Pane switch intensity', 0, 3, 0.05, paneSwitchOff)}
+                        {range('paneSwitchDuration', 'Pane switch duration multiplier', 0.1, 5, 0.05, paneSwitchOff)}
                         {choose('paneSwitchBorderStyle', 'Pane switch border', [
                           none,
                           ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
                         ])}
-                        {range('paneSwitchBorderSpeed', 'Pane switch border speed (seconds)', 0.05, 3, 0.05)}
+                        {range(
+                          'paneSwitchBorderSpeed',
+                          'Pane switch border duration (seconds)',
+                          0.05,
+                          3,
+                          0.05,
+                          paneBorderOff,
+                        )}
                       </FormLayout>
                     </VStack>
                   )}

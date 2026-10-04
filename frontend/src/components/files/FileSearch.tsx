@@ -131,7 +131,12 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
         </SegmentedControl>
       </VStack>
 
-      <ScrollableArea label="Search results" axis="both" data-preview-viewport className="min-w-0 flex-1 overflow-auto">
+      <ScrollableArea
+        label="Search results"
+        axis="block"
+        data-preview-viewport
+        className="min-w-0 flex-1 overflow-auto"
+      >
         <div ref={listRef}>
           {searchMode === 'files' &&
             searchResults.map((r, i) => (

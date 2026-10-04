@@ -127,12 +127,17 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   const isLoading = useFileStore((s) => s.isLoading);
   const isGitMode = useFileStore((s) => s.isGitMode);
   const gitDiff = useFileStore((s) => s.gitDiff);
+  const gitStatus = useFileStore((s) => s.gitStatus);
   const directoryTree = useFileStore((s) => s.directoryTree);
   const selectedDirectory = useFileStore((s) => s.selectedDirectory);
   const searchMode = useFileStore((s) => s.searchMode);
 
   if (isGitMode) {
-    return gitDiff ? <DiffPreview /> : <Placeholder>Select a file to view diff</Placeholder>;
+    if (gitDiff) return <DiffPreview />;
+    // Nothing to select outside a repo or in a clean tree.
+    const hasChanges =
+      !!gitStatus?.is_repo && gitStatus.staged.length + gitStatus.unstaged.length + gitStatus.untracked.length > 0;
+    return hasChanges ? <Placeholder>Select a file to view diff</Placeholder> : null;
   }
 
   if (directoryTree) {

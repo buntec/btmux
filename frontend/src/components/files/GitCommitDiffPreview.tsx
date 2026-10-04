@@ -60,7 +60,7 @@ export function GitCommitDiffPreview() {
 
         {gitCommitDiff.files.map((file) => (
           <section key={`${file.old_path ?? ''}:${file.path}`} className="mb-5 last:mb-0">
-            <div className="mb-2 truncate font-mono text-xs text-secondary">
+            <div className="mb-2 truncate font-mono text-sm font-medium text-primary">
               {file.old_path ? `${file.old_path} → ${file.path}` : file.path}
             </div>
 

@@ -61,8 +61,9 @@ export function MirrorPane({ paneId, config: configOverride, shaderId, animation
   visibleRef.current = visible;
 
   // Recompute the CSS scale that fits the natural (full-size) canvas into the
-  // grid cell, preserving aspect ratio and centering. Reads the canvas's
-  // *untransformed* offset size (ancestor transforms don't affect it).
+  // grid cell, preserving aspect ratio and anchoring top-left like a terminal.
+  // Reads the canvas's *untransformed* offset size (ancestor transforms don't
+  // affect it).
   const refit = () => {
     const cell = cellRef.current;
     const scaler = scalerRef.current;
@@ -72,9 +73,7 @@ export function MirrorPane({ paneId, config: configOverride, shaderId, animation
     const naturalH = (canvas as HTMLCanvasElement | null)?.offsetHeight ?? scaler.offsetHeight;
     if (!naturalW || !naturalH) return;
     const scale = Math.min(cell.clientWidth / naturalW, cell.clientHeight / naturalH);
-    const left = (cell.clientWidth - naturalW * scale) / 2;
-    const top = (cell.clientHeight - naturalH * scale) / 2;
-    scaler.style.transform = `translate(${left}px, ${top}px) scale(${scale})`;
+    scaler.style.transform = `scale(${scale})`;
   };
 
   useEffect(() => {

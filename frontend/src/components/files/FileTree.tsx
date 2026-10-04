@@ -95,7 +95,7 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
   }
 
   return (
-    <ScrollableArea label="Files" axis="both" data-preview-viewport className="flex-1 overflow-auto">
+    <ScrollableArea label="Files" axis="block" data-preview-viewport className="flex-1 overflow-auto">
       <div ref={listRef}>
         {visible.map((entry, i) => {
           const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
@@ -160,11 +160,17 @@ function FileRow({
       }}
     >
       {isSelected ? (
-        <span className="size-3.5 shrink-0 text-blue-vivid flex items-center justify-center" aria-hidden>
+        <span
+          className={cn(
+            'size-3.5 shrink-0 flex items-center justify-center',
+            focused ? 'text-on-accent' : 'text-blue-vivid',
+          )}
+          aria-hidden
+        >
           ■
         </span>
       ) : entry.is_dir ? (
-        <Folder className="size-3.5 text-blue-vivid shrink-0" />
+        <Folder className={cn('size-3.5 shrink-0', focused ? 'text-on-accent' : 'text-blue-vivid')} />
       ) : (
         <File className={cn('size-3.5 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')} />
       )}

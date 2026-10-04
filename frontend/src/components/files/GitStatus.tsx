@@ -198,7 +198,7 @@ export function GitStatus() {
       {items.length === 0 ? (
         <Placeholder>{isFilterActive && filterQuery ? 'No matches' : 'Clean working tree'}</Placeholder>
       ) : (
-        <ScrollableArea label="Changes" axis="both" data-preview-viewport className="flex-1 overflow-auto">
+        <ScrollableArea label="Changes" axis="block" data-preview-viewport className="flex-1 overflow-auto">
           <div ref={listRef}>
             {items.map((item, i) => {
               if (item.kind === 'section-header') {
@@ -242,11 +242,19 @@ export function GitStatus() {
                   title={path}
                 >
                   {statusIcon(item.status!)}
-                  <span className="min-w-0 flex-1 truncate">
+                  {/* The directory truncates first so the filename stays visible. */}
+                  <span className="flex min-w-0 flex-1">
                     {dir && (
-                      <span className={i === gitFocusedIndex ? 'text-on-accent/70' : 'text-secondary'}>{dir}</span>
+                      <span
+                        className={cn(
+                          'min-w-0 truncate',
+                          i === gitFocusedIndex ? 'text-on-accent/70' : 'text-secondary',
+                        )}
+                      >
+                        {dir}
+                      </span>
                     )}
-                    {filename}
+                    <span className="min-w-0 shrink-0 truncate max-w-full">{filename}</span>
                   </span>
                   <DiffStat additions={item.additions ?? 0} deletions={item.deletions ?? 0} />
                 </div>

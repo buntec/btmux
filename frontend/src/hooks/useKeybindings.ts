@@ -16,25 +16,26 @@ import {
 } from '../state/configDefaults';
 
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
+import { colorSchemeLabel } from '../lib/colorSchemeLabel';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
 
 /**
  * Picker rows for the `shader: choose effect` command — the registered
- * post-process effects plus a "(none)" row that clears the setting. Shared
+ * post-process effects plus a "None" row that clears the setting. Shared
  * with the command palette's own dispatch in Overlay.tsx.
  */
 export function shaderPickerItems(activeId: string | null): PickerItem[] {
   return [
-    { id: '', label: '(none)', active: !activeId },
+    { id: '', label: 'None', active: !activeId },
     ...SHADER_EFFECTS.map((e) => ({ id: e.id, label: e.label, active: e.id === activeId })),
   ];
 }
 
 /**
  * Picker rows for `shader: choose pane-switch effect`. Unlike the persistent
- * effect above, "(none)" is a registry entry with its own id rather than the
+ * effect above, "None" is a registry entry with its own id rather than the
  * empty string — an unset `pane_switch_shader` means the default effect. The
  * default is currently "none", while keeping it as a registry entry lets an
  * explicit `none` remain a stable config-file value.
@@ -197,7 +198,7 @@ function dispatch(
   if (action) runAction(action, sessionId, send, onSwitchToSession);
 }
 
-function runAction(
+export function runAction(
   action: string,
   sessionId: string,
   send: (msg: ClientMessage) => void,
@@ -382,8 +383,8 @@ function runAction(
       const schemes = store.config?.color_schemes ?? [];
       const active = store.config?.active_color_scheme;
       const items: PickerItem[] = [
-        { id: '', label: '(none)', active: !active },
-        ...schemes.map((s) => ({ id: s, label: s, active: s === active })),
+        { id: '', label: 'Built-in default', active: !active },
+        ...schemes.map((s) => ({ id: s, label: colorSchemeLabel(s), active: s === active })),
       ];
       openOverlay({
         mode: 'picker',

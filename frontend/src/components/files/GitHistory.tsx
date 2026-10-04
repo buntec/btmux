@@ -137,7 +137,7 @@ export function GitHistory() {
       ) : (
         <ScrollableArea
           label="Commit history"
-          axis="both"
+          axis="block"
           data-preview-viewport
           className="min-h-0 flex-1 overflow-auto"
         >
@@ -210,7 +210,7 @@ export function GitHistory() {
                       <GitCommitHorizontal
                         className={cn(
                           'size-3.5 shrink-0',
-                          commit.is_head ? 'text-yellow-vivid' : selected ? 'text-on-accent/70' : 'text-secondary',
+                          selected ? 'text-on-accent/70' : commit.is_head ? 'text-yellow-vivid' : 'text-secondary',
                         )}
                       />
                       <span

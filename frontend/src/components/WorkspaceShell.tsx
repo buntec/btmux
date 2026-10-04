@@ -60,6 +60,10 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
     state.setAgentGridOpen(false);
     state.setFileBrowserOpen(false);
   };
+  const newSession = () => {
+    closeSurfaces();
+    setOverlay({ mode: 'prompt', title: 'New session', value: '', action: 'new-session' });
+  };
   return (
     <AppShell
       height="fill"
@@ -165,18 +169,18 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
           </SideNavSection>
           <SideNavSection
             title="Sessions"
+            // The collapsed rail clips endContent; it gets a nav item below instead.
             endContent={
-              <IconButton
-                label="New session"
-                tooltip="New session"
-                variant="ghost"
-                size="sm"
-                icon={<Plus />}
-                onClick={() => {
-                  closeSurfaces();
-                  setOverlay({ mode: 'prompt', title: 'New session', value: '', action: 'new-session' });
-                }}
-              />
+              collapsed ? undefined : (
+                <IconButton
+                  label="New session"
+                  tooltip="New session"
+                  variant="ghost"
+                  size="sm"
+                  icon={<Plus />}
+                  onClick={newSession}
+                />
+              )
             }
           >
             {sortSessions(sessions, getSessionSort(config)).map((session) => (
@@ -204,6 +208,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
                 ))}
               </SessionNavItem>
             ))}
+            {collapsed && <SideNavItem label="New session" icon={Plus} onClick={newSession} />}
           </SideNavSection>
         </SideNav>
       }

@@ -11,6 +11,9 @@ interface Props {
   animations: boolean;
 }
 
+// base03 (fgMuted) is a comment color and too faint for live values.
+const VALUE_COLOR = 'var(--color-text-secondary)';
+
 const NETWORK_SATURATION_FLOOR_BPS = 1_000;
 const NETWORK_FULL_SATURATION_BPS = 10_000_000;
 
@@ -126,7 +129,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
         <span
           title={`CPU: ${Math.round(stats.cpu.reduce((a, b) => a + b, 0) / Math.max(1, stats.cpu.length))}% average across ${stats.cpu.length} cores`}
-          style={{ display: 'flex', color: c.fgDim, flexShrink: 0 }}
+          style={{ display: 'flex', color: c.fgMuted, flexShrink: 0 }}
         >
           <Cpu size={iconSize} aria-label="CPU" />
         </span>
@@ -137,7 +140,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
         <span
           title={`Memory: ${fmtBytes(stats.mem_used)} / ${fmtBytes(stats.mem_total)} used`}
-          style={{ display: 'flex', color: c.fgDim, flexShrink: 0 }}
+          style={{ display: 'flex', color: c.fgMuted, flexShrink: 0 }}
         >
           <MemoryStick size={iconSize} aria-label="Memory" />
         </span>
@@ -163,7 +166,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
             }}
           />
         </div>
-        <span style={{ color: c.fgMuted, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ color: VALUE_COLOR, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
           {fmtMemPct(stats.mem_used, stats.mem_total)}
         </span>
       </div>
@@ -172,7 +175,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: c.fgDim }}>
         <span
           title={`Network: ↓ ${fmtBytes(stats.net_rx)}/s, ↑ ${fmtBytes(stats.net_tx)}/s`}
-          style={{ display: 'flex', color: c.fgDim, flexShrink: 0 }}
+          style={{ display: 'flex', color: c.fgMuted, flexShrink: 0 }}
         >
           <Network size={iconSize} aria-label="Network" />
         </span>
@@ -188,7 +191,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
           >
             ↓
           </span>
-          <span style={{ color: c.fgMuted, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: VALUE_COLOR, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
             {fmtBytes(stats.net_rx)}
           </span>
         </div>
@@ -204,7 +207,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
           >
             ↑
           </span>
-          <span style={{ color: c.fgMuted, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: VALUE_COLOR, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
             {fmtBytes(stats.net_tx)}
           </span>
         </div>

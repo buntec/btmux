@@ -6,6 +6,9 @@ import { Grid } from '@astryxdesign/core/Grid';
 import { SelectableCard } from '@astryxdesign/core/SelectableCard';
 import { Text } from '@astryxdesign/core/Text';
 import { Kbd } from '@astryxdesign/core/Kbd';
+import { EmptyState } from '@astryxdesign/core/EmptyState';
+import { Icon } from '@astryxdesign/core/Icon';
+import { Bot } from 'lucide-react';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import type { AgentStatus } from '../state/types';
@@ -173,9 +176,13 @@ export function AgentGrid({ send }: Props) {
         content={
           <LayoutContent padding={4}>
             {entries.length === 0 ? (
-              <Text color="secondary">
-                No agents detected. Start Claude, Codex, Gemini, Antigravity, or OpenCode in a pane.
-              </Text>
+              <VStack hAlign="center" vAlign="center" className="h-full">
+                <EmptyState
+                  icon={<Icon icon={Bot} size="lg" color="secondary" />}
+                  title="No agents detected"
+                  description="Start Claude, Codex, Gemini, Antigravity, or OpenCode in a pane."
+                />
+              </VStack>
             ) : (
               <Grid
                 columns={cols}
@@ -218,7 +225,7 @@ export function AgentGrid({ send }: Props) {
         footer={
           <LayoutFooter hasDivider>
             <HStack gap={4} wrap="wrap">
-              {HINTS.map(([keys, label]) => (
+              {(entries.length ? HINTS : CLOSE_HINTS).map(([keys, label]) => (
                 <HStack key={label} gap={1} vAlign="center">
                   {keys.map((key) => (
                     <KeyCap key={key} keys={key} />
@@ -240,3 +247,5 @@ const HINTS: [string[], string][] = [
   [['enter'], 'switch'],
   [['esc'], 'close'],
 ];
+
+const CLOSE_HINTS: [string[], string][] = [[['esc'], 'close']];

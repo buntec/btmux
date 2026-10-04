@@ -792,9 +792,8 @@ export function TerminalPane({
       >
         <div
           ref={containerRef}
+          className="absolute inset-3"
           style={{
-            position: 'absolute',
-            inset: '8px',
             // `visibility` preserves layout, so FitAddon and ResizeObserver can
             // establish the correct grid while replay remains off-screen.
             visibility: initialReplayRendered ? 'visible' : 'hidden',

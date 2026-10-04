@@ -25,8 +25,16 @@ const SORT_COLUMNS: Array<{ label: string; mode: ProcessSortMode }> = [
 ];
 
 function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortMode; active: boolean }) {
+  const setSortMode = useProcessStore((s) => s.setSortMode);
   return (
-    <span className={cn('flex items-center gap-1', active && 'text-primary')}>
+    <button
+      type="button"
+      title={`Sort by ${PROCESS_SORT_LABELS[mode]}`}
+      aria-pressed={active}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => setSortMode(mode)}
+      className={cn('flex cursor-pointer items-center gap-1 text-left hover:text-primary', active && 'text-primary')}
+    >
       {label}
       {active && (
         <span
@@ -36,7 +44,7 @@ function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortM
           {isProcessSortDescending(mode) ? '▼' : '▲'}
         </span>
       )}
-    </span>
+    </button>
   );
 }
 
@@ -74,7 +82,7 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
         {SORT_COLUMNS.map((column) => (
           <SortHeader key={column.label} label={column.label} mode={column.mode} active={sortMode === column.mode} />
         ))}
-        <span>COMMAND</span>
+        <SortHeader label="COMMAND" mode="command" active={sortMode === 'command'} />
       </div>
       <ScrollableArea label="Process list" axis="both" className="min-h-0 flex-1 overflow-auto">
         <div ref={listRef} role={treeMode ? 'tree' : 'list'} aria-label="Processes">

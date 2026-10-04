@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { AlertDialog } from '@astryxdesign/core/AlertDialog';
-import { CommandPalette } from '@astryxdesign/core/CommandPalette';
+import { CommandPalette, CommandPaletteInput, useCommandPaletteContext } from '@astryxdesign/core/CommandPalette';
 import { createStaticSource } from '@astryxdesign/core/Typeahead';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
@@ -89,6 +89,18 @@ interface Props {
   config: ClientConfig | null;
 }
 
+/** Palette input that keeps the first result highlighted whenever the results change. */
+function TopHighlightedInput() {
+  const palette = useCommandPaletteContext();
+  const resultsKey = palette?.selectableItems.map((item) => item.value).join('\n') ?? '';
+  const count = palette?.selectableItems.length ?? 0;
+  const setHighlightedIndex = palette?.setHighlightedIndex;
+  useEffect(() => {
+    setHighlightedIndex?.(count > 0 ? 0 : -1);
+  }, [resultsKey, count, setHighlightedIndex]);
+  return <CommandPaletteInput />;
+}
+
 export function Overlay({ sessionId, send, config }: Props) {
   const overlay = useStore((state) => state.overlay);
   const setOverlay = useStore((state) => state.setOverlay);
@@ -150,6 +162,7 @@ export function Overlay({ sessionId, send, config }: Props) {
         isOpen
         label={overlay.title}
         searchSource={source}
+        input={<TopHighlightedInput />}
         onOpenChange={(open) => {
           if (!open && useStore.getState().overlay === overlay) setOverlay(null);
         }}

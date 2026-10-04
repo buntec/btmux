@@ -76,9 +76,9 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
   );
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      return localStorage.getItem('btmux-nav-collapsed') === 'true';
+      return localStorage.getItem('btmux-nav-collapsed') !== 'false';
     } catch {
-      return false;
+      return true;
     }
   });
   const currentName = location.pathname.match(/^\/s\/([^/]+)/)?.[1];

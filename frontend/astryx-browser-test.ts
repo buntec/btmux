@@ -44,7 +44,10 @@ try {
   await startup.close();
   console.log('PASS cached loading-screen palette before config arrives');
 
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    permissions: ['clipboard-write'],
+  });
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -83,6 +86,22 @@ try {
   assert.equal(theme.background, theme.palette);
   assert(theme.font.includes(theme.terminalFont));
 
+  const toastIsOnTop = async (message: string) => {
+    await page.waitForFunction((message) => {
+      const toast = [...document.querySelectorAll('.astryx-toast')].find((toast) =>
+        toast.textContent?.includes(message),
+      );
+      const button = toast?.querySelector('button[aria-label="Dismiss notification"]');
+      if (!button) return false;
+      const rect = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    }, message);
+  };
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().showToast('Toast before settings', 'error');
+  });
+  await toastIsOnTop('Toast before settings');
   const settings = page.getByRole('button', { name: 'Settings', exact: true }).first();
   await settings.click();
   const dialog = page.locator('dialog[open]');
@@ -92,6 +111,19 @@ try {
     return panel.getBoundingClientRect().left - dialog.getBoundingClientRect().left;
   });
   assert(spacing >= 16, 'settings groups must retain Astryx container padding');
+  await toastIsOnTop('Toast before settings');
+  await dialog.getByRole('button', { name: 'Copy TOML', exact: true }).click();
+  await toastIsOnTop('Settings copied to clipboard');
+  await page
+    .locator('.astryx-toast')
+    .filter({ hasText: 'Settings copied to clipboard' })
+    .getByRole('button', { name: 'Dismiss notification' })
+    .click();
+  await page
+    .locator('.astryx-toast')
+    .filter({ hasText: 'Settings copied to clipboard' })
+    .waitFor({ state: 'detached' });
+  await dialog.getByRole('heading', { name: 'Settings', exact: true }).focus();
   await page.keyboard.press('Tab');
   assert(await page.evaluate(() => document.activeElement?.closest('dialog')?.open));
   await page.keyboard.press('Escape');
@@ -107,8 +139,10 @@ try {
     }, pane),
     'opening settings must preserve the terminal',
   );
+  await toastIsOnTop('Toast before settings');
 
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await toastIsOnTop('Toast before settings');
   const confirmationLabel = await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return useStore.getState().config.commands.find((command: any) => command.confirm).label;
@@ -118,8 +152,15 @@ try {
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Confirm', exact: true }).waitFor();
+  await toastIsOnTop('Toast before settings');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });
+  await page
+    .locator('.astryx-toast')
+    .filter({ hasText: 'Toast before settings' })
+    .getByRole('button', { name: 'Dismiss notification' })
+    .click();
+  console.log('PASS toast stacking and interaction across modal transitions');
 
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
@@ -165,17 +206,31 @@ try {
       encoding: 'utf8',
     }).trim() || 'detached';
   await page.getByText(branch, { exact: true }).first().waitFor();
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().showToast('Toast in Git browser', 'error');
+  });
+  await toastIsOnTop('Toast in Git browser');
   await page
     .getByRole('button', { name: 'Close file browser' })
     .evaluate((button) => (button.closest('[tabindex="-1"]') as HTMLElement).focus());
   await page.keyboard.press('c');
   await page.getByRole('heading', { name: 'Commit staged changes' }).waitFor();
+  await toastIsOnTop('Toast in Git browser');
   await page.getByRole('textbox', { name: /^Subject/ }).pressSequentially('q rename c');
   await page.getByRole('textbox', { name: /^Body/ }).fill('Draft only.');
   assert.equal(await page.getByRole('textbox', { name: /^Subject/ }).inputValue(), 'q rename c');
   await page.keyboard.press('Escape');
-  await page.locator('dialog[open]').waitFor({ state: 'hidden' });
-  await page.getByRole('button', { name: 'Close file browser' }).click();
+  await page.getByRole('dialog', { name: 'Commit staged changes', exact: true }).waitFor({ state: 'hidden' });
+  await toastIsOnTop('Toast in Git browser');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
+  await toastIsOnTop('Toast in Git browser');
+  await page
+    .locator('.astryx-toast')
+    .filter({ hasText: 'Toast in Git browser' })
+    .getByRole('button', { name: 'Dismiss notification' })
+    .click();
 
   console.log('PASS Git commit dialog input isolation');
   // Live theme changes must update both terminal and UI, including light mode.

@@ -1,14 +1,12 @@
 import { useMemo, type ReactNode } from 'react';
 import { Theme } from '@astryxdesign/core/theme';
 import type { Theme as TerminalTheme } from '../state/types';
-import { LayerProvider } from '@astryxdesign/core/Layer';
+import { ToastLayer } from './ToastLayer';
 import { useStore } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { getAnimations, getTerminalFontFamily, getTerminalFontWeight } from '../state/configDefaults';
 import { createBtmuxTheme, terminalColorMode } from '../lib/astryx-theme';
-
-const toastOptions = { position: 'topEnd' as const };
 
 // Config including the open settings preview.
 function useEffectiveConfig() {
@@ -35,7 +33,7 @@ export function BtmuxTheme({ children }: { children: ReactNode }) {
   );
   return (
     <Theme theme={theme} mode={terminalColorMode(palette)}>
-      <LayerProvider toast={toastOptions}>{children}</LayerProvider>
+      <ToastLayer>{children}</ToastLayer>
     </Theme>
   );
 }

@@ -37,7 +37,16 @@ import { FormLayout } from '@astryxdesign/core/FormLayout';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { Text } from '@astryxdesign/core/Text';
-import { Layout, LayoutContent, LayoutFooter, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import {
+  Layout,
+  LayoutContent,
+  LayoutFooter,
+  LayoutHeader,
+  LayoutPanel,
+  HStack,
+  VStack,
+} from '@astryxdesign/core/Layout';
 import { KeyCap } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 
@@ -442,6 +451,7 @@ function KeyBindField({ label, value, onChange }: { label: string; value: string
 }
 
 export function ConfigPage({ config, send }: Props) {
+  const isNarrow = useMediaQuery('(max-width: 767px)');
   const [tab, setTab] = useState<SettingsTab>('general');
   const setConfigPreview = useStore((state) => state.setConfigPreview);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
@@ -617,6 +627,45 @@ export function ConfigPage({ config, send }: Props) {
   ];
   const effects = SHADER_EFFECTS.map((item) => ({ value: item.id, label: item.label }));
 
+  const tomlPanel = (
+    <LayoutPanel
+      width={isNarrow ? '100%' : '50%'}
+      padding={0}
+      hasDivider={!isNarrow}
+      isScrollable={false}
+      role="region"
+      label="Generated TOML"
+      className={isNarrow ? 'h-64 border-t border-border' : 'h-full'}
+    >
+      <Layout
+        padding={6}
+        header={
+          <LayoutHeader>
+            <Text weight="medium">Generated TOML</Text>
+          </LayoutHeader>
+        }
+        content={
+          <LayoutContent isScrollable={false} className="[&>.astryx-field]:h-full">
+            <TextArea
+              label="Generated TOML"
+              isLabelHidden
+              value={toml}
+              isReadOnly
+              hasSpellCheck={false}
+              statusVariant="detached"
+              className="h-full [&_textarea]:h-full [&_textarea]:resize-none [&_textarea]:font-mono"
+            />
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <Button label={copied ? 'Copied' : 'Copy TOML'} clickAction={copy} />
+          </LayoutFooter>
+        }
+      />
+    </LayoutPanel>
+  );
+
   return (
     <Dialog
       isOpen
@@ -624,206 +673,210 @@ export function ConfigPage({ config, send }: Props) {
         if (!open) goBack();
       }}
       purpose="form"
-      width={960}
+      width={1200}
       maxHeight="90dvh"
-      style={{ height: '90dvh' }}
+      className="h-full"
     >
       <Layout
         header={
-          <VStack>
-            <DialogHeader
-              title="Settings"
-              subtitle="Preview changes in the terminal and UI. Apply for this run, or copy TOML to save them."
-              hasDivider={false}
-              onOpenChange={(open) => {
-                if (!open) goBack();
-              }}
-            />
-            <LayoutHeader paddingBlockEnd={0}>
-              <TabList
-                value={tab}
-                onChange={(value) => setTab(value as SettingsTab)}
-                role="tablist"
-                hasDivider
-                isFullBleed
-              >
-                {(Object.keys(TAB_LABELS) as SettingsTab[]).map((value) => (
-                  <Tab key={value} value={value} label={TAB_LABELS[value]} panelId={`settings-${value}`} />
-                ))}
-              </TabList>
-            </LayoutHeader>
-          </VStack>
+          <DialogHeader
+            title="Settings"
+            subtitle="Preview changes in the terminal and UI. Apply for this run, or copy TOML to save them."
+            hasDivider={false}
+            onOpenChange={(open) => {
+              if (!open) goBack();
+            }}
+          />
         }
+        end={isNarrow ? undefined : tomlPanel}
+        footer={isNarrow ? tomlPanel : undefined}
         content={
-          <LayoutContent padding={6}>
-            <VStack gap={8}>
-              {tab === 'general' && (
-                <VStack gap={4} id="settings-general" role="tabpanel" aria-label={TAB_LABELS.general}>
-                  <FormLayout>
-                    {text('prefix', 'Prefix key', 'Use tmux notation such as C-b, C-a, or M-x.')}
-                    {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
-                    {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
-                    {toggle('animations', 'Animations')}
-                    {toggle('showPaneTitles', 'Show pane titles')}
-                    {toggle('showNavHeader', 'Show sidebar header', 'Display the app icon and name.')}
-                    {choose('sessionSort', 'Session sort', ordering)}
-                    {choose('windowSort', 'Window sort', ordering)}
-                    <NumberInput
-                      label="Window grid count"
-                      value={draft.windowGridCount}
-                      min={1}
-                      max={24}
-                      isIntegerOnly
-                      onChange={(value) => update('windowGridCount', value)}
-                    />
-                    {range('desktopBackgroundOpacity', 'Desktop background opacity', 0, 1, 0.01)}
-                  </FormLayout>
+          <Layout
+            header={
+              <LayoutHeader paddingBlockEnd={0}>
+                <TabList
+                  value={tab}
+                  onChange={(value) => setTab(value as SettingsTab)}
+                  role="tablist"
+                  hasDivider
+                  isFullBleed
+                >
+                  {(Object.keys(TAB_LABELS) as SettingsTab[]).map((value) => (
+                    <Tab key={value} value={value} label={TAB_LABELS[value]} panelId={`settings-${value}`} />
+                  ))}
+                </TabList>
+              </LayoutHeader>
+            }
+            content={
+              <LayoutContent padding={6}>
+                <VStack gap={8}>
+                  {tab === 'general' && (
+                    <VStack gap={4} id="settings-general" role="tabpanel" aria-label={TAB_LABELS.general}>
+                      <FormLayout>
+                        {text('prefix', 'Prefix key', 'Use tmux notation such as C-b, C-a, or M-x.')}
+                        {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
+                        {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
+                        {toggle('animations', 'Animations')}
+                        {toggle('showPaneTitles', 'Show pane titles')}
+                        {toggle('showNavHeader', 'Show sidebar header', 'Display the app icon and name.')}
+                        {choose('sessionSort', 'Session sort', ordering)}
+                        {choose('windowSort', 'Window sort', ordering)}
+                        <NumberInput
+                          label="Window grid count"
+                          value={draft.windowGridCount}
+                          min={1}
+                          max={24}
+                          isIntegerOnly
+                          onChange={(value) => update('windowGridCount', value)}
+                        />
+                        {range('desktopBackgroundOpacity', 'Desktop background opacity', 0, 1, 0.01)}
+                      </FormLayout>
+                    </VStack>
+                  )}
+                  {tab === 'terminal' && (
+                    <VStack gap={4} id="settings-terminal" role="tabpanel" aria-label={TAB_LABELS.terminal}>
+                      <FormLayout>
+                        <Selector
+                          label="Color scheme"
+                          value={draft.colors || 'none'}
+                          hasSearch
+                          presentation="adaptive"
+                          options={[
+                            { value: 'none', label: 'Built-in default' },
+                            ...config.color_schemes.map((value) => ({ value, label: value })),
+                          ]}
+                          onChange={(value) => {
+                            setColorSchemeTouched(true);
+                            update('colors', value === 'none' ? '' : value);
+                          }}
+                        />
+                        <Selector
+                          label="Font family"
+                          value={draft.fontFamily}
+                          presentation="adaptive"
+                          options={config.fonts.map((font) => ({ value: font.family, label: font.family }))}
+                          onChange={(value) => {
+                            const { min, max } = getFontWeightRange(config.fonts, value);
+                            update('fontFamily', value);
+                            update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
+                          }}
+                        />
+                        {range('fontSize', 'Terminal font size', 8, 36)}
+                        {range('fontWeight', 'Font weight', weightMin, weightMax, 100)}
+                        {choose('renderer', 'Renderer', [
+                          { value: 'webgl', label: 'WebGL' },
+                          { value: 'canvas', label: 'Canvas' },
+                        ])}
+                        {choose('cursorStyle', 'Cursor style', [
+                          { value: 'bar', label: 'Bar' },
+                          { value: 'block', label: 'Block' },
+                          { value: 'underline', label: 'Underline' },
+                        ])}
+                        {toggle('cursorBlink', 'Blinking cursor')}
+                        <NumberInput
+                          label="Scrollback lines"
+                          value={draft.scrollback}
+                          min={1}
+                          max={1_000_000}
+                          isIntegerOnly
+                          onChange={(value) => update('scrollback', value)}
+                        />
+                        {toggle('allowTransparency', 'Allow transparency')}
+                        {toggle('convertEol', 'Convert line endings')}
+                        {toggle('disableStdin', 'Disable terminal input')}
+                        {range('smoothScrollDuration', 'Smooth scroll duration', 0, 2, 0.05)}
+                        {range('scrollSensitivity', 'Scroll sensitivity', 0.1, 20, 0.1)}
+                      </FormLayout>
+                    </VStack>
+                  )}
+                  {tab === 'wallpaper' && (
+                    <VStack gap={4} id="settings-wallpaper" role="tabpanel" aria-label={TAB_LABELS.wallpaper}>
+                      <FormLayout>
+                        {choose('wallpaperShader', 'Procedural shader', [
+                          none,
+                          ...WALLPAPER_SHADERS.map((item) => ({ value: item.id, label: item.label })),
+                        ])}
+                        {text('wallpaper', 'Wallpaper URL or path')}
+                        {range('wallpaperOpacity', 'Wallpaper opacity', 0, 1, 0.01)}
+                        {range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5)}
+                        {range('wallpaperSaturate', 'Wallpaper saturation', 0, 3, 0.05)}
+                        {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
+                        <HStack gap={2} align="end">
+                          {text('wallpaperSeed', 'Wallpaper seed')}
+                          <Button label="Randomize" onClick={() => update('wallpaperSeed', generateWallpaperSeed())} />
+                        </HStack>
+                        {toggle('wallpaperFollowsMouse', 'Follow mouse cursor')}
+                        {toggle('wallpaperFollowsKeyboard', 'Follow keyboard input')}
+                      </FormLayout>
+                    </VStack>
+                  )}
+                  {tab === 'effects' && (
+                    <VStack gap={4} id="settings-effects" role="tabpanel" aria-label={TAB_LABELS.effects}>
+                      <FormLayout>
+                        {choose('shader', 'Terminal shader', [none, ...effects])}
+                        {choose('sessionViewShader', 'Session switcher shader', [none, ...effects])}
+                        {choose(
+                          'paneSwitchShader',
+                          'Pane switch shader',
+                          PANE_SWITCH_EFFECTS.map((item) => ({ value: item.id, label: item.label })),
+                        )}
+                        {range('paneSwitchIntensity', 'Pane switch intensity', 0, 3, 0.05)}
+                        {range('paneSwitchDuration', 'Pane switch duration', 0.1, 5, 0.05)}
+                        {choose('paneSwitchBorderStyle', 'Pane switch border', [
+                          none,
+                          ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
+                        ])}
+                        {range('paneSwitchBorderSpeed', 'Pane switch border speed (seconds)', 0.05, 3, 0.05)}
+                      </FormLayout>
+                    </VStack>
+                  )}
+                  {tab === 'keybinds' && (
+                    <VStack gap={4} id="settings-keybinds" role="tabpanel" aria-label={TAB_LABELS.keybinds}>
+                      <FormLayout>
+                        {bindingRows.map((bind) => (
+                          <KeyBindField
+                            key={bind.action}
+                            label={actionLabel(bind.action)}
+                            value={draft.binds[bind.action] ?? bind.key}
+                            onChange={(key) => {
+                              setDraft((current) => ({
+                                ...current,
+                                binds: { ...current.binds, [bind.action]: key },
+                                keyOverrides: { ...current.keyOverrides, [bind.action]: key },
+                              }));
+                              setDirty((current) => new Set(current).add('binds'));
+                            }}
+                          />
+                        ))}
+                      </FormLayout>
+                    </VStack>
+                  )}
+                  {tab === 'logging' && (
+                    <VStack gap={4} id="settings-logging" role="tabpanel" aria-label={TAB_LABELS.logging}>
+                      <Text color="secondary">
+                        Use error, warn, info, debug, trace, or a tracing directive. Changes take effect on restart.
+                      </Text>
+                      <FormLayout>
+                        {text('consoleLevel', 'Console level')}
+                        {text('fileLevel', 'File level')}
+                      </FormLayout>
+                    </VStack>
+                  )}
                 </VStack>
-              )}
-              {tab === 'terminal' && (
-                <VStack gap={4} id="settings-terminal" role="tabpanel" aria-label={TAB_LABELS.terminal}>
-                  <FormLayout>
-                    <Selector
-                      label="Color scheme"
-                      value={draft.colors || 'none'}
-                      hasSearch
-                      presentation="adaptive"
-                      options={[
-                        { value: 'none', label: 'Built-in default' },
-                        ...config.color_schemes.map((value) => ({ value, label: value })),
-                      ]}
-                      onChange={(value) => {
-                        setColorSchemeTouched(true);
-                        update('colors', value === 'none' ? '' : value);
-                      }}
-                    />
-                    <Selector
-                      label="Font family"
-                      value={draft.fontFamily}
-                      presentation="adaptive"
-                      options={config.fonts.map((font) => ({ value: font.family, label: font.family }))}
-                      onChange={(value) => {
-                        const { min, max } = getFontWeightRange(config.fonts, value);
-                        update('fontFamily', value);
-                        update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
-                      }}
-                    />
-                    {range('fontSize', 'Terminal font size', 8, 36)}
-                    {range('fontWeight', 'Font weight', weightMin, weightMax, 100)}
-                    {choose('renderer', 'Renderer', [
-                      { value: 'webgl', label: 'WebGL' },
-                      { value: 'canvas', label: 'Canvas' },
-                    ])}
-                    {choose('cursorStyle', 'Cursor style', [
-                      { value: 'bar', label: 'Bar' },
-                      { value: 'block', label: 'Block' },
-                      { value: 'underline', label: 'Underline' },
-                    ])}
-                    {toggle('cursorBlink', 'Blinking cursor')}
-                    <NumberInput
-                      label="Scrollback lines"
-                      value={draft.scrollback}
-                      min={1}
-                      max={1_000_000}
-                      isIntegerOnly
-                      onChange={(value) => update('scrollback', value)}
-                    />
-                    {toggle('allowTransparency', 'Allow transparency')}
-                    {toggle('convertEol', 'Convert line endings')}
-                    {toggle('disableStdin', 'Disable terminal input')}
-                    {range('smoothScrollDuration', 'Smooth scroll duration', 0, 2, 0.05)}
-                    {range('scrollSensitivity', 'Scroll sensitivity', 0.1, 20, 0.1)}
-                  </FormLayout>
-                </VStack>
-              )}
-              {tab === 'wallpaper' && (
-                <VStack gap={4} id="settings-wallpaper" role="tabpanel" aria-label={TAB_LABELS.wallpaper}>
-                  <FormLayout>
-                    {choose('wallpaperShader', 'Procedural shader', [
-                      none,
-                      ...WALLPAPER_SHADERS.map((item) => ({ value: item.id, label: item.label })),
-                    ])}
-                    {text('wallpaper', 'Wallpaper URL or path')}
-                    {range('wallpaperOpacity', 'Wallpaper opacity', 0, 1, 0.01)}
-                    {range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5)}
-                    {range('wallpaperSaturate', 'Wallpaper saturation', 0, 3, 0.05)}
-                    {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
-                    <HStack gap={2} align="end">
-                      {text('wallpaperSeed', 'Wallpaper seed')}
-                      <Button label="Randomize" onClick={() => update('wallpaperSeed', generateWallpaperSeed())} />
-                    </HStack>
-                    {toggle('wallpaperFollowsMouse', 'Follow mouse cursor')}
-                    {toggle('wallpaperFollowsKeyboard', 'Follow keyboard input')}
-                  </FormLayout>
-                </VStack>
-              )}
-              {tab === 'effects' && (
-                <VStack gap={4} id="settings-effects" role="tabpanel" aria-label={TAB_LABELS.effects}>
-                  <FormLayout>
-                    {choose('shader', 'Terminal shader', [none, ...effects])}
-                    {choose('sessionViewShader', 'Session switcher shader', [none, ...effects])}
-                    {choose(
-                      'paneSwitchShader',
-                      'Pane switch shader',
-                      PANE_SWITCH_EFFECTS.map((item) => ({ value: item.id, label: item.label })),
-                    )}
-                    {range('paneSwitchIntensity', 'Pane switch intensity', 0, 3, 0.05)}
-                    {range('paneSwitchDuration', 'Pane switch duration', 0.1, 5, 0.05)}
-                    {choose('paneSwitchBorderStyle', 'Pane switch border', [
-                      none,
-                      ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
-                    ])}
-                    {range('paneSwitchBorderSpeed', 'Pane switch border speed (seconds)', 0.05, 3, 0.05)}
-                  </FormLayout>
-                </VStack>
-              )}
-              {tab === 'keybinds' && (
-                <VStack gap={4} id="settings-keybinds" role="tabpanel" aria-label={TAB_LABELS.keybinds}>
-                  <FormLayout>
-                    {bindingRows.map((bind) => (
-                      <KeyBindField
-                        key={bind.action}
-                        label={actionLabel(bind.action)}
-                        value={draft.binds[bind.action] ?? bind.key}
-                        onChange={(key) => {
-                          setDraft((current) => ({
-                            ...current,
-                            binds: { ...current.binds, [bind.action]: key },
-                            keyOverrides: { ...current.keyOverrides, [bind.action]: key },
-                          }));
-                          setDirty((current) => new Set(current).add('binds'));
-                        }}
-                      />
-                    ))}
-                  </FormLayout>
-                </VStack>
-              )}
-              {tab === 'logging' && (
-                <VStack gap={4} id="settings-logging" role="tabpanel" aria-label={TAB_LABELS.logging}>
-                  <Text color="secondary">
-                    Use error, warn, info, debug, trace, or a tracing directive. Changes take effect on restart.
-                  </Text>
-                  <FormLayout>
-                    {text('consoleLevel', 'Console level')}
-                    {text('fileLevel', 'File level')}
-                  </FormLayout>
-                </VStack>
-              )}
-              <TextArea label="Generated TOML" value={toml} isReadOnly rows={12} hasSpellCheck={false} />
-            </VStack>
-          </LayoutContent>
-        }
-        footer={
-          <LayoutFooter hasDivider>
-            <HStack gap={2} wrap="wrap" hAlign="between">
-              <Button label="Reset" onClick={reset} />
-              <HStack gap={2} wrap="wrap">
-                <Button label={copied ? 'Copied' : 'Copy TOML'} clickAction={copy} />
-                <Button label="Close" onClick={goBack} />
-                <Button label="Apply" variant="primary" onClick={apply} isDisabled={dirty.size === 0} />
-              </HStack>
-            </HStack>
-          </LayoutFooter>
+              </LayoutContent>
+            }
+            footer={
+              <LayoutFooter hasDivider>
+                <HStack gap={2} wrap="wrap" hAlign="between">
+                  <Button label="Reset" onClick={reset} />
+                  <HStack gap={2} wrap="wrap">
+                    <Button label="Close" onClick={goBack} />
+                    <Button label="Apply" variant="primary" onClick={apply} isDisabled={dirty.size === 0} />
+                  </HStack>
+                </HStack>
+              </LayoutFooter>
+            }
+          />
         }
       />
     </Dialog>

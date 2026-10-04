@@ -1,3 +1,4 @@
+import { Cpu, MemoryStick, Network } from 'lucide-react';
 import { useSysStats } from '../hooks/useSysStats';
 import type { ChromePalette } from '../lib/chrome-colors';
 import { mix, withAlpha } from '../lib/chrome-colors';
@@ -105,6 +106,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
   const memBarW = Math.round(barH * 0.9);
   const memFillW = Math.round(memBarW * memPct);
   const innerH = Math.round(barH * 0.55);
+  const iconSize = Math.max(11, font + 1);
   const netRxSaturation = networkSaturation(stats.net_rx);
   const netTxSaturation = networkSaturation(stats.net_tx);
 
@@ -113,7 +115,7 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: '10px',
+        gap: '16px',
         height: '100%',
         padding: '0 13px',
         borderLeft: `1px solid ${c.borderDim}`,
@@ -122,13 +124,23 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
     >
       {/* CPU bar chart */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-        <span style={{ color: c.fgDim, fontSize: `${Math.max(8, font - 1)}px`, letterSpacing: '.03em' }}>CPU</span>
+        <span
+          title={`CPU: ${Math.round(stats.cpu.reduce((a, b) => a + b, 0) / Math.max(1, stats.cpu.length))}% average across ${stats.cpu.length} cores`}
+          style={{ display: 'flex', color: c.fgDim, flexShrink: 0 }}
+        >
+          <Cpu size={iconSize} aria-label="CPU" />
+        </span>
         <CpuBars cpu={stats.cpu} c={c} barH={barH} />
       </div>
 
       {/* Memory bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-        <span style={{ color: c.fgDim, fontSize: `${Math.max(8, font - 1)}px`, letterSpacing: '.03em' }}>MEM</span>
+        <span
+          title={`Memory: ${fmtBytes(stats.mem_used)} / ${fmtBytes(stats.mem_total)} used`}
+          style={{ display: 'flex', color: c.fgDim, flexShrink: 0 }}
+        >
+          <MemoryStick size={iconSize} aria-label="Memory" />
+        </span>
         <div
           title={`${fmtBytes(stats.mem_used)} / ${fmtBytes(stats.mem_total)}`}
           style={{
@@ -151,39 +163,51 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
             }}
           />
         </div>
-        <span style={{ color: c.fgMuted, minWidth: '4ch', textAlign: 'right' }}>
+        <span style={{ color: c.fgMuted, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
           {fmtMemPct(stats.mem_used, stats.mem_total)}
         </span>
       </div>
 
       {/* Network */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: c.fgDim }}>
-        <span style={{ fontSize: `${Math.max(8, font - 1)}px`, letterSpacing: '.03em' }}>NET</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: c.fgDim }}>
         <span
-          title={`Receive: ${fmtBytes(stats.net_rx)}/s`}
-          style={{
-            color: c.accent,
-            filter: `saturate(${netRxSaturation})`,
-            fontSize: `${Math.max(8, font - 1)}px`,
-            transition: 'filter 200ms ease-out',
-          }}
+          title={`Network: ↓ ${fmtBytes(stats.net_rx)}/s, ↑ ${fmtBytes(stats.net_tx)}/s`}
+          style={{ display: 'flex', color: c.fgDim, flexShrink: 0 }}
         >
-          ↓
+          <Network size={iconSize} aria-label="Network" />
         </span>
-        <span style={{ color: c.fgMuted, minWidth: '4ch', textAlign: 'right' }}>{fmtBytes(stats.net_rx)}</span>
-        <span
-          title={`Transmit: ${fmtBytes(stats.net_tx)}/s`}
-          style={{
-            color: c.warn,
-            filter: `saturate(${netTxSaturation})`,
-            fontSize: `${Math.max(8, font - 1)}px`,
-            marginLeft: '2px',
-            transition: 'filter 200ms ease-out',
-          }}
-        >
-          ↑
-        </span>
-        <span style={{ color: c.fgMuted, minWidth: '4ch', textAlign: 'right' }}>{fmtBytes(stats.net_tx)}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+          <span
+            title={`Receive: ${fmtBytes(stats.net_rx)}/s`}
+            style={{
+              color: c.accent,
+              filter: `saturate(${netRxSaturation})`,
+              fontSize: `${Math.max(8, font - 1)}px`,
+              transition: 'filter 200ms ease-out',
+            }}
+          >
+            ↓
+          </span>
+          <span style={{ color: c.fgMuted, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+            {fmtBytes(stats.net_rx)}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+          <span
+            title={`Transmit: ${fmtBytes(stats.net_tx)}/s`}
+            style={{
+              color: c.warn,
+              filter: `saturate(${netTxSaturation})`,
+              fontSize: `${Math.max(8, font - 1)}px`,
+              transition: 'filter 200ms ease-out',
+            }}
+          >
+            ↑
+          </span>
+          <span style={{ color: c.fgMuted, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+            {fmtBytes(stats.net_tx)}
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -16,7 +16,7 @@ import { ProcessTree } from './processes/ProcessTree';
 import type { ProcessSignal } from '@/protocol/process-messages';
 import type { ClientMessage } from '@/protocol/messages';
 
-const DEFAULT_SIDEBAR_RATIO = 0.5;
+const DEFAULT_TABLE_RATIO = 0.65;
 
 interface PendingKill {
   pid: number;
@@ -46,7 +46,12 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const message = useProcessStore((s) => s.message);
   const [pendingKill, setPendingKill] = useState<PendingKill | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const { sidebarRatio, onDividerMouseDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
+  const bodyRef = useRef<HTMLElement>(null);
+  const { sidebarRatio: tableRatio, onDividerMouseDown } = useSidebarResize(bodyRef, DEFAULT_TABLE_RATIO, {
+    axis: 'y',
+    min: 0.25,
+    max: 0.85,
+  });
 
   const rows = useMemo(
     () => buildProcessRows(processes, collapsedPids, sortMode, treeMode, filterActive ? filterQuery : ''),
@@ -253,21 +258,21 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
         <IconButton label="Close process viewer" icon={<X />} variant="ghost" size="sm" onClick={onClose} />
       </HStack>
 
-      <HStack className="min-h-0 min-w-0 flex-1 items-stretch overflow-hidden">
-        <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ width: `${sidebarRatio * 100}%` }}>
+      <VStack ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ height: `${tableRatio * 100}%` }}>
           <ProcessTree rows={rows} />
         </VStack>
         <div
           role="separator"
-          aria-orientation="vertical"
+          aria-orientation="horizontal"
           aria-label="Resize process list"
           onMouseDown={onDividerMouseDown}
-          className="w-1 flex-none cursor-col-resize border-r border-border hover:bg-accent-bg active:bg-accent-bg"
+          className="h-1 flex-none cursor-row-resize border-b border-border hover:bg-accent-bg active:bg-accent-bg"
         />
         <VStack className="min-h-0 min-w-0 flex-1">
           <ProcessDetails />
         </VStack>
-      </HStack>
+      </VStack>
 
       <HStack gap={4} vAlign="center" className="flex-none overflow-hidden border-t border-border px-3 py-1">
         {pendingKill ? (

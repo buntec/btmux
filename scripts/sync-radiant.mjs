@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import ts from '../frontend/node_modules/typescript/lib/typescript.js';
@@ -13,6 +13,8 @@ const suppliedSource = process.argv[2];
 const temporary = suppliedSource ? null : mkdtempSync(join(tmpdir(), 'btmux-radiant-'));
 const sourceRoot = suppliedSource ? resolve(suppliedSource) : join(temporary, 'radiant');
 const outputRoot = join(workspace, 'frontend/public/radiant');
+// Local fixes, as diffs against upstream `static/`, applied after vendoring.
+const patchRoot = join(workspace, 'scripts/radiant-patches');
 
 const BRIDGE = `<style>.label{display:none!important}</style>
 <script>
@@ -84,6 +86,9 @@ try {
     if (!html.includes('</head>')) throw new Error(`${shader.file} has no </head>`);
     writeFileSync(join(outputRoot, basename(shader.file)), html.replace('</head>', `${BRIDGE}\n</head>`));
   }
+  for (const patch of readdirSync(patchRoot).filter((name) => name.endsWith('.patch')).sort()) {
+    execFileSync('git', ['apply', '-p2', '--directory=frontend/public/radiant', join(patchRoot, patch)], { cwd: workspace });
+  }
   cpSync(join(sourceRoot, 'LICENSE'), join(outputRoot, 'LICENSE'));
   writeFileSync(join(outputRoot, 'REVISION'), `${actualRevision}\n`);
 
@@ -93,6 +98,9 @@ try {
     `export const RADIANT_REVISION = ${JSON.stringify(actualRevision)};\n` +
     `export const RADIANT_SHADERS = ${JSON.stringify(shaders, null, 2)} as const;\n`;
   writeFileSync(manifestPath, manifest);
+  execFileSync(join(workspace, 'frontend/node_modules/.bin/prettier'), ['--write', '--log-level=warn', manifestPath], {
+    cwd: join(workspace, 'frontend'),
+  });
   console.log(`Vendored ${shaders.length} Radiant shaders at ${actualRevision}`);
 } finally {
   if (temporary) rmSync(temporary, { recursive: true, force: true });

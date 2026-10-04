@@ -1,0 +1,71 @@
+diff --git a/static/aurora-curtain.html b/static/aurora-curtain.html
+index f6a5a45..391e7ed 100644
+--- a/static/aurora-curtain.html
++++ b/static/aurora-curtain.html
+@@ -54,6 +54,7 @@
+     'uniform float u_amplitude;',
+     'uniform float u_rotation;',
+     'uniform vec2 u_mouse;',
++    'uniform float u_phase;',
+     'uniform float u_dragAngle;',
+     '',
+     '// ── Hash for noise ──',
+@@ -93,11 +94,9 @@
+     '  uv = rot2(u_dragAngle + u_rotation) * uv;',
+     '  // Base from sliders, mouse modifies on top',
+     '  float mouseAmp = u_amplitude;',
+-    '  float mouseFreq = 1.0;',
+     '  if (u_mouse.x > 0.0) {',
+     '    vec2 mUV = u_mouse / u_res;',
+     '    mouseAmp *= 0.3 + mUV.y * 1.4;',
+-    '    mouseFreq = 0.5 + mUV.x * 1.0;',
+     '  }',
+     '  float t = u_time * u_waveSpeed;',
+     '  int lineCount = int(u_lineCount);',
+@@ -109,7 +108,7 @@
+     '    float fi = float(i);',
+     '    float frac = fi / max(u_lineCount - 1.0, 1.0);',
+     '',
+-    '    float speed = (0.6 + frac * 0.5) * mouseFreq;',
++    '    float speed = 0.6 + frac * 0.5;',
+     '    float freq = (4.0 + frac * 2.0) * mouseAmp;',
+     '',
+     '    // Color: warm amber at base (bottom), cool teal at top',
+@@ -128,7 +127,7 @@
+     '',
+     '    float nOff = noise(vec2(uv.y * 2.0 + fi * 3.7, t * 0.1 + fi)) * 0.015;',
+     '',
+-    '    col += curtainLine(uv + vec2(nOff + drift, 0.0), speed, freq, lineCol, t);',
++    '    col += curtainLine(uv + vec2(nOff + drift, 0.0), speed, freq, lineCol, u_phase);',
+     '  }',
+     '',
+     '  // ── Vignette ──',
+@@ -172,11 +171,14 @@
+   var uAmplitude = gl.getUniformLocation(prog, 'u_amplitude');
+   var uRotation = gl.getUniformLocation(prog, 'u_rotation');
+   var uMouse = gl.getUniformLocation(prog, 'u_mouse');
++  var uPhase = gl.getUniformLocation(prog, 'u_phase');
++  // Integrate phase so mouse-driven speed changes don't scale with uptime
++  var phase = 0, lastNow = null;
+   var uDragAngle = gl.getUniformLocation(prog, 'u_dragAngle');
+ 
+   var mouseXVal = -1.0, mouseYVal = -1.0;
+   var dragAngle = 0;
+-  var mouseDown = false, lastMX = 0;
++  var mouseDown = false, lastMX = 0, freqVal = 1.0;
+   var waveSpeedVal = 1.0;
+   var lineCountVal = 6.0;
+   var amplitudeVal = 1.0;
+@@ -202,6 +204,12 @@
+     if (!running) { requestAnimationFrame(render); return; }
+     if (needsResize) resize();
+     gl.uniform1f(uTime, prefersReduced ? 0.0 : now * 0.001);
++    var dt = lastNow === null ? 0 : Math.min((now - lastNow) * 0.001, 0.1);
++    lastNow = now;
++    var freqTarget = mouseXVal > 0 ? 0.5 + (mouseXVal / canvas.width) : 1.0;
++    freqVal += (freqTarget - freqVal) * Math.min(1, dt * 6);
++    if (!prefersReduced) phase += dt * waveSpeedVal * freqVal;
++    gl.uniform1f(uPhase, phase);
+     gl.uniform1f(uWaveSpeed, waveSpeedVal);
+     gl.uniform1f(uLineCount, lineCountVal);
+     gl.uniform1f(uAmplitude, amplitudeVal);

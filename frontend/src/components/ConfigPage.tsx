@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
-import type { Bind, ClientConfig } from '../state/types';
+import type { ClientConfig } from '../state/types';
 import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
@@ -37,6 +37,8 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { Text } from '@astryxdesign/core/Text';
 import { Layout, LayoutContent, LayoutFooter, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout';
+import { KeyCap } from './KeyHint';
+import { actionLabel } from '../lib/actionLabel';
 
 interface Props {
   config: ClientConfig;
@@ -136,8 +138,6 @@ const SEED_ENDINGS = [
   'whisper',
 ];
 
-const SETTINGS_BACKGROUND_BLUR = 5;
-
 function randomItem(words: string[]): string {
   const value = new Uint32Array(1);
   crypto.getRandomValues(value);
@@ -146,10 +146,6 @@ function randomItem(words: string[]): string {
 
 function generateWallpaperSeed(): string {
   return [randomItem(SEED_ADJECTIVES), randomItem(SEED_NOUNS), randomItem(SEED_ENDINGS)].join('-');
-}
-
-function bindLabel(bind: Bind): string {
-  return bind.action.replace(/-/g, ' ');
 }
 
 function initialDraft(config: ClientConfig): Draft {
@@ -402,6 +398,42 @@ const TAB_LABELS = {
   effects: 'Effects',
 };
 type SettingsTab = keyof typeof TAB_LABELS;
+
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
+
+/** A binding shown as its key cap; click it, then press the new key. Escape cancels. */
+function KeyBindField({ label, value, onChange }: { label: string; value: string; onChange: (key: string) => void }) {
+  const [recording, setRecording] = useState(false);
+
+  useEffect(() => {
+    if (!recording) return;
+    // Window capture runs before the keybinding hook and the dialog's Escape handling.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (MODIFIER_KEYS.has(e.key)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.key !== 'Escape') onChange(e.key);
+      setRecording(false);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [recording, onChange]);
+
+  return (
+    <HStack gap={3} vAlign="center" hAlign="between" className="min-w-0">
+      <Text>{label}</Text>
+      <Button
+        label={recording ? `Press a key for ${label}` : `Change key for ${label}`}
+        size="sm"
+        variant={recording ? 'primary' : 'ghost'}
+        onClick={() => setRecording((current) => !current)}
+        onBlur={() => setRecording(false)}
+      >
+        {recording ? 'Press a key…' : value ? <KeyCap keys={value} /> : 'Unbound'}
+      </Button>
+    </HStack>
+  );
+}
 
 export function ConfigPage({ config, send }: Props) {
   const [tab, setTab] = useState<SettingsTab>('general');
@@ -741,9 +773,9 @@ export function ConfigPage({ config, send }: Props) {
                 <VStack gap={4} id="settings-keybinds" role="tabpanel" aria-label={TAB_LABELS.keybinds}>
                   <FormLayout>
                     {bindingRows.map((bind) => (
-                      <TextInput
+                      <KeyBindField
                         key={bind.action}
-                        label={bindLabel(bind)}
+                        label={actionLabel(bind.action)}
                         value={draft.binds[bind.action] ?? bind.key}
                         onChange={(key) => {
                           setDraft((current) => ({

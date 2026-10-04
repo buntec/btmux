@@ -16,6 +16,7 @@ import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
 import { getPrefix } from '../state/configDefaults';
 import { KeyCap } from './KeyHint';
+import { actionLabel } from '../lib/actionLabel';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -334,7 +335,7 @@ export function Overlay({ sessionId, send, config }: Props) {
                       {binds.map((bind) => (
                         <ListItem
                           key={`${bind.action}:${bind.key}`}
-                          label={bind.action.replace(/-/g, ' ')}
+                          label={actionLabel(bind.action)}
                           endContent={<KeyCap keys={bind.key} />}
                         />
                       ))}

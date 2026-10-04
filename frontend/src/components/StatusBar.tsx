@@ -6,7 +6,7 @@ import { Button } from '@astryxdesign/core/Button';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, FolderOpen, GitBranch, Settings2, Grid2X2 } from 'lucide-react';
+import { Activity, FolderOpen, GitBranch } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -106,14 +106,6 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>
       <IconButton
-        label="Window overview"
-        tooltip="Window overview"
-        variant="ghost"
-        size="sm"
-        icon={<Grid2X2 />}
-        onClick={() => state().setWindowGridOpen(true)}
-      />
-      <IconButton
         label="File browser"
         tooltip="File browser"
         variant="ghost"
@@ -136,21 +128,6 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
         size="sm"
         icon={<Activity />}
         onClick={() => openFiles('process')}
-      />
-      <IconButton
-        label="Settings"
-        tooltip="Settings"
-        variant="ghost"
-        size="sm"
-        icon={<Settings2 />}
-        onClick={() => {
-          state().setOverlay(null);
-          state().setSwitcherOpen(false);
-          state().setWindowGridOpen(false);
-          state().setAgentGridOpen(false);
-          state().setFileBrowserOpen(false);
-          state().setSettingsOpen(true);
-        }}
       />
     </HStack>
   );

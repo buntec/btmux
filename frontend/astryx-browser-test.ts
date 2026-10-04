@@ -87,9 +87,9 @@ try {
   await settings.click();
   const dialog = page.locator('dialog[open]');
   await dialog.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
-  const spacing = await dialog.getByRole('heading', { name: 'General', exact: true }).evaluate((heading) => {
-    const dialog = heading.closest('dialog')!;
-    return heading.getBoundingClientRect().left - dialog.getBoundingClientRect().left;
+  const spacing = await dialog.getByRole('tabpanel').evaluate((panel) => {
+    const dialog = panel.closest('dialog')!;
+    return panel.getBoundingClientRect().left - dialog.getBoundingClientRect().left;
   });
   assert(spacing >= 16, 'settings groups must retain Astryx container padding');
   await page.keyboard.press('Tab');
@@ -203,7 +203,7 @@ try {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     'compact shell must not overflow horizontally',
   );
-  await page.getByRole('button', { name: 'Settings', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
   const compact = await page.locator('dialog[open]').boundingBox();
   assert(compact && compact.x >= 0 && compact.width <= 390);
   await page.keyboard.press('Escape');

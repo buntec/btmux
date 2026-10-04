@@ -1,4 +1,7 @@
 import { GitBranch } from 'lucide-react';
+import { HStack } from '@astryxdesign/core/Layout';
+import { Icon } from '@astryxdesign/core/Icon';
+import { Text } from '@astryxdesign/core/Text';
 import { useFileStore } from '@/state/fileStore';
 
 export function GitModeHeader() {
@@ -7,19 +10,21 @@ export function GitModeHeader() {
   const { head } = gitStatus;
 
   return (
-    <div className="flex items-center gap-2 border-b border-border px-2 py-1.5 min-h-0">
-      <GitBranch className="size-3.5 text-muted-foreground shrink-0" />
-      <span className="font-medium">{head.branch ?? 'detached'}</span>
+    <HStack gap={2} vAlign="center" className="min-w-0 flex-none border-b border-border px-2 py-1.5">
+      <Icon icon={GitBranch} size="sm" color="secondary" />
+      <Text weight="medium" textWrap="nowrap" className="flex-none">
+        {head.branch ?? 'detached'}
+      </Text>
       {head.commit_sha && (
-        <span className="text-muted-foreground font-mono" style={{ fontSize: '0.85em' }}>
+        <Text type="code" size="sm" color="secondary">
           {head.commit_sha.slice(0, 7)}
-        </span>
+        </Text>
       )}
       {head.commit_message && (
-        <span className="text-muted-foreground truncate" style={{ fontSize: '0.85em' }}>
+        <Text size="sm" color="secondary" maxLines={1} className="min-w-0">
           {head.commit_message}
-        </span>
+        </Text>
       )}
-    </div>
+    </HStack>
   );
 }

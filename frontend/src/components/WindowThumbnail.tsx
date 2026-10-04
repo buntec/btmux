@@ -9,10 +9,14 @@ const EMPTY_RATIOS: Map<string, number> = new Map();
 interface Props {
   window: SessionState['windows'][number];
   visible: boolean;
+  /** Keep mirrors mounted (suspended) while hidden; defaults to `visible`. */
+  isMounted?: boolean;
   c: ReturnType<typeof chromePalette>;
   terminalConfig?: ClientConfig | null;
   shaderId?: string | null;
   activePaneId?: string | null;
+  /** How the active pane stands out: an accent border, or dimming the others. */
+  activeIndicator?: 'border' | 'dim';
   hoveredPaneId?: string | null;
   onHoveredPaneChange?: (paneId: string | null) => void;
   onSelectPane?: (paneId: string) => void;
@@ -23,10 +27,12 @@ interface Props {
 export function WindowThumbnail({
   window: win,
   visible,
+  isMounted = visible,
   c,
   terminalConfig,
   shaderId,
   activePaneId = null,
+  activeIndicator = 'border',
   hoveredPaneId = null,
   onHoveredPaneChange,
   onSelectPane,
@@ -42,7 +48,8 @@ export function WindowThumbnail({
   return (
     <>
       {rects.map((r) => {
-        const isActive = r.paneId === activePaneId;
+        const isActive = r.paneId === activePaneId && activeIndicator === 'border';
+        const isDimmed = activeIndicator === 'dim' && activePaneId !== null && r.paneId !== activePaneId;
         const isHovered = r.paneId === hoveredPaneId;
         return (
           <div
@@ -78,12 +85,13 @@ export function WindowThumbnail({
                     ? `0 0 18px ${c.accentGlow}`
                     : undefined,
                 background: isHovered ? withAlpha(c.warn, 0.07) : withAlpha(c.bodyBg, 0.6),
+                opacity: isDimmed ? 0.6 : undefined,
                 transition: animations
-                  ? 'border-color 100ms ease, box-shadow 100ms ease, background 100ms ease'
+                  ? 'border-color 100ms ease, box-shadow 100ms ease, background 100ms ease, opacity 100ms ease'
                   : undefined,
               }}
             >
-              {visible && (
+              {isMounted && (
                 <MirrorPane
                   paneId={r.paneId}
                   config={terminalConfig}

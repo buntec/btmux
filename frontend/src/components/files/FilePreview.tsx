@@ -1,4 +1,4 @@
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { useFileStore } from '@/state/fileStore';
 import { CodePreview } from './previews/CodePreview';
 import { MarkdownPreview } from './previews/MarkdownPreview';
@@ -9,6 +9,7 @@ import { MediaPreview } from './previews/MediaPreview';
 import { PdfPreview } from './previews/PdfPreview';
 import { DirectoryPreview } from './previews/DirectoryPreview';
 import type { ServerFileMessage } from '@/protocol/file-messages';
+import { Placeholder } from './Placeholder';
 
 type PreviewType =
   | 'code'
@@ -131,11 +132,7 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   const searchMode = useFileStore((s) => s.searchMode);
 
   if (isGitMode) {
-    return gitDiff ? (
-      <DiffPreview />
-    ) : (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">Select a file to view diff</div>
-    );
+    return gitDiff ? <DiffPreview /> : <Placeholder>Select a file to view diff</Placeholder>;
   }
 
   if (directoryTree) {
@@ -143,17 +140,15 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   }
 
   if (isLoading) {
-    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading...</div>;
+    return <Placeholder isLoading>Loading…</Placeholder>;
   }
 
   if (selectedDirectory) {
-    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading directory...</div>;
+    return <Placeholder isLoading>Loading directory…</Placeholder>;
   }
 
   if (!selectedFile || !fileContent || fileContent.path !== selectedFile) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">Select a file to preview</div>
-    );
+    return <Placeholder>Select a file to preview</Placeholder>;
   }
 
   const previewType = getPreviewType(selectedFile, fileContent.mime_type);
@@ -169,11 +164,11 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   if (previewType === 'image') {
     if (fileContent.mime_type === 'image/svg+xml' && fileContent.encoding === 'utf-8') {
       return (
-        <ScrollArea className="flex-1 overflow-hidden">
+        <ScrollableArea label="File preview" axis="both" data-preview-viewport className="flex-1 overflow-auto">
           <div className="flex items-center justify-center p-4">
             <div dangerouslySetInnerHTML={{ __html: sanitizeSvg(fileContent.content) }} />
           </div>
-        </ScrollArea>
+        </ScrollableArea>
       );
     }
 
@@ -181,7 +176,7 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
       fileContent.encoding === 'base64' ? `data:${fileContent.mime_type};base64,${fileContent.content}` : undefined;
 
     if (!src) {
-      return <div className="flex-1 flex items-center justify-center text-muted-foreground">Cannot preview image</div>;
+      return <Placeholder>Cannot preview image</Placeholder>;
     }
 
     return (
@@ -193,14 +188,14 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
 
   if (fileContent.encoding === 'base64') {
     return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
+      <Placeholder>
         Binary file ({fileContent.mime_type}, {formatSize(fileContent.size)})
-      </div>
+      </Placeholder>
     );
   }
 
   return (
-    <ScrollArea className="flex-1 overflow-hidden">
+    <ScrollableArea label="File preview" axis="both" data-preview-viewport className="flex-1 overflow-auto">
       <div className="p-4">
         {searchMode === 'content' ? (
           <CodePreview />
@@ -211,15 +206,15 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
             {previewType === 'json' && <JsonPreview />}
             {previewType === 'csv' && <CsvPreview />}
             {previewType === 'unknown' && (
-              <pre className="leading-relaxed whitespace-pre-wrap break-all text-foreground text-sm">
+              <pre className="leading-relaxed whitespace-pre-wrap break-all text-primary text-sm">
                 {fileContent.content}
-                {fileContent.truncated && <span className="text-muted-foreground">{'\n\n'}[truncated]</span>}
+                {fileContent.truncated && <span className="text-secondary">{'\n\n'}[truncated]</span>}
               </pre>
             )}
           </>
         )}
       </div>
-    </ScrollArea>
+    </ScrollableArea>
   );
 }
 

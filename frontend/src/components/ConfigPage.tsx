@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Check, Clipboard, Dices, RotateCcw, Upload, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { useEffect, useMemo, useState } from 'react';
+import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
-import type { Bind, ClientConfig } from '../state/types';
+import type { ClientConfig } from '../state/types';
 import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS } from '../lib/terminalFxShaders';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
@@ -26,16 +25,20 @@ import {
   getWallpaperSpeed,
 } from '../state/configDefaults';
 import { useStore } from '../state/store';
-import { Button } from './ui/button';
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from './ui/field';
-import { Input } from './ui/input';
-import { Kbd, KbdGroup } from './ui/kbd';
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Slider } from './ui/slider';
-import { Switch } from './ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Textarea } from './ui/textarea';
-import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { Button } from '@astryxdesign/core/Button';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { NumberInput } from '@astryxdesign/core/NumberInput';
+import { TextArea } from '@astryxdesign/core/TextArea';
+import { Selector } from '@astryxdesign/core/Selector';
+import { Switch } from '@astryxdesign/core/Switch';
+import { Slider } from '@astryxdesign/core/Slider';
+import { FormLayout } from '@astryxdesign/core/FormLayout';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { TabList, Tab } from '@astryxdesign/core/TabList';
+import { Text } from '@astryxdesign/core/Text';
+import { Layout, LayoutContent, LayoutFooter, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout';
+import { KeyCap } from './KeyHint';
+import { actionLabel } from '../lib/actionLabel';
 
 interface Props {
   config: ClientConfig;
@@ -90,27 +93,6 @@ type Draft = {
 type DraftKey = keyof Draft;
 type ConfigUpdate = Extract<ClientMessage, { type: 'update_config' }>['update'];
 
-function IconAction({
-  label,
-  children,
-  disabled,
-  variant = 'outline',
-  ...props
-}: ComponentProps<typeof Button> & { label: string }) {
-  const button = (
-    <Button {...props} variant={variant} size="icon" disabled={disabled} aria-label={label}>
-      {children}
-    </Button>
-  );
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{disabled ? <span className="inline-flex">{button}</span> : button}</TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 const SEED_ADJECTIVES = [
   'ancient',
   'brisk',
@@ -156,8 +138,6 @@ const SEED_ENDINGS = [
   'whisper',
 ];
 
-const SETTINGS_BACKGROUND_BLUR = 5;
-
 function randomItem(words: string[]): string {
   const value = new Uint32Array(1);
   crypto.getRandomValues(value);
@@ -166,10 +146,6 @@ function randomItem(words: string[]): string {
 
 function generateWallpaperSeed(): string {
   return [randomItem(SEED_ADJECTIVES), randomItem(SEED_NOUNS), randomItem(SEED_ENDINGS)].join('-');
-}
-
-function bindLabel(bind: Bind): string {
-  return bind.action.replace(/-/g, ' ');
 }
 
 function initialDraft(config: ClientConfig): Draft {
@@ -413,36 +389,57 @@ function previewTheme(config: ClientConfig, draft: Draft, colorSchemeTouched: bo
   return config.color_scheme_themes[draft.colors] ?? DEFAULT_THEME;
 }
 
-function RangeField({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (value: number) => void;
-}) {
+const TAB_LABELS = {
+  general: 'General',
+  keybinds: 'Key binds',
+  logging: 'Logging',
+  wallpaper: 'Wallpaper',
+  terminal: 'Terminal',
+  effects: 'Effects',
+};
+type SettingsTab = keyof typeof TAB_LABELS;
+
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
+
+/** A binding shown as its key cap; click it, then press the new key. Escape cancels. */
+function KeyBindField({ label, value, onChange }: { label: string; value: string; onChange: (key: string) => void }) {
+  const [recording, setRecording] = useState(false);
+
+  useEffect(() => {
+    if (!recording) return;
+    // Window capture runs before the keybinding hook and the dialog's Escape handling.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (MODIFIER_KEYS.has(e.key)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.key !== 'Escape') onChange(e.key);
+      setRecording(false);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [recording, onChange]);
+
   return (
-    <Field>
-      <div className="flex items-center justify-between gap-4">
-        <FieldLabel>{label}</FieldLabel>
-        <output className="tabular-nums text-sm text-muted-foreground">{value.toFixed(step < 1 ? 2 : 0)}</output>
-      </div>
-      <Slider value={[value]} min={min} max={max} step={step} onValueChange={([next]) => onChange(next)} />
-    </Field>
+    <HStack gap={3} vAlign="center" hAlign="between" className="min-w-0">
+      <Text>{label}</Text>
+      <Button
+        label={recording ? `Press a key for ${label}` : `Change key for ${label}`}
+        size="sm"
+        variant={recording ? 'primary' : 'ghost'}
+        onClick={() => setRecording((current) => !current)}
+        onBlur={() => setRecording(false)}
+      >
+        {recording ? 'Press a key…' : value ? <KeyCap keys={value} /> : 'Unbound'}
+      </Button>
+    </HStack>
   );
 }
 
 export function ConfigPage({ config, send }: Props) {
+  const [tab, setTab] = useState<SettingsTab>('general');
   const setConfigPreview = useStore((state) => state.setConfigPreview);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
-  const pageRef = useRef<HTMLElement>(null);
+  const toast = useToast();
   const [draft, setDraft] = useState(() => initialDraft(config));
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
   const [colorSchemeTouched, setColorSchemeTouched] = useState(false);
@@ -502,10 +499,6 @@ export function ConfigPage({ config, send }: Props) {
   }, [previewConfig, setConfigPreview]);
   useEffect(() => () => setConfigPreview(null), [setConfigPreview]);
 
-  useEffect(() => {
-    pageRef.current?.focus();
-  }, []);
-
   // Config broadcasts are authoritative. This also refreshes the local draft
   // after reset, when the server replaces session-only overrides with the
   // values resolved from config.toml and built-in defaults.
@@ -525,708 +518,306 @@ export function ConfigPage({ config, send }: Props) {
     if (Object.keys(update).length === 0) return;
     send({ type: 'update_config', update });
     setDirty(new Set());
-    toast.success('Settings applied to the current session');
+    toast({ body: 'Settings applied to the current session' });
   };
 
   const copy = async () => {
     await navigator.clipboard.writeText(toml);
     setCopied(true);
-    toast.success('Settings copied to clipboard');
+    toast({ body: 'Settings copied to clipboard' });
     window.setTimeout(() => setCopied(false), 1600);
   };
 
   const reset = () => {
     send({ type: 'reset_config' });
     setDirty(new Set());
-    toast.success('Settings reset to config.toml and defaults');
+    toast({ body: 'Settings reset to config.toml and defaults' });
   };
 
   const { min: weightMin, max: weightMax } = getFontWeightRange(config.fonts, draft.fontFamily);
 
-  const bindingRows = [...config.binds].sort((left, right) => left.action.localeCompare(right.action));
+  const bindingRows = [...new Map(config.binds.map((bind) => [bind.action, bind])).values()].sort((left, right) =>
+    left.action.localeCompare(right.action),
+  );
 
   const goBack = () => setSettingsOpen(false);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const editing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT';
-      const quitWithQ =
-        event.key.toLowerCase() === 'q' && !editing && !event.ctrlKey && !event.altKey && !event.metaKey;
-      if (event.key === 'Escape' || quitWithQ) {
-        event.preventDefault();
-        goBack();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [goBack]);
+  const toggle = (
+    key: { [K in DraftKey]: Draft[K] extends boolean ? K : never }[DraftKey],
+    label: string,
+    description?: string,
+  ) => (
+    <Switch
+      key={key}
+      label={label}
+      description={description}
+      value={draft[key]}
+      onChange={(value) => update(key, value)}
+      labelPosition="start"
+      labelSpacing="spread"
+    />
+  );
+  const text = (
+    key: { [K in DraftKey]: Draft[K] extends string ? K : never }[DraftKey],
+    label: string,
+    description?: string,
+  ) => (
+    <TextInput
+      key={key}
+      label={label}
+      value={draft[key]}
+      onChange={(value) => update(key, value as never)}
+      description={description}
+    />
+  );
+  const range = (
+    key: { [K in DraftKey]: Draft[K] extends number ? K : never }[DraftKey],
+    label: string,
+    min: number,
+    max: number,
+    step = 1,
+  ) => (
+    <Slider
+      key={key}
+      label={label}
+      value={draft[key]}
+      min={min}
+      max={max}
+      step={step}
+      onChange={(value: number) => update(key, value)}
+      valueDisplay="text"
+    />
+  );
+  const choose = (
+    key: { [K in DraftKey]: Draft[K] extends string ? K : never }[DraftKey],
+    label: string,
+    options: { value: string; label: string }[],
+  ) => (
+    <Selector
+      key={key}
+      label={label}
+      value={draft[key] || 'none'}
+      options={options}
+      onChange={(value) => update(key, (value === 'none' ? '' : value) as never)}
+      presentation="adaptive"
+    />
+  );
+  const none = { value: 'none', label: 'None' };
+  const ordering = [
+    { value: 'created', label: 'Created' },
+    { value: 'mru', label: 'Recently used' },
+    { value: 'alphabetical', label: 'Alphabetical' },
+  ];
+  const effects = SHADER_EFFECTS.map((item) => ({ value: item.id, label: item.label }));
 
   return (
-    <main
-      ref={pageRef}
-      tabIndex={-1}
-      className="absolute inset-y-0 right-0 z-20 flex w-1/2 flex-col overflow-hidden border-l border-border bg-background/45 text-foreground outline-none"
-      style={{
-        backdropFilter: `blur(${SETTINGS_BACKGROUND_BLUR}px)`,
-        WebkitBackdropFilter: `blur(${SETTINGS_BACKGROUND_BLUR}px)`,
+    <Dialog
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) goBack();
       }}
+      purpose="form"
+      width={960}
+      maxHeight="90dvh"
+      style={{ height: '90dvh' }}
     >
-      <Tabs defaultValue="general" className="mx-auto flex min-h-0 w-full flex-1 flex-col gap-0">
-        <div className="shrink-0 border-b border-border bg-background/75 px-4 pt-5 pb-3 lg:px-6">
-          <div className="flex min-w-0 items-center gap-2">
-            <TabsList className="min-w-0 flex-1 justify-start overflow-x-auto [scrollbar-width:none] [&>*]:flex-none">
-              <TabsTrigger value="general">General</TabsTrigger>
-              <TabsTrigger value="keybinds">Key binds</TabsTrigger>
-              <TabsTrigger value="logging">Logging</TabsTrigger>
-              <TabsTrigger value="wallpaper">Wallpaper</TabsTrigger>
-              <TabsTrigger value="terminal">Terminal</TabsTrigger>
-              <TabsTrigger value="effects">Effects</TabsTrigger>
-            </TabsList>
-            <div className="flex shrink-0 items-center gap-1">
-              <IconAction label="Apply to current session" onClick={apply} disabled={dirty.size === 0}>
-                <Upload />
-              </IconAction>
-              <IconAction label="Reset" variant="outline" onClick={reset}>
-                <RotateCcw />
-              </IconAction>
-              <IconAction label="Copy settings to clipboard" onClick={copy}>
-                {copied ? <Check /> : <Clipboard />}
-              </IconAction>
-              <IconAction label="Close settings" onClick={goBack}>
-                <X />
-              </IconAction>
-            </div>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto grid gap-4 px-4 py-5 xl:grid-cols-2 lg:px-6">
-            <div className="min-w-0">
-              <TabsContent value="general" className="pt-4">
-                <FieldGroup>
-                  <FieldSet>
-                    <FieldLegend>Session and input</FieldLegend>
-                    <FieldGroup>
-                      <Field>
-                        <FieldLabel htmlFor="prefix">Prefix key</FieldLabel>
-                        <Input
-                          id="prefix"
-                          value={draft.prefix}
-                          onChange={(event) => update('prefix', event.target.value)}
-                        />
-                        <FieldDescription>Use tmux notation such as C-b, C-a, or M-x.</FieldDescription>
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="shell">Shell for new panes</FieldLabel>
-                        <Input
-                          id="shell"
-                          value={draft.shell}
-                          onChange={(event) => update('shell', event.target.value)}
-                          placeholder="Use $SHELL"
-                        />
-                      </Field>
-                      <Field orientation="horizontal">
-                        <FieldContent>
-                          <FieldLabel htmlFor="vi-mode">Vi mode</FieldLabel>
-                          <FieldDescription>Add h/j/k/l pane navigation bindings.</FieldDescription>
-                        </FieldContent>
-                        <Switch
-                          id="vi-mode"
-                          checked={draft.viMode}
-                          onCheckedChange={(value) => update('viMode', value)}
-                        />
-                      </Field>
-                      <Field orientation="horizontal">
-                        <FieldContent>
-                          <FieldLabel htmlFor="animations">Animations</FieldLabel>
-                          <FieldDescription>Enable animated transitions and effects.</FieldDescription>
-                        </FieldContent>
-                        <Switch
-                          id="animations"
-                          checked={draft.animations}
-                          onCheckedChange={(value) => update('animations', value)}
-                        />
-                      </Field>
-                      <Field orientation="horizontal">
-                        <FieldContent>
-                          <FieldLabel htmlFor="show-pane-titles">Show pane titles</FieldLabel>
-                          <FieldDescription>Show shell, cwd, size, and zoom metadata above panes.</FieldDescription>
-                        </FieldContent>
-                        <Switch
-                          id="show-pane-titles"
-                          checked={draft.showPaneTitles}
-                          onCheckedChange={(value) => update('showPaneTitles', value)}
-                        />
-                      </Field>
-                    </FieldGroup>
-                  </FieldSet>
-                  <FieldSet>
-                    <FieldLegend>Ordering</FieldLegend>
-                    <FieldGroup>
-                      <Field>
-                        <FieldLabel htmlFor="session-sort">Session sort</FieldLabel>
-                        <Select
-                          value={draft.sessionSort}
-                          onValueChange={(value) => update('sessionSort', value as Draft['sessionSort'])}
-                        >
-                          <SelectTrigger id="session-sort" className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectItem value="created">Created</SelectItem>
-                              <SelectItem value="mru">Recently used</SelectItem>
-                              <SelectItem value="alphabetical">Alphabetical</SelectItem>
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="window-sort">Window sort</FieldLabel>
-                        <Select
-                          value={draft.windowSort}
-                          onValueChange={(value) => update('windowSort', value as Draft['windowSort'])}
-                        >
-                          <SelectTrigger id="window-sort" className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectItem value="created">Created</SelectItem>
-                              <SelectItem value="mru">Recently used</SelectItem>
-                              <SelectItem value="alphabetical">Alphabetical</SelectItem>
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="window-grid-count">Window grid count</FieldLabel>
-                        <Input
-                          id="window-grid-count"
-                          type="number"
-                          min={1}
-                          max={24}
-                          value={draft.windowGridCount}
-                          onChange={(event) =>
-                            update('windowGridCount', Math.min(24, Math.max(1, Number(event.target.value) || 1)))
-                          }
-                        />
-                      </Field>
-                    </FieldGroup>
-                  </FieldSet>
-                  <FieldSet>
-                    <FieldLegend>Desktop window</FieldLegend>
-                    <FieldDescription>macOS only. Set the theme tint from clear (0) to opaque (1).</FieldDescription>
-                    <RangeField
-                      label="Background opacity"
-                      value={draft.desktopBackgroundOpacity}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      onChange={(value) => update('desktopBackgroundOpacity', value)}
+      <Layout
+        header={
+          <VStack>
+            <DialogHeader
+              title="Settings"
+              subtitle="Preview changes in the terminal and UI. Apply for this run, or copy TOML to save them."
+              hasDivider={false}
+              onOpenChange={(open) => {
+                if (!open) goBack();
+              }}
+            />
+            <LayoutHeader paddingBlockEnd={0}>
+              <TabList
+                value={tab}
+                onChange={(value) => setTab(value as SettingsTab)}
+                role="tablist"
+                hasDivider
+                isFullBleed
+              >
+                {(Object.keys(TAB_LABELS) as SettingsTab[]).map((value) => (
+                  <Tab key={value} value={value} label={TAB_LABELS[value]} panelId={`settings-${value}`} />
+                ))}
+              </TabList>
+            </LayoutHeader>
+          </VStack>
+        }
+        content={
+          <LayoutContent padding={6}>
+            <VStack gap={8}>
+              {tab === 'general' && (
+                <VStack gap={4} id="settings-general" role="tabpanel" aria-label={TAB_LABELS.general}>
+                  <FormLayout>
+                    {text('prefix', 'Prefix key', 'Use tmux notation such as C-b, C-a, or M-x.')}
+                    {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
+                    {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
+                    {toggle('animations', 'Animations')}
+                    {toggle('showPaneTitles', 'Show pane titles')}
+                    {choose('sessionSort', 'Session sort', ordering)}
+                    {choose('windowSort', 'Window sort', ordering)}
+                    <NumberInput
+                      label="Window grid count"
+                      value={draft.windowGridCount}
+                      min={1}
+                      max={24}
+                      isIntegerOnly
+                      onChange={(value) => update('windowGridCount', value)}
                     />
-                  </FieldSet>
-                </FieldGroup>
-              </TabsContent>
-
-              <TabsContent value="keybinds" className="pt-4">
-                <FieldSet>
-                  <FieldLegend>Prefix key bindings</FieldLegend>
-                  <FieldDescription>
-                    Change the second key pressed after the prefix. Values use browser key names for arrows.
-                  </FieldDescription>
-                  <FieldGroup>
-                    {bindingRows.map((bind) => (
-                      <Field key={bind.action} orientation="responsive">
-                        <FieldContent>
-                          <FieldLabel htmlFor={`bind-${bind.action}`}>{bindLabel(bind)}</FieldLabel>
-                        </FieldContent>
-                        <Input
-                          id={`bind-${bind.action}`}
-                          className="@md/field:w-40"
-                          value={draft.binds[bind.action] ?? bind.key}
-                          onChange={(event) => {
-                            const key = event.target.value;
-                            setDraft((current) => ({
-                              ...current,
-                              binds: { ...current.binds, [bind.action]: key },
-                              keyOverrides: { ...current.keyOverrides, [bind.action]: key },
-                            }));
-                            setDirty((current) => new Set(current).add('binds'));
-                          }}
-                        />
-                      </Field>
-                    ))}
-                  </FieldGroup>
-                </FieldSet>
-              </TabsContent>
-
-              <TabsContent value="logging" className="pt-4">
-                <FieldSet>
-                  <FieldLegend>Log levels</FieldLegend>
-                  <FieldDescription>
-                    Use error, warn, info, debug, trace, or a tracing directive such as btmux=debug,tower_http=info.
-                    Changes are included in the copied TOML and take effect on restart.
-                  </FieldDescription>
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="console-level">Console level</FieldLabel>
-                      <Input
-                        id="console-level"
-                        value={draft.consoleLevel}
-                        onChange={(event) => update('consoleLevel', event.target.value)}
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="file-level">File level</FieldLabel>
-                      <Input
-                        id="file-level"
-                        value={draft.fileLevel}
-                        onChange={(event) => update('fileLevel', event.target.value)}
-                      />
-                    </Field>
-                  </FieldGroup>
-                </FieldSet>
-              </TabsContent>
-
-              <TabsContent value="wallpaper" className="pt-4">
-                <FieldGroup>
-                  <FieldSet>
-                    <FieldLegend>Wallpaper source</FieldLegend>
-                    <FieldGroup>
-                      <Field>
-                        <FieldLabel htmlFor="wallpaper-shader">Procedural shader</FieldLabel>
-                        <Select
-                          value={draft.wallpaperShader || 'none'}
-                          onValueChange={(value) => update('wallpaperShader', value === 'none' ? '' : value)}
-                        >
-                          <SelectTrigger id="wallpaper-shader" className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectItem value="none">None</SelectItem>
-                              {WALLPAPER_SHADERS.map((item) => (
-                                <SelectItem key={item.id} value={item.id}>
-                                  {item.label}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="wallpaper-url">Image URL or path</FieldLabel>
-                        <Input
-                          id="wallpaper-url"
-                          value={draft.wallpaper}
-                          onChange={(event) => update('wallpaper', event.target.value)}
-                          placeholder="https://… or ~/Pictures/wallpaper.png"
-                        />
-                      </Field>
-                      <RangeField
-                        label="Opacity"
-                        value={draft.wallpaperOpacity}
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        onChange={(value) => update('wallpaperOpacity', value)}
-                      />
-                      <RangeField
-                        label="Blur"
-                        value={draft.wallpaperBlur}
-                        min={0}
-                        max={50}
-                        step={1}
-                        onChange={(value) => update('wallpaperBlur', value)}
-                      />
-                      <RangeField
-                        label="Saturation"
-                        value={draft.wallpaperSaturate}
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        onChange={(value) => update('wallpaperSaturate', value)}
-                      />
-                      <RangeField
-                        label="Animation speed"
-                        value={draft.wallpaperSpeed}
-                        min={0}
-                        max={10}
-                        step={0.05}
-                        onChange={(value) => update('wallpaperSpeed', value)}
-                      />
-                      <Field>
-                        <FieldLabel htmlFor="wallpaper-seed">Seed</FieldLabel>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id="wallpaper-seed"
-                            className="min-w-0"
-                            value={draft.wallpaperSeed}
-                            onChange={(event) => update('wallpaperSeed', event.target.value)}
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                              const seed = generateWallpaperSeed();
-                              update('wallpaperSeed', seed);
-                            }}
-                          >
-                            <Dices data-icon="inline-start" />
-                            Generate
-                          </Button>
-                        </div>
-                      </Field>
-                      <Field orientation="horizontal">
-                        <FieldContent>
-                          <FieldLabel htmlFor="wallpaper-follows-mouse">Follow mouse cursor</FieldLabel>
-                        </FieldContent>
-                        <Switch
-                          id="wallpaper-follows-mouse"
-                          checked={draft.wallpaperFollowsMouse}
-                          onCheckedChange={(value) => update('wallpaperFollowsMouse', value)}
-                        />
-                      </Field>
-                      <Field orientation="horizontal">
-                        <FieldContent>
-                          <FieldLabel htmlFor="wallpaper-follows-keyboard">Follow keyboard input</FieldLabel>
-                        </FieldContent>
-                        <Switch
-                          id="wallpaper-follows-keyboard"
-                          checked={draft.wallpaperFollowsKeyboard}
-                          onCheckedChange={(value) => update('wallpaperFollowsKeyboard', value)}
-                        />
-                      </Field>
-                    </FieldGroup>
-                  </FieldSet>
-                </FieldGroup>
-              </TabsContent>
-
-              <TabsContent value="terminal" className="pt-4">
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="color-scheme">Color scheme</FieldLabel>
-                    <Select
+                    {range('desktopBackgroundOpacity', 'Desktop background opacity', 0, 1, 0.01)}
+                  </FormLayout>
+                </VStack>
+              )}
+              {tab === 'terminal' && (
+                <VStack gap={4} id="settings-terminal" role="tabpanel" aria-label={TAB_LABELS.terminal}>
+                  <FormLayout>
+                    <Selector
+                      label="Color scheme"
                       value={draft.colors || 'none'}
-                      onValueChange={(value) => {
+                      hasSearch
+                      presentation="adaptive"
+                      options={[
+                        { value: 'none', label: 'Built-in default' },
+                        ...config.color_schemes.map((value) => ({ value, label: value })),
+                      ]}
+                      onChange={(value) => {
                         setColorSchemeTouched(true);
                         update('colors', value === 'none' ? '' : value);
                       }}
-                    >
-                      <SelectTrigger id="color-scheme" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="none">Built-in default</SelectItem>
-                          {config.color_schemes.map((scheme) => (
-                            <SelectItem key={scheme} value={scheme}>
-                              {scheme}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="font-family">Font family</FieldLabel>
-                    <Select
-                      value={draft.fontFamily}
-                      onValueChange={(value) => {
-                        const { min, max } = getFontWeightRange(config.fonts, value);
-                        const nextWeight = Math.min(max, Math.max(min, draft.fontWeight));
-                        update('fontFamily', value);
-                        update('fontWeight', nextWeight);
-                      }}
-                    >
-                      <SelectTrigger id="font-family" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {config.fonts.map((item) => (
-                            <SelectItem key={item.family} value={item.family}>
-                              {item.family}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <RangeField
-                    label="Font size"
-                    value={draft.fontSize}
-                    min={8}
-                    max={36}
-                    step={1}
-                    onChange={(value) => update('fontSize', value)}
-                  />
-                  <RangeField
-                    label="Font weight"
-                    value={draft.fontWeight}
-                    min={weightMin}
-                    max={weightMax}
-                    step={100}
-                    onChange={(value) => update('fontWeight', value)}
-                  />
-                  <Field>
-                    <FieldLabel htmlFor="renderer">Renderer</FieldLabel>
-                    <Select
-                      value={draft.renderer}
-                      onValueChange={(value) => update('renderer', value as Draft['renderer'])}
-                    >
-                      <SelectTrigger id="renderer" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="webgl">WebGL</SelectItem>
-                          <SelectItem value="canvas">Canvas</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="cursor-style">Cursor style</FieldLabel>
-                    <Select
-                      value={draft.cursorStyle}
-                      onValueChange={(value) => update('cursorStyle', value as Draft['cursorStyle'])}
-                    >
-                      <SelectTrigger id="cursor-style" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="bar">Bar</SelectItem>
-                          <SelectItem value="block">Block</SelectItem>
-                          <SelectItem value="underline">Underline</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field orientation="horizontal">
-                    <FieldContent>
-                      <FieldLabel htmlFor="cursor-blink">Blinking cursor</FieldLabel>
-                    </FieldContent>
-                    <Switch
-                      id="cursor-blink"
-                      checked={draft.cursorBlink}
-                      onCheckedChange={(value) => update('cursorBlink', value)}
                     />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="scrollback">Scrollback lines</FieldLabel>
-                    <Input
-                      id="scrollback"
-                      type="number"
+                    <Selector
+                      label="Font family"
+                      value={draft.fontFamily}
+                      presentation="adaptive"
+                      options={config.fonts.map((font) => ({ value: font.family, label: font.family }))}
+                      onChange={(value) => {
+                        const { min, max } = getFontWeightRange(config.fonts, value);
+                        update('fontFamily', value);
+                        update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
+                      }}
+                    />
+                    {range('fontSize', 'Terminal font size', 8, 36)}
+                    {range('fontWeight', 'Font weight', weightMin, weightMax, 100)}
+                    {choose('renderer', 'Renderer', [
+                      { value: 'webgl', label: 'WebGL' },
+                      { value: 'canvas', label: 'Canvas' },
+                    ])}
+                    {choose('cursorStyle', 'Cursor style', [
+                      { value: 'bar', label: 'Bar' },
+                      { value: 'block', label: 'Block' },
+                      { value: 'underline', label: 'Underline' },
+                    ])}
+                    {toggle('cursorBlink', 'Blinking cursor')}
+                    <NumberInput
+                      label="Scrollback lines"
+                      value={draft.scrollback}
                       min={1}
                       max={1_000_000}
-                      value={draft.scrollback}
-                      onChange={(event) =>
-                        update('scrollback', Math.min(1_000_000, Math.max(1, Number(event.target.value) || 1)))
-                      }
+                      isIntegerOnly
+                      onChange={(value) => update('scrollback', value)}
                     />
-                  </Field>
-                  <Field orientation="horizontal">
-                    <FieldContent>
-                      <FieldLabel htmlFor="allow-transparency">Allow transparency</FieldLabel>
-                    </FieldContent>
-                    <Switch
-                      id="allow-transparency"
-                      checked={draft.allowTransparency}
-                      onCheckedChange={(value) => update('allowTransparency', value)}
-                    />
-                  </Field>
-                  <Field orientation="horizontal">
-                    <FieldContent>
-                      <FieldLabel htmlFor="convert-eol">Convert line endings</FieldLabel>
-                    </FieldContent>
-                    <Switch
-                      id="convert-eol"
-                      checked={draft.convertEol}
-                      onCheckedChange={(value) => update('convertEol', value)}
-                    />
-                  </Field>
-                  <Field orientation="horizontal">
-                    <FieldContent>
-                      <FieldLabel htmlFor="disable-stdin">Disable terminal input</FieldLabel>
-                    </FieldContent>
-                    <Switch
-                      id="disable-stdin"
-                      checked={draft.disableStdin}
-                      onCheckedChange={(value) => update('disableStdin', value)}
-                    />
-                  </Field>
-                  <RangeField
-                    label="Smooth scroll duration"
-                    value={draft.smoothScrollDuration}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    onChange={(value) => update('smoothScrollDuration', value)}
-                  />
-                  <RangeField
-                    label="Scroll sensitivity"
-                    value={draft.scrollSensitivity}
-                    min={0.1}
-                    max={20}
-                    step={0.1}
-                    onChange={(value) => update('scrollSensitivity', value)}
-                  />
-                </FieldGroup>
-              </TabsContent>
-
-              <TabsContent value="effects" className="pt-4">
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="shader">Terminal shader</FieldLabel>
-                    <Select
-                      value={draft.shader || 'none'}
-                      onValueChange={(value) => update('shader', value === 'none' ? '' : value)}
-                    >
-                      <SelectTrigger id="shader" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="none">None</SelectItem>
-                          {SHADER_EFFECTS.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="session-view-shader">Session-view background shader</FieldLabel>
-                    <Select
-                      value={draft.sessionViewShader || 'none'}
-                      onValueChange={(value) => update('sessionViewShader', value === 'none' ? '' : value)}
-                    >
-                      <SelectTrigger id="session-view-shader" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="none">None</SelectItem>
-                          {SHADER_EFFECTS.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="pane-switch-shader">Pane-switch shader</FieldLabel>
-                    <Select
-                      value={draft.paneSwitchShader || 'none'}
-                      onValueChange={(value) => update('paneSwitchShader', value === 'none' ? '' : value)}
-                    >
-                      <SelectTrigger id="pane-switch-shader" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {PANE_SWITCH_EFFECTS.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.id === 'none' ? 'None' : item.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <RangeField
-                    label="Pane-switch intensity"
-                    value={draft.paneSwitchIntensity}
-                    min={0}
-                    max={3}
-                    step={0.05}
-                    onChange={(value) => update('paneSwitchIntensity', value)}
-                  />
-                  <RangeField
-                    label="Pane-switch duration"
-                    value={draft.paneSwitchDuration}
-                    min={0.1}
-                    max={5}
-                    step={0.05}
-                    onChange={(value) => update('paneSwitchDuration', value)}
-                  />
-                  <Field>
-                    <FieldLabel htmlFor="pane-switch-border">Pane-switch border draw</FieldLabel>
-                    <Select
-                      value={draft.paneSwitchBorderStyle || 'none'}
-                      onValueChange={(value) => update('paneSwitchBorderStyle', value)}
-                    >
-                      <SelectTrigger id="pane-switch-border" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="none">None</SelectItem>
-                          {PANE_BORDER_STYLES.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <RangeField
-                    label="Pane-switch border speed (seconds)"
-                    value={draft.paneSwitchBorderSpeed}
-                    min={0.05}
-                    max={3}
-                    step={0.05}
-                    onChange={(value) => update('paneSwitchBorderSpeed', value)}
-                  />
-                </FieldGroup>
-              </TabsContent>
-            </div>
-
-            <aside className="min-w-0">
-              <div className="top-4 flex flex-col gap-3 xl:sticky">
-                <Field>
-                  <FieldLabel htmlFor="toml-output">Generated TOML</FieldLabel>
-                  <Textarea id="toml-output" readOnly value={toml} className="min-h-72 resize-none font-mono text-xs" />
-                </Field>
-              </div>
-            </aside>
-          </div>
-        </div>
-      </Tabs>
-
-      <footer className="shrink-0 border-t border-border bg-background/75">
-        <div className="mx-auto flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1 text-xs text-muted-foreground md:px-6">
-          <span>
-            <KbdGroup>
-              <Kbd>←</Kbd>
-              <Kbd>→</Kbd>
-            </KbdGroup>{' '}
-            switch tabs
-          </span>
-          <span>
-            <KbdGroup>
-              <Kbd>Tab</Kbd>
-            </KbdGroup>{' '}
-            navigate
-          </span>
-          <span>
-            <KbdGroup>
-              <Kbd>Esc</Kbd>
-              <Kbd>q</Kbd>
-            </KbdGroup>{' '}
-            close
-          </span>
-        </div>
-      </footer>
-    </main>
+                    {toggle('allowTransparency', 'Allow transparency')}
+                    {toggle('convertEol', 'Convert line endings')}
+                    {toggle('disableStdin', 'Disable terminal input')}
+                    {range('smoothScrollDuration', 'Smooth scroll duration', 0, 2, 0.05)}
+                    {range('scrollSensitivity', 'Scroll sensitivity', 0.1, 20, 0.1)}
+                  </FormLayout>
+                </VStack>
+              )}
+              {tab === 'wallpaper' && (
+                <VStack gap={4} id="settings-wallpaper" role="tabpanel" aria-label={TAB_LABELS.wallpaper}>
+                  <FormLayout>
+                    {choose('wallpaperShader', 'Procedural shader', [
+                      none,
+                      ...WALLPAPER_SHADERS.map((item) => ({ value: item.id, label: item.label })),
+                    ])}
+                    {text('wallpaper', 'Wallpaper URL or path')}
+                    {range('wallpaperOpacity', 'Wallpaper opacity', 0, 1, 0.01)}
+                    {range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5)}
+                    {range('wallpaperSaturate', 'Wallpaper saturation', 0, 3, 0.05)}
+                    {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
+                    <HStack gap={2} align="end">
+                      {text('wallpaperSeed', 'Wallpaper seed')}
+                      <Button label="Randomize" onClick={() => update('wallpaperSeed', generateWallpaperSeed())} />
+                    </HStack>
+                    {toggle('wallpaperFollowsMouse', 'Follow mouse cursor')}
+                    {toggle('wallpaperFollowsKeyboard', 'Follow keyboard input')}
+                  </FormLayout>
+                </VStack>
+              )}
+              {tab === 'effects' && (
+                <VStack gap={4} id="settings-effects" role="tabpanel" aria-label={TAB_LABELS.effects}>
+                  <FormLayout>
+                    {choose('shader', 'Terminal shader', [none, ...effects])}
+                    {choose('sessionViewShader', 'Session switcher shader', [none, ...effects])}
+                    {choose(
+                      'paneSwitchShader',
+                      'Pane switch shader',
+                      PANE_SWITCH_EFFECTS.map((item) => ({ value: item.id, label: item.label })),
+                    )}
+                    {range('paneSwitchIntensity', 'Pane switch intensity', 0, 3, 0.05)}
+                    {range('paneSwitchDuration', 'Pane switch duration', 0.1, 5, 0.05)}
+                    {choose('paneSwitchBorderStyle', 'Pane switch border', [
+                      none,
+                      ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
+                    ])}
+                    {range('paneSwitchBorderSpeed', 'Pane switch border speed (seconds)', 0.05, 3, 0.05)}
+                  </FormLayout>
+                </VStack>
+              )}
+              {tab === 'keybinds' && (
+                <VStack gap={4} id="settings-keybinds" role="tabpanel" aria-label={TAB_LABELS.keybinds}>
+                  <FormLayout>
+                    {bindingRows.map((bind) => (
+                      <KeyBindField
+                        key={bind.action}
+                        label={actionLabel(bind.action)}
+                        value={draft.binds[bind.action] ?? bind.key}
+                        onChange={(key) => {
+                          setDraft((current) => ({
+                            ...current,
+                            binds: { ...current.binds, [bind.action]: key },
+                            keyOverrides: { ...current.keyOverrides, [bind.action]: key },
+                          }));
+                          setDirty((current) => new Set(current).add('binds'));
+                        }}
+                      />
+                    ))}
+                  </FormLayout>
+                </VStack>
+              )}
+              {tab === 'logging' && (
+                <VStack gap={4} id="settings-logging" role="tabpanel" aria-label={TAB_LABELS.logging}>
+                  <Text color="secondary">
+                    Use error, warn, info, debug, trace, or a tracing directive. Changes take effect on restart.
+                  </Text>
+                  <FormLayout>
+                    {text('consoleLevel', 'Console level')}
+                    {text('fileLevel', 'File level')}
+                  </FormLayout>
+                </VStack>
+              )}
+              <TextArea label="Generated TOML" value={toml} isReadOnly rows={12} hasSpellCheck={false} />
+            </VStack>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter hasDivider>
+            <HStack gap={2} wrap="wrap" hAlign="between">
+              <Button label="Reset" onClick={reset} />
+              <HStack gap={2} wrap="wrap">
+                <Button label={copied ? 'Copied' : 'Copy TOML'} clickAction={copy} />
+                <Button label="Close" onClick={goBack} />
+                <Button label="Apply" variant="primary" onClick={apply} isDisabled={dirty.size === 0} />
+              </HStack>
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }

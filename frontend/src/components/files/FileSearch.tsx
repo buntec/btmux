@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, Loader2, File, FileText } from 'lucide-react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Search, File, FileText } from 'lucide-react';
+import { HStack, VStack } from '@astryxdesign/core/Layout';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import { Spinner } from '@astryxdesign/core/Spinner';
+import { Placeholder } from './Placeholder';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
 import type { FileSearchResult, SearchResult, ServerFileMessage } from '@/protocol/file-messages';
@@ -97,34 +102,36 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
     (searchMode === 'files' ? searchResults.length === 0 : contentSearchResults.length === 0);
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col min-h-0 overflow-hidden">
-      <div className="flex items-center gap-1.5 px-2 py-1 border-b border-border">
-        {isLoading ? (
-          <Loader2 className="size-3.5 animate-spin text-muted-foreground shrink-0" />
-        ) : (
-          <Search className="size-3.5 text-muted-foreground shrink-0" />
-        )}
-        <input
-          ref={inputRef}
-          value={searchQuery}
-          onChange={(e) => store.getState().setSearchQuery(e.target.value)}
-          placeholder={searchMode === 'files' ? 'Search files…' : 'Search content…'}
-          className="flex-1 bg-transparent outline-none min-w-0"
-          spellCheck={false}
-        />
-        <button
-          onClick={() => {
-            store.getState().setSearchMode(searchMode === 'files' ? 'content' : 'files');
-          }}
-          className="text-muted-foreground hover:text-foreground shrink-0 leading-none"
-          style={{ fontSize: '0.75em' }}
-          tabIndex={-1}
+    <VStack className="min-h-0 min-w-0 flex-1 overflow-hidden">
+      <VStack gap={1} className="flex-none border-b border-border px-2 py-1">
+        <HStack gap={2} vAlign="center">
+          <TextInput
+            ref={inputRef}
+            label={searchMode === 'files' ? 'Search files' : 'Search content'}
+            isLabelHidden
+            size="sm"
+            startIcon={Search}
+            value={searchQuery}
+            onChange={(value) => store.getState().setSearchQuery(value)}
+            placeholder={searchMode === 'files' ? 'Search files…' : 'Search content…'}
+            className="min-w-0 flex-1"
+          />
+          {isLoading && <Spinner size="sm" aria-label="Searching" />}
+        </HStack>
+        <SegmentedControl
+          label="Search mode"
+          size="sm"
+          layout="fill"
+          value={searchMode}
+          onChange={(value) => store.getState().setSearchMode(value as 'files' | 'content')}
+          onMouseDown={(e) => e.preventDefault()}
         >
-          {searchMode === 'files' ? 'files' : 'content'}
-        </button>
-      </div>
+          <SegmentedControlItem value="files" label="Files" />
+          <SegmentedControlItem value="content" label="Content" />
+        </SegmentedControl>
+      </VStack>
 
-      <ScrollArea className="min-w-0 flex-1 overflow-hidden">
+      <ScrollableArea label="Search results" axis="both" data-preview-viewport className="min-w-0 flex-1 overflow-auto">
         <div ref={listRef}>
           {searchMode === 'files' &&
             searchResults.map((r, i) => (
@@ -140,12 +147,12 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
                 focused={i === focusedIndex}
               />
             ))}
-          {error && <div className="px-3 py-4 text-center text-destructive">{error}</div>}
-          {!error && isEmpty && <div className="px-3 py-4 text-center text-muted-foreground">No results</div>}
-          {!searchQuery.trim() && <div className="px-3 py-4 text-center text-muted-foreground">Type to search</div>}
+          {error && <Placeholder isError>{error}</Placeholder>}
+          {!error && isEmpty && <Placeholder>No results</Placeholder>}
+          {!searchQuery.trim() && <Placeholder>Type to search</Placeholder>}
         </div>
-      </ScrollArea>
-    </div>
+      </ScrollableArea>
+    </VStack>
   );
 }
 
@@ -179,14 +186,14 @@ function FileResultRow({
       data-index={index}
       className={cn(
         'flex items-center gap-2 px-2 leading-tight cursor-default select-none',
-        focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+        focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
     >
-      <File className="size-3.5 text-muted-foreground shrink-0" />
+      <File className="size-3.5 text-secondary shrink-0" />
       <span className="flex-1 truncate">
         {segments.map((seg, k) =>
           seg.hi ? (
-            <span key={k} className="text-yellow-400">
+            <span key={k} className="text-yellow-vivid">
               {seg.text}
             </span>
           ) : (
@@ -216,25 +223,20 @@ function ContentResultRow({
       data-index={index}
       className={cn(
         'flex flex-col px-2 py-0.5 cursor-default select-none',
-        focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+        focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
     >
       <div className="flex items-center gap-1.5 min-w-0 leading-tight">
-        <FileText className="size-3.5 text-muted-foreground shrink-0" />
+        <FileText className="size-3.5 text-secondary shrink-0" />
         <span className="min-w-0 flex-1 truncate">
           {displayPath}
           {result.line != null && (
-            <span className={focused ? 'text-accent-foreground/60' : 'text-muted-foreground'}>:{result.line}</span>
+            <span className={focused ? 'text-on-accent/60' : 'text-secondary'}>:{result.line}</span>
           )}
         </span>
       </div>
       {result.text && (
-        <div
-          className={cn(
-            'min-w-0 truncate pl-5 leading-tight',
-            focused ? 'text-accent-foreground/70' : 'text-muted-foreground',
-          )}
-        >
+        <div className={cn('min-w-0 truncate pl-5 leading-tight', focused ? 'text-on-accent/70' : 'text-secondary')}>
           {result.text}
         </div>
       )}

@@ -1,4 +1,9 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { HStack, VStack } from '@astryxdesign/core/Layout';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Token } from '@astryxdesign/core/Token';
 import { X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
@@ -13,10 +18,10 @@ import { GitCommitDiffPreview } from './files/GitCommitDiffPreview';
 import { GitCommitModal } from './files/GitCommitModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
+import { KeyHint, type Hint } from './KeyHint';
 import { cn, getParent } from '@/lib/utils';
-import { getAnimations, getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
+import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
-import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import type {
   FileEntry,
   FileContent,
@@ -50,7 +55,7 @@ const MEDIA_EXTENSIONS = new Set([
 const DEFAULT_SIDEBAR_RATIO = 1 / 3;
 
 function scrollFilePreview(direction: 1 | -1) {
-  const viewport = document.querySelector<HTMLElement>('.file-preview-scroll [data-slot="scroll-area-viewport"]');
+  const viewport = document.querySelector<HTMLElement>('.file-preview-scroll [data-preview-viewport]');
   if (viewport) viewport.scrollBy({ top: direction * (viewport.clientHeight / 2) });
 }
 
@@ -585,7 +590,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Keyboard handler — only active while this overlay (or a child) has focus.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!rootRef.current?.contains(document.activeElement)) return;
+      if (commitModalOpen || !rootRef.current?.contains(document.activeElement)) return;
 
       // Rename input eats its own keys — let it handle Escape/Enter only
       if (pendingRename && document.activeElement === renameInputRef.current) {
@@ -1165,6 +1170,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     deleteFile,
     pendingDiscard,
     pendingDelete,
+    commitModalOpen,
     pendingRename,
     renameValue,
     commitRename,
@@ -1191,111 +1197,118 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const selectionCount = selectedPaths.size;
 
+  const hints: Hint[] = isGitMode
+    ? gitView === 'log'
+      ? GIT_LOG_HINTS
+      : [
+          ...GIT_STATUS_HINTS,
+          {
+            keys: ['w'],
+            label: (
+              <Text
+                type="code"
+                size="sm"
+                color={ignoreAllSpace ? 'inherit' : 'disabled'}
+                className={cn(ignoreAllSpace && 'text-cyan-vivid')}
+                style={{ fontVariantLigatures: 'none' }}
+              >
+                -w/--ignore-all-space
+              </Text>
+            ),
+          },
+          ...GIT_STATUS_TAIL_HINTS,
+        ]
+    : searchMode !== 'off'
+      ? [
+          { keys: ['up', 'down'], label: 'navigate' },
+          { keys: ['enter'], label: searchMode === 'content' ? 'open at line' : 'open' },
+          { keys: ['ctrl+enter'], label: 'insert path' },
+          { keys: ['tab'], label: searchMode === 'files' ? 'content search' : 'file search' },
+          { keys: ['esc'], label: 'exit search' },
+        ]
+      : [
+          { keys: ['j', 'k'], label: 'navigate' },
+          { keys: ['space'], label: 'select' },
+          { keys: ['ctrl+n', 'ctrl+p'], label: focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate' },
+          ...BROWSE_HINTS,
+        ];
+
   return (
-    <div
+    <VStack
       ref={rootRef}
       tabIndex={-1}
-      className="absolute inset-0 flex flex-col bg-background outline-none overflow-hidden"
-      style={{
-        fontSize: `${fontSize}px`,
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
-      }}
+      className="h-full min-h-0 overflow-hidden outline-none"
+      style={{ fontSize: `${fontSize}px` }}
       onMouseDown={() => {
         if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
         rootRef.current?.focus();
       }}
     >
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border">
-        <Breadcrumb onNavigate={navigate} />
-        <div className="flex-1" />
+      <HStack gap={3} vAlign="center" className="min-w-0 flex-none border-b border-border px-3 py-1.5">
+        <HStack className="min-w-0 flex-1 overflow-hidden">
+          <Breadcrumb onNavigate={navigate} />
+        </HStack>
         {fileConnectionState !== 'connected' && (
-          <div role="status" className={cn('text-muted-foreground text-xs', animations && 'animate-pulse')}>
+          <Text size="sm" color="secondary" role="status" className={cn(animations && 'animate-pulse')}>
             {CONNECTION_STATE_LABEL[fileConnectionState]}
-          </div>
+          </Text>
         )}
         {isFilterActive && (
-          <div className="text-muted-foreground">
-            filter: <span className="text-foreground">{filterQuery || '...'}</span>
-          </div>
+          <Text size="sm" color="secondary">
+            Filter: <Text size="sm">{filterQuery || '…'}</Text>
+          </Text>
         )}
-        {selectionCount > 0 && !isFilterActive && (
-          <div className="text-muted-foreground text-xs">
-            <span className="text-foreground font-medium">{selectionCount}</span> selected
-          </div>
-        )}
+        {selectionCount > 0 && !isFilterActive && <Token size="sm" color="blue" label={`${selectionCount} selected`} />}
         {yankRegister && !isFilterActive && (
-          <div className="text-muted-foreground text-xs">
-            {yankRegister.mode === 'cut' ? '✂' : '⎘'}{' '}
-            <span className="text-foreground font-medium">{yankRegister.paths.length}</span> in register
-          </div>
+          <Token
+            size="sm"
+            label={`${yankRegister.paths.length} ${yankRegister.mode === 'cut' ? 'to move' : 'to copy'}`}
+          />
         )}
-        <button
-          onClick={onClose}
-          aria-label="Close file browser"
-          className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
+        <IconButton label="Close file browser" icon={<X />} variant="ghost" size="sm" onClick={onClose} />
+      </HStack>
 
-      {/* Body */}
-      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
-        {/* Sidebar */}
-        <div
-          className="min-w-0 shrink-0 flex flex-col min-h-0 overflow-hidden"
-          style={{ width: `${sidebarRatio * 100}%` }}
-        >
+      <HStack className="min-h-0 min-w-0 flex-1 items-stretch overflow-hidden">
+        <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ width: `${sidebarRatio * 100}%` }}>
           {isGitMode ? (
-            gitView === 'log' ? (
-              <>
-                <GitModeHeader />
-                <GitHistory />
-              </>
-            ) : (
-              <>
-                <GitModeHeader />
-                <GitStatus />
-              </>
-            )
+            <>
+              <GitModeHeader />
+              {gitView === 'log' ? <GitHistory /> : <GitStatus />}
+            </>
           ) : (
             <>
-              <div className={searchMode === 'off' ? 'flex flex-1 flex-col min-h-0' : 'hidden'}>
+              <VStack className={searchMode === 'off' ? 'min-h-0 flex-1' : 'hidden'}>
                 <FileTree fileSend={fileSend} onNavigate={navigate} onSelect={selectFile} />
-              </div>
+              </VStack>
               {searchMode !== 'off' && (
                 <FileSearch fileSend={fileSend} currentPath={currentPath} focusedIndex={focusedIndex} />
               )}
             </>
           )}
-        </div>
-        {/* Drag handle */}
+        </VStack>
         <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
           onMouseDown={onDividerMouseDown}
-          className="w-1 shrink-0 cursor-col-resize border-r border-border hover:bg-accent active:bg-accent"
+          className="w-1 flex-none cursor-col-resize border-r border-border hover:bg-accent-bg active:bg-accent-bg"
         />
-        {/* Preview */}
-        <div className="min-w-0 flex-1 flex flex-col min-h-0 file-preview-scroll file-preview-content">
-          <div className="min-h-0 flex-1 flex flex-col">
-            {isGitMode && gitView === 'log' ? <GitCommitDiffPreview /> : <FilePreview fileSend={fileSend} />}
-          </div>
-        </div>
-      </div>
+        <VStack className="file-preview-scroll file-preview-content min-h-0 min-w-0 flex-1">
+          {isGitMode && gitView === 'log' ? <GitCommitDiffPreview /> : <FilePreview fileSend={fileSend} />}
+        </VStack>
+      </HStack>
 
-      {/* Footer */}
-      <div
-        className="flex items-center gap-4 px-3 py-1 border-t border-border text-muted-foreground"
-        style={{ fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}
-      >
+      <HStack gap={4} vAlign="center" className="flex-none overflow-hidden border-t border-border px-3 py-1">
         {pendingRename ? (
-          <span className="flex items-center gap-2 text-foreground w-full">
-            <span>rename:</span>
-            <input
+          <HStack gap={3} vAlign="center" className="w-full">
+            <TextInput
               ref={renameInputRef}
-              className="flex-1 bg-transparent border-b border-border outline-none text-foreground"
+              label="Rename"
+              isLabelHidden
+              size="sm"
               value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
+              onChange={setRenameValue}
+              className="min-w-0 flex-1"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
@@ -1307,316 +1320,79 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 e.stopPropagation();
               }}
             />
-            <span className="text-muted-foreground">
-              <KbdGroup>
-                <Kbd>Enter</Kbd>
-              </KbdGroup>{' '}
-              confirm{' '}
-              <KbdGroup>
-                <Kbd>Esc</Kbd>
-              </KbdGroup>{' '}
-              cancel
-            </span>
-          </span>
-        ) : pendingDiscard ? (
-          <span className="text-foreground">
-            {pendingDiscard.untracked ? 'permanently delete untracked file' : 'discard changes to'}{' '}
-            <span className="text-yellow-400">{pendingDiscard.path}</span>?{' '}
-            <KbdGroup>
-              <Kbd>y</Kbd>
-            </KbdGroup>{' '}
-            confirm{' '}
-            <KbdGroup>
-              <Kbd>n</Kbd>
-            </KbdGroup>{' '}
-            cancel
-          </span>
-        ) : pendingDelete ? (
-          <span className="text-foreground">
-            {pendingDelete.permanent ? 'permanently delete' : 'move to trash'}{' '}
-            {pendingDelete.names.length === 1 ? (
-              <span className="text-yellow-400">{pendingDelete.names[0]}</span>
-            ) : (
-              <span className="text-yellow-400">{pendingDelete.names.length} items</span>
-            )}
-            ?{' '}
-            <KbdGroup>
-              <Kbd>y</Kbd>
-            </KbdGroup>{' '}
-            confirm{' '}
-            <KbdGroup>
-              <Kbd>n</Kbd>
-            </KbdGroup>{' '}
-            cancel
-          </span>
-        ) : isGitMode ? (
-          gitView === 'log' ? (
-            <>
-              <span>
-                <KbdGroup>
-                  <Kbd>j</Kbd>
-                  <Kbd>k</Kbd>
-                </KbdGroup>{' '}
-                navigate commits
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>g</Kbd>
-                  <Kbd>G</Kbd>
-                </KbdGroup>{' '}
-                top/bottom
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>s</Kbd>
-                </KbdGroup>{' '}
-                status
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>Esc</Kbd>
-                  <Kbd>q</Kbd>
-                </KbdGroup>{' '}
-                exit git
-              </span>
-            </>
-          ) : (
-            <>
-              <span>
-                <KbdGroup>
-                  <Kbd>j</Kbd>
-                  <Kbd>k</Kbd>
-                </KbdGroup>{' '}
-                navigate
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>Tab</Kbd>
-                </KbdGroup>{' '}
-                expand
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>h</Kbd>
-                  <Kbd>l</Kbd>
-                </KbdGroup>{' '}
-                fold/unfold
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>s</Kbd>
-                </KbdGroup>{' '}
-                stage
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>u</Kbd>
-                </KbdGroup>{' '}
-                unstage
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>x</Kbd>
-                </KbdGroup>{' '}
-                discard
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>w</Kbd>
-                </KbdGroup>{' '}
-                <span
-                  className={cn('font-mono', ignoreAllSpace ? 'text-theme-cyan' : 'text-muted-foreground/50')}
-                  style={{ fontVariantLigatures: 'none' }}
-                >
-                  -w/--ignore-all-space
-                </span>
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>c</Kbd>
-                </KbdGroup>{' '}
-                commit
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>/</Kbd>
-                </KbdGroup>{' '}
-                filter
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>o</Kbd>
-                </KbdGroup>{' '}
-                log
-              </span>
-              <span>
-                <KbdGroup>
-                  <Kbd>Esc</Kbd>
-                  <Kbd>q</Kbd>
-                </KbdGroup>{' '}
-                exit git
-              </span>
-            </>
-          )
-        ) : searchMode !== 'off' ? (
+            <KeyHint keys={['enter']} label="confirm" />
+            <KeyHint keys={['esc']} label="cancel" />
+          </HStack>
+        ) : pendingDiscard || pendingDelete ? (
           <>
-            <span>
-              <KbdGroup>
-                <Kbd>↑</Kbd>
-                <Kbd>↓</Kbd>
-              </KbdGroup>{' '}
-              navigate
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>Enter</Kbd>
-              </KbdGroup>{' '}
-              {searchMode === 'content' ? 'open at line' : 'open'}
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>^Enter</Kbd>
-              </KbdGroup>{' '}
-              insert path
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>Tab</Kbd>
-              </KbdGroup>{' '}
-              {searchMode === 'files' ? 'content search' : 'file search'}
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>Esc</Kbd>
-              </KbdGroup>{' '}
-              exit search
-            </span>
+            <Text size="sm">
+              {pendingDiscard
+                ? pendingDiscard.untracked
+                  ? 'Permanently delete untracked file '
+                  : 'Discard changes to '
+                : pendingDelete!.permanent
+                  ? 'Permanently delete '
+                  : 'Move to trash '}
+              <Text size="sm" color="inherit" className="text-yellow-vivid">
+                {pendingDiscard
+                  ? pendingDiscard.path
+                  : pendingDelete!.names.length === 1
+                    ? pendingDelete!.names[0]
+                    : `${pendingDelete!.names.length} items`}
+              </Text>
+              ?
+            </Text>
+            <KeyHint keys={['y']} label="confirm" />
+            <KeyHint keys={['n']} label="cancel" />
           </>
         ) : (
-          <>
-            <span>
-              <KbdGroup>
-                <Kbd>j</Kbd>
-                <Kbd>k</Kbd>
-              </KbdGroup>{' '}
-              navigate
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>Space</Kbd>
-              </KbdGroup>{' '}
-              select
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>^n</Kbd>
-                <Kbd>^p</Kbd>
-              </KbdGroup>{' '}
-              {focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate'}
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>y</Kbd>
-              </KbdGroup>{' '}
-              copy
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>x</Kbd>
-              </KbdGroup>{' '}
-              cut
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>p</Kbd>
-              </KbdGroup>{' '}
-              paste
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>r</Kbd>
-              </KbdGroup>{' '}
-              rename
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>Enter</Kbd>
-              </KbdGroup>{' '}
-              open
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>^Enter</Kbd>
-              </KbdGroup>{' '}
-              insert path
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>l</Kbd>
-              </KbdGroup>{' '}
-              preview
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>h</Kbd>
-              </KbdGroup>{' '}
-              up
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>^d</Kbd>
-                <Kbd>^u</Kbd>
-              </KbdGroup>{' '}
-              scroll
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>/</Kbd>
-              </KbdGroup>{' '}
-              filter
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>f</Kbd>
-                <Kbd>s</Kbd>
-              </KbdGroup>{' '}
-              search
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>.</Kbd>
-              </KbdGroup>{' '}
-              dotfiles
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>i</Kbd>
-              </KbdGroup>{' '}
-              gitignored
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>d</Kbd>
-              </KbdGroup>{' '}
-              trash
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>D</Kbd>
-              </KbdGroup>{' '}
-              delete
-            </span>
-            <span>
-              <KbdGroup>
-                <Kbd>q</Kbd>
-              </KbdGroup>{' '}
-              close
-            </span>
-          </>
+          hints.map((hint) => <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} />)
         )}
-      </div>
+      </HStack>
 
       <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
-    </div>
+    </VStack>
   );
 }
+
+const GIT_LOG_HINTS: Hint[] = [
+  { keys: ['j', 'k'], label: 'navigate commits' },
+  { keys: ['g', 'G'], label: 'top/bottom' },
+  { keys: ['s'], label: 'status' },
+  { keys: ['esc', 'q'], label: 'exit git' },
+];
+
+const GIT_STATUS_HINTS: Hint[] = [
+  { keys: ['j', 'k'], label: 'navigate' },
+  { keys: ['tab'], label: 'expand' },
+  { keys: ['h', 'l'], label: 'fold/unfold' },
+  { keys: ['s'], label: 'stage' },
+  { keys: ['u'], label: 'unstage' },
+  { keys: ['x'], label: 'discard' },
+];
+
+const GIT_STATUS_TAIL_HINTS: Hint[] = [
+  { keys: ['c'], label: 'commit' },
+  { keys: ['/'], label: 'filter' },
+  { keys: ['o'], label: 'log' },
+  { keys: ['esc', 'q'], label: 'exit git' },
+];
+
+const BROWSE_HINTS: Hint[] = [
+  { keys: ['y'], label: 'copy' },
+  { keys: ['x'], label: 'cut' },
+  { keys: ['p'], label: 'paste' },
+  { keys: ['r'], label: 'rename' },
+  { keys: ['enter'], label: 'open' },
+  { keys: ['ctrl+enter'], label: 'insert path' },
+  { keys: ['l'], label: 'preview' },
+  { keys: ['h'], label: 'up' },
+  { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll' },
+  { keys: ['/'], label: 'filter' },
+  { keys: ['f', 's'], label: 'search' },
+  { keys: ['.'], label: 'dotfiles' },
+  { keys: ['i'], label: 'gitignored' },
+  { keys: ['d'], label: 'trash' },
+  { keys: ['D'], label: 'delete' },
+  { keys: ['q'], label: 'close' },
+];

@@ -1,10 +1,10 @@
 import { create } from 'zustand';
-import { toast } from 'sonner';
+import { showNotification } from '../lib/notifications';
 import type { Terminal } from 'ghostty-web';
 import { SessionState, SessionSummary, ClientConfig, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
-import { ToastCard } from '../components/ToastCard';
 import type { ConnectionState } from '../lib/connectionState';
+import { DEFAULT_THEME } from './defaultTheme';
 
 export interface PaneNotification {
   paneId: string;
@@ -141,11 +141,9 @@ export const useStore = create<AppStore>((set, get) => ({
   setAllSessions: (allSessions) => set({ allSessions }),
   setConfig: (config) => {
     set({ config });
-    if (config?.theme) {
-      try {
-        localStorage.setItem('btmux-theme', JSON.stringify(config.theme));
-      } catch {}
-    }
+    try {
+      localStorage.setItem('btmux-theme', JSON.stringify(config.theme ?? DEFAULT_THEME));
+    } catch {}
   },
   setConfigPreview: (configPreview) => set({ configPreview }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen, prefixActive: false }),
@@ -167,32 +165,16 @@ export const useStore = create<AppStore>((set, get) => ({
       fileBrowserFocusFile: open ? focusFile : null,
       fileBrowserPaneId: paneId ?? null,
     }),
-  setWindowGridOpen: (open) => set({ windowGridOpen: open }),
+  setWindowGridOpen: (open) =>
+    set((state) => ({ windowGridOpen: open, windowGridMounted: state.windowGridMounted || open })),
   markWindowGridMounted: () => set((s) => (s.windowGridMounted ? s : { windowGridMounted: true })),
-  setAgentGridOpen: (open) => set({ agentGridOpen: open }),
+  setAgentGridOpen: (open) =>
+    set((state) => ({ agentGridOpen: open, agentGridMounted: state.agentGridMounted || open })),
   markAgentGridMounted: () => set((s) => (s.agentGridMounted ? s : { agentGridMounted: true })),
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
-  showToast: (message, level = 'info', opts) => {
-    const paneId = opts?.paneId;
-    // Attention and error both mean "needs a look" (an agent waiting on input,
-    // or a hard failure) — give them longer than routine info/success.
-    const duration = level === 'error' || level === 'attention' ? 8000 : 5000;
-    toast.custom(
-      (id) => (
-        <ToastCard
-          level={level}
-          title={message}
-          message={opts?.body}
-          duration={duration}
-          onDismiss={() => toast.dismiss(id)}
-          onView={paneId ? () => get().navigateToPane(paneId) : undefined}
-        />
-      ),
-      { duration },
-    );
-  },
+  showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
   setPaneNotification: (n) =>
     set((s) => {
       const next = new Map(s.notifications);

@@ -219,7 +219,7 @@ run: build
 test:
     cargo test
 
-# Frontend unit tests (LaTeX detector)
+# Frontend unit tests
 test-frontend:
     cd frontend && bun test
 
@@ -229,4 +229,4 @@ protocol:
 
 # Browser regressions against an isolated dev stack (requires BTMUX_AUTH_TOKEN)
 test-browser:
-    cd frontend && bun reliability-test.ts
+    cd frontend && bun reliability-test.ts && bun astryx-browser-test.ts

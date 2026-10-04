@@ -1,11 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
-import { InfoDialog } from './InfoDialog';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
+import { CommandPalette, CommandPaletteInput, useCommandPaletteContext } from '@astryxdesign/core/CommandPalette';
+import { createStaticSource } from '@astryxdesign/core/Typeahead';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Button } from '@astryxdesign/core/Button';
+import { Heading } from '@astryxdesign/core/Heading';
+import { Text } from '@astryxdesign/core/Text';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { Layout, LayoutContent, LayoutFooter, HStack, VStack, Section } from '@astryxdesign/core/Layout';
+import { InfoDialog } from './InfoDialog';
 import { useStore } from '../state/store';
-import { ClientMessage } from '../protocol/messages';
-import { Bind, ClientConfig } from '../state/types';
-import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import { getAnimations, getPrefix, getTerminalFontSize, MIN_FONT_SIZE } from '../state/configDefaults';
+import type { ClientMessage } from '../protocol/messages';
+import type { ClientConfig } from '../state/types';
+import { getPrefix } from '../state/configDefaults';
+import { KeyCap } from './KeyHint';
+import { actionLabel } from '../lib/actionLabel';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -72,588 +83,283 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
   },
 ];
 
-/** Human-friendly label for an action name (kebab-case → spaced words). */
-function actionLabel(action: string): string {
-  return action.replace(/-/g, ' ');
-}
-
-/** Render a key string as a compact keycap glyph (Space, arrows, etc.). */
-function keyLabel(key: string): string {
-  if (key === ' ') return '␣';
-  if (key === 'ArrowLeft') return '←';
-  if (key === 'ArrowRight') return '→';
-  if (key === 'ArrowUp') return '↑';
-  if (key === 'ArrowDown') return '↓';
-  return key;
-}
-
 interface Props {
   sessionId: string;
-  send: (msg: ClientMessage) => void;
+  send: (message: ClientMessage) => void;
   config: ClientConfig | null;
 }
 
-export function Overlay({ sessionId, send, config }: Props) {
-  const overlay = useStore((s) => s.overlay);
-  const setOverlay = useStore((s) => s.setOverlay);
-  const setSettingsOpen = useStore((s) => s.setSettingsOpen);
-  const fontSize = getTerminalFontSize(config);
-  const navigate = useNavigate();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const focusRef = useRef<HTMLDivElement>(null);
-  const commandItemRefs = useRef<(HTMLDivElement | null)[]>([]);
-
-  // Command-palette selection + typeahead filter (only used in `command` mode).
-  const [cmdIdx, setCmdIdx] = useState(0);
-  const [cmdQuery, setCmdQuery] = useState('');
-  // Picker selection index.
-  const [pickerIdx, setPickerIdx] = useState(0);
-  // Tracks which picker item was last applied (space/click).
-  const [pickerApplied, setPickerApplied] = useState<string | null>(null);
-  // Closing flag: set on close request; actual unmount happens 165ms later after
-  // the exit animation completes. frozenOverlay holds a snapshot of the last
-  // non-null overlay so the content stays visible during the exit animation.
-  const [closing, setClosing] = useState(false);
-  const closingTimerRef = useRef<number>(0);
-  const frozenOverlay = useRef(overlay);
-
-  if (overlay) frozenOverlay.current = overlay;
-
+/** Palette input that keeps the first result highlighted whenever the results change. */
+function TopHighlightedInput() {
+  const palette = useCommandPaletteContext();
+  const resultsKey = palette?.selectableItems.map((item) => item.value).join('\n') ?? '';
+  const count = palette?.selectableItems.length ?? 0;
+  const setHighlightedIndex = palette?.setHighlightedIndex;
   useEffect(() => {
-    if (!overlay) return;
-    // Cancel any in-flight close when a new overlay opens.
-    clearTimeout(closingTimerRef.current);
-    setClosing(false);
-    if (overlay.mode === 'prompt') inputRef.current?.focus();
-    else focusRef.current?.focus();
-    // Reset palette state whenever a new overlay opens.
-    setCmdIdx(0);
-    setCmdQuery('');
-    // Start picker at the active item if there is one.
-    if (overlay.mode === 'picker') {
-      const activeIdx = overlay.items.findIndex((i) => i.active);
-      setPickerIdx(activeIdx >= 0 ? activeIdx : 0);
-      setPickerApplied(null);
-    } else {
-      setPickerIdx(0);
-      setPickerApplied(null);
-    }
-  }, [overlay?.mode]);
+    setHighlightedIndex?.(count > 0 ? 0 : -1);
+  }, [resultsKey, count, setHighlightedIndex]);
+  return <CommandPaletteInput />;
+}
 
-  // Re-focus the picker after config-change re-renders (space-to-apply causes
-  // a config broadcast that rebuilds terminal panes which grab focus).
+export function Overlay({ sessionId, send, config }: Props) {
+  const overlay = useStore((state) => state.overlay);
+  const setOverlay = useStore((state) => state.setOverlay);
+  const navigate = useNavigate();
+  const [pickerIndex, setPickerIndex] = useState(0);
+  const [applied, setApplied] = useState<string | null>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const source = useMemo(() => createStaticSource(overlay?.mode === 'command' ? overlay.commands : []), [overlay]);
+  useEffect(() => {
+    if (overlay?.mode !== 'picker') return;
+    setPickerIndex(
+      Math.max(
+        0,
+        overlay.items.findIndex((item) => item.active),
+      ),
+    );
+    setApplied(null);
+  }, [overlay?.mode, overlay?.title]);
   useEffect(() => {
     if (overlay?.mode === 'picker') {
-      const id = setTimeout(() => focusRef.current?.focus(), 0);
-      return () => clearTimeout(id);
+      pickerRef.current?.querySelector<HTMLElement>('[aria-selected="true"] button')?.focus();
     }
-  });
-
-  const pendingOverlay = overlay ?? frozenOverlay.current;
-  const filteredCommands =
-    pendingOverlay?.mode === 'command'
-      ? pendingOverlay.commands.filter((c) => c.label.toLowerCase().includes(cmdQuery.trim().toLowerCase()))
-      : [];
-  const clampedCmdIdx = Math.min(cmdIdx, Math.max(0, filteredCommands.length - 1));
-
-  useEffect(() => {
-    if (pendingOverlay?.mode === 'command' && filteredCommands.length > 0) {
-      commandItemRefs.current[clampedCmdIdx]?.scrollIntoView({ block: 'nearest' });
-    }
-  }, [pendingOverlay, clampedCmdIdx, cmdQuery, filteredCommands.length]);
-
-  // Keep mounted during the exit animation.
-  if (!overlay && !closing) return null;
-  // Use the frozen snapshot during the exit animation so content stays visible.
-  const activeOverlay = pendingOverlay!;
-
-  if (activeOverlay.mode === 'info') return <InfoDialog onClose={() => setOverlay(null)} />;
-
-  const runCommand = (cmdId: string) => {
-    if (cmdId === 'open-config') {
-      setOverlay(null);
-      setSettingsOpen(true);
-      return true;
-    }
-    if (cmdId === 'toggle-latex') {
-      const paneId = useStore.getState().getActivePaneId(sessionId);
-      if (paneId) useStore.getState().toggleLatex(paneId);
-      setOverlay(null);
-      return true;
-    }
-    return false;
+  }, [pickerIndex, overlay?.mode, config]);
+  if (!overlay) return null;
+  const close = () => setOverlay(overlay.mode === 'confirm' ? (overlay.returnTo ?? null) : null);
+  const changeOpen = (open: boolean) => {
+    if (!open) close();
   };
-
-  const close = () => {
-    if (closing) return;
-    if (!animations) {
-      setOverlay(null);
-      return;
-    }
-    setClosing(true);
-    closingTimerRef.current = window.setTimeout(() => {
-      setClosing(false);
-      setOverlay(null);
-    }, 165);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    e.stopPropagation();
-
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      close();
-      return;
-    }
-
-    if (activeOverlay.mode === 'prompt' && e.key === 'Enter') {
-      e.preventDefault();
-      const name = activeOverlay.value.trim();
-      if (name) {
-        if (activeOverlay.action === 'rename-window') {
-          const targetSessionId = activeOverlay.targetSessionId ?? sessionId;
-          send({ type: 'rename_window', session_id: targetSessionId, name });
-        } else if (activeOverlay.action === 'rename-session') {
-          const targetSessionId = activeOverlay.targetSessionId ?? sessionId;
-          send({ type: 'rename_session', session_id: targetSessionId, name });
-          if (targetSessionId === sessionId) navigate(`/s/${encodeURIComponent(name)}`, { replace: true });
-        } else if (activeOverlay.action === 'new-session') {
-          send({ type: 'create_session', name });
-        }
-      } else if (activeOverlay.action === 'new-session') {
-        send({ type: 'create_session', name: null });
-      }
-      close();
-      return;
-    }
-
-    if (activeOverlay.mode === 'command') {
-      const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n');
-      const up = e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p');
-      if (down || up) {
-        e.preventDefault();
-        const n = filteredCommands.length;
-        if (n === 0) return;
-        setCmdIdx((i) => (Math.min(i, n - 1) + (down ? 1 : -1) + n) % n);
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const cmd = filteredCommands[clampedCmdIdx];
-        if (!cmd) return;
-        if (runCommand(cmd.id)) return;
-        if (cmd.confirm) {
-          setOverlay({
-            mode: 'confirm',
-            title: cmd.confirm,
-            onConfirm: () => send({ type: 'run_command', command: cmd.id, session_id: sessionId }),
-          });
-        } else {
-          send({ type: 'run_command', command: cmd.id, session_id: sessionId });
-          close();
-        }
-        return;
-      }
-      if (e.key === 'Backspace') {
-        e.preventDefault();
-        setCmdQuery((q) => q.slice(0, -1));
-        setCmdIdx(0);
-        return;
-      }
-      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        setCmdQuery((q) => q + e.key);
-        setCmdIdx(0);
-        return;
-      }
-      return;
-    }
-
-    if (activeOverlay.mode === 'picker') {
-      const n = activeOverlay.items.length;
-      const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n') || e.key === 'j';
-      const up = e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p') || e.key === 'k';
-      if (down || up) {
-        e.preventDefault();
-        if (n === 0) return;
-        setPickerIdx((i) => (Math.min(i, n - 1) + (down ? 1 : -1) + n) % n);
-        return;
-      }
-      if (e.key === ' ') {
-        e.preventDefault();
-        const item = activeOverlay.items[Math.min(pickerIdx, n - 1)];
-        if (item) {
-          activeOverlay.onSelect(item.id);
-          setPickerApplied(item.id);
-        }
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const item = activeOverlay.items[Math.min(pickerIdx, n - 1)];
-        if (item) {
-          activeOverlay.onSelect(item.id);
-          close();
-        }
-        return;
-      }
-      return;
-    }
-
-    if (activeOverlay.mode === 'confirm') {
-      if (e.key === 'y' || e.key === 'Enter') {
-        e.preventDefault();
-        activeOverlay.onConfirm();
-        if (activeOverlay.returnTo) setOverlay(activeOverlay.returnTo);
-        else close();
-      } else if (e.key === 'n' || e.key === 'Escape') {
-        e.preventDefault();
-        if (activeOverlay.returnTo) setOverlay(activeOverlay.returnTo);
-        else close();
-      }
-    }
-  };
-
-  const c = chromePalette(config?.theme ?? null);
-  const bg = c.panelBg;
-  const fg = c.fg;
-  const accent = c.accent;
-  const dimFg = c.fgDim;
-  const hintFont = `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px`;
-  const animations = getAnimations(config);
-
-  // The keybinding-help overlay is a centered modal (backdrop + panel); every
-  // other overlay mode is a bottom-anchored sheet.
-  if (activeOverlay.mode === 'keys') {
-    const byAction = new Map(activeOverlay.binds.map((b) => [b.action, b] as const));
-    const shown = new Set<string>();
+  if (overlay.mode === 'info') return <InfoDialog onClose={close} />;
+  if (overlay.mode === 'confirm')
     return (
-      <div
-        onKeyDown={onKeyDown}
-        tabIndex={0}
-        ref={focusRef}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: withAlpha(c.bodyBg, 0.55),
-          backdropFilter: 'blur(3px)',
-          WebkitBackdropFilter: 'blur(3px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          outline: 'none',
-          // Above the session switcher / window grid (zIndex 30) so the
-          // keybinding-help modal isn't stuck behind their blurred backdrop.
-          zIndex: 40,
-          fontFamily: 'var(--btmux-font)',
-          fontWeight: 'var(--btmux-font-weight)',
-          fontSize: `${fontSize}px`,
-          animation: animations ? (closing ? 'btm-fade-out .16s ease forwards' : 'btm-fade .15s ease') : undefined,
+      <AlertDialog
+        isOpen
+        onOpenChange={changeOpen}
+        title="Confirm action"
+        description={overlay.title}
+        actionLabel="Confirm"
+        onAction={() => {
+          overlay.onConfirm();
+          close();
         }}
-        onMouseDown={(e) => {
-          if (e.target === e.currentTarget) close();
+        onKeyDown={(event) => {
+          if (event.key === 'y') {
+            event.preventDefault();
+            overlay.onConfirm();
+            close();
+          }
+          if (event.key === 'n') {
+            event.preventDefault();
+            close();
+          }
+          event.stopPropagation();
         }}
-      >
-        <div
-          style={{
-            width: '1200px',
-            maxWidth: '94%',
-            maxHeight: '88%',
-            overflow: 'auto',
-            borderRadius: '12px',
-            background: c.panelBg,
-            border: `1px solid ${c.border}`,
-            boxShadow: `0 30px 80px ${withAlpha(c.bodyBg, 0.55)}`,
-            animation: animations ? (closing ? 'btm-out .17s ease forwards' : 'btm-in .18s ease') : undefined,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              padding: '16px 20px 14px',
-              borderBottom: `1px solid ${c.borderDim}`,
-            }}
-          >
-            <span style={{ color: c.fgBright, fontWeight: 800, fontSize: `${fontSize + 2}px` }}>
-              {activeOverlay.title}
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: c.fgDim, fontSize: hintFont }}>
-              prefix
-              <span style={{ ...keycapStyle(c), fontSize: hintFont }}>{getPrefix(config)}</span>
-              then…
-            </span>
-            <span style={{ flex: 1 }} />
-            <span style={{ color: c.fgDim, fontSize: hintFont }}>esc to close</span>
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: '18px 34px',
-              padding: '18px 22px 22px',
-            }}
-          >
-            {KEY_SECTIONS.map((section) => {
-              const rows = section.actions.map((action) => byAction.get(action)).filter((b): b is Bind => !!b);
-              rows.forEach((b) => shown.add(b.action));
-              if (rows.length === 0) return null;
-              return <KeySection key={section.title} title={section.title} rows={rows} c={c} />;
-            })}
-            {(() => {
-              // Any bound action not placed in a named section (e.g. user-added
-              // vi binds) goes in a catch-all so the help stays complete.
-              const rest = activeOverlay.mode === 'keys' ? activeOverlay.binds.filter((b) => !shown.has(b.action)) : [];
-              if (rest.length === 0) return null;
-              return <KeySection title="Other" rows={rest} c={c} />;
-            })()}
-          </div>
-        </div>
-      </div>
+      />
+    );
+  if (overlay.mode === 'command')
+    return (
+      <CommandPalette
+        isOpen
+        label={overlay.title}
+        searchSource={source}
+        input={<TopHighlightedInput />}
+        onOpenChange={(open) => {
+          if (!open && useStore.getState().overlay === overlay) setOverlay(null);
+        }}
+        onValueChange={(id) => {
+          const command = overlay.commands.find((item) => item.id === id);
+          if (!command) return;
+          const state = useStore.getState();
+          if (id === 'open-config') {
+            setOverlay(null);
+            state.setSettingsOpen(true);
+            return;
+          }
+          if (id === 'toggle-latex') {
+            const pane = state.getActivePaneId(sessionId);
+            if (pane) state.toggleLatex(pane);
+            setOverlay(null);
+            return;
+          }
+          const run = () => send({ type: 'run_command', command: id, session_id: sessionId });
+          if (command.confirm) setOverlay({ mode: 'confirm', title: command.confirm, onConfirm: run });
+          else {
+            run();
+            setOverlay(null);
+          }
+        }}
+        renderItem={(item) => (
+          <VStack gap={0.5}>
+            <Text>{item.label}</Text>
+            <Text color="secondary">{item.description}</Text>
+          </VStack>
+        )}
+      />
+    );
+  if (overlay.mode === 'prompt') {
+    const submit = () => {
+      const name = overlay.value.trim();
+      const target = overlay.targetSessionId ?? sessionId;
+      if (overlay.action === 'new-session') send({ type: 'create_session', name: name || null });
+      else if (name && overlay.action === 'rename-window') send({ type: 'rename_window', session_id: target, name });
+      else if (name) {
+        send({ type: 'rename_session', session_id: target, name });
+        if (target === sessionId) navigate(`/s/${encodeURIComponent(name)}`, { replace: true });
+      }
+      close();
+    };
+    return (
+      <Dialog isOpen onOpenChange={changeOpen} purpose="form">
+        <Layout
+          header={<DialogHeader title={overlay.title} onOpenChange={changeOpen} />}
+          content={
+            <LayoutContent padding={4}>
+              <TextInput
+                label="Name"
+                value={overlay.value}
+                hasAutoFocus
+                onChange={(value) => setOverlay({ ...overlay, value })}
+                onEnter={submit}
+              />
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter hasDivider>
+              <HStack gap={2} hAlign="end">
+                <Button label="Cancel" onClick={close} />
+                <Button label="Save" variant="primary" onClick={submit} />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
     );
   }
-
-  return (
-    <div
-      onKeyDown={onKeyDown}
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: withAlpha(bg, 0.96),
-        backdropFilter: 'blur(9px)',
-        WebkitBackdropFilter: 'blur(9px)',
-        color: fg,
-        borderTop: `1px solid ${c.border}`,
-        boxShadow: `0 -14px 40px ${withAlpha(c.bodyBg, 0.4)}`,
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
-        fontSize: `${fontSize}px`,
-        // Above the session switcher / window grid (zIndex 30) — a confirm/prompt
-        // sheet opened from within either (e.g. killing a session) must render on
-        // top of their blurred backdrop, not underneath it.
-        zIndex: 40,
-        animation: animations ? (closing ? 'btm-sheet-out .16s ease forwards' : 'btm-in .16s ease') : undefined,
-      }}
-    >
-      {activeOverlay.mode === 'prompt' ? (
-        <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px' }}>
-          <span style={{ color: accent, marginRight: '8px' }}>{activeOverlay.title}:</span>
-          <input
-            ref={inputRef}
-            value={activeOverlay.value}
-            onChange={(e) => activeOverlay.mode === 'prompt' && setOverlay({ ...activeOverlay, value: e.target.value })}
-            style={{
-              flex: 1,
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              color: fg,
-              fontFamily: 'var(--btmux-font)',
-              fontWeight: 'var(--btmux-font-weight)',
-              fontSize: `${fontSize}px`,
-            }}
-          />
-        </div>
-      ) : activeOverlay.mode === 'confirm' ? (
-        <div tabIndex={0} ref={focusRef} style={{ outline: 'none', padding: '4px 8px' }}>
-          <span style={{ color: accent }}>{activeOverlay.title} </span>
-          <span style={{ color: dimFg }}>(y/enter=yes, n/esc=no)</span>
-        </div>
-      ) : activeOverlay.mode === 'command' ? (
-        /* command palette */
-        <div tabIndex={0} ref={focusRef} style={{ outline: 'none' }}>
-          <div
-            style={{
-              padding: '9px 14px 4px',
-              fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 3)}px`,
-              letterSpacing: '.12em',
-              textTransform: 'uppercase',
-              color: c.fgDim,
-            }}
-          >
-            Commands
-          </div>
-          <div style={{ maxHeight: '48vh', overflowY: 'auto' }}>
-            {filteredCommands.length === 0 ? (
-              <div style={{ color: dimFg, padding: '8px 14px' }}>
-                {activeOverlay.commands.length === 0 ? 'No commands.' : 'No matching commands.'}
-              </div>
-            ) : (
-              filteredCommands.map((cmd, i) => {
-                const selected = i === clampedCmdIdx;
-                return (
-                  <div
-                    key={cmd.id}
-                    ref={(element) => {
-                      commandItemRefs.current[i] = element;
-                    }}
-                    onClick={() => {
-                      if (runCommand(cmd.id)) return;
-                      if (cmd.confirm) {
-                        setOverlay({
-                          mode: 'confirm',
-                          title: cmd.confirm,
-                          onConfirm: () => send({ type: 'run_command', command: cmd.id, session_id: sessionId }),
-                        });
-                      } else {
-                        send({ type: 'run_command', command: cmd.id, session_id: sessionId });
-                        close();
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      padding: '4px 14px',
-                      cursor: 'pointer',
-                      background: selected ? withAlpha(accent, 0.09) : 'transparent',
-                      borderLeft: `2px solid ${selected ? accent : 'transparent'}`,
-                      fontWeight: 'var(--btmux-font-weight)',
-                      userSelect: 'none',
-                    }}
-                  >
-                    <span style={{ color: selected ? accent : fg, minWidth: '150px', whiteSpace: 'nowrap' }}>
-                      {cmd.label}
-                    </span>
-                    <span style={{ color: selected ? c.fgMuted : dimFg }}>{cmd.description}</span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-          {/* Prompt line footer with the typed query. */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '9px',
-              padding: '11px 14px',
-              borderTop: `1px solid ${c.borderDim}`,
-              background: withAlpha(c.bodyBg, 0.5),
-            }}
-          >
-            <span style={{ color: accent, fontWeight: 800, fontSize: `${fontSize + 1}px` }}>:</span>
-            <span style={{ color: c.fgBright }}>
-              {cmdQuery}
-              <span style={{ animation: 'btm-blink 1.05s steps(1) infinite' }}>▏</span>
-            </span>
-            <span style={{ flex: 1 }} />
-            <span style={{ color: dimFg, fontSize: hintFont }}>↵ run · ⇥/↑↓ select · esc cancel</span>
-          </div>
-        </div>
-      ) : activeOverlay.mode === 'picker' ? (
-        /* picker overlay */
-        <div tabIndex={0} ref={focusRef} style={{ outline: 'none' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              padding: '9px 14px 6px',
-              gap: '10px',
-            }}
-          >
-            <span
-              style={{
-                fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 3)}px`,
-                letterSpacing: '.12em',
-                textTransform: 'uppercase',
-                color: c.fgDim,
-              }}
-            >
-              {activeOverlay.title}
-            </span>
-            <span style={{ marginLeft: 'auto', color: dimFg, fontSize: hintFont }}>
-              ↑/↓ select · space apply · enter confirm · esc cancel
-            </span>
-          </div>
-          <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
-            {activeOverlay.items.length === 0 ? (
-              <div style={{ color: dimFg, padding: '8px 14px' }}>No items available.</div>
-            ) : (
-              activeOverlay.items.map((item, i) => {
-                const selected = i === Math.min(pickerIdx, activeOverlay.items.length - 1);
-                const isApplied = pickerApplied !== null ? item.id === pickerApplied : item.active;
-                return (
-                  <div
-                    key={item.id || `__none_${i}`}
-                    onMouseDown={(ev) => {
-                      ev.preventDefault();
-                      setPickerIdx(i);
-                      activeOverlay.onSelect(item.id);
-                      setPickerApplied(item.id);
-                    }}
-                    style={{
-                      padding: '7px 14px',
-                      cursor: 'pointer',
-                      background: selected ? withAlpha(accent, 0.09) : 'transparent',
-                      borderLeft: `2px solid ${selected ? accent : 'transparent'}`,
-                      userSelect: 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                  >
-                    <span
-                      style={{
-                        color: isApplied ? accent : selected ? c.fgBright : fg,
-                        fontWeight: isApplied ? 700 : 400,
-                      }}
-                    >
-                      {item.label}
-                    </span>
-                    {isApplied && <span style={{ color: accent }}>●</span>}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/** A key-cap glyph style used in the keybinding-help header + rows. */
-function keycapStyle(c: ReturnType<typeof chromePalette>): React.CSSProperties {
-  return {
-    minWidth: '30px',
-    textAlign: 'center',
-    padding: '3px 8px',
-    borderRadius: '6px',
-    background: c.titleActiveBg,
-    border: `1px solid ${c.border}`,
-    color: c.fgBright,
-    fontWeight: 700,
-  };
-}
-
-/** One titled column of key→action rows in the keybinding-help modal. */
-function KeySection({ title, rows, c }: { title: string; rows: Bind[]; c: ReturnType<typeof chromePalette> }) {
-  return (
-    <div>
-      <div
-        style={{
-          color: c.accent,
-          fontSize: '11px',
-          letterSpacing: '.14em',
-          textTransform: 'uppercase',
-          fontWeight: 700,
-          marginBottom: '10px',
+  if (overlay.mode === 'picker') {
+    const select = (index: number, finish = false) => {
+      const item = overlay.items[index];
+      if (!item) return;
+      setPickerIndex(index);
+      overlay.onSelect(item.id);
+      setApplied(item.id);
+      if (finish) close();
+    };
+    return (
+      <Dialog
+        isOpen
+        onOpenChange={changeOpen}
+        width={640}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          const count = overlay.items.length;
+          if (!count) return;
+          const direction =
+            event.key === 'ArrowDown' || event.key === 'j' || (event.ctrlKey && event.key === 'n')
+              ? 1
+              : event.key === 'ArrowUp' || event.key === 'k' || (event.ctrlKey && event.key === 'p')
+                ? -1
+                : 0;
+          if (direction) {
+            event.preventDefault();
+            setPickerIndex((pickerIndex + direction + count) % count);
+          }
+          if (event.key === ' ') {
+            event.preventDefault();
+            select(pickerIndex);
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            select(pickerIndex, true);
+          }
         }}
       >
-        {title}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
-        {rows.map((b) => (
-          <div key={b.action} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ ...keycapStyle(c), fontSize: '12px', flex: 'none' }}>{keyLabel(b.key)}</span>
-            <span style={{ color: c.fgMuted, fontSize: '12.5px' }}>{actionLabel(b.action)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+        <Layout
+          header={<DialogHeader title={overlay.title} onOpenChange={changeOpen} />}
+          content={
+            <LayoutContent ref={pickerRef} padding={0}>
+              <List density="compact">
+                {overlay.items.map((item, index) => (
+                  <ListItem
+                    key={item.id}
+                    label={item.label}
+                    isSelected={index === pickerIndex}
+                    endContent={
+                      (applied === null ? item.active : applied === item.id) ? (
+                        <Text color="secondary">Applied</Text>
+                      ) : undefined
+                    }
+                    onClick={() => select(index)}
+                  />
+                ))}
+              </List>
+              {!overlay.items.length && (
+                <Section>
+                  <Text color="secondary">No items available.</Text>
+                </Section>
+              )}
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter hasDivider>
+              <HStack gap={2} hAlign="between">
+                <Text color="secondary">Space to apply · Enter to confirm</Text>
+                <Button label="Done" onClick={close} />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
+    );
+  }
+  const sections = [
+    ...KEY_SECTIONS,
+    {
+      title: 'Other',
+      actions: overlay.binds
+        .filter((bind) => !KEY_SECTIONS.some((section) => section.actions.includes(bind.action)))
+        .map((bind) => bind.action),
+    },
+  ];
+  return (
+    <Dialog
+      isOpen
+      onOpenChange={changeOpen}
+      width={960}
+      maxHeight="85dvh"
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <Layout
+        header={
+          <DialogHeader
+            title={overlay.title}
+            subtitle={`Press ${getPrefix(config)}, then a key`}
+            onOpenChange={changeOpen}
+          />
+        }
+        content={
+          <LayoutContent padding={4}>
+            <VStack gap={6}>
+              {sections.map((section) => {
+                const binds = overlay.binds.filter((bind) => section.actions.includes(bind.action));
+                return binds.length ? (
+                  <Section key={section.title}>
+                    <Heading level={3}>{section.title}</Heading>
+                    <List density="compact" hasDividers>
+                      {binds.map((bind) => (
+                        <ListItem
+                          key={`${bind.action}:${bind.key}`}
+                          label={actionLabel(bind.action)}
+                          endContent={<KeyCap keys={bind.key} />}
+                        />
+                      ))}
+                    </List>
+                  </Section>
+                ) : null;
+              })}
+            </VStack>
+          </LayoutContent>
+        }
+      />
+    </Dialog>
   );
 }

@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { Plus, Pencil, Trash2, GitBranch, FileQuestion, ChevronRight, ChevronDown } from 'lucide-react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
 import type { GitStatusResult, FileStatus, LineStats } from '@/protocol/file-messages';
+import { Placeholder } from './Placeholder';
 
 export interface GitItem {
   kind: 'section-header' | 'file';
@@ -129,15 +130,15 @@ export function filterGitItems(items: GitItem[], query: string): GitItem[] {
 function statusIcon(status: FileStatus) {
   switch (status) {
     case 'added':
-      return <Plus className="size-3 text-[var(--color-green)] shrink-0" />;
+      return <Plus className="size-3 text-green-vivid shrink-0" />;
     case 'modified':
-      return <Pencil className="size-3 text-[var(--color-yellow)] shrink-0" />;
+      return <Pencil className="size-3 text-yellow-vivid shrink-0" />;
     case 'deleted':
-      return <Trash2 className="size-3 text-[var(--color-red)] shrink-0" />;
+      return <Trash2 className="size-3 text-red-vivid shrink-0" />;
     case 'renamed':
-      return <GitBranch className="size-3 text-[var(--color-magenta)] shrink-0" />;
+      return <GitBranch className="size-3 text-purple-vivid shrink-0" />;
     case 'typechange':
-      return <FileQuestion className="size-3 text-[var(--color-yellow)] shrink-0" />;
+      return <FileQuestion className="size-3 text-yellow-vivid shrink-0" />;
   }
 }
 
@@ -156,12 +157,12 @@ function DiffStat({ additions, deletions, showZeroes = false }: LineStats & { sh
     >
       {total > 0 && (
         <span className="inline-flex h-1.5 w-8 overflow-hidden rounded-full bg-muted/60" aria-hidden="true">
-          {additions > 0 && <span className="bg-[var(--color-green)]" style={{ width: additionsWidth }} />}
-          {deletions > 0 && <span className="bg-[var(--color-red)]" style={{ width: deletionsWidth }} />}
+          {additions > 0 && <span className="bg-green-vivid" style={{ width: additionsWidth }} />}
+          {deletions > 0 && <span className="bg-red-vivid" style={{ width: deletionsWidth }} />}
         </span>
       )}
-      {(additions > 0 || showZeroes) && <span className="text-[var(--color-green)]">+{additions}</span>}
-      {(deletions > 0 || showZeroes) && <span className="text-[var(--color-red)]">-{deletions}</span>}
+      {(additions > 0 || showZeroes) && <span className="text-green-vivid">+{additions}</span>}
+      {(deletions > 0 || showZeroes) && <span className="text-red-vivid">-{deletions}</span>}
     </span>
   );
 }
@@ -185,21 +186,19 @@ export function GitStatus() {
   }, [gitFocusedIndex]);
 
   if (!gitStatus) {
-    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading...</div>;
+    return <Placeholder isLoading>Loading…</Placeholder>;
   }
 
   if (!gitStatus.is_repo) {
-    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Not a git repo</div>;
+    return <Placeholder>Not a git repo</Placeholder>;
   }
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       {items.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          {isFilterActive && filterQuery ? 'No matches' : 'Clean working tree'}
-        </div>
+        <Placeholder>{isFilterActive && filterQuery ? 'No matches' : 'Clean working tree'}</Placeholder>
       ) : (
-        <ScrollArea className="flex-1 overflow-hidden">
+        <ScrollableArea label="Changes" axis="both" data-preview-viewport className="flex-1 overflow-auto">
           <div ref={listRef}>
             {items.map((item, i) => {
               if (item.kind === 'section-header') {
@@ -210,8 +209,8 @@ export function GitStatus() {
                     data-git-index={i}
                     onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
                     className={cn(
-                      'flex items-center gap-1.5 px-2 cursor-pointer select-none text-muted-foreground leading-tight',
-                      i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                      'flex items-center gap-1.5 px-2 cursor-pointer select-none leading-tight',
+                      i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'text-secondary hover:bg-overlay-hover',
                     )}
                   >
                     {expanded ? (
@@ -238,13 +237,15 @@ export function GitStatus() {
                   onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
                   className={cn(
                     'flex items-center gap-2 px-2 pl-5 cursor-pointer leading-tight',
-                    i === gitFocusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                    i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   )}
                   title={path}
                 >
                   {statusIcon(item.status!)}
                   <span className="min-w-0 flex-1 truncate">
-                    {dir && <span className="text-muted-foreground">{dir}</span>}
+                    {dir && (
+                      <span className={i === gitFocusedIndex ? 'text-on-accent/70' : 'text-secondary'}>{dir}</span>
+                    )}
                     {filename}
                   </span>
                   <DiffStat additions={item.additions ?? 0} deletions={item.deletions ?? 0} />
@@ -252,7 +253,7 @@ export function GitStatus() {
               );
             })}
           </div>
-        </ScrollArea>
+        </ScrollableArea>
       )}
     </div>
   );

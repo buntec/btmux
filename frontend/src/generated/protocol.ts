@@ -160,7 +160,7 @@ pane_switch_border: string | null,
  */
 pane_switch_border_speed: number, 
 /**
- * Sort order for the session list on the landing page.
+ * Sort order for the session list.
  */
 session_sort: SessionSort, 
 /**

@@ -11,8 +11,7 @@ interface Props {
 /**
  * The cross-session keep-alive pool. SessionPool is mounted once in AppInner,
  * *above* <Routes>, so it never unmounts on navigation — that's what lets a
- * session's terminals survive even a trip through the landing page (the
- * choose-tree path unmounts SessionView). It keeps the last POOL_LIMIT sessions
+ * session's terminals survive route changes that unmount SessionView. It keeps the last POOL_LIMIT sessions
  * warm: each pooled session gets a SessionPane (keyed by sessionId) whose ghostty
  * terminals and pane sockets stay mounted; only the active session's is shown,
  * the rest are display:none + suspend()ed but still streaming. Switching back to
@@ -29,9 +28,8 @@ export function SessionPool({ send }: Props) {
   const location = useLocation();
 
   // The active session is derived from the URL (there is no server-side
-  // "current session"). On the landing page ("/") nothing is active, so no
-  // SessionPane is shown — but the pool is left untouched, keeping the last-N
-  // sessions warm while you browse the tree.
+  // "current session"). While "/" redirects nothing is active, so no
+  // SessionPane is shown — but the pool is left untouched.
   const match = location.pathname.match(/^\/s\/([^/]+)/);
   const activeSessionName = match ? decodeURIComponent(match[1]) : null;
   const activeSessionId = allSessions.find((s) => s.name === activeSessionName)?.id ?? null;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal } from 'ghostty-web';
+import { Dialog } from '@astryxdesign/core/Dialog';
 import { TerminalPane } from './TerminalPane';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
 import { ProcessOverlay } from './ProcessOverlay';
@@ -303,43 +304,38 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
             }
           />
         ))}
-      {fileBrowserOpen &&
-        isActiveSession &&
-        (() => {
-          const isFileBrowserZoomed = fileBrowserPaneId === zoomedPaneId;
-          const rect = isFileBrowserZoomed ? HIDDEN : fileBrowserPaneId ? rectByPane.get(fileBrowserPaneId) : null;
-          if (!rect) return null;
-          return (
-            <div
-              key="file-browser"
-              style={{
-                position: 'absolute',
-                top: `${rect.top}%`,
-                left: `${rect.left}%`,
-                width: `${rect.width}%`,
-                height: `${rect.height}%`,
-                zIndex: 20,
-              }}
-            >
-              {fileBrowserMode === 'process' ? (
-                <ProcessOverlay
-                  sessionId={sessionId}
-                  paneId={fileBrowserPaneId!}
-                  send={send}
-                  onClose={() => useStore.getState().setFileBrowserOpen(false)}
-                />
-              ) : (
-                <FileBrowserOverlay
-                  cwd={fileBrowserCwd}
-                  sessionId={sessionId}
-                  paneId={fileBrowserPaneId!}
-                  send={send}
-                  onClose={() => useStore.getState().setFileBrowserOpen(false)}
-                />
-              )}
-            </div>
-          );
-        })()}
+      {fileBrowserOpen && isActiveSession && fileBrowserPaneId && (
+        <Dialog
+          key="file-browser"
+          isOpen
+          onOpenChange={(open) => {
+            if (!open) useStore.getState().setFileBrowserOpen(false);
+          }}
+          aria-label={fileBrowserMode === 'process' ? 'Processes' : fileBrowserMode === 'git' ? 'Git' : 'Files'}
+          width="min(1440px, 94vw)"
+          maxHeight="90dvh"
+          padding={0}
+          className="bg-body/70 backdrop-blur-xl"
+          style={{ height: '90dvh' }}
+        >
+          {fileBrowserMode === 'process' ? (
+            <ProcessOverlay
+              sessionId={sessionId}
+              paneId={fileBrowserPaneId}
+              send={send}
+              onClose={() => useStore.getState().setFileBrowserOpen(false)}
+            />
+          ) : (
+            <FileBrowserOverlay
+              cwd={fileBrowserCwd}
+              sessionId={sessionId}
+              paneId={fileBrowserPaneId}
+              send={send}
+              onClose={() => useStore.getState().setFileBrowserOpen(false)}
+            />
+          )}
+        </Dialog>
+      )}
       {showPaneNumbers &&
         rects.map((rect) => {
           const n = paneNumberById.get(rect.paneId);

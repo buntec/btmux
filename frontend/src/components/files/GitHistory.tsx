@@ -1,25 +1,29 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, GitCommitHorizontal } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Token } from '@astryxdesign/core/Token';
+import { HStack } from '@astryxdesign/core/Layout';
+import { Icon } from '@astryxdesign/core/Icon';
+import { Text } from '@astryxdesign/core/Text';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';
 import { layoutGitGraph, type GitGraphTransition } from '@/lib/gitGraph';
 import { useFileStore } from '@/state/fileStore';
 import type { GitLogCommit, GitLogRef } from '@/protocol/file-messages';
+import { Placeholder } from './Placeholder';
 
 const ROW_HEIGHT = 52;
 const LANE_GAP = 18;
 const GRAPH_LEFT = 18;
 const GRAPH_RIGHT = 16;
 const GRAPH_COLORS = [
-  'var(--muted-foreground)',
-  'var(--color-cyan)',
-  'var(--color-magenta)',
-  'var(--color-green)',
-  'var(--color-orange)',
-  'var(--color-red)',
-  'var(--color-yellow)',
-  'var(--color-brown)',
+  'var(--color-text-secondary)',
+  'var(--color-text-cyan)',
+  'var(--color-text-purple)',
+  'var(--color-text-green)',
+  'var(--color-text-orange)',
+  'var(--color-text-red)',
+  'var(--color-text-yellow)',
+  'var(--color-text-gray)',
 ];
 
 function graphColor(colorIndex: number): string {
@@ -49,22 +53,13 @@ function formatDate(timestamp: number): string {
   }).format(date);
 }
 
-function refClassName(ref: GitLogRef): string {
-  switch (ref.kind) {
-    case 'tag':
-      return 'border-theme-yellow/50 text-theme-yellow';
-    case 'remote':
-      return 'border-theme-cyan/50 text-theme-cyan';
-    default:
-      return 'border-theme-green/50 text-theme-green';
-  }
-}
-
 function RefLabel({ ref }: { ref: GitLogRef }) {
   return (
-    <Badge variant="outline" className={cn('px-1.5 py-0 text-[0.65rem] font-normal', refClassName(ref))}>
-      {ref.kind === 'tag' ? `tag: ${ref.name}` : ref.name}
-    </Badge>
+    <Token
+      size="sm"
+      color={ref.kind === 'tag' ? 'yellow' : ref.kind === 'remote' ? 'cyan' : 'green'}
+      label={ref.kind === 'tag' ? `tag: ${ref.name}` : ref.name}
+    />
   );
 }
 
@@ -112,27 +107,32 @@ export function GitHistory() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
-        <GitBranch className="size-3.5 shrink-0" />
-        <span className="font-medium uppercase tracking-wider">History</span>
+      <HStack gap={2} vAlign="center" className="flex-none border-b border-border px-3 py-1.5">
+        <Icon icon={GitBranch} size="sm" color="secondary" />
+        <Text size="sm" weight="medium" color="secondary">
+          History
+        </Text>
         {gitLog && (
-          <span className="ml-auto tabular-nums">
+          <Text size="sm" color="secondary" hasTabularNumbers className="ml-auto">
             {gitLog.commits.length}
             {gitLog.truncated ? '+' : ''}
-          </span>
+          </Text>
         )}
-      </div>
+      </HStack>
 
       {!gitLog ? (
-        <div role="status" className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-          Loading history…
-        </div>
+        <Placeholder isLoading>Loading history…</Placeholder>
       ) : gitStatus && !gitStatus.is_repo ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">Not a git repo</div>
+        <Placeholder>Not a git repo</Placeholder>
       ) : gitLog.commits.length === 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">No commits yet</div>
+        <Placeholder>No commits yet</Placeholder>
       ) : (
-        <ScrollArea className="min-h-0 flex-1 overflow-hidden">
+        <ScrollableArea
+          label="Commit history"
+          axis="both"
+          data-preview-viewport
+          className="min-h-0 flex-1 overflow-auto"
+        >
           <div ref={listRef} className="relative min-w-0 py-1" role="list" aria-label="Git commit history">
             <svg
               aria-hidden="true"
@@ -161,9 +161,16 @@ export function GitHistory() {
                 return (
                   <g key={row.commit.id}>
                     {row.commit.is_head && (
-                      <circle cx={x} cy={y} r="8" fill="none" stroke="var(--color-yellow)" strokeWidth="1" />
+                      <circle cx={x} cy={y} r="8" fill="none" stroke="var(--color-text-yellow)" strokeWidth="1" />
                     )}
-                    <circle cx={x} cy={y} r="4.5" fill="var(--background)" stroke={color} strokeWidth="2.5" />
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r="4.5"
+                      fill="var(--color-background-body)"
+                      stroke={color}
+                      strokeWidth="2.5"
+                    />
                   </g>
                 );
               })}
@@ -182,7 +189,7 @@ export function GitHistory() {
                   onClick={() => useFileStore.getState().setGitLogFocusedIndex(rowIndex)}
                   className={cn(
                     'flex cursor-pointer items-center gap-2 px-2',
-                    selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                    selected ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   )}
                   style={{ minHeight: `${ROW_HEIGHT}px` }}
                   title={`${commit.id}\n${date.toLocaleString()}`}
@@ -193,19 +200,20 @@ export function GitHistory() {
                       <GitCommitHorizontal
                         className={cn(
                           'size-3.5 shrink-0',
-                          commit.is_head ? 'text-theme-yellow' : 'text-muted-foreground',
+                          commit.is_head ? 'text-yellow-vivid' : selected ? 'text-on-accent/70' : 'text-secondary',
                         )}
                       />
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                      <span className={cn('min-w-0 flex-1 truncate text-xs font-medium', !selected && 'text-primary')}>
                         {commit.summary}
                       </span>
-                      {commit.is_head && (
-                        <Badge variant="secondary" className="px-1.5 py-0 text-[0.65rem] font-normal">
-                          HEAD
-                        </Badge>
-                      )}
+                      {commit.is_head && <Token size="sm" label="HEAD" />}
                     </div>
-                    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[0.7rem] text-muted-foreground">
+                    <div
+                      className={cn(
+                        'mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[0.7rem]',
+                        selected ? 'text-on-accent/70' : 'text-secondary',
+                      )}
+                    >
                       {commit.refs.map((ref) => (
                         <RefLabel key={`${ref.kind}-${ref.name}`} ref={ref} />
                       ))}
@@ -221,7 +229,7 @@ export function GitHistory() {
               );
             })}
           </div>
-        </ScrollArea>
+        </ScrollableArea>
       )}
     </section>
   );

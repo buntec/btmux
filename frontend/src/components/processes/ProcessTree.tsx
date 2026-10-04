@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
+import { Placeholder } from '../files/Placeholder';
 import { cn } from '@/lib/utils';
 import { formatBytes, formatCpu, formatElapsed, formatMemoryPercent } from '@/lib/processFormat';
 import {
@@ -11,7 +12,7 @@ import {
 } from '@/lib/processTree';
 import { useProcessStore } from '@/state/processStore';
 
-const GRID_COLUMNS = 'grid grid-cols-[3.5rem_5rem_4.5rem_4.5rem_5rem_5rem_5.5rem_minmax(0,1fr)]';
+const GRID_COLUMNS = 'grid gap-x-2 grid-cols-[3.5rem_5rem_4.5rem_4.5rem_5rem_5rem_5.5rem_minmax(0,1fr)]';
 
 const SORT_COLUMNS: Array<{ label: string; mode: ProcessSortMode }> = [
   { label: 'PID', mode: 'pid' },
@@ -24,8 +25,16 @@ const SORT_COLUMNS: Array<{ label: string; mode: ProcessSortMode }> = [
 ];
 
 function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortMode; active: boolean }) {
+  const setSortMode = useProcessStore((s) => s.setSortMode);
   return (
-    <span className={cn('flex items-center gap-1', active && 'text-foreground')}>
+    <button
+      type="button"
+      title={`Sort by ${PROCESS_SORT_LABELS[mode]}`}
+      aria-pressed={active}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => setSortMode(mode)}
+      className={cn('flex cursor-pointer items-center gap-1 text-left hover:text-primary', active && 'text-primary')}
+    >
       {label}
       {active && (
         <span
@@ -35,7 +44,7 @@ function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortM
           {isProcessSortDescending(mode) ? '▼' : '▲'}
         </span>
       )}
-    </span>
+    </button>
   );
 }
 
@@ -69,13 +78,13 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className={cn(GRID_COLUMNS, 'shrink-0 border-b border-border px-2 py-1 text-muted-foreground')}>
+      <div className={cn(GRID_COLUMNS, 'shrink-0 border-b border-border px-2 py-1 text-secondary')}>
         {SORT_COLUMNS.map((column) => (
           <SortHeader key={column.label} label={column.label} mode={column.mode} active={sortMode === column.mode} />
         ))}
-        <span>COMMAND</span>
+        <SortHeader label="COMMAND" mode="command" active={sortMode === 'command'} />
       </div>
-      <ScrollArea className="flex-1 overflow-hidden">
+      <ScrollableArea label="Process list" axis="both" className="min-h-0 flex-1 overflow-auto">
         <div ref={listRef} role={treeMode ? 'tree' : 'list'} aria-label="Processes">
           {rows.map(({ process, depth, hasChildren, match }) => {
             const collapsed = collapsedPids.has(process.pid);
@@ -91,8 +100,8 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
                 className={cn(
                   GRID_COLUMNS,
                   'cursor-pointer items-center px-2 leading-tight',
-                  focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-                  !match && !focused && 'text-muted-foreground',
+                  focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
+                  !match && !focused && 'text-secondary',
                 )}
                 onClick={() => setFocusedPid(process.pid)}
                 onDoubleClick={() => hasChildren && toggleCollapsed(process.pid)}
@@ -103,7 +112,9 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
                 <span className="truncate" title={process.user ?? '—'}>
                   {process.user ?? '—'}
                 </span>
-                <span className={cn('font-mono', process.cpu >= 80 && 'text-theme-red')}>{formatCpu(process.cpu)}</span>
+                <span className={cn('font-mono', process.cpu >= 80 && !focused && 'text-red-vivid')}>
+                  {formatCpu(process.cpu)}
+                </span>
                 <span className="font-mono" title={`${formatMemoryPercent(process.memory, memTotal)} of system memory`}>
                   {formatMemoryPercent(process.memory, memTotal)}
                 </span>
@@ -121,7 +132,10 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
                   style={{ paddingLeft: treeMode ? `${depth * 1.1}rem` : undefined }}
                 >
                   {treeMode && (
-                    <span className="inline-block w-4 shrink-0 text-muted-foreground" aria-hidden>
+                    <span
+                      className={cn('inline-block w-4 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')}
+                      aria-hidden
+                    >
                       {hasChildren ? (collapsed ? '▸' : '▾') : ' '}
                     </span>
                   )}
@@ -132,9 +146,9 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
               </div>
             );
           })}
-          {rows.length === 0 && <div className="px-3 py-6 text-center text-muted-foreground">No processes</div>}
+          {rows.length === 0 && <Placeholder>No processes</Placeholder>}
         </div>
-      </ScrollArea>
+      </ScrollableArea>
     </div>
   );
 }

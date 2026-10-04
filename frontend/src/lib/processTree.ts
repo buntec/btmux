@@ -9,7 +9,7 @@ export interface ProcessTreeRow {
   match: boolean;
 }
 
-export const PROCESS_SORT_MODES = ['cpu', 'memory', 'elapsed', 'pid', 'user', 'virtual-memory'] as const;
+export const PROCESS_SORT_MODES = ['cpu', 'memory', 'elapsed', 'pid', 'user', 'virtual-memory', 'command'] as const;
 
 export type ProcessSortMode = (typeof PROCESS_SORT_MODES)[number];
 
@@ -20,10 +20,11 @@ export const PROCESS_SORT_LABELS: Record<ProcessSortMode, string> = {
   pid: 'PID',
   user: 'user',
   'virtual-memory': 'virtual mem',
+  command: 'command',
 };
 
 export function isProcessSortDescending(mode: ProcessSortMode): boolean {
-  return mode !== 'pid' && mode !== 'user';
+  return mode !== 'pid' && mode !== 'user' && mode !== 'command';
 }
 
 export function nextProcessSortMode(mode: ProcessSortMode): ProcessSortMode {
@@ -62,6 +63,8 @@ function compareProcesses(a: ProcessInfo, b: ProcessInfo, sortMode: ProcessSortM
         return compareNumbers(a.virtual_memory, b.virtual_memory, true);
       case 'pid':
         return compareNumbers(a.pid, b.pid, false);
+      case 'command':
+        return (a.command || a.name).localeCompare(b.command || b.name);
     }
   })();
 

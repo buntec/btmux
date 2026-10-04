@@ -14,7 +14,7 @@ interface Props {
  * so it survives navigation), and StatusBar/Overlay are single instances in
  * AppInner. SessionView exists purely for its route-driven effects — keeping the
  * URL in sync with the active window, switching to the URL's window on entry,
- * redirecting to the landing page if the session was killed — plus binding
+ * leaving the route if the session was killed — plus binding
  * keyboard shortcuts to the active session. These must stay in the route-mounted
  * component (not SessionPool, which never remounts) so e.g. initialWindowSwitch
  * fires once per route entry.
@@ -30,7 +30,7 @@ export function SessionView({ send }: Props) {
   const decodedSessionName = sessionName ?? ''; // useParams already decodes the route segment
   const session = allSessions.find((s) => s.name === decodedSessionName);
 
-  // If the session was killed, redirect to landing
+  // If the session was killed, / redirects to another one.
   useEffect(() => {
     if (allSessions.length > 0 && !session) {
       navigate('/', { replace: true });

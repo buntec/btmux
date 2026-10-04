@@ -1,8 +1,11 @@
+import { Spinner } from '@astryxdesign/core/Spinner';
+import { Layout, LayoutContent, LayoutFooter, VStack } from '@astryxdesign/core/Layout';
+import { WorkspaceShell } from './components/WorkspaceShell';
 import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './state/store';
 import { useControlSocket } from './hooks/useControlSocket';
-import { LandingPage, recordMruVisit } from './components/LandingPage';
+import { getSessionMruOrder, recordSessionMruVisit } from './state/sessionMru';
 import { SessionView } from './components/SessionView';
 import { SessionPool } from './components/SessionPool';
 import { StatusBar } from './components/StatusBar';
@@ -13,9 +16,9 @@ import { SessionSwitcher } from './components/SessionSwitcher';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { ShaderWallpaper } from './components/ShaderWallpaper';
 import { ConfigPage } from './components/ConfigPage';
-import { Toaster } from './components/ui/sonner';
-import { TooltipProvider } from './components/ui/tooltip';
+import { NotificationToasts } from './components/NotificationToasts';
 import { DEFAULT_THEME } from './state/defaultTheme';
+import { STARTUP_THEME } from './state/startupTheme';
 import {
   getAnimations,
   getDesktopBackgroundOpacity,
@@ -32,7 +35,6 @@ import {
 } from './state/configDefaults';
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
-import { applyThemeVars } from './lib/apply-theme-vars';
 import {
   PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC,
   PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
@@ -205,31 +207,24 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
     };
   }, [navigate, send, setNavigateFn, setControlSendFn]);
 
-  // On cold load at /, auto-redirect to the last known session for this tab.
-  // If sessionStorage already has a last-session entry, the user has visited a
-  // session in this tab before — a navigation back to / is intentional (show
-  // the landing page). Only redirect when the tab is brand-new.
-  const didAutoRedirect = useRef(false);
+  // / has no view of its own: open this tab's last session, else the most recently used one.
   useEffect(() => {
-    if (allSessions.length === 0) return;
-    if (location.pathname !== '/') return;
-    if (didAutoRedirect.current) return;
-    didAutoRedirect.current = true;
+    if (location.pathname !== '/' || allSessions.length === 0) return;
+    const byName = (name: string | null) => allSessions.find((s) => s.name === name);
+    const target =
+      byName(sessionStorage.getItem('btmux-last-session')) ??
+      byName(sessionStorage.getItem('btmux-prev-session')) ??
+      getSessionMruOrder()
+        .map((id) => allSessions.find((s) => s.id === id))
+        .find((s) => s != null) ??
+      allSessions[0];
+    const activeWin = target.windows[target.active_window];
+    const url = activeWin
+      ? `/s/${encodeURIComponent(target.name)}/w/${encodeURIComponent(activeWin.name)}`
+      : `/s/${encodeURIComponent(target.name)}`;
+    navigate(url, { replace: true });
+  }, [allSessions, location.pathname, navigate]);
 
-    // If this tab already visited a session, honour the / navigation (landing page).
-    if (sessionStorage.getItem('btmux-last-session')) return;
-
-    const target = allSessions[0];
-    if (target) {
-      const activeWin = target.windows[target.active_window];
-      const url = activeWin
-        ? `/s/${encodeURIComponent(target.name)}/w/${encodeURIComponent(activeWin.name)}`
-        : `/s/${encodeURIComponent(target.name)}`;
-      navigate(url, { replace: true });
-    }
-  }, [allSessions.length, location.pathname, navigate]);
-
-  // Track current session name for the landing page (so it can highlight the active session)
   const currentSessionNameMatch = location.pathname.match(/^\/s\/([^/]+)/);
   const currentSessionName = currentSessionNameMatch ? decodeURIComponent(currentSessionNameMatch[1]) : null;
   const lastSessionName = currentSessionName ?? sessionStorage.getItem('btmux-last-session');
@@ -237,7 +232,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 
   // The session shown right now is derived from the URL. Settings is an
   // in-place overlay, so opening it never changes the session route.
-  const onLanding = location.pathname === '/';
   const activeSessionId = currentSessionName
     ? (allSessions.find((s) => s.name === currentSessionName)?.id ?? null)
     : null;
@@ -272,7 +266,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 
   // Record MRU visit whenever the active session changes.
   useEffect(() => {
-    if (activeSessionId) recordMruVisit(activeSessionId);
+    if (activeSessionId) recordSessionMruVisit(activeSessionId);
   }, [activeSessionId]);
 
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
@@ -295,7 +289,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   // SessionView used to own, hoisted up one level so it survives navigation and
   // the keep-alive pool persists across session switches.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <WorkspaceShell send={send}>
       {wallpaperShader ? (
         <ShaderWallpaper
           shaderId={wallpaperShader}
@@ -327,35 +321,43 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           }}
         />
       ) : null}
-      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        <SessionPool send={send} />
-        <Routes>
-          <Route path="/" element={<LandingPage send={send} currentSessionId={currentSessionId} />} />
-          <Route path="/s/:sessionName" element={<SessionView send={send} />} />
-          <Route path="/s/:sessionName/w/:windowName" element={<SessionView send={send} />} />
-        </Routes>
-        {settingsOpen && config && <ConfigPage config={config} send={send} />}
-        {/* Single Overlay for both landing and session views. On landing,
-            activeSessionId is null, so anchor to the last-visited session (its
-            prompts — rename/new — target that session; new-session ignores it). */}
-        {!settingsOpen && (
-          <Overlay
-            sessionId={activeSessionId ?? currentSessionId ?? allSessions[0]?.id ?? ''}
-            send={send}
-            config={config}
-          />
-        )}
-        {/* Live window-grid thumbnails (prefix + w). Sits above the pane region
+      <Layout
+        content={
+          <LayoutContent isScrollable={false} padding={0} className="relative min-h-0 overflow-hidden">
+            <SessionPool send={send} />
+            <Routes>
+              <Route path="/" element={null} />
+              <Route path="/s/:sessionName" element={<SessionView send={send} />} />
+              <Route path="/s/:sessionName/w/:windowName" element={<SessionView send={send} />} />
+            </Routes>
+            {settingsOpen && config && <ConfigPage config={config} send={send} />}
+            {/* Single Overlay. While / redirects, activeSessionId is null, so
+            anchor to the last-visited session. */}
+            {!settingsOpen && (
+              <Overlay
+                sessionId={activeSessionId ?? currentSessionId ?? allSessions[0]?.id ?? ''}
+                send={send}
+                config={config}
+              />
+            )}
+            {/* Live window-grid thumbnails (prefix + w). Sits above the pane region
             like the Overlay; mounts lazily on first open and stays warm. */}
-        {!settingsOpen && <WindowGrid send={send} />}
-        {!settingsOpen && <AgentGrid send={send} />}
-        {/* Session/window switcher modal (prefix + s). Also above the pane region;
+            {!settingsOpen && <WindowGrid send={send} />}
+            {!settingsOpen && <AgentGrid send={send} />}
+            {/* Session/window switcher modal (prefix + s). Also above the pane region;
             lazily mounted on first open and kept warm like the grid. */}
-        {!settingsOpen && <SessionSwitcher send={send} />}
-      </div>
-      {/* No status bar on the landing page (it has its own full-height chrome). */}
-      {!onLanding && <StatusBar sessionId={activeSessionId ?? ''} send={send} />}
-    </div>
+            {!settingsOpen && <SessionSwitcher send={send} />}
+          </LayoutContent>
+        }
+        footer={
+          activeSessionId ? (
+            <LayoutFooter padding={0} hasDivider>
+              <StatusBar sessionId={activeSessionId ?? ''} send={send} />
+            </LayoutFooter>
+          ) : undefined
+        }
+      />
+    </WorkspaceShell>
   );
 }
 
@@ -377,56 +379,24 @@ export function App() {
 
   useEffect(() => {
     document.body.style.background = pageBackground(
-      effectiveConfig?.theme?.background ?? DEFAULT_THEME.background,
+      effectiveConfig ? (effectiveConfig.theme?.background ?? DEFAULT_THEME.background) : STARTUP_THEME.background,
       getDesktopBackgroundOpacity(effectiveConfig),
     );
-    applyThemeVars(effectiveConfig?.theme ?? DEFAULT_THEME);
   }, [effectiveConfig?.theme, effectiveConfig?.desktop_background_opacity]);
 
   if (allSessions.length === 0 || !config) {
-    const cached = (() => {
-      try {
-        const s = localStorage.getItem('btmux-theme');
-        return s ? JSON.parse(s) : null;
-      } catch {
-        return null;
-      }
-    })();
-    const bg = cached?.background ?? DEFAULT_THEME.background;
-    const fg = cached?.brightBlack ?? DEFAULT_THEME.brightBlack;
-    const accent = cached?.cyan ?? DEFAULT_THEME.cyan;
     return (
-      <div
-        style={{
-          background: pageBackground(bg, getDesktopBackgroundOpacity(config)),
-          height: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: fg,
-          fontFamily: 'var(--btmux-font)',
-          fontWeight: 'var(--btmux-font-weight)',
-          fontSize: '13px',
-        }}
-      >
-        <style>{`
-          @keyframes pulse {
-            0%, 100% { opacity: 0.4; }
-            50% { opacity: 1; }
-          }
-        `}</style>
-        <span style={{ animation: 'pulse 2s ease-in-out infinite', color: accent }}>connecting…</span>
-      </div>
+      <VStack hAlign="center" vAlign="center" className="h-full bg-body">
+        <Spinner label="Connecting to btmux" />
+      </VStack>
     );
   }
 
   return (
     <BrowserRouter>
-      <TooltipProvider>
-        <ConnectionBanner />
-        <Toaster position="top-right" />
-        <AppInner send={send} />
-      </TooltipProvider>
+      <ConnectionBanner />
+      <NotificationToasts />
+      <AppInner send={send} />
     </BrowserRouter>
   );
 }

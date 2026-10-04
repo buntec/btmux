@@ -5,6 +5,7 @@ import { buildSyntaxStyle } from '../syntax-theme';
 import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
 import { useFileStore } from '@/state/fileStore';
 import { useStore } from '@/state/store';
+import { Button } from '@astryxdesign/core/Button';
 
 SyntaxHighlighter.registerLanguage('json', json);
 
@@ -45,9 +46,13 @@ export function JsonPreview() {
   return (
     <div>
       <div className="mb-2 flex justify-end">
-        <button onClick={() => setExpanded(!expanded)} className="rounded px-2 py-1 text-xs hover:bg-accent">
-          {expanded ? 'Collapse' : 'Expand'}
-        </button>
+        <Button
+          label={expanded ? 'Collapse' : 'Expand'}
+          size="sm"
+          variant="ghost"
+          onClick={() => setExpanded(!expanded)}
+          onMouseDown={(e) => e.preventDefault()}
+        />
       </div>
       {useHighlighting ? (
         <SyntaxHighlighter
@@ -68,7 +73,7 @@ export function JsonPreview() {
         </pre>
       )}
       {(lineTruncated || fileContent.truncated) && (
-        <div className="mt-2 rounded bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="mt-2 rounded bg-muted px-3 py-1.5 text-xs text-secondary">
           Preview truncated ({formatSize(fileContent.size)} total)
         </div>
       )}

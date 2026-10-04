@@ -39,9 +39,9 @@ test('flattens processes in PID order by default and preserves indentation', () 
 
 test('sorts each tree level by the selected mode with PID tie-breaks', () => {
   const processes = [
-    { ...process(1, null, 20), memory: 100, virtual_memory: 500, run_time: 10, user: 'z' },
-    { ...process(2, null, 80), memory: 300, virtual_memory: 200, run_time: 30, user: 'a' },
-    { ...process(3, null, 80), memory: 200, virtual_memory: 900, run_time: 20, user: 'a' },
+    { ...process(1, null, 20), memory: 100, virtual_memory: 500, run_time: 10, user: 'z', command: 'bash' },
+    { ...process(2, null, 80), memory: 300, virtual_memory: 200, run_time: 30, user: 'a', command: 'zsh' },
+    { ...process(3, null, 80), memory: 200, virtual_memory: 900, run_time: 20, user: 'a', command: 'bash' },
   ];
 
   const sorted = (mode: ProcessSortMode) =>
@@ -53,6 +53,7 @@ test('sorts each tree level by the selected mode with PID tie-breaks', () => {
   expect(sorted('pid')).toEqual([1, 2, 3]);
   expect(sorted('user')).toEqual([2, 3, 1]);
   expect(sorted('virtual-memory')).toEqual([3, 1, 2]);
+  expect(sorted('command')).toEqual([1, 3, 2]);
 });
 
 test('flat mode sorts all processes globally and removes tree indentation', () => {
@@ -78,7 +79,7 @@ test('cycles sort modes in the displayed order', () => {
     return next;
   });
 
-  expect(cycled).toEqual(['memory', 'elapsed', 'pid', 'user', 'virtual-memory', 'cpu']);
+  expect(cycled).toEqual(['memory', 'elapsed', 'pid', 'user', 'virtual-memory', 'command', 'cpu']);
 });
 
 test('folding a process hides all descendants', () => {

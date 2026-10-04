@@ -108,6 +108,12 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight:
     ...(animations ? {} : { motion: { fast: 0, medium: 0, ratio: 1 } }),
     tokens,
     components: {
+      'side-nav': {
+        base: {
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+        },
+      },
       // Palette surfaces instead of the inverted foreground slab.
       toast: {
         base: {

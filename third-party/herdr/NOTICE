@@ -2,6 +2,6 @@ Herdr — https://github.com/herdrdev/herdr
 Revision: 5da0a01e1eedda054db0c81dd3a780000c40d9f0
 Licensed under Apache-2.0; see LICENSE in this directory.
 
-The bundled Claude, Codex, and Gemini detection manifests and region helpers
+The bundled Claude, Codex, Gemini, and Antigravity detection manifests and region helpers
 are adapted from Herdr. Codex's generic title-idle rule is omitted because
 an ordinary terminal title does not prove that a turn has ended.

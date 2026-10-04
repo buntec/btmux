@@ -13,6 +13,7 @@ const BUNDLED: &[(&str, &str)] = &[
     ("claude", include_str!("manifests/claude.toml")),
     ("codex", include_str!("manifests/codex.toml")),
     ("gemini", include_str!("manifests/gemini.toml")),
+    ("agy", include_str!("manifests/agy.toml")),
 ];
 
 pub struct DetectionInput<'a> {
@@ -456,6 +457,20 @@ mod tests {
                 "",
                 AgentState::Working,
                 Some("esc_cancel_working"),
+            ),
+            (
+                "agy",
+                "requesting permission for: ls\ndo you want to proceed?",
+                "",
+                AgentState::Blocked,
+                Some("permission_prompt"),
+            ),
+            (
+                "agy",
+                "⠋ Thinking",
+                "",
+                AgentState::Working,
+                Some("spinner_working"),
             ),
         ];
         for (agent, screen, title, state, rule) in cases {

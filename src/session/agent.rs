@@ -119,6 +119,13 @@ pub fn agent_name(process: &PaneProcess) -> Option<&'static str> {
         {
             Some("claude")
         }
+        "agy"
+            if !args
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "--print" | "--prompt" | "-p")) =>
+        {
+            Some("agy")
+        }
         "gemini"
             if !args
                 .iter()

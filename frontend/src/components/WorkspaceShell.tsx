@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from '@astryxdesign/core/AppShell';
 import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2 } from 'lucide-react';
+import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2, Bot } from 'lucide-react';
 import { useStore } from '../state/store';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -28,6 +28,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const setSwitcherOpen = useStore((state) => state.setSwitcherOpen);
   const setWindowGridOpen = useStore((state) => state.setWindowGridOpen);
+  const setAgentGridOpen = useStore((state) => state.setAgentGridOpen);
   const location = useLocation();
   const navigate = useNavigate();
   useSyncExternalStore(
@@ -145,6 +146,14 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
                 }}
               />
             )}
+            <SideNavItem
+              label="Agents"
+              icon={Bot}
+              onClick={() => {
+                closeSurfaces();
+                setAgentGridOpen(true);
+              }}
+            />
             <SideNavItem
               label="Commands"
               icon={Command}

@@ -67,7 +67,9 @@ try {
     }, pane);
   await page.waitForFunction(async (id) => {
     const { useStore } = await import('/src/state/store.tsx' as string);
-    const buf = useStore.getState().terminals.get(id).buffer.active;
+    // A config update can rebuild the terminal, briefly unregistering it.
+    const buf = useStore.getState().terminals.get(id)?.buffer.active;
+    if (!buf) return false;
     return Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '')
       .join('\n')
       .includes('\nREPLAY_🙂_OK\n');
@@ -168,6 +170,28 @@ try {
     ownerSize,
   );
   console.log('PASS multiple viewers share owner dimensions');
+  const termSize = (target: typeof page) =>
+    target.evaluate(async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const term = useStore.getState().terminals.get(id);
+      return [term.cols, term.rows];
+    }, pane);
+  const waitForSize = (target: typeof page, size: number[], equal: boolean) =>
+    target.waitForFunction(
+      async ({ id, size, equal }) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        const term = useStore.getState().terminals.get(id);
+        return term && (term.cols === size[0] && term.rows === size[1]) === equal;
+      },
+      { id: pane, size, equal },
+    );
+  await second.locator('[aria-label="Terminal input"]').first().press('Shift');
+  await waitForSize(second, ownerSize, false);
+  const claimedSize = await termSize(second);
+  await waitForSize(page, claimedSize, true);
+  console.log('PASS keyboard input claims dimension ownership');
+  await page.locator('[aria-label="Terminal input"]').first().press('Shift');
+  await waitForSize(second, ownerSize, true);
   await page.close();
   await second.waitForFunction(
     async ({ id, size }) => {

@@ -74,6 +74,8 @@ pub struct PtyHandle {
     scrollback: Arc<Mutex<Replay>>,
     killer: Arc<Mutex<Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>>>,
     viewers: Vec<(Uuid, u16, u16)>,
+    /// The interactive viewer whose size the PTY follows.
+    owner_tx: watch::Sender<Option<Uuid>>,
     size: Arc<Mutex<(u16, u16)>>,
     spawned: Arc<Mutex<bool>>,
     shell_pid: Option<libc::pid_t>,
@@ -130,6 +132,7 @@ impl PtyHandle {
             ))),
             killer: Arc::new(Mutex::new(None)),
             viewers: Vec::new(),
+            owner_tx: watch::channel(None).0,
             size: Arc::new(Mutex::new((0, 0))),
             spawned: Arc::new(Mutex::new(false)),
             shell_pid: None,
@@ -506,13 +509,35 @@ impl PtyHandle {
         (self.output_tx.subscribe(), replay.snapshot())
     }
 
-    // The first attached interactive viewer owns the shared PTY dimensions.
-    // Followers receive ordered size events; mirrors never acquire ownership.
+    // The first interactive viewer owns the shared PTY dimensions until it
+    // disconnects or another viewer claims them. Followers receive ordered size
+    // events; mirrors never acquire ownership.
     pub fn attach_viewer(&mut self, id: Uuid, cols: u16, rows: u16) {
         self.viewers.push((id, cols, rows));
         if self.viewers.len() == 1 {
             self.resize(cols, rows);
+            self.publish_owner();
         }
+    }
+    /// Make a viewer the size owner, e.g. after user input in its tab.
+    pub fn claim_viewer(&mut self, id: Uuid) {
+        let Some(index) = self.viewers.iter().position(|v| v.0 == id) else {
+            return;
+        };
+        if index == 0 {
+            return;
+        }
+        let viewer = self.viewers.remove(index);
+        self.viewers.insert(0, viewer);
+        self.resize(viewer.1, viewer.2);
+        self.publish_owner();
+    }
+    pub fn subscribe_owner(&self) -> watch::Receiver<Option<Uuid>> {
+        self.owner_tx.subscribe()
+    }
+    fn publish_owner(&self) {
+        self.owner_tx
+            .send_replace(self.viewers.first().map(|v| v.0));
     }
     pub fn resize_viewer(&mut self, id: Uuid, cols: u16, rows: u16) {
         if validate_size(cols, rows).is_err() {
@@ -530,6 +555,7 @@ impl PtyHandle {
         if let Some(&(_, cols, rows)) = self.viewers.first() {
             self.resize(cols, rows);
         }
+        self.publish_owner();
     }
 }
 
@@ -736,6 +762,25 @@ mod lifecycle_tests {
         assert_eq!(*pane.size.lock().unwrap(), (100, 30));
         pane.detach_viewer(a);
         assert_eq!(*pane.size.lock().unwrap(), (90, 25));
+    }
+    #[tokio::test]
+    async fn claiming_viewer_takes_size_ownership() {
+        let mut pane = pane("/bin/sh");
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let owner = pane.subscribe_owner();
+        pane.attach_viewer(a, 100, 30);
+        pane.attach_viewer(b, 80, 24);
+        assert_eq!(*owner.borrow(), Some(a));
+        pane.resize_viewer(b, 90, 25);
+        pane.claim_viewer(b);
+        assert_eq!(*pane.size.lock().unwrap(), (90, 25));
+        assert_eq!(*owner.borrow(), Some(b));
+        pane.resize_viewer(a, 120, 40);
+        assert_eq!(*pane.size.lock().unwrap(), (90, 25));
+        pane.detach_viewer(b);
+        assert_eq!(*pane.size.lock().unwrap(), (120, 40));
+        assert_eq!(*owner.borrow(), Some(a));
     }
     #[tokio::test]
     async fn dropping_pane_terminates_and_reaps_shell() {

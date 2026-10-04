@@ -54,6 +54,11 @@ fn size_frame(cols: u16, rows: u16) -> String {
     format!(r#"{{"type":"size","cols":{cols},"rows":{rows}}}"#)
 }
 
+/// Tell a viewer whether its size drives the PTY.
+fn owner_frame(owner: bool) -> Message {
+    Message::Text(format!(r#"{{"type":"owner","owner":{owner}}}"#).into())
+}
+
 async fn handle_socket(
     socket: WebSocket,
     pane_id: Uuid,
@@ -73,10 +78,15 @@ async fn handle_socket(
                 pane.pty.attach_viewer(viewer_id, cols, rows);
             }
             let (rx, replay) = pane.pty.subscribe_replay();
-            Ok::<_, String>((pane.pty.input_tx.clone(), rx, replay))
+            Ok::<_, String>((
+                pane.pty.input_tx.clone(),
+                rx,
+                replay,
+                pane.pty.subscribe_owner(),
+            ))
         })
     };
-    let (input_tx, mut output_rx, replay) = match attachment {
+    let (input_tx, mut output_rx, replay, mut owner_rx) = match attachment {
         Some(Ok(attachment)) => attachment,
         failure => {
             let error = failure
@@ -93,9 +103,23 @@ async fn handle_socket(
             return;
         }
     };
+    let is_owner = |owner: &Option<Uuid>| !mirror && *owner == Some(viewer_id);
     let send = async {
         let mut pending = replay;
         let mut replaying = true;
+        let mut owner = is_owner(&owner_rx.borrow_and_update());
+        if !mirror
+            && !matches!(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    ws_tx.send(owner_frame(owner))
+                )
+                .await,
+                Ok(Ok(()))
+            )
+        {
+            return;
+        }
         loop {
             for event in pending.drain(..) {
                 let frame = match event {
@@ -125,11 +149,28 @@ async fn handle_socket(
                 }
                 replaying = false;
             }
-            match output_rx.recv().await {
-                Ok(event) => pending.push(event),
-                // Output is stateful: disconnect instead of silently continuing
-                // past missing bytes. The client reconnects to a fresh snapshot.
-                Err(_) => return,
+            tokio::select! {
+                event = output_rx.recv() => match event {
+                    Ok(event) => pending.push(event),
+                    // Output is stateful: disconnect instead of silently continuing
+                    // past missing bytes. The client reconnects to a fresh snapshot.
+                    Err(_) => return,
+                },
+                changed = owner_rx.changed(), if !mirror => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let next = is_owner(&owner_rx.borrow_and_update());
+                    if next != owner {
+                        owner = next;
+                        if !matches!(
+                            tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(owner_frame(owner))).await,
+                            Ok(Ok(()))
+                        ) {
+                            return;
+                        }
+                    }
+                }
             }
         }
     };
@@ -148,11 +189,14 @@ async fn handle_socket(
                     }
                 }
                 Message::Text(text) => {
-                    if let Ok(resize) = serde_json::from_str::<ResizeMsg>(&text) {
-                        if resize.r#type == "resize" {
-                            let mut mgr = state.write().await;
-                            if let Some(pane) = mgr.find_pane_mut(pane_id) {
-                                pane.pty.resize_viewer(viewer_id, resize.cols, resize.rows);
+                    if let Ok(control) = serde_json::from_str::<ControlMsg>(&text) {
+                        let mut mgr = state.write().await;
+                        if let Some(pane) = mgr.find_pane_mut(pane_id) {
+                            match control {
+                                ControlMsg::Resize { cols, rows } => {
+                                    pane.pty.resize_viewer(viewer_id, cols, rows)
+                                }
+                                ControlMsg::Claim => pane.pty.claim_viewer(viewer_id),
                             }
                         }
                     } else {
@@ -175,8 +219,12 @@ async fn handle_socket(
 }
 
 #[derive(Deserialize)]
-struct ResizeMsg {
-    r#type: String,
-    cols: u16,
-    rows: u16,
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ControlMsg {
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    /// User input in this viewer: make its size drive the PTY.
+    Claim,
 }

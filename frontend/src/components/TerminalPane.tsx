@@ -134,7 +134,7 @@ export function TerminalPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
+  const fitRef = useRef<(() => void) | null>(null);
   // Live terminal dimensions, shown as "cols×rows" in the title bar. Updated from
   // the fit/resize path so the bar tracks the pane's real grid.
   const [dims, setDims] = useState<{ cols: number; rows: number } | null>(null);
@@ -218,7 +218,7 @@ export function TerminalPane({
     ]).then(() => {
       if (fontAbort) return;
       term.remeasureFont();
-      if (visibleRef.current) fitAddon.fit();
+      if (visibleRef.current) fit();
     });
 
     // Replace ghostty-web's built-in wheel handler for alt-screen applications
@@ -287,7 +287,6 @@ export function TerminalPane({
     });
 
     termRef.current = term;
-    fitRef.current = fitAddon;
     registry?.set(paneId, term);
     // Also register in the store so actions outside the pane tree (capture-pane
     // in useKeybindings) can read this pane's emulator buffer.
@@ -309,7 +308,45 @@ export function TerminalPane({
         prev?.cols === term.cols && prev?.rows === term.rows ? prev : { cols: term.cols, rows: term.rows },
       );
 
-    let applyingServerSize = false;
+    // Size ownership: the owner's container size drives the PTY. Followers
+    // report their size (applied when they claim) but keep the server's grid:
+    // a local resize reflows and clears the prompt, and the shell never
+    // redraws because the PTY size did not change.
+    let owner = true;
+    let claimed = false;
+    let serverSize: { cols: number; rows: number } | null = null;
+    let reported = '';
+    const report = (cols: number, rows: number) => {
+      const key = `${cols}x${rows}`;
+      if (ws?.readyState !== WebSocket.OPEN || !visibleRef.current || key === reported) return;
+      reported = key;
+      ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    };
+    const adoptServerSize = () => {
+      if (serverSize && (serverSize.cols !== term.cols || serverSize.rows !== term.rows)) {
+        term.resize(serverSize.cols, serverSize.rows);
+      }
+    };
+    // FitAddon.fit() drops calls for 50 ms after a resize and caches its last
+    // proposal, which can strand the grid mid-animation; resize directly.
+    const fit = () => {
+      const size = fitAddon.proposeDimensions();
+      if (!size) return;
+      if (!owner) adoptServerSize();
+      else if (size.cols !== term.cols || size.rows !== term.rows) term.resize(size.cols, size.rows);
+      report(size.cols, size.rows);
+    };
+    fitRef.current = fit;
+    const claim = () => {
+      if (owner || claimed || ws?.readyState !== WebSocket.OPEN) return;
+      claimed = true;
+      fit();
+      ws.send(JSON.stringify({ type: 'claim' }));
+    };
+    container.addEventListener('keydown', claim, true);
+    container.addEventListener('paste', claim, true);
+    container.addEventListener('mousedown', claim, true);
+
     let disposed = false;
     let reconnectTimer = 0;
     let attempts = 0;
@@ -318,8 +355,11 @@ export function TerminalPane({
     const connect = () => {
       if (disposed || ws) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const size = fitAddon.proposeDimensions() ?? { cols: term.cols, rows: term.rows };
+      reported = `${size.cols}x${size.rows}`;
+      claimed = false;
       const socket = new WebSocket(
-        `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${term.cols}&rows=${term.rows}`,
+        `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${size.cols}&rows=${size.rows}`,
       );
       ws = socket;
       wsRef.current = socket;
@@ -353,9 +393,16 @@ export function TerminalPane({
             }
             if (msg.type === 'error') setConnectionError(msg.message);
             if (msg.type === 'size') {
-              applyingServerSize = true;
+              // Applied in stream order, so output is parsed at the size it was
+              // produced for. The owner's own echo is a no-op.
+              serverSize = { cols: msg.cols, rows: msg.rows };
               term.resize(msg.cols, msg.rows);
-              applyingServerSize = false;
+            }
+            if (msg.type === 'owner') {
+              owner = msg.owner;
+              claimed = false;
+              if (owner) fit();
+              else adoptServerSize();
             }
           } catch {
             /* Unknown protocol frames are not terminal input. */
@@ -387,19 +434,16 @@ export function TerminalPane({
     });
     const onResize = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
       setDims({ cols, rows });
-      if (ws?.readyState === WebSocket.OPEN && visibleRef.current && !applyingServerSize) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
     });
     const observer = new ResizeObserver(() => {
       if (!visibleRef.current) return;
-      fitAddon.fit();
+      fit();
       syncDims();
       if (!ws && !reconnectTimer) {
         cancelAnimationFrame(connectRaf);
         connectRaf = requestAnimationFrame(() => {
           if (!visibleRef.current) return;
-          fitAddon.fit();
+          fit();
           syncDims();
           connect();
         });
@@ -418,7 +462,7 @@ export function TerminalPane({
       } | null;
       if (r?.vendored?.setDevicePixelRatio) r.vendored.setDevicePixelRatio(window.devicePixelRatio);
       else term.remeasureFont();
-      if (visibleRef.current) fitAddon.fit();
+      if (visibleRef.current) fit();
       watchDpr();
     };
     const watchDpr = () => {
@@ -434,6 +478,9 @@ export function TerminalPane({
       clearTimeout(reconnectTimer);
       onData.dispose();
       onResize.dispose();
+      container.removeEventListener('keydown', claim, true);
+      container.removeEventListener('paste', claim, true);
+      container.removeEventListener('mousedown', claim, true);
       fontAbort = true;
       cancelAnimationFrame(connectRaf);
       cancelAnimationFrame(revealRaf);
@@ -479,7 +526,7 @@ export function TerminalPane({
     if (!term) return;
     if (visible) {
       term.resume();
-      fitRef.current?.fit();
+      fitRef.current?.();
     } else {
       term.suspend();
     }

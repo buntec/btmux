@@ -60,7 +60,7 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
    **Broadcast fan-out:** `SessionManager` owns a `tokio::sync::broadcast::Sender<String>` (`events()`) carrying pre-serialized `ServerMessage` JSON. Every control socket subscribes to that stream, so a mutation in one browser tab, a REST/MCP call, a config reload, or an agent notification reaches _all_ tabs. On connect a socket is also sent its current `Config` + `State` directly so it doesn't wait for the next event. `ServerMessage` includes `State { sessions, all_sessions }` (`Vec<SessionSummary>` for the StatusBar/picker + `Vec<SessionSnapshot>` with full window/layout data), `Config`, `Toast`, pane notification/clear messages, and per-request `CommandResult` replies. `request_id` command results go only to the originating socket.
 
-2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` resizes. On connect, a checkpoint and journal are replayed, followed by `ready`. The browser accepts input only after this initial replay completes.
+2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` reports the viewer's size and `{type:"claim"}` makes it the size owner. The server sends `{type:"owner",owner}` before the replay and whenever ownership changes. On connect, a checkpoint and journal are replayed, followed by `ready`. The browser accepts input only after this initial replay completes.
 
    `?mirror=1` creates a read-only attachment for window-grid thumbnails. Mirrors receive output and ordered size frames but never resize or write to the PTY.
 
@@ -77,10 +77,13 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   shared history budget) plus a VT100 screen checkpoint at its head. Eviction
   advances the checkpoint. Resize events are journaled and broadcast in the same
   stream; resizing never clears history. The first interactive viewer owns PTY
-  dimensions until disconnect; followers and mirrors adopt the ordered sizes.
+  dimensions until it disconnects or another viewer claims them (the browser
+  claims on keydown, paste, or mousedown). Followers and mirrors keep the
+  ordered server sizes instead of fitting locally: a local resize reflows and
+  clears the prompt, which the shell never redraws.
   PTY writes use a dedicated blocking thread and a bounded queue. Pane disposal
   signals the foreground group and kills the shell; a waiter reaps the child.
-- **DA1/DA2 query interception** (`strip_and_answer_da_queries`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. `ghostty-web` _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder. The canned bytes mirror `ghostty-web`'s exact DA replies for the pinned build — re-probe if `ghostty-web` is bumped. Don't remove this without a replacement.
+- **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. `ghostty-web` _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder. The canned bytes mirror `ghostty-web`'s exact DA replies for the pinned build — re-probe if `ghostty-web` is bumped. Don't remove this without a replacement.
 - **Termios** is set manually on the PTY master (`configure_termios`: `IUTF8`, `ECHOK`, `IMAXBEL`) because `portable-pty` opens the PTY with NULL termios; without `IUTF8`, fish misbehaves.
 
 ### Persistence and profiles

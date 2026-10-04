@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Terminal, FitAddon } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
-import { ClientMessage, NotificationLevel } from '../protocol/messages';
+import { ClientMessage } from '../protocol/messages';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
@@ -653,7 +653,6 @@ export function TerminalPane({
   const showTitle = getShowPaneTitles(config);
   const termFont = getTerminalFontSize(config);
   const notification = useStore((s) => s.notifications.get(paneId));
-  const notifColor = notification ? notificationColorFor(notification.level, config?.theme ?? null) : null;
 
   const accentGlow = withAlpha(borderColor, 0.2);
 
@@ -695,7 +694,6 @@ export function TerminalPane({
       )}
       {showTitle && (
         <PaneTitleBar
-          theme={config?.theme ?? null}
           index={paneIndex ?? 0}
           title={title}
           cwd={cwd}
@@ -703,8 +701,7 @@ export function TerminalPane({
           cols={dims?.cols ?? null}
           rows={dims?.rows ?? null}
           isActive={isActive}
-          notificationColor={notifColor}
-          termFont={termFont}
+          notification={notification?.level ?? null}
           latexCount={latexMatches.length}
           latexOpen={latexOpen}
           onToggleLatex={toggleLatex}
@@ -839,19 +836,4 @@ export function TerminalPane({
       </div>
     </div>
   );
-}
-
-/** Notification-level → theme color (mirrors StatusBar). */
-function notificationColorFor(level: NotificationLevel, theme: typeof DEFAULT_THEME | null): string {
-  const t = theme ?? DEFAULT_THEME;
-  switch (level) {
-    case 'attention':
-      return t.yellow;
-    case 'error':
-      return t.red;
-    case 'success':
-      return t.green;
-    default:
-      return t.blue;
-  }
 }

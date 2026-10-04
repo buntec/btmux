@@ -1,22 +1,12 @@
-import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import type { AgentState, AgentStatus, Theme } from '../state/types';
+import type { AgentState, AgentStatus } from '../state/types';
+import type { NotificationLevel } from '../protocol/messages';
 import { Token, type TokenProps } from '@astryxdesign/core/Token';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
-
-/**
- * Height of a pane title bar for a given terminal font size. TerminalPane insets
- * its terminal container by this amount when titles are enabled, so it lives here
- * next to the bar that defines it.
- */
-export function paneTitleHeight(termFont: number): number {
-  const font = chromeFont(termFont);
-  return Math.round(font * 2.3);
-}
-
-/** Chrome font size derived from the terminal font (compact, clamped). */
-function chromeFont(termFont: number): number {
-  return Math.max(10, Math.min(17, Math.round(termFont * 0.68)));
-}
+import { Text } from '@astryxdesign/core/Text';
+import { HStack } from '@astryxdesign/core/Layout';
+import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
+import { ToggleButton } from '@astryxdesign/core/ToggleButton';
+import { cn } from '@/lib/utils';
 
 /** Collapse a home-directory prefix to `~` so cwds read like the shell prompt. */
 function shortCwd(cwd: string | null | undefined): string | null {
@@ -25,8 +15,14 @@ function shortCwd(cwd: string | null | undefined): string | null {
   return collapsed || cwd;
 }
 
+const NOTIFICATION_VARIANTS: Record<NotificationLevel, StatusDotProps['variant']> = {
+  attention: 'warning',
+  error: 'error',
+  success: 'success',
+  info: 'accent',
+};
+
 interface Props {
-  theme: Theme | null;
   index: number;
   title: string | null | undefined;
   cwd: string | null | undefined;
@@ -34,9 +30,8 @@ interface Props {
   cols: number | null;
   rows: number | null;
   isActive: boolean;
-  /** Color of the pending-notification dot for this pane, or null if none. */
-  notificationColor: string | null;
-  termFont: number;
+  /** Level of the pending notification for this pane, or null if none. */
+  notification: NotificationLevel | null;
   /** LaTeX formulas detected on screen; the chip is hidden at 0. */
   latexCount?: number;
   latexOpen?: boolean;
@@ -44,13 +39,11 @@ interface Props {
 }
 
 /**
- * The per-pane title bar from the "btmux Chrome" design: an accent stripe +
- * pane title/shell, working directory, live cols×rows, and a right-aligned numbered badge. The active pane gets an accent outline and a
- * brighter fill; inactive panes get a muted badge and a status dot. Fully
- * theme-driven via `chromePalette`.
+ * Per-pane title bar: title, working directory, LaTeX toggle, notification dot,
+ * live cols×rows, agent status, and the pane number. The active pane gets an
+ * accent edge and tint.
  */
 export function PaneTitleBar({
-  theme,
   index,
   title,
   cwd,
@@ -58,141 +51,69 @@ export function PaneTitleBar({
   cols,
   rows,
   isActive,
-  notificationColor,
-  termFont,
+  notification,
   latexCount = 0,
   latexOpen = false,
   onToggleLatex,
 }: Props) {
-  const c = chromePalette(theme);
-  const font = chromeFont(termFont);
-  const height = paneTitleHeight(termFont);
-  const badgeSize = Math.round(font * 1.35);
   const label = (title && title.trim()) || 'shell';
   const dir = shortCwd(cwd);
-
-  const badge: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: `${badgeSize}px`,
-    height: `${Math.round(badgeSize * 0.9)}px`,
-    padding: '0 4px',
-    borderRadius: '4px',
-    fontSize: `${Math.max(9, font - 2)}px`,
-    fontWeight: 800,
-    flex: 'none',
-    border: `1px solid ${withAlpha(isActive ? c.accent : c.fgMuted, 0.45)}`,
-    color: isActive ? c.accent : c.fgMuted,
-  };
-
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: `${Math.round(font * 0.6)}px`,
-        height: `${height}px`,
-        flex: 'none',
-        padding: isActive ? '0 10px 0 0' : '0 10px',
-        background: isActive ? c.titleActiveBg : c.titleInactiveBg,
-        borderBottom: `1px solid ${isActive ? c.border : c.borderDim}`,
-        fontSize: `${font}px`,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-      }}
+    <HStack
+      gap={2}
+      vAlign="center"
+      className={cn(
+        'flex-none overflow-hidden border-b px-2 py-1',
+        isActive ? 'border-b-border-strong border-l-2 border-l-accent bg-accent-muted' : 'border-b-border bg-surface',
+      )}
     >
-      {isActive && <div style={{ width: '3px', alignSelf: 'stretch', background: c.accent, flex: 'none' }} />}
-      <span
-        style={{
-          color: isActive ? c.fgBright : c.fgMuted,
-          fontWeight: isActive ? 700 : 500,
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
+      <Text
+        size="sm"
+        weight={isActive ? 'semibold' : 'normal'}
+        color={isActive ? 'primary' : 'secondary'}
+        maxLines={1}
+        hasTruncateTooltip={false}
+        className="min-w-0"
       >
         {label}
-      </span>
+      </Text>
       {dir && (
-        <span
-          style={{
-            color: isActive ? c.fgMuted : c.fgDim,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
+        <Text size="sm" color="secondary" maxLines={1} hasTruncateTooltip={false} className="min-w-0">
           {dir}
-        </span>
+        </Text>
       )}
-      <span style={{ flex: 1 }} />
-      {(latexCount > 0 || latexOpen) && (
-        <button
-          type="button"
-          title="Toggle LaTeX overlay"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={onToggleLatex}
-          style={{
-            flex: 'none',
-            padding: '0 6px',
-            borderRadius: '5px',
-            fontSize: `${Math.max(9, font - 1)}px`,
-            fontWeight: 700,
-            cursor: 'pointer',
-            color: latexOpen ? c.accentInk : c.accent,
-            background: latexOpen ? c.accent : withAlpha(c.accent, 0.16),
-          }}
-        >
-          ∑ {latexCount}
-        </button>
-      )}
-      {notificationColor ? (
-        <span
-          style={{
-            width: '7px',
-            height: '7px',
-            borderRadius: '50%',
-            background: notificationColor,
-            boxShadow: `0 0 7px ${withAlpha(notificationColor, 0.6)}`,
-            flex: 'none',
-          }}
-        />
-      ) : !isActive ? (
-        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: c.fgMuted, flex: 'none' }} />
-      ) : null}
-      {cols && rows ? (
-        <span style={{ color: c.fgDim, fontSize: `${Math.max(9, font - 1)}px`, letterSpacing: '.06em', flex: 'none' }}>
-          {cols}×{rows}
-        </span>
-      ) : null}
-      <AgentStatusBadge status={agentStatus} />
-      <span aria-label={`Pane ${index}`} style={badge}>
-        {index}
-      </span>
-    </div>
+      <HStack gap={2} vAlign="center" className="ml-auto flex-none">
+        {(latexCount > 0 || latexOpen) && (
+          <ToggleButton
+            size="sm"
+            label={`∑ ${latexCount}`}
+            tooltip="Toggle LaTeX overlay"
+            isPressed={latexOpen}
+            onPressedChange={() => onToggleLatex?.()}
+            onMouseDown={(e) => e.preventDefault()}
+          />
+        )}
+        {notification && (
+          <StatusDot variant={NOTIFICATION_VARIANTS[notification]} label={`${notification} notification`} />
+        )}
+        {cols && rows ? (
+          <Text size="sm" color="secondary" hasTabularNumbers>
+            {cols}×{rows}
+          </Text>
+        ) : null}
+        <AgentStatusBadge status={agentStatus} />
+        <Token size="sm" color={isActive ? 'blue' : 'gray'} aria-label={`Pane ${index}`} label={String(index)} />
+      </HStack>
+    </HStack>
   );
 }
 
 export function PaneCorner({ index, status, isActive }: { index: number; status?: AgentStatus; isActive: boolean }) {
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: '8px',
-        right: '8px',
-        zIndex: 3,
-        display: 'flex',
-        alignItems: 'center',
-        gap: '7px',
-        borderRadius: '4px',
-        fontSize: '11px',
-        pointerEvents: 'none',
-      }}
-    >
+    <HStack gap={2} vAlign="center" className="pointer-events-none absolute top-2 right-2 z-3">
       <AgentStatusBadge status={status} />
       <Token color={isActive ? 'blue' : 'gray'} aria-label={`Pane ${index}`} label={String(index)} />
-    </div>
+    </HStack>
   );
 }
 

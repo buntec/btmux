@@ -13,6 +13,7 @@ import { FileTree } from './files/FileTree';
 import { FilePreview } from './files/FilePreview';
 import { Breadcrumb } from './files/Breadcrumb';
 import { GitModeHeader } from './files/GitModeHeader';
+import { filterGitLog } from '@/lib/gitGraph';
 import { GitHistory } from './files/GitHistory';
 import { GitCommitDiffPreview } from './files/GitCommitDiffPreview';
 import { GitCommitModal } from './files/GitCommitModal';
@@ -254,6 +255,15 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, store],
   );
 
+  // Close the log filter, keeping the focused commit selected in the full list.
+  const closeLogFilter = useCallback(() => {
+    const st = store.getState();
+    const commits = st.gitLog?.commits ?? [];
+    const focused = filterGitLog(commits, st.filterQuery)[st.gitLogFocusedIndex];
+    st.setIsFilterActive(false);
+    if (focused) st.setGitLogFocusedIndex(Math.max(commits.indexOf(focused), 0));
+  }, [store]);
+
   const exitGitMode = useCallback(() => {
     store.getState().setIsGitMode(false);
     store.getState().setGitView('status');
@@ -449,7 +459,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       return;
     }
 
-    const commit = gitLog.commits[gitLogFocusedIndex];
+    const commit = filterGitLog(gitLog.commits, isFilterActive ? filterQuery : '')[gitLogFocusedIndex];
     if (!commit) {
       store.getState().setGitCommitDiff(null);
       return;
@@ -465,7 +475,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       },
       () => {},
     );
-  }, [isGitMode, gitView, gitLog, gitLogFocusedIndex, fileSend, currentPath, store]);
+  }, [isGitMode, gitView, gitLog, gitLogFocusedIndex, isFilterActive, filterQuery, fileSend, currentPath, store]);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -619,7 +629,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         } else if (searchMode !== 'off') {
           exitSearch();
         } else if (isFilterActive) {
-          store.getState().setIsFilterActive(false);
+          if (isGitMode && gitView === 'log') closeLogFilter();
+          else store.getState().setIsFilterActive(false);
         } else if (isGitMode) {
           exitGitMode();
         } else {
@@ -661,8 +672,23 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       // Git mode keybindings
       if (isGitMode) {
         if (gitView === 'log') {
-          const count = gitLog?.commits.length ?? 0;
-          const lastIndex = Math.max(count - 1, 0);
+          const visibleCommits = filterGitLog(gitLog?.commits ?? [], isFilterActive ? filterQuery : '');
+          const lastIndex = Math.max(visibleCommits.length - 1, 0);
+
+          if (isFilterActive) {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              closeLogFilter();
+              return;
+            }
+            if (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey)) {
+              e.preventDefault();
+              store.getState().setFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
+              store.getState().setGitLogFocusedIndex(0);
+              return;
+            }
+            if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+          }
 
           if (e.ctrlKey && e.key === 'd') {
             e.preventDefault();
@@ -695,6 +721,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             case 'ArrowUp':
               e.preventDefault();
               store.getState().setGitLogFocusedIndex(Math.max(gitLogFocusedIndex - 1, 0));
+              break;
+            case '/':
+              e.preventDefault();
+              store.getState().setIsFilterActive(true);
+              store.getState().setGitLogFocusedIndex(0);
               break;
             case 'g':
               e.preventDefault();
@@ -1162,6 +1193,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     openPath,
     onClose,
     exitGitMode,
+    closeLogFilter,
     gitStage,
     gitUnstage,
     gitDiscard,
@@ -1358,6 +1390,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 const GIT_LOG_HINTS: Hint[] = [
   { keys: ['j', 'k'], label: 'navigate commits' },
   { keys: ['g', 'G'], label: 'top/bottom' },
+  { keys: ['/'], label: 'filter' },
   { keys: ['s'], label: 'status' },
   { keys: ['esc', 'q'], label: 'exit git' },
 ];

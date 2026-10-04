@@ -2,6 +2,7 @@ import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { useFileStore } from '@/state/fileStore';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
+import { filterGitLog } from '@/lib/gitGraph';
 import { Placeholder } from './Placeholder';
 
 function formatDate(timestamp: number): string {
@@ -15,7 +16,9 @@ export function GitCommitDiffPreview() {
   const gitLog = useFileStore((s) => s.gitLog);
   const gitLogFocusedIndex = useFileStore((s) => s.gitLogFocusedIndex);
   const gitCommitDiff = useFileStore((s) => s.gitCommitDiff);
-  const commit = gitLog?.commits[gitLogFocusedIndex];
+  const filterQuery = useFileStore((s) => s.filterQuery);
+  const isFilterActive = useFileStore((s) => s.isFilterActive);
+  const commit = filterGitLog(gitLog?.commits ?? [], isFilterActive ? filterQuery : '')[gitLogFocusedIndex];
 
   if (!commit) {
     return <Placeholder>Select a commit</Placeholder>;

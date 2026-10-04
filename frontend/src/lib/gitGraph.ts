@@ -138,3 +138,15 @@ export function layoutGitGraph<T extends GitGraphCommit>(commits: readonly T[]):
 
   return { rows, maxLanes };
 }
+
+/** Case-insensitive substring match on summary, author, and full/short hash. */
+export function filterGitLog<T extends GitGraphCommit & { summary: string; author: string }>(
+  commits: readonly T[],
+  query: string,
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return commits as T[];
+  return commits.filter(
+    (c) => c.summary.toLowerCase().includes(q) || c.author.toLowerCase().includes(q) || c.id.toLowerCase().includes(q),
+  );
+}

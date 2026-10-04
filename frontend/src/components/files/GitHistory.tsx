@@ -6,7 +6,7 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { Text } from '@astryxdesign/core/Text';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';
-import { layoutGitGraph, type GitGraphTransition } from '@/lib/gitGraph';
+import { filterGitLog, layoutGitGraph, type GitGraphTransition } from '@/lib/gitGraph';
 import { useFileStore } from '@/state/fileStore';
 import type { GitLogCommit, GitLogRef } from '@/protocol/file-messages';
 import { Placeholder } from './Placeholder';
@@ -67,9 +67,15 @@ export function GitHistory() {
   const gitStatus = useFileStore((s) => s.gitStatus);
   const gitLog = useFileStore((s) => s.gitLog);
   const gitLogFocusedIndex = useFileStore((s) => s.gitLogFocusedIndex);
+  const filterQuery = useFileStore((s) => s.filterQuery);
+  const isFilterActive = useFileStore((s) => s.isFilterActive);
   const listRef = useRef<HTMLDivElement>(null);
-  const layout = useMemo(() => layoutGitGraph<GitLogCommit>(gitLog?.commits ?? []), [gitLog]);
-  const graphWidth = GRAPH_LEFT + Math.max(layout.maxLanes - 1, 0) * LANE_GAP + GRAPH_RIGHT;
+  const query = isFilterActive ? filterQuery : '';
+  const commits = useMemo(() => filterGitLog(gitLog?.commits ?? [], query), [gitLog, query]);
+  const layout = useMemo(() => layoutGitGraph<GitLogCommit>(commits), [commits]);
+  // A filtered list has missing parents, so the graph would be misleading.
+  const showGraph = !query.trim();
+  const graphWidth = showGraph ? GRAPH_LEFT + Math.max(layout.maxLanes - 1, 0) * LANE_GAP + GRAPH_RIGHT : 0;
   const [rowHeights, setRowHeights] = useState<number[]>([]);
   const rowCenters: number[] = [];
   let graphHeight = 0;
@@ -114,7 +120,7 @@ export function GitHistory() {
         </Text>
         {gitLog && (
           <Text size="sm" color="secondary" hasTabularNumbers className="ml-auto">
-            {gitLog.commits.length}
+            {query.trim() ? `${commits.length}/${gitLog.commits.length}` : gitLog.commits.length}
             {gitLog.truncated ? '+' : ''}
           </Text>
         )}
@@ -126,6 +132,8 @@ export function GitHistory() {
         <Placeholder>Not a git repo</Placeholder>
       ) : gitLog.commits.length === 0 ? (
         <Placeholder>No commits yet</Placeholder>
+      ) : commits.length === 0 ? (
+        <Placeholder>No matches</Placeholder>
       ) : (
         <ScrollableArea
           label="Commit history"
@@ -134,47 +142,49 @@ export function GitHistory() {
           className="min-h-0 flex-1 overflow-auto"
         >
           <div ref={listRef} className="relative min-w-0 py-1" role="list" aria-label="Git commit history">
-            <svg
-              aria-hidden="true"
-              className="pointer-events-none absolute left-0 top-1"
-              width={graphWidth}
-              height={graphHeight}
-              viewBox={`0 0 ${graphWidth} ${graphHeight}`}
-            >
-              {layout.rows.flatMap((row, rowIndex) =>
-                row.transitions.map((transition, transitionIndex) => (
-                  <path
-                    key={`${row.commit.id}-${transitionIndex}`}
-                    d={transitionPath(transition, rowCenters[rowIndex], rowCenters[rowIndex + 1] ?? graphHeight)}
-                    fill="none"
-                    stroke={graphColor(transition.colorIndex)}
-                    strokeLinecap="round"
-                    strokeWidth="2"
-                    strokeOpacity="0.8"
-                  />
-                )),
-              )}
-              {layout.rows.map((row, rowIndex) => {
-                const color = graphColor(row.laneColors[row.lane] ?? 0);
-                const x = laneX(row.lane);
-                const y = rowCenters[rowIndex];
-                return (
-                  <g key={row.commit.id}>
-                    {row.commit.is_head && (
-                      <circle cx={x} cy={y} r="8" fill="none" stroke="var(--color-text-yellow)" strokeWidth="1" />
-                    )}
-                    <circle
-                      cx={x}
-                      cy={y}
-                      r="4.5"
-                      fill="var(--color-background-body)"
-                      stroke={color}
-                      strokeWidth="2.5"
+            {showGraph && (
+              <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-1"
+                width={graphWidth}
+                height={graphHeight}
+                viewBox={`0 0 ${graphWidth} ${graphHeight}`}
+              >
+                {layout.rows.flatMap((row, rowIndex) =>
+                  row.transitions.map((transition, transitionIndex) => (
+                    <path
+                      key={`${row.commit.id}-${transitionIndex}`}
+                      d={transitionPath(transition, rowCenters[rowIndex], rowCenters[rowIndex + 1] ?? graphHeight)}
+                      fill="none"
+                      stroke={graphColor(transition.colorIndex)}
+                      strokeLinecap="round"
+                      strokeWidth="2"
+                      strokeOpacity="0.8"
                     />
-                  </g>
-                );
-              })}
-            </svg>
+                  )),
+                )}
+                {layout.rows.map((row, rowIndex) => {
+                  const color = graphColor(row.laneColors[row.lane] ?? 0);
+                  const x = laneX(row.lane);
+                  const y = rowCenters[rowIndex];
+                  return (
+                    <g key={row.commit.id}>
+                      {row.commit.is_head && (
+                        <circle cx={x} cy={y} r="8" fill="none" stroke="var(--color-text-yellow)" strokeWidth="1" />
+                      )}
+                      <circle
+                        cx={x}
+                        cy={y}
+                        r="4.5"
+                        fill="var(--color-background-body)"
+                        stroke={color}
+                        strokeWidth="2.5"
+                      />
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
 
             {layout.rows.map((row, rowIndex) => {
               const commit = row.commit;

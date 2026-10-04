@@ -98,6 +98,7 @@ fn watch(window: WebviewWindow, server: discovery::RunningServer) {
 }
 
 fn open_server(window: &WebviewWindow, server: &discovery::RunningServer) -> Result<(), String> {
+    // IPv6 needs the bare form: WKWebView ignores a "[::1]" domain.
     let domain = server.address.ip().to_string();
     let cookie_name = format!("btmux_auth_{}", server.address.port());
     let cookie = Cookie::build((cookie_name.clone(), server.token.clone()))

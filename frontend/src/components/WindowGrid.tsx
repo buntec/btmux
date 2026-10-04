@@ -263,6 +263,7 @@ export function WindowGrid({ send }: Props) {
                           isMounted={mirrorsReady}
                           c={c}
                           activePaneId={entry.window.panes[entry.window.active_pane]?.id ?? null}
+                          activeIndicator="dim"
                           animations={animations}
                         />
                       </VStack>

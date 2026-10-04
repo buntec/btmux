@@ -18,6 +18,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // The backend only trusts this origin (`--public-url` in the justfile), so
+    // fail instead of silently moving to a port it would reject.
+    strictPort: true,
     proxy: {
       // Dev backend runs on 8044 (see `dev_port` in the justfile) so it doesn't
       // clash with a production/service instance on the default 8004.

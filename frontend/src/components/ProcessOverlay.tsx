@@ -122,11 +122,6 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
       };
 
       if (store.filterActive) {
-        if (e.key === 'F5') {
-          e.preventDefault();
-          store.toggleTreeMode();
-          return;
-        }
         if (e.key === 'Enter') {
           e.preventDefault();
           store.setFilterActive(false);
@@ -190,7 +185,6 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
           e.preventDefault();
           store.cycleSortMode();
           break;
-        case 'F5':
         case 'V':
           e.preventDefault();
           store.toggleTreeMode();
@@ -312,7 +306,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
             <KeyHint keys={['x', 'X']} label="term/kill" />
             <KeyHint keys={['F']} label="follow" />
             <KeyHint keys={['s']} label="sort" />
-            <KeyHint keys={['f5', 'V']} label={treeMode ? 'flat' : 'tree'} />
+            <KeyHint keys={['V']} label={treeMode ? 'flat' : 'tree'} />
             <KeyHint keys={['/']} label="filter" />
             <KeyHint keys={['g', 'G']} label="top/bottom" />
             <KeyHint keys={['esc', 'q']} label="close" />

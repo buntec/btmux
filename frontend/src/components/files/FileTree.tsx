@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Folder, File, ChevronRight } from 'lucide-react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
 import type { FileEntry, GitStatusResult, ServerFileMessage } from '@/protocol/file-messages';
+import { Placeholder } from './Placeholder';
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
@@ -90,11 +91,11 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
   }, [focusedIndex]);
 
   if (isLoading) {
-    return <div className="flex-1 flex items-center justify-center text-muted-foreground">Loading...</div>;
+    return <Placeholder isLoading>Loading…</Placeholder>;
   }
 
   return (
-    <ScrollArea className="flex-1 overflow-hidden">
+    <ScrollableArea label="Files" axis="both" data-preview-viewport className="flex-1 overflow-auto">
       <div ref={listRef}>
         {visible.map((entry, i) => {
           const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
@@ -113,9 +114,9 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
             />
           );
         })}
-        {visible.length === 0 && <div className="px-3 py-6 text-center text-muted-foreground">Empty</div>}
+        {visible.length === 0 && <Placeholder>Empty directory</Placeholder>}
       </div>
-    </ScrollArea>
+    </ScrollableArea>
   );
 }
 
@@ -147,7 +148,7 @@ function FileRow({
       data-index={index}
       className={cn(
         'flex items-center gap-2 px-2 cursor-pointer leading-tight',
-        focused ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+        focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
         isCut && 'opacity-40',
       )}
       onClick={() => {
@@ -159,22 +160,25 @@ function FileRow({
       }}
     >
       {isSelected ? (
-        <span className="size-3.5 shrink-0 text-theme-blue flex items-center justify-center" aria-hidden>
+        <span className="size-3.5 shrink-0 text-blue-vivid flex items-center justify-center" aria-hidden>
           ■
         </span>
       ) : entry.is_dir ? (
-        <Folder className="size-3.5 text-theme-blue shrink-0" />
+        <Folder className="size-3.5 text-blue-vivid shrink-0" />
       ) : (
-        <File className="size-3.5 text-muted-foreground shrink-0" />
+        <File className={cn('size-3.5 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')} />
       )}
-      <span className={cn('flex-1 truncate', isCut && 'line-through decoration-muted-foreground')} title={entry.name}>
+      <span className={cn('flex-1 truncate', isCut && 'line-through decoration-secondary')} title={entry.name}>
         {entry.name}
       </span>
       {gitStatus && <GitStatusIndicators status={gitStatus} />}
       {entry.is_dir ? (
-        <ChevronRight className="size-3 text-muted-foreground shrink-0" />
+        <ChevronRight className={cn('size-3 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')} />
       ) : (
-        <span className="text-muted-foreground shrink-0" style={{ fontSize: '0.85em' }}>
+        <span
+          className={cn('shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')}
+          style={{ fontSize: '0.85em' }}
+        >
           {formatSize(entry.size)}
         </span>
       )}
@@ -187,19 +191,19 @@ function GitStatusIndicators({ status }: { status: GitStatusResult }) {
   const branch = status.is_repo_root ? status.head.branch : null;
 
   if (status.is_repo_root && status.head.ahead > 0) {
-    indicators.push({ symbol: '↑', label: `${status.head.ahead} ahead`, className: 'text-theme-green' });
+    indicators.push({ symbol: '↑', label: `${status.head.ahead} ahead`, className: 'text-green-vivid' });
   }
   if (status.is_repo_root && status.head.behind > 0) {
-    indicators.push({ symbol: '↓', label: `${status.head.behind} behind`, className: 'text-theme-yellow' });
+    indicators.push({ symbol: '↓', label: `${status.head.behind} behind`, className: 'text-yellow-vivid' });
   }
   if (status.staged.length > 0) {
-    indicators.push({ symbol: '+', label: `${status.staged.length} staged`, className: 'text-theme-green' });
+    indicators.push({ symbol: '+', label: `${status.staged.length} staged`, className: 'text-green-vivid' });
   }
   if (status.unstaged.length > 0) {
-    indicators.push({ symbol: '~', label: `${status.unstaged.length} changed`, className: 'text-theme-yellow' });
+    indicators.push({ symbol: '~', label: `${status.unstaged.length} changed`, className: 'text-yellow-vivid' });
   }
   if (status.untracked.length > 0) {
-    indicators.push({ symbol: '?', label: `${status.untracked.length} untracked`, className: 'text-muted-foreground' });
+    indicators.push({ symbol: '?', label: `${status.untracked.length} untracked`, className: 'text-secondary' });
   }
 
   if (!branch && indicators.length === 0) return null;
@@ -214,7 +218,7 @@ function GitStatusIndicators({ status }: { status: GitStatusResult }) {
       title={labels.join(', ')}
       aria-label={labels.join(', ')}
     >
-      {branch && <span className="min-w-0 max-w-48 truncate text-muted-foreground">⎇ {branch}</span>}
+      {branch && <span className="min-w-0 max-w-48 truncate text-secondary">⎇ {branch}</span>}
       {indicators.map((indicator) => (
         <span key={indicator.symbol} className={indicator.className}>
           {indicator.symbol}

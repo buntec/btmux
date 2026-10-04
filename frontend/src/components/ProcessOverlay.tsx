@@ -251,7 +251,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     <div
       ref={rootRef}
       tabIndex={-1}
-      className="absolute inset-0 flex flex-col overflow-hidden bg-background outline-none"
+      className="flex h-full min-h-0 flex-col overflow-hidden outline-none"
       style={{
         fontSize: `${fontSize}px`,
         fontFamily: 'var(--btmux-font)',

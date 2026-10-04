@@ -1,4 +1,5 @@
 import { useFileStore } from '@/state/fileStore';
+import { Text } from '@astryxdesign/core/Text';
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'avi', 'mkv', 'ogv']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'wma']);
@@ -29,7 +30,7 @@ export function MediaPreview() {
   if (mediaType === 'audio') {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 p-4">
-        <div className="text-muted-foreground text-sm">{selectedFile.split('/').pop()}</div>
+        <Text color="secondary">{selectedFile.split('/').pop()}</Text>
         <audio src={src} controls className="w-full max-w-md" />
       </div>
     );

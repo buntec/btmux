@@ -137,7 +137,7 @@ export function CodePreview() {
   // Scroll target line into the centre of the preview viewport
   useEffect(() => {
     if (targetLine == null) return;
-    const scrollArea = document.querySelector('.file-preview-scroll [data-slot="scroll-area-viewport"]');
+    const scrollArea = document.querySelector('.file-preview-scroll [data-preview-viewport]');
     if (!scrollArea) return;
     // SyntaxHighlighter renders one <span> block per line, or we can use the
     // data-line attribute injected via lineProps. Fall back to a rough estimate.
@@ -193,7 +193,7 @@ export function CodePreview() {
         </pre>
       )}
       {(lineTruncated || fileContent.truncated) && (
-        <div className="mt-2 rounded bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="mt-2 rounded bg-muted px-3 py-1.5 text-xs text-secondary">
           Preview truncated ({formatSize(fileContent.size)} total)
         </div>
       )}

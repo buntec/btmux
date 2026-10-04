@@ -1,11 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, GitCommitHorizontal } from 'lucide-react';
 import { Token } from '@astryxdesign/core/Token';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { HStack } from '@astryxdesign/core/Layout';
+import { Icon } from '@astryxdesign/core/Icon';
+import { Text } from '@astryxdesign/core/Text';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';
 import { layoutGitGraph, type GitGraphTransition } from '@/lib/gitGraph';
 import { useFileStore } from '@/state/fileStore';
 import type { GitLogCommit, GitLogRef } from '@/protocol/file-messages';
+import { Placeholder } from './Placeholder';
 
 const ROW_HEIGHT = 52;
 const LANE_GAP = 18;
@@ -103,27 +107,32 @@ export function GitHistory() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
-        <GitBranch className="size-3.5 shrink-0" />
-        <span className="font-medium uppercase tracking-wider">History</span>
+      <HStack gap={2} vAlign="center" className="flex-none border-b border-border px-3 py-1.5">
+        <Icon icon={GitBranch} size="sm" color="secondary" />
+        <Text size="sm" weight="medium" color="secondary">
+          History
+        </Text>
         {gitLog && (
-          <span className="ml-auto tabular-nums">
+          <Text size="sm" color="secondary" hasTabularNumbers className="ml-auto">
             {gitLog.commits.length}
             {gitLog.truncated ? '+' : ''}
-          </span>
+          </Text>
         )}
-      </div>
+      </HStack>
 
       {!gitLog ? (
-        <div role="status" className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-          Loading history…
-        </div>
+        <Placeholder isLoading>Loading history…</Placeholder>
       ) : gitStatus && !gitStatus.is_repo ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">Not a git repo</div>
+        <Placeholder>Not a git repo</Placeholder>
       ) : gitLog.commits.length === 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">No commits yet</div>
+        <Placeholder>No commits yet</Placeholder>
       ) : (
-        <ScrollArea className="min-h-0 flex-1 overflow-hidden">
+        <ScrollableArea
+          label="Commit history"
+          axis="both"
+          data-preview-viewport
+          className="min-h-0 flex-1 overflow-auto"
+        >
           <div ref={listRef} className="relative min-w-0 py-1" role="list" aria-label="Git commit history">
             <svg
               aria-hidden="true"
@@ -180,7 +189,7 @@ export function GitHistory() {
                   onClick={() => useFileStore.getState().setGitLogFocusedIndex(rowIndex)}
                   className={cn(
                     'flex cursor-pointer items-center gap-2 px-2',
-                    selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                    selected ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   )}
                   style={{ minHeight: `${ROW_HEIGHT}px` }}
                   title={`${commit.id}\n${date.toLocaleString()}`}
@@ -191,15 +200,20 @@ export function GitHistory() {
                       <GitCommitHorizontal
                         className={cn(
                           'size-3.5 shrink-0',
-                          commit.is_head ? 'text-theme-yellow' : 'text-muted-foreground',
+                          commit.is_head ? 'text-yellow-vivid' : selected ? 'text-on-accent/70' : 'text-secondary',
                         )}
                       />
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                      <span className={cn('min-w-0 flex-1 truncate text-xs font-medium', !selected && 'text-primary')}>
                         {commit.summary}
                       </span>
                       {commit.is_head && <Token size="sm" label="HEAD" />}
                     </div>
-                    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[0.7rem] text-muted-foreground">
+                    <div
+                      className={cn(
+                        'mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[0.7rem]',
+                        selected ? 'text-on-accent/70' : 'text-secondary',
+                      )}
+                    >
                       {commit.refs.map((ref) => (
                         <RefLabel key={`${ref.kind}-${ref.name}`} ref={ref} />
                       ))}
@@ -215,7 +229,7 @@ export function GitHistory() {
               );
             })}
           </div>
-        </ScrollArea>
+        </ScrollableArea>
       )}
     </section>
   );

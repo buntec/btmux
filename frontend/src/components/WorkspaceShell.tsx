@@ -9,9 +9,9 @@ import type { IconType } from '@astryxdesign/core/Icon';
 import { useStore } from '../state/store';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
-import { getSessionSort, getWindowSort } from '../state/configDefaults';
+import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
+import { AnimatedAppIcon } from './AnimatedAppIcon';
 import type { ClientMessage } from '../protocol/messages';
-import appIconUrl from '../../../desktop/app-icon.svg?url';
 
 let mruVersion = 0;
 for (const event of [SESSION_MRU_EVENT, WINDOW_MRU_EVENT]) window.addEventListener(event, () => mruVersion++);
@@ -107,7 +107,17 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
               } catch {}
             },
           }}
-          header={<SideNavHeading heading="btmux" icon={<img src={appIconUrl} alt="" className="size-6 shrink-0" />} />}
+          header={
+            <SideNavHeading
+              heading="btmux"
+              icon={
+                <AnimatedAppIcon
+                  animated={getAnimations(config)}
+                  className={collapsed ? '-my-2 size-12 shrink-0' : '-my-2 -ml-4 size-12 shrink-0'}
+                />
+              }
+            />
+          }
           footerIcons={
             <>
               <IconButton

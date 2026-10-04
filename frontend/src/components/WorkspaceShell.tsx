@@ -19,6 +19,7 @@ for (const event of [SESSION_MRU_EVENT, WINDOW_MRU_EVENT]) window.addEventListen
 export function WorkspaceShell({ children, send }: { children: ReactNode; send: (message: ClientMessage) => void }) {
   const sessions = useStore((state) => state.allSessions);
   const config = useStore((state) => state.config);
+  const animations = getAnimations(config);
   const palette = useTerminalPalette();
   const setOverlay = useStore((state) => state.setOverlay);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
@@ -77,9 +78,9 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
               heading="btmux"
               icon={
                 <AnimatedAppIcon
-                  animated={getAnimations(config)}
+                  animated={animations}
                   palette={palette}
-                  className={collapsed ? '-my-2 size-12 shrink-0' : '-my-2 -ml-4 size-12 shrink-0'}
+                  className={`-my-2 size-12 shrink-0 saturate-0 rotate-30 ${collapsed ? '' : '-ml-4'}`}
                 />
               }
             />

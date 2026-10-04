@@ -157,7 +157,7 @@ export function GitHistory() {
               {layout.rows.map((row, rowIndex) => {
                 const color = graphColor(row.laneColors[row.lane] ?? 0);
                 const x = laneX(row.lane);
-                const y = rowIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
+                const y = rowCenters[rowIndex];
                 return (
                   <g key={row.commit.id}>
                     {row.commit.is_head && (
@@ -203,14 +203,16 @@ export function GitHistory() {
                           commit.is_head ? 'text-yellow-vivid' : selected ? 'text-on-accent/70' : 'text-secondary',
                         )}
                       />
-                      <span className={cn('min-w-0 flex-1 truncate text-xs font-medium', !selected && 'text-primary')}>
+                      <span
+                        className={cn('min-w-0 flex-1 truncate text-base font-medium', !selected && 'text-primary')}
+                      >
                         {commit.summary}
                       </span>
                       {commit.is_head && <Token size="sm" label="HEAD" />}
                     </div>
                     <div
                       className={cn(
-                        'mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[0.7rem]',
+                        'mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm',
                         selected ? 'text-on-accent/70' : 'text-secondary',
                       )}
                     >

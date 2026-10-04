@@ -47,7 +47,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     else state().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
   };
   return (
-    <HStack gap={2} padding={2} vAlign="center" className="min-w-0" role="toolbar" aria-label="Terminal controls">
+    <HStack gap={2} paddingInline={2} vAlign="center" className="min-w-0" role="toolbar" aria-label="Terminal controls">
       <Button label={session.name} variant="ghost" size="sm" onClick={() => state().setSwitcherOpen(true)} />
       <TabList
         value={activeWindow?.id ?? ''}

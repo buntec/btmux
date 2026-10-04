@@ -8,7 +8,6 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Text } from '@astryxdesign/core/Text';
-import { Kbd } from '@astryxdesign/core/Kbd';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Layout, LayoutContent, LayoutFooter, HStack, VStack, Section } from '@astryxdesign/core/Layout';
 import { InfoDialog } from './InfoDialog';
@@ -16,6 +15,7 @@ import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
 import { getPrefix } from '../state/configDefaults';
+import { KeyCap } from './KeyHint';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -335,7 +335,7 @@ export function Overlay({ sessionId, send, config }: Props) {
                         <ListItem
                           key={`${bind.action}:${bind.key}`}
                           label={bind.action.replace(/-/g, ' ')}
-                          endContent={<Kbd keys={bind.key === ' ' ? 'Space' : bind.key} />}
+                          endContent={<KeyCap keys={bind.key} />}
                         />
                       ))}
                     </List>

@@ -4,7 +4,7 @@ import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Button } from '@astryxdesign/core/Button';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import { Kbd } from '@astryxdesign/core/Kbd';
+import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
 import { Activity, FolderOpen, GitBranch } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
@@ -101,7 +101,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
           );
         })}
       </TabList>
-      {prefixActive && <Kbd keys={config?.prefix ?? 'C-b'} />}
+      {prefixActive && <KeyCap keys={config?.prefix ?? 'C-b'} />}
       <HStack gap={1} className="hidden lg:flex">
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>

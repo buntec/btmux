@@ -5,7 +5,6 @@ import { Layout, LayoutContent, LayoutFooter, LayoutPanel, HStack, VStack } from
 import { List, ListItem } from '@astryxdesign/core/List';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Text } from '@astryxdesign/core/Text';
-import { Kbd } from '@astryxdesign/core/Kbd';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Token } from '@astryxdesign/core/Token';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
@@ -21,6 +20,7 @@ import { WindowThumbnail } from './WindowThumbnail';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
+import { KeyCap } from './KeyHint';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -557,7 +557,7 @@ export function SessionSwitcher({ send }: Props) {
               {HINTS.map(([keys, label]) => (
                 <HStack key={label} gap={1} vAlign="center">
                   {keys.map((key) => (
-                    <Kbd key={key} keys={key} />
+                    <KeyCap key={key} keys={key} />
                   ))}
                   <Text color="secondary">{label}</Text>
                 </HStack>

@@ -304,12 +304,12 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
                 <KeyHint keys={['tab', 'enter']} label="toggle" />
               </>
             )}
-            <KeyHint keys={['x', 'shift+x']} label="term/kill" />
-            <KeyHint keys={['shift+f']} label="follow" />
+            <KeyHint keys={['x', 'X']} label="term/kill" />
+            <KeyHint keys={['F']} label="follow" />
             <KeyHint keys={['s']} label="sort" />
-            <KeyHint keys={['f5', 'shift+v']} label={treeMode ? 'flat' : 'tree'} />
+            <KeyHint keys={['f5', 'V']} label={treeMode ? 'flat' : 'tree'} />
             <KeyHint keys={['/']} label="filter" />
-            <KeyHint keys={['g', 'shift+g']} label="top/bottom" />
+            <KeyHint keys={['g', 'G']} label="top/bottom" />
             <KeyHint keys={['esc', 'q']} label="close" />
           </>
         )}

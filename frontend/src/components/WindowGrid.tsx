@@ -13,6 +13,7 @@ import { getWindowMruOrder } from '../state/windowMru';
 import type { SessionState } from '../state/types';
 import { WindowThumbnail } from './WindowThumbnail';
 import { getAnimations, getWindowGridCount } from '../state/configDefaults';
+import { KeyCap } from './KeyHint';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -278,7 +279,7 @@ export function WindowGrid({ send }: Props) {
               {HINTS.map(([keys, label]) => (
                 <HStack key={label} gap={1} vAlign="center">
                   {keys.map((key) => (
-                    <Kbd key={key} keys={key} />
+                    <KeyCap key={key} keys={key} />
                   ))}
                   <Text color="secondary">{label}</Text>
                 </HStack>

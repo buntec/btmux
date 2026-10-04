@@ -11,6 +11,7 @@ import { ClientMessage } from '../protocol/messages';
 import type { AgentStatus } from '../state/types';
 import { AgentStatusBadge } from './PaneTitleBar';
 import { MirrorPane } from './MirrorPane';
+import { KeyCap } from './KeyHint';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -218,7 +219,7 @@ export function AgentGrid({ send }: Props) {
               {HINTS.map(([keys, label]) => (
                 <HStack key={label} gap={1} vAlign="center">
                   {keys.map((key) => (
-                    <Kbd key={key} keys={key} />
+                    <KeyCap key={key} keys={key} />
                   ))}
                   <Text color="secondary">{label}</Text>
                 </HStack>

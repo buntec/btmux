@@ -1357,7 +1357,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
 const GIT_LOG_HINTS: Hint[] = [
   { keys: ['j', 'k'], label: 'navigate commits' },
-  { keys: ['g', 'shift+g'], label: 'top/bottom' },
+  { keys: ['g', 'G'], label: 'top/bottom' },
   { keys: ['s'], label: 'status' },
   { keys: ['esc', 'q'], label: 'exit git' },
 ];
@@ -1393,6 +1393,6 @@ const BROWSE_HINTS: Hint[] = [
   { keys: ['.'], label: 'dotfiles' },
   { keys: ['i'], label: 'gitignored' },
   { keys: ['d'], label: 'trash' },
-  { keys: ['shift+d'], label: 'delete' },
+  { keys: ['D'], label: 'delete' },
   { keys: ['q'], label: 'close' },
 ];

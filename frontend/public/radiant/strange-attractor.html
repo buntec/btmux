@@ -33,7 +33,12 @@
 <script>
 (function(){
   var nativeRaf=window.requestAnimationFrame.bind(window), enabled=true, speed=1, maxFps=30, epoch=performance.now(), virtualEpoch=epoch, pending=null, lastFrame=-Infinity;
-  var seed=new URLSearchParams(location.search).get('seed')||'btmux', hash=2166136261;
+  var params=new URLSearchParams(location.search), seed=params.get('seed')||'btmux', hash=2166136261;
+  // Report a reduced devicePixelRatio so shaders allocate smaller canvases
+  // without changing their CSS-pixel layout.
+  var dpr=Object.getOwnPropertyDescriptor(window,'devicePixelRatio')||Object.getOwnPropertyDescriptor(Window.prototype,'devicePixelRatio');
+  var resolution=parseFloat(params.get('resolution'));resolution=resolution>0?Math.min(1,resolution):1;
+  Object.defineProperty(window,'devicePixelRatio',{configurable:true,get:function(){return(dpr&&dpr.get?dpr.get.call(window):1)*resolution}});
   for(var i=0;i<seed.length;i++){hash^=seed.charCodeAt(i);hash=Math.imul(hash,16777619)}
   Math.random=function(){hash+=0x6D2B79F5;var t=hash;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296};
   window.requestAnimationFrame=function(callback){

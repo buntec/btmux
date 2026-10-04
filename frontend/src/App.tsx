@@ -31,6 +31,8 @@ import {
   getWallpaperSaturate,
   getWallpaperSeed,
   getWallpaperShader,
+  getWallpaperFps,
+  getWallpaperResolution,
   getWallpaperSpeed,
 } from './state/configDefaults';
 import { ClientMessage } from './protocol/messages';
@@ -276,6 +278,8 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const wallpaperBlur = getWallpaperBlur(effectiveConfig);
   const wallpaperSaturate = getWallpaperSaturate(effectiveConfig);
   const wallpaperSpeed = getWallpaperSpeed(effectiveConfig);
+  const wallpaperFps = getWallpaperFps(effectiveConfig);
+  const wallpaperResolution = getWallpaperResolution(effectiveConfig);
   const wallpaperSeed = getWallpaperSeed(effectiveConfig);
   const wallpaperFollowsMouse = getWallpaperFollowsMouse(effectiveConfig);
   const wallpaperFollowsKeyboard = getWallpaperFollowsKeyboard(effectiveConfig);
@@ -295,6 +299,8 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           blur={wallpaperBlur}
           saturate={wallpaperSaturate}
           speed={wallpaperSpeed}
+          fps={wallpaperFps}
+          resolution={wallpaperResolution}
           animated={getAnimations(effectiveConfig) && wallpaperSpeed > 0}
           // Modal animations and first-time session mounts both compete with
           // the wallpaper for GPU time. Keep it stopped until that foreground

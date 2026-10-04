@@ -21,7 +21,9 @@ import {
   getWallpaperBlur,
   getWallpaperFollowsKeyboard,
   getWallpaperFollowsMouse,
+  getWallpaperFps,
   getWallpaperOpacity,
+  getWallpaperResolution,
   getWallpaperSaturate,
   getWallpaperSeed,
   getWallpaperSpeed,
@@ -90,6 +92,8 @@ type Draft = {
   wallpaperBlur: number;
   wallpaperSaturate: number;
   wallpaperSpeed: number;
+  wallpaperFps: number;
+  wallpaperResolution: number;
   wallpaperSeed: string;
   wallpaperFollowsMouse: boolean;
   wallpaperFollowsKeyboard: boolean;
@@ -196,6 +200,8 @@ function initialDraft(config: ClientConfig): Draft {
     wallpaperBlur: getWallpaperBlur(config),
     wallpaperSaturate: getWallpaperSaturate(config),
     wallpaperSpeed: getWallpaperSpeed(config),
+    wallpaperFps: getWallpaperFps(config),
+    wallpaperResolution: getWallpaperResolution(config),
     wallpaperSeed: getWallpaperSeed(config),
     wallpaperFollowsMouse: getWallpaperFollowsMouse(config),
     wallpaperFollowsKeyboard: getWallpaperFollowsKeyboard(config),
@@ -239,6 +245,8 @@ const TOML_DEFAULTS = {
   wallpaperBlur: 0,
   wallpaperSaturate: 0.05,
   wallpaperSpeed: 0.2,
+  wallpaperFps: 30,
+  wallpaperResolution: 0.4,
   wallpaperSeed: 'mellow-nebula-dream',
   wallpaperFollowsMouse: true,
   wallpaperFollowsKeyboard: false,
@@ -309,6 +317,8 @@ function toToml(draft: Draft): string {
     numLine('wallpaper-blur', draft.wallpaperBlur, TOML_DEFAULTS.wallpaperBlur, 1),
     numLine('wallpaper-saturate', draft.wallpaperSaturate, TOML_DEFAULTS.wallpaperSaturate, 2),
     numLine('wallpaper-speed', draft.wallpaperSpeed, TOML_DEFAULTS.wallpaperSpeed, 2),
+    intLine('wallpaper-fps', draft.wallpaperFps, TOML_DEFAULTS.wallpaperFps),
+    numLine('wallpaper-resolution', draft.wallpaperResolution, TOML_DEFAULTS.wallpaperResolution, 2),
     strLine('wallpaper-seed', draft.wallpaperSeed, TOML_DEFAULTS.wallpaperSeed),
     boolLine('wallpaper-shader-follows-mouse-cursor', draft.wallpaperFollowsMouse, TOML_DEFAULTS.wallpaperFollowsMouse),
     boolLine(
@@ -389,6 +399,8 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('wallpaperBlur')) update.wallpaper_blur = draft.wallpaperBlur;
   if (dirty.has('wallpaperSaturate')) update.wallpaper_saturate = draft.wallpaperSaturate;
   if (dirty.has('wallpaperSpeed')) update.wallpaper_speed = draft.wallpaperSpeed;
+  if (dirty.has('wallpaperFps')) update.wallpaper_fps = draft.wallpaperFps;
+  if (dirty.has('wallpaperResolution')) update.wallpaper_resolution = draft.wallpaperResolution;
   if (dirty.has('wallpaperSeed')) update.wallpaper_seed = draft.wallpaperSeed;
   if (dirty.has('wallpaperFollowsMouse')) {
     update.wallpaper_shader_follows_mouse_cursor = draft.wallpaperFollowsMouse;
@@ -503,6 +515,8 @@ export function ConfigPage({ config, send }: Props) {
       wallpaper_blur: draft.wallpaperBlur,
       wallpaper_saturate: draft.wallpaperSaturate,
       wallpaper_speed: draft.wallpaperSpeed,
+      wallpaper_fps: draft.wallpaperFps,
+      wallpaper_resolution: draft.wallpaperResolution,
       wallpaper_seed: draft.wallpaperSeed,
       wallpaper_shader_follows_mouse_cursor: draft.wallpaperFollowsMouse,
       wallpaper_shader_follows_keyboard_input: draft.wallpaperFollowsKeyboard,
@@ -818,6 +832,8 @@ export function ConfigPage({ config, send }: Props) {
                         {range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5)}
                         {range('wallpaperSaturate', 'Wallpaper saturation', 0, 3, 0.05)}
                         {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
+                        {range('wallpaperFps', 'Wallpaper frame rate', 1, 120, 1)}
+                        {range('wallpaperResolution', 'Wallpaper resolution', 0.1, 1, 0.05)}
                         <HStack gap={2} align="end">
                           {text('wallpaperSeed', 'Wallpaper seed')}
                           <Button label="Randomize" onClick={() => update('wallpaperSeed', generateWallpaperSeed())} />

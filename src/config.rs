@@ -21,6 +21,8 @@ pub const DEFAULT_DESKTOP_BACKGROUND_OPACITY: f32 = 0.95;
 pub const DEFAULT_WALLPAPER_BLUR: f32 = 0.0;
 pub const DEFAULT_WALLPAPER_SATURATE: f32 = 0.05;
 pub const DEFAULT_WALLPAPER_SPEED: f32 = 0.20;
+pub const DEFAULT_WALLPAPER_FPS: u32 = 30;
+pub const DEFAULT_WALLPAPER_RESOLUTION: f32 = 0.40;
 pub const DEFAULT_WALLPAPER_SEED: &str = "mellow-nebula-dream";
 pub const DEFAULT_WALLPAPER_FOLLOWS_MOUSE: bool = true;
 pub const DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD: bool = false;
@@ -253,6 +255,13 @@ pub struct FileConfig {
     /// Defaults to 0.20.
     #[serde(rename = "wallpaper-speed")]
     pub wallpaper_speed: Option<f32>,
+    /// Frame-rate cap for a procedural wallpaper. Defaults to 30.
+    #[serde(rename = "wallpaper-fps")]
+    pub wallpaper_fps: Option<u32>,
+    /// Render scale for a procedural wallpaper, as a fraction of native
+    /// resolution. Defaults to 0.40.
+    #[serde(rename = "wallpaper-resolution")]
+    pub wallpaper_resolution: Option<f32>,
     /// Deterministic seed used to vary procedural wallpaper colors and form.
     /// Defaults to `mellow-nebula-dream`.
     #[serde(rename = "wallpaper-seed")]
@@ -346,6 +355,8 @@ impl Default for FileConfig {
             wallpaper_blur: Some(DEFAULT_WALLPAPER_BLUR),
             wallpaper_saturate: Some(DEFAULT_WALLPAPER_SATURATE),
             wallpaper_speed: Some(DEFAULT_WALLPAPER_SPEED),
+            wallpaper_fps: Some(DEFAULT_WALLPAPER_FPS),
+            wallpaper_resolution: Some(DEFAULT_WALLPAPER_RESOLUTION),
             wallpaper_seed: Some(DEFAULT_WALLPAPER_SEED.to_string()),
             wallpaper_shader_follows_mouse_cursor: DEFAULT_WALLPAPER_FOLLOWS_MOUSE,
             wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
@@ -729,6 +740,10 @@ pub struct ClientConfig {
     pub wallpaper_saturate: Option<f32>,
     /// Animation speed multiplier for the procedural wallpaper.
     pub wallpaper_speed: f32,
+    /// Frame-rate cap for the procedural wallpaper.
+    pub wallpaper_fps: u32,
+    /// Procedural wallpaper render scale relative to native resolution.
+    pub wallpaper_resolution: f32,
     /// Deterministic seed used to vary procedural wallpaper colors and form.
     pub wallpaper_seed: String,
     pub wallpaper_shader_follows_mouse_cursor: bool,
@@ -1107,6 +1122,10 @@ pub fn generate_config_toml() -> String {
 # wallpaper-saturate = {DEFAULT_WALLPAPER_SATURATE:.2}
 # Procedural wallpaper animation speed. 0 = frozen, 1 = normal.
 # wallpaper-speed = {DEFAULT_WALLPAPER_SPEED:.2}
+# Procedural wallpaper quality vs. performance: frame-rate cap (1-120) and
+# render scale relative to native resolution (0.1-1.0). Lower is cheaper.
+# wallpaper-fps = {DEFAULT_WALLPAPER_FPS}
+# wallpaper-resolution = {DEFAULT_WALLPAPER_RESOLUTION:.2}
 # Deterministic seed for procedural wallpaper colors and form.
 # wallpaper-seed = "{DEFAULT_WALLPAPER_SEED}"
 # Let the shader react to pointer movement and to the active terminal cursor.
@@ -1325,6 +1344,14 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .wallpaper_speed
         .unwrap_or(DEFAULT_WALLPAPER_SPEED)
         .clamp(0.0, 10.0);
+    let wallpaper_fps = file
+        .wallpaper_fps
+        .unwrap_or(DEFAULT_WALLPAPER_FPS)
+        .clamp(1, 120);
+    let wallpaper_resolution = file
+        .wallpaper_resolution
+        .unwrap_or(DEFAULT_WALLPAPER_RESOLUTION)
+        .clamp(0.1, 1.0);
     let wallpaper_seed = file
         .wallpaper_seed
         .clone()
@@ -1411,6 +1438,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_blur,
         wallpaper_saturate,
         wallpaper_speed,
+        wallpaper_fps,
+        wallpaper_resolution,
         wallpaper_seed,
         wallpaper_shader_follows_mouse_cursor: file.wallpaper_shader_follows_mouse_cursor,
         wallpaper_shader_follows_keyboard_input: file.wallpaper_shader_follows_keyboard_input,
@@ -1487,6 +1516,8 @@ pub struct ConfigUpdate {
     pub wallpaper_blur: Option<f32>,
     pub wallpaper_saturate: Option<f32>,
     pub wallpaper_speed: Option<f32>,
+    pub wallpaper_fps: Option<u32>,
+    pub wallpaper_resolution: Option<f32>,
     pub wallpaper_seed: Option<String>,
     pub wallpaper_shader_follows_mouse_cursor: Option<bool>,
     pub wallpaper_shader_follows_keyboard_input: Option<bool>,
@@ -1605,6 +1636,12 @@ impl ConfigUpdate {
         }
         if other.wallpaper_speed.is_some() {
             self.wallpaper_speed = other.wallpaper_speed;
+        }
+        if other.wallpaper_fps.is_some() {
+            self.wallpaper_fps = other.wallpaper_fps;
+        }
+        if other.wallpaper_resolution.is_some() {
+            self.wallpaper_resolution = other.wallpaper_resolution;
         }
         if other.wallpaper_seed.is_some() {
             self.wallpaper_seed = other.wallpaper_seed.clone();
@@ -1746,6 +1783,12 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(speed) = overrides.wallpaper_speed {
         file.wallpaper_speed = Some(speed.clamp(0.0, 10.0));
+    }
+    if let Some(fps) = overrides.wallpaper_fps {
+        file.wallpaper_fps = Some(fps.clamp(1, 120));
+    }
+    if let Some(resolution) = overrides.wallpaper_resolution {
+        file.wallpaper_resolution = Some(resolution.clamp(0.1, 1.0));
     }
     if let Some(seed) = &overrides.wallpaper_seed {
         file.wallpaper_seed = Some(seed.clone());
@@ -1891,6 +1934,8 @@ palette:
         assert_eq!(resolved.wallpaper_saturate, None);
         assert_eq!(resolved.wallpaper_blur, None);
         assert_eq!(resolved.wallpaper_speed, 0.20);
+        assert_eq!(resolved.wallpaper_fps, 30);
+        assert_eq!(resolved.wallpaper_resolution, 0.40);
         assert_eq!(resolved.wallpaper_seed, "mellow-nebula-dream");
         assert!(resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);
@@ -2024,6 +2069,8 @@ palette:
                 wallpaper_blur: Some(8.0),
                 wallpaper_saturate: Some(0.75),
                 wallpaper_speed: Some(0.5),
+                wallpaper_fps: Some(60),
+                wallpaper_resolution: Some(0.75),
                 wallpaper_seed: Some("preview".to_string()),
                 wallpaper_shader_follows_mouse_cursor: Some(false),
                 wallpaper_shader_follows_keyboard_input: Some(false),
@@ -2055,6 +2102,8 @@ palette:
         assert_eq!(resolved.wallpaper_blur, Some(8.0));
         assert_eq!(resolved.wallpaper_saturate, Some(0.75));
         assert_eq!(resolved.wallpaper_speed, 0.5);
+        assert_eq!(resolved.wallpaper_fps, 60);
+        assert_eq!(resolved.wallpaper_resolution, 0.75);
         assert_eq!(resolved.wallpaper_seed, "preview");
         assert!(!resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);

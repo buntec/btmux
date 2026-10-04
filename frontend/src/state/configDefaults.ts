@@ -16,6 +16,8 @@ export const CONFIG_DEFAULTS = {
   wallpaperBlur: 0,
   wallpaperSaturate: 0.05,
   wallpaperSpeed: 0.2,
+  wallpaperFps: 30,
+  wallpaperResolution: 0.4,
   wallpaperSeed: 'mellow-nebula-dream',
   wallpaperFollowsMouse: true,
   wallpaperFollowsKeyboard: false,
@@ -105,6 +107,14 @@ export function getWallpaperSaturate(config: ConfigLike): number {
 
 export function getWallpaperSpeed(config: ConfigLike): number {
   return config?.wallpaper_speed ?? CONFIG_DEFAULTS.wallpaperSpeed;
+}
+
+export function getWallpaperFps(config: ConfigLike): number {
+  return config?.wallpaper_fps ?? CONFIG_DEFAULTS.wallpaperFps;
+}
+
+export function getWallpaperResolution(config: ConfigLike): number {
+  return config?.wallpaper_resolution ?? CONFIG_DEFAULTS.wallpaperResolution;
 }
 
 export function getWallpaperSeed(config: ConfigLike): string {

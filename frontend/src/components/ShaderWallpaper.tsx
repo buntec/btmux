@@ -3,73 +3,7 @@ import { randomizeRadiantColor, randomizeRadiantParams } from '../lib/wallpaperR
 import { findWallpaperShader } from '../lib/wallpaperCatalog';
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
 
-interface WallpaperBudget {
-  maxFps: number;
-  renderScale: number;
-}
-
-// Decorative rendering must leave headroom for latency-sensitive terminal
-// work. Start below display refresh/native resolution, then step down when the
-// main document sees sustained >50ms frames. Recovery is intentionally slower
-// than degradation so quality does not oscillate under marginal GPU load.
-const WALLPAPER_BUDGETS: readonly WallpaperBudget[] = [
-  { maxFps: 30, renderScale: 0.4 },
-  { maxFps: 24, renderScale: 0.3 },
-  { maxFps: 15, renderScale: 0.25 },
-];
-const BUDGET_SAMPLE_MS = 2000;
-const SLOW_FRAME_MS = 50;
-const SLOW_FRAMES_TO_DEGRADE = 3;
-const STABLE_WINDOWS_TO_RECOVER = 5;
-
-function useWallpaperBudget(monitor: boolean): WallpaperBudget {
-  const [level, setLevel] = useState(0);
-
-  useEffect(() => {
-    if (!monitor) return;
-
-    let rafId = 0;
-    let lastFrame = performance.now();
-    let windowStartedAt = lastFrame;
-    let slowFrames = 0;
-    let stableWindows = 0;
-
-    const sample = (now: number) => {
-      const frameDuration = now - lastFrame;
-      if (frameDuration > SLOW_FRAME_MS) {
-        // Count observed slow frames, not the number of missed frame slots.
-        // A single long main-thread pause during terminal/session changes is
-        // transient and should not permanently lower wallpaper resolution.
-        slowFrames += 1;
-      }
-      lastFrame = now;
-
-      if (now - windowStartedAt >= BUDGET_SAMPLE_MS) {
-        if (slowFrames >= SLOW_FRAMES_TO_DEGRADE) {
-          setLevel((current) => Math.min(current + 1, WALLPAPER_BUDGETS.length - 1));
-          stableWindows = 0;
-        } else if (slowFrames === 0) {
-          stableWindows += 1;
-          if (stableWindows >= STABLE_WINDOWS_TO_RECOVER) {
-            setLevel((current) => Math.max(0, current - 1));
-            stableWindows = 0;
-          }
-        } else {
-          stableWindows = 0;
-        }
-        slowFrames = 0;
-        windowStartedAt = now;
-      }
-
-      rafId = requestAnimationFrame(sample);
-    };
-
-    rafId = requestAnimationFrame(sample);
-    return () => cancelAnimationFrame(rafId);
-  }, [monitor]);
-
-  return WALLPAPER_BUDGETS[level];
-}
+const RESOLUTION_RELOAD_DELAY_MS = 300;
 
 interface ShaderWallpaperProps {
   shaderId: string;
@@ -77,6 +11,10 @@ interface ShaderWallpaperProps {
   blur: number;
   saturate: number;
   speed: number;
+  /** Frame-rate cap. */
+  fps: number;
+  /** Render scale relative to native resolution. */
+  resolution: number;
   animated: boolean;
   paused?: boolean;
   seed: string;
@@ -90,6 +28,8 @@ function RadiantShaderWallpaper({
   blur,
   saturate,
   speed,
+  fps,
+  resolution,
   animated,
   paused = false,
   seed,
@@ -98,14 +38,20 @@ function RadiantShaderWallpaper({
 }: ShaderWallpaperProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const shader = findWallpaperShader(shaderId);
-  const budget = useWallpaperBudget(animated && !paused);
+  // Shaders read devicePixelRatio at startup, so resolution changes reload the
+  // iframe. Debounce so dragging the settings slider doesn't reload per tick.
+  const [loadedResolution, setLoadedResolution] = useState(resolution);
+  useEffect(() => {
+    const timer = setTimeout(() => setLoadedResolution(resolution), RESOLUTION_RELOAD_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [resolution]);
 
   useLayoutEffect(() => {
     iframeRef.current?.contentWindow?.postMessage(
-      { type: 'btmux-runtime', animated: animated && !paused, speed, maxFps: budget.maxFps },
+      { type: 'btmux-runtime', animated: animated && !paused, speed, maxFps: fps },
       '*',
     );
-  }, [animated, paused, speed, budget.maxFps]);
+  }, [animated, paused, speed, fps]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -113,7 +59,7 @@ function RadiantShaderWallpaper({
 
     const postRuntime = () =>
       iframe.contentWindow?.postMessage(
-        { type: 'btmux-runtime', animated: animated && !paused, speed, maxFps: budget.maxFps },
+        { type: 'btmux-runtime', animated: animated && !paused, speed, maxFps: fps },
         '*',
       );
     const postParams = () => {
@@ -158,7 +104,7 @@ function RadiantShaderWallpaper({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener(WALLPAPER_KEYBOARD_CURSOR_EVENT, handleKeyboardCursor);
     };
-  }, [shader, speed, animated, paused, seed, followsMouseCursor, followsKeyboardInput, budget.maxFps]);
+  }, [shader, speed, animated, paused, seed, followsMouseCursor, followsKeyboardInput, fps]);
 
   if (!shader) return null;
   const randomizedColor = randomizeRadiantColor(shader.id, seed);
@@ -178,17 +124,15 @@ function RadiantShaderWallpaper({
     >
       <iframe
         ref={iframeRef}
-        src={`${shader.src}?seed=${encodeURIComponent(seed)}`}
+        src={`${shader.src}?seed=${encodeURIComponent(seed)}&resolution=${loadedResolution}`}
         title={shader.title}
         sandbox="allow-scripts"
         style={{
           position: 'absolute',
           border: 0,
           inset: 0,
-          width: `${100 * budget.renderScale}%`,
-          height: `${100 * budget.renderScale}%`,
-          transform: `scale(${1 / budget.renderScale})`,
-          transformOrigin: 'top left',
+          width: '100%',
+          height: '100%',
           pointerEvents: 'none',
         }}
       />

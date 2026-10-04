@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "btmux-desktop"
-version = "0.0.108"
+version = "0.0.109"
 dependencies = [
  "libc",
  "reqwest 0.12.28",

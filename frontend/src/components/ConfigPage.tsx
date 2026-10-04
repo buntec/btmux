@@ -227,7 +227,7 @@ const TOML_DEFAULTS = {
   windowGridCount: 4,
   wallpaperShader: '',
   wallpaperOpacity: 0.1,
-  desktopBackgroundOpacity: 0.8,
+  desktopBackgroundOpacity: 0.95,
   wallpaperBlur: 0,
   wallpaperSaturate: 0.05,
   wallpaperSpeed: 0.2,

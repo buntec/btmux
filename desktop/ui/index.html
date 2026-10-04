@@ -5,8 +5,125 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>btmux</title>
     <style>
+      :root { color-scheme: dark; }
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #171717; color: #ddd; font: 14px system-ui, sans-serif; }
+      main { width: min(480px, calc(100vw - 64px)); padding: 32px; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 12px; }
+      p { color: #aaa; line-height: 1.5; }
+      ul { list-style: none; padding: 0; margin: 24px 0; }
+      li + li { margin-top: 8px; }
+      button { background: #252525; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 12px 16px; cursor: pointer; font: inherit; }
+      button:hover { background: #333; }
+      button:focus-visible { outline: 2px solid #b4c9ff; outline-offset: 3px; }
+      button:disabled { opacity: 0.5; cursor: wait; }
+      .server { width: 100%; text-align: left; }
+      .server strong, .server small { display: block; }
+      .server small { margin-top: 4px; color: #aaa; }
+      .actions { display: flex; gap: 8px; }
+      .hint { font-size: 12px; }
+      #error { color: #ffb4b4; }
+      [hidden] { display: none; }
     </style>
   </head>
-  <body>Starting btmux…</body>
+  <body>
+    <main>
+      <h1 id="heading">Looking for btmux servers…</h1>
+      <p id="description"></p>
+      <ul id="servers" aria-label="Running btmux servers"></ul>
+      <p id="status" role="status" aria-live="polite"></p>
+      <p id="error" role="alert" hidden></p>
+      <section id="controls" hidden>
+        <div class="actions">
+          <button id="start" type="button">Start desktop server</button>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+        <p class="hint">New desktop servers stop when you quit.</p>
+      </section>
+    </main>
+    <script>
+      const invoke = (command, args) => window.__TAURI__.core.invoke(command, args);
+      const heading = document.getElementById("heading");
+      const description = document.getElementById("description");
+      const servers = document.getElementById("servers");
+      const status = document.getElementById("status");
+      const error = document.getElementById("error");
+      const controls = document.getElementById("controls");
+
+      function busy(message) {
+        status.textContent = message;
+        error.hidden = true;
+        document.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      }
+
+      function idle() {
+        status.textContent = "";
+        controls.hidden = false;
+        document.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+      }
+
+      function showError(message) {
+        idle();
+        error.textContent = String(message);
+        error.hidden = false;
+      }
+
+      async function start() {
+        busy("Starting btmux…");
+        try {
+          await invoke("start_server");
+        } catch (message) {
+          heading.textContent = "Could not start btmux";
+          showError(message);
+        }
+      }
+
+      async function connect(server) {
+        busy(`Connecting to ${server.profile}…`);
+        try {
+          await invoke("connect_server", { address: server.address });
+        } catch (message) {
+          showError(message);
+        }
+      }
+
+      async function refresh(autoStart = false) {
+        busy("Looking for running servers…");
+        try {
+          const choices = await invoke("discover_servers");
+          servers.replaceChildren();
+          for (const server of choices) {
+            const item = document.createElement("li");
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "server";
+            const name = document.createElement("strong");
+            name.textContent = `Connect to ${server.profile}`;
+            const address = document.createElement("small");
+            address.textContent = server.url;
+            button.append(name, address);
+            button.addEventListener("click", () => connect(server));
+            item.append(button);
+            servers.append(item);
+          }
+          heading.textContent = choices.length ? "Connect to btmux" : "No running servers found";
+          description.textContent = choices.length
+            ? "Connected servers keep running when you quit."
+            : "Start a desktop server or refresh.";
+          if (autoStart && !choices.length) {
+            await start();
+          } else {
+            idle();
+            servers.querySelector("button")?.focus();
+          }
+        } catch (message) {
+          heading.textContent = "Could not look for servers";
+          showError(message);
+        }
+      }
+
+      document.getElementById("start").addEventListener("click", start);
+      document.getElementById("refresh").addEventListener("click", () => refresh());
+      refresh(true);
+    </script>
+  </body>
 </html>

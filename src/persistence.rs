@@ -18,13 +18,7 @@ use crate::session::manager::SessionSnapshot;
 /// Resolve the XDG state base dir: `$XDG_STATE_HOME/btmux/`, falling back to
 /// `$HOME/.local/state/btmux/`. Returns `None` when neither env var is set.
 fn state_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state"))
-        })?;
-    Some(base.join("btmux"))
+    crate::discovery::state_dir()
 }
 
 /// Resolve the state file path. Without a profile this is

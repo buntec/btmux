@@ -93,6 +93,13 @@ restored; restored panes spawn fresh shells lazily in their saved cwd. A
 per-profile OS file lock prevents two btmux processes from owning the same
 profile.
 
+`discovery.rs` is shared with the Tauri launcher. After binding, local servers
+publish an owner-only `state.server` record beside their state file, containing
+the loopback endpoint and credential; normal shutdown removes it. The desktop
+startup picker probes these records through the authenticated API and installs
+an HTTP-only cookie before connecting. Reused servers remain independently
+owned; only a bundled private server is stopped when the desktop app exits.
+
 ### UI and theme
 
 Astryx provides the app shell, navigation, forms, dialogs, tabs, and notifications.

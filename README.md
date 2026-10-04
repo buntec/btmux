@@ -34,10 +34,13 @@ Download a `btmux-desktop-*` package from [Releases](https://github.com/buntec/b
   open **System Settings → Privacy & Security → Open Anyway**, then confirm.
 - **Linux (x86-64 or ARM64, Debian/Ubuntu):** install the `.deb` with `sudo apt install ./btmux-desktop-*.deb`.
 
-Launch btmux from your applications menu. The app bundles its own local server and
-signs you in automatically. It uses a separate `desktop` session profile and the
-same configuration file as the browser version. Quitting the app stops its server
-and running shells; the saved session layout is restored on the next launch.
+Launch btmux from your applications menu. On startup, the app offers to connect to
+running local btmux servers and signs you in automatically. Connected servers keep
+running when the app quits, so you can return to the same terminal sessions from
+the desktop app or a browser. If none are found, it starts its bundled server with
+the separate `desktop` profile and the same configuration file. This private
+server stops when the app quits; its saved session layout is restored on the next
+launch. See [desktop details](desktop/README.md) for discovery and service setup.
 
 ### Browser / CLI
 

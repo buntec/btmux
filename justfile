@@ -54,6 +54,10 @@ desktop-build:
 desktop-check: _desktop-sidecar-debug
     cd desktop/src-tauri && cargo check
 
+# Desktop launcher UI regressions (no server needed).
+test-desktop-launcher:
+    cd frontend && bun desktop-launcher-test.ts
+
 # Type-check the frontend without emitting
 check-frontend:
     cd frontend && bunx tsc --noEmit

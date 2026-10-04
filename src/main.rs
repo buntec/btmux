@@ -2,6 +2,9 @@ mod agent_hooks;
 mod api;
 mod auth;
 mod config;
+// The desktop launcher also compiles this shared module.
+#[allow(dead_code)]
+mod discovery;
 mod file_git;
 mod file_search;
 mod fs_ops;
@@ -306,6 +309,22 @@ async fn main() {
         }
         std::process::exit(1);
     });
+
+    let _registration =
+        state_file.as_ref().and_then(|path| {
+            match discovery::Registration::publish(
+                path,
+                listener.local_addr().ok()?,
+                args.profile.clone(),
+                auth::shell_token()?.to_string(),
+            ) {
+                Ok(registration) => registration,
+                Err(error) => {
+                    tracing::warn!("could not register server for desktop discovery: {error}");
+                    None
+                }
+            }
+        });
 
     if !args.no_browser {
         let url = format!("http://{}:{}", args.host, args.port);

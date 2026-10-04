@@ -1,7 +1,7 @@
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
 import type { AgentState, AgentStatus, Theme } from '../state/types';
-import { DEFAULT_THEME } from '../state/defaultTheme';
-import { Token } from '@astryxdesign/core/Token';
+import { Token, type TokenProps } from '@astryxdesign/core/Token';
+import { Tooltip } from '@astryxdesign/core/Tooltip';
 
 /**
  * Height of a pane title bar for a given terminal font size. TerminalPane insets
@@ -166,7 +166,7 @@ export function PaneTitleBar({
           {cols}×{rows}
         </span>
       ) : null}
-      <AgentStatusBadge theme={theme} status={agentStatus} />
+      <AgentStatusBadge status={agentStatus} />
       <span aria-label={`Pane ${index}`} style={badge}>
         {index}
       </span>
@@ -174,17 +174,7 @@ export function PaneTitleBar({
   );
 }
 
-export function PaneCorner({
-  theme,
-  index,
-  status,
-  isActive,
-}: {
-  theme: Theme | null;
-  index: number;
-  status?: AgentStatus;
-  isActive: boolean;
-}) {
+export function PaneCorner({ index, status, isActive }: { index: number; status?: AgentStatus; isActive: boolean }) {
   return (
     <div
       style={{
@@ -200,85 +190,22 @@ export function PaneCorner({
         pointerEvents: 'none',
       }}
     >
-      <AgentStatusBadge theme={theme} status={status} />
+      <AgentStatusBadge status={status} />
       <Token color={isActive ? 'blue' : 'gray'} aria-label={`Pane ${index}`} label={String(index)} />
     </div>
   );
 }
 
-export function AgentStatusBadge({
-  theme,
-  status,
-  overlay = false,
-}: {
-  theme: Theme | null;
-  status?: AgentStatus;
-  overlay?: boolean;
-}) {
-  const c = chromePalette(theme);
+const AGENT_TOKEN_COLORS: Record<Exclude<AgentState, 'unknown'>, TokenProps['color']> = {
+  blocked: 'yellow',
+  working: 'blue',
+  done: 'green',
+  idle: 'gray',
+};
+
+export function AgentStatusBadge({ status }: { status?: AgentStatus }) {
   if (!status || status.state === 'unknown') return null;
-  const label = status.state;
-
-  const color = agentStateColor(status.state, c, theme);
-  return (
-    <span
-      title={status.message ?? undefined}
-      aria-label={`Agent ${status.agent ? `${status.agent} ` : ''}${label}`}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '4px',
-        color,
-        fontSize: overlay ? '11px' : 'inherit',
-        fontWeight: 700,
-        textTransform: 'lowercase',
-        flex: 'none',
-        ...(overlay
-          ? {
-              position: 'absolute',
-              top: '7px',
-              right: '8px',
-              zIndex: 3,
-              padding: '2px 6px',
-              border: `1px solid ${withAlpha(color, 0.45)}`,
-              borderRadius: '4px',
-              background: withAlpha(c.barBg, 0.92),
-              pointerEvents: 'none',
-            }
-          : {}),
-      }}
-    >
-      <span
-        style={{
-          width: '6px',
-          height: '6px',
-          borderRadius: '50%',
-          background: color,
-          boxShadow: `0 0 6px ${withAlpha(color, 0.55)}`,
-        }}
-      />
-      {status.agent ? `${status.agent} ` : ''}
-      {label}
-    </span>
-  );
-}
-
-function agentStateColor(
-  state: AgentState | undefined,
-  chrome: ReturnType<typeof chromePalette>,
-  theme: Theme | null,
-): string {
-  const t = theme ?? DEFAULT_THEME;
-  switch (state) {
-    case 'blocked':
-      return t.yellow;
-    case 'working':
-      return t.blue;
-    case 'done':
-      return t.green;
-    case 'idle':
-      return chrome.fgMuted;
-    default:
-      return chrome.fgDim;
-  }
+  const label = `${status.agent ? `${status.agent} ` : ''}${status.state}`;
+  const token = <Token size="sm" color={AGENT_TOKEN_COLORS[status.state]} label={label} />;
+  return status.message ? <Tooltip content={status.message}>{token}</Tooltip> : token;
 }

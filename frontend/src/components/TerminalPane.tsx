@@ -710,9 +710,7 @@ export function TerminalPane({
           onToggleLatex={toggleLatex}
         />
       )}
-      {!showTitle && (
-        <PaneCorner theme={config?.theme ?? null} index={paneIndex ?? 0} status={agentStatus} isActive={isActive} />
-      )}
+      {!showTitle && <PaneCorner index={paneIndex ?? 0} status={agentStatus} isActive={isActive} />}
       {/* Focus ring — only rendered on the active/zoomed pane so mounting it
           replays btm-bloom on every focus change without needing a key trick. */}
       {(isActive || isZoomed) && (

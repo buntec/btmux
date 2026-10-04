@@ -4,12 +4,12 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Layout, LayoutContent, LayoutFooter, HStack, VStack } from '@astryxdesign/core/Layout';
 import { Grid } from '@astryxdesign/core/Grid';
 import { SelectableCard } from '@astryxdesign/core/SelectableCard';
-import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
-import type { AgentState, AgentStatus } from '../state/types';
+import type { AgentStatus } from '../state/types';
+import { AgentStatusBadge } from './PaneTitleBar';
 import { MirrorPane } from './MirrorPane';
 
 interface Props {
@@ -181,10 +181,7 @@ export function AgentGrid({ send }: Props) {
                 style={{ gridTemplateRows: `repeat(${rows}, minmax(160px, 1fr))` }}
               >
                 {entries.map((entry, i) => {
-                  const status = entry.agentStatus;
                   const paneLabel = entry.paneTitle || `pane ${entry.paneIndex + 1}`;
-                  const state =
-                    status.state === 'unknown' ? null : `${status.agent ? `${status.agent} ` : ''}${status.state}`;
                   return (
                     <SelectableCard
                       key={entry.paneId}
@@ -200,17 +197,9 @@ export function AgentGrid({ send }: Props) {
                           <Text color="secondary">{entry.sessionName}</Text>
                           <Text>{entry.windowName}</Text>
                           <Text color="secondary">{paneLabel}</Text>
-                          {state && (
-                            <HStack gap={1} vAlign="center" className="ml-auto">
-                              <StatusDot
-                                variant={STATUS_VARIANTS[status.state]}
-                                label={state}
-                                tooltip={status.message ?? undefined}
-                                isPulsing={status.state === 'working'}
-                              />
-                              <Text color="secondary">{state}</Text>
-                            </HStack>
-                          )}
+                          <HStack className="ml-auto">
+                            <AgentStatusBadge status={entry.agentStatus} />
+                          </HStack>
                         </HStack>
                         <VStack data-agent-mirror className="relative min-h-0 flex-1 overflow-hidden">
                           {mirrorsReady && <MirrorPane paneId={entry.paneId} visible={open} />}
@@ -241,14 +230,6 @@ export function AgentGrid({ send }: Props) {
     </Dialog>
   );
 }
-
-const STATUS_VARIANTS: Record<AgentState, StatusDotProps['variant']> = {
-  blocked: 'warning',
-  working: 'accent',
-  done: 'success',
-  idle: 'neutral',
-  unknown: 'neutral',
-};
 
 const HINTS: [string[], string][] = [
   [['up', 'down', 'left', 'right'], 'move'],

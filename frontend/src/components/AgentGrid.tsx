@@ -1,11 +1,15 @@
-import { Dialog } from '@astryxdesign/core/Dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { Layout, LayoutContent, LayoutFooter, HStack, VStack } from '@astryxdesign/core/Layout';
+import { Grid } from '@astryxdesign/core/Grid';
+import { SelectableCard } from '@astryxdesign/core/SelectableCard';
+import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
+import { Text } from '@astryxdesign/core/Text';
+import { Kbd } from '@astryxdesign/core/Kbd';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
-import { DEFAULT_THEME } from '../state/defaultTheme';
-import type { AgentStatus } from '../state/types';
-import { AgentStatusBadge } from './PaneTitleBar';
+import type { AgentState, AgentStatus } from '../state/types';
 import { MirrorPane } from './MirrorPane';
 
 interface Props {
@@ -76,13 +80,11 @@ export function AgentGrid({ send }: Props) {
   const cols = Math.max(1, Math.ceil(Math.sqrt(entries.length)));
   const rows = Math.max(1, Math.ceil(entries.length / cols));
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const prevFocusRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const wasOpen = useRef(false);
 
   useEffect(() => {
     if (open && !wasOpen.current) {
-      prevFocusRef.current = document.activeElement as HTMLElement | null;
       const match = location.pathname.match(/^\/s\/([^/]+)/);
       const sessionName = match ? decodeURIComponent(match[1]) : null;
       const session = sessionName ? allSessions.find((s) => s.name === sessionName) : null;
@@ -90,22 +92,14 @@ export function AgentGrid({ send }: Props) {
       const activePaneId = activeWindow?.panes[activeWindow.active_pane]?.id;
       const idx = activePaneId ? entries.findIndex((entry) => entry.paneId === activePaneId) : -1;
       setSelectedIdx(idx >= 0 ? idx : 0);
-      containerRef.current?.focus();
     }
     wasOpen.current = open;
   }, [open, entries, location.pathname, allSessions]);
 
   const clampedIdx = Math.min(selectedIdx, Math.max(0, entries.length - 1));
 
-  const cancel = () => {
-    setOpen(false);
-    const prev = prevFocusRef.current;
-    if (prev && prev.isConnected) {
-      window.setTimeout(() => {
-        if (prev.isConnected) prev.focus();
-      }, 0);
-    }
-  };
+  // The native dialog restores focus to the pane on close.
+  const cancel = () => setOpen(false);
 
   const select = (entry: AgentPaneEntry | undefined) => {
     if (!entry) return;
@@ -151,101 +145,114 @@ export function AgentGrid({ send }: Props) {
 
   if (!mounted) return null;
 
-  const theme = config?.theme;
-  const bg = theme?.background ?? DEFAULT_THEME.background;
-  const dimFg = theme?.brightBlack ?? DEFAULT_THEME.brightBlack;
-  const ringColor = theme?.blue ?? DEFAULT_THEME.blue;
-  const cellBorder = theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
-
   return (
     <Dialog
+      ref={dialogRef}
+      tabIndex={-1}
       isOpen={open}
       onOpenChange={(value) => {
         if (!value) cancel();
       }}
-      aria-label="Agent overview"
       variant="fullscreen"
-      padding={0}
+      onKeyDown={onKeyDown}
+      onFocus={(e) => {
+        // MirrorPane's Terminal.open() focuses its textarea; keep keys on the dialog.
+        if ((e.target as Element).closest('[data-agent-mirror]')) dialogRef.current?.focus();
+      }}
     >
-      <div
-        ref={containerRef}
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        style={{
-          position: 'relative',
-          height: '100dvh',
-          display: open ? 'grid' : 'none',
-          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${rows}, minmax(160px, 1fr))`,
-          gap: '8px',
-          padding: '8px',
-          background: bg,
-          outline: 'none',
-          overflow: 'auto',
-          zIndex: 31,
-          boxSizing: 'border-box',
-          fontFamily: 'var(--btmux-font)',
-          fontWeight: 'var(--btmux-font-weight)',
-        }}
-      >
-        {entries.length === 0 && (
-          <div style={{ color: dimFg, padding: '16px', gridColumn: '1 / -1' }}>
-            No agents detected. Install agent hooks for status and notifications.
-          </div>
-        )}
-        {entries.map((entry, i) => {
-          const isSelected = i === clampedIdx;
-          return (
-            <div
-              key={entry.paneId}
-              onClick={() => select(entry)}
-              style={{
-                position: 'relative',
-                minWidth: 0,
-                minHeight: 0,
-                overflow: 'hidden',
-                cursor: 'pointer',
-                border: `2px solid ${isSelected ? ringColor : cellBorder}`,
-                boxShadow: isSelected ? `0 0 0 2px ${ringColor}` : undefined,
-                boxSizing: 'border-box',
-                background: bg,
-              }}
-            >
-              <div style={{ position: 'absolute', inset: 0, paddingBottom: '26px', boxSizing: 'border-box' }}>
-                {mirrorsReady && <MirrorPane paneId={entry.paneId} visible={open} />}
-              </div>
-              <AgentStatusBadge theme={theme ?? null} status={entry.agentStatus} overlay />
-              <div
-                style={{
-                  position: 'absolute',
-                  insetInline: 0,
-                  bottom: 0,
-                  height: '26px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '0 8px',
-                  boxSizing: 'border-box',
-                  background: bg,
-                  color: theme?.foreground ?? DEFAULT_THEME.foreground,
-                  fontSize: '12px',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  zIndex: 2,
-                }}
+      <Layout
+        header={
+          <DialogHeader
+            title="Agents"
+            onOpenChange={(value) => {
+              if (!value) cancel();
+            }}
+          />
+        }
+        content={
+          <LayoutContent padding={4}>
+            {entries.length === 0 ? (
+              <Text color="secondary">No agents detected. Install agent hooks for status and notifications.</Text>
+            ) : (
+              <Grid
+                columns={cols}
+                gap={3}
+                minHeight="100%"
+                style={{ gridTemplateRows: `repeat(${rows}, minmax(160px, 1fr))` }}
               >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {entry.sessionName} / {entry.windowName}
-                </span>
-                <span style={{ color: dimFg, marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {entry.paneTitle || `pane ${entry.paneIndex + 1}`}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                {entries.map((entry, i) => {
+                  const status = entry.agentStatus;
+                  const paneLabel = entry.paneTitle || `pane ${entry.paneIndex + 1}`;
+                  const state =
+                    status.state === 'unknown' ? null : `${status.agent ? `${status.agent} ` : ''}${status.state}`;
+                  return (
+                    <SelectableCard
+                      key={entry.paneId}
+                      label={`${entry.sessionName} › ${entry.windowName} › ${paneLabel}`}
+                      isSelected={i === clampedIdx}
+                      onChange={() => select(entry)}
+                      padding={2}
+                      height="100%"
+                    >
+                      <VStack gap={2} className="h-full min-h-0">
+                        <HStack gap={2} vAlign="center" className="min-w-0">
+                          {i < 9 && <Kbd keys={String(i + 1)} />}
+                          <Text color="secondary">{entry.sessionName}</Text>
+                          <Text>{entry.windowName}</Text>
+                          <Text color="secondary">{paneLabel}</Text>
+                          {state && (
+                            <HStack gap={1} vAlign="center" className="ml-auto">
+                              <StatusDot
+                                variant={STATUS_VARIANTS[status.state]}
+                                label={state}
+                                tooltip={status.message ?? undefined}
+                                isPulsing={status.state === 'working'}
+                              />
+                              <Text color="secondary">{state}</Text>
+                            </HStack>
+                          )}
+                        </HStack>
+                        <VStack data-agent-mirror className="relative min-h-0 flex-1 overflow-hidden">
+                          {mirrorsReady && <MirrorPane paneId={entry.paneId} visible={open} />}
+                        </VStack>
+                      </VStack>
+                    </SelectableCard>
+                  );
+                })}
+              </Grid>
+            )}
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter hasDivider>
+            <HStack gap={4} wrap="wrap">
+              {HINTS.map(([keys, label]) => (
+                <HStack key={label} gap={1} vAlign="center">
+                  {keys.map((key) => (
+                    <Kbd key={key} keys={key} />
+                  ))}
+                  <Text color="secondary">{label}</Text>
+                </HStack>
+              ))}
+            </HStack>
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   );
 }
+
+const STATUS_VARIANTS: Record<AgentState, StatusDotProps['variant']> = {
+  blocked: 'warning',
+  working: 'accent',
+  done: 'success',
+  idle: 'neutral',
+  unknown: 'neutral',
+};
+
+const HINTS: [string[], string][] = [
+  [['up', 'down', 'left', 'right'], 'move'],
+  [['1', '9'], 'jump to cell'],
+  [['enter'], 'switch'],
+  [['esc'], 'close'],
+];

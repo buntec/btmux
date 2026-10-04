@@ -100,6 +100,10 @@ impl Replay {
         }
     }
 
+    pub fn screen_revision(&self) -> u64 {
+        self.live.revision()
+    }
+
     pub fn screen_snapshot(&self) -> super::screen::ScreenSnapshot {
         self.live.snapshot()
     }

@@ -139,11 +139,25 @@ resize events, independently of browser viewers and replay history. About every
 300 ms, it evaluates bundled TOML manifests against the screen and OSC title and
 progress signals. Rules recognize working indicators, approval dialogs, and idle
 prompts. They scope matches to the current UI to avoid old transcript text.
-Working/blocked transitions to idle or unknown settle for 700 ms to avoid redraw
-flicker. Missing indicators do not prove completion: only completion reports set
-`done`. A fresh hook report suppresses older screen evidence; subsequent screen
-updates can correct missed hooks. Explicit statuses with a source other than
-`hook`, `process`, or `screen` remain reporter-controlled.
+Screen-only working/blocked transitions to idle or unknown settle for 700 ms to
+avoid redraw flicker. Missing indicators do not prove completion: only
+completion reports set `done`, and idle screens do not acknowledge it.
+
+When hooks and screens disagree, the more reliable evidence wins:
+
+1. `POST /agent-status` reports are reporter-controlled; screen detection never
+   overrides them.
+2. Hook reports outrank screens. A hook ignores screen evidence produced before
+   it. An unmatched or `unknown` screen never overrides a hook, and a screen that
+   agrees keeps the hook's source and message.
+3. A matched screen rule that contradicts a hook for 1.5 s wins, which corrects
+   missed hooks such as an interrupt without `Stop`. The next hook takes over again.
+4. Process presence alone reports `unknown` activity.
+
+Hooks may report a wrapper's child process; the process scan's own choice
+identifies the agent and selects its manifest. Names reported by hooks take
+precedence over process names. A newly detected agent ignores OSC titles that a
+previous program left behind.
 
 The generated hooks remain useful for session/turn identities, completion
 messages, and notifications. Reinstall older hook snippets to receive those
@@ -195,7 +209,8 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
   "${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/agent-status"
 ```
 
-The response includes `status`, tracked `process` identity, and the most recent
+The response includes `status`, the `authority` that set it (`explicit`, `hook`,
+`screen`, or `process`), tracked `process` identity, and the most recent
 `detection`: matched rule, region, priority, manifest version/source, screen
 revision, and visible evidence flags. It excludes terminal contents. A null rule
 means no rule matched; a null detection means no screen evaluation is available.

@@ -150,14 +150,38 @@ pub struct AgentReport {
     pub message: Option<String>,
 }
 
+/// Evidence that set the current status. Later variants win conflicts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Authority {
+    /// Process presence only; activity unknown.
+    Process,
+    /// Screen manifest rules.
+    Screen,
+    /// Structured lifecycle reports from the agent.
+    Hook,
+    /// `POST /agent-status`; screen detection never overrides it.
+    Explicit,
+}
+
+/// Screen-only flicker guard for working/blocked -> idle/unknown.
+const SCREEN_SETTLE: Duration = Duration::from_millis(700);
+/// How long positive screen evidence must contradict a hook before winning.
+const HOOK_OVERRIDE_SETTLE: Duration = Duration::from_millis(1500);
+
 pub struct AgentLifecycle {
     pub status: AgentStatus,
+    authority: Authority,
     session_id: Option<String>,
     turn_id: Option<String>,
     turn_complete: bool,
     blocked_tool_id: Option<String>,
+    /// Identity reported by hooks (may be a wrapper's child).
     process: Option<AgentProcess>,
-    observed_process: bool,
+    /// Identity selected by the process scan; also keys the manifest.
+    observed: Option<AgentProcess>,
+    observed_name: Option<String>,
+    named_by_report: bool,
     last_seen: Instant,
     ended: bool,
     ended_process: Option<AgentProcess>,
@@ -171,29 +195,48 @@ pub struct AgentLifecycle {
 
 impl AgentLifecycle {
     pub fn detected(process: AgentProcess, name: String, now: Instant) -> Self {
-        let mut lifecycle = Self::explicit(
+        let mut lifecycle = Self::new(
             AgentStatus {
                 state: AgentState::Unknown,
-                agent: Some(name),
+                agent: Some(name.clone()),
                 source: Some("process".to_string()),
                 message: None,
             },
+            Authority::Process,
             now,
         );
-        lifecycle.process = Some(process);
-        lifecycle.observed_process = true;
+        lifecycle.observed = Some(process);
+        lifecycle.observed_name = Some(name);
         lifecycle
     }
 
     pub fn explicit(status: AgentStatus, now: Instant) -> Self {
+        Self::new(status, Authority::Explicit, now)
+    }
+
+    pub fn reported(now: Instant) -> Self {
+        Self::new(
+            AgentStatus {
+                state: AgentState::Idle,
+                ..AgentStatus::default()
+            },
+            Authority::Hook,
+            now,
+        )
+    }
+
+    fn new(status: AgentStatus, authority: Authority, now: Instant) -> Self {
         Self {
             status,
+            authority,
             session_id: None,
             turn_id: None,
             turn_complete: false,
             blocked_tool_id: None,
             process: None,
-            observed_process: false,
+            observed: None,
+            observed_name: None,
+            named_by_report: false,
             last_seen: now,
             ended: false,
             ended_process: None,
@@ -213,8 +256,9 @@ impl AgentLifecycle {
         revision: u64,
         now: Instant,
     ) -> bool {
-        let replaced = self.ended || (self.observed_process && self.process != Some(process));
-        let changed_name = self.status.agent.as_deref() != Some(name);
+        // Hooks may report a wrapper's child; only the scan's own choice
+        // identifies a replacement.
+        let replaced = self.ended || self.observed.is_some_and(|current| current != process);
         if replaced {
             let mut retired_sessions = std::mem::take(&mut self.retired_sessions);
             if let Some(session) = self.session_id.take() {
@@ -225,18 +269,29 @@ impl AgentLifecycle {
             }
             *self = Self::detected(process, name.to_string(), now);
             self.retired_sessions = retired_sessions;
-            self.signal_floor = revision;
-            self.screen_floor = Some(revision);
-        } else {
-            self.process = Some(process);
-            self.observed_process = true;
-            self.status.agent = Some(name.to_string());
+            self.suppress_old_screen(revision);
+            return true;
         }
-        replaced || changed_name
+        self.observed = Some(process);
+        self.observed_name = Some(name.to_string());
+        // A reported name outranks the process-derived one.
+        if self.named_by_report || self.status.agent.as_deref() == Some(name) {
+            return false;
+        }
+        self.status.agent = Some(name.to_string());
+        true
     }
 
     pub fn process(&self) -> Option<AgentProcess> {
-        self.process
+        self.observed.or(self.process)
+    }
+
+    pub fn observed_process(&self) -> Option<AgentProcess> {
+        self.observed
+    }
+
+    pub fn authority(&self) -> Authority {
+        self.authority
     }
 
     pub fn scan_screen(
@@ -246,15 +301,7 @@ impl AgentLifecycle {
         foreground: bool,
         now: Instant,
     ) -> bool {
-        if self.ended || !self.observed_process {
-            return false;
-        }
-        if self
-            .status
-            .source
-            .as_deref()
-            .is_some_and(|source| !matches!(source, "hook" | "process" | "screen"))
-        {
+        if self.ended || self.observed.is_none() || self.authority == Authority::Explicit {
             return false;
         }
         if !foreground {
@@ -266,6 +313,7 @@ impl AgentLifecycle {
             self.status.state = AgentState::Unknown;
             self.status.source = Some("process".into());
             self.status.message = None;
+            self.authority = Authority::Process;
             self.detection = None;
             return self.status != previous;
         }
@@ -280,7 +328,7 @@ impl AgentLifecycle {
         }
         self.screen_floor = None;
         self.screen_revision = Some(screen.revision);
-        let Some(name) = self.status.agent.as_deref() else {
+        let Some(name) = self.observed_name.as_deref() else {
             return false;
         };
         let Some(mut detection) = detector.detect(
@@ -302,49 +350,70 @@ impl AgentLifecycle {
             return false;
         };
         detection.screen_revision = screen.revision;
-        self.detection = Some(detection.clone());
-        if detection.skip_state_update {
+        let Some((state, settle)) = self.screen_verdict(&detection) else {
+            self.detection = Some(detection);
             self.pending_screen = None;
             return false;
-        }
-        if detection.rule.is_none()
-            && self.status.source.as_deref() != Some("screen")
-            && !matches!(self.status.state, AgentState::Working | AgentState::Blocked)
-        {
-            self.pending_screen = None;
-            return false;
-        }
-        // Idle screens do not acknowledge an unread hook completion.
-        if self.status.state == AgentState::Done && detection.state == AgentState::Idle {
-            self.pending_screen = None;
-            return false;
-        }
-        if matches!(detection.state, AgentState::Idle | AgentState::Unknown)
-            && matches!(self.status.state, AgentState::Working | AgentState::Blocked)
-        {
+        };
+        self.detection = Some(detection);
+        if let Some(settle) = settle {
             let started = match &self.pending_screen {
-                Some((state, started)) if *state == detection.state => *started,
+                Some((pending, started)) if *pending == state => *started,
                 _ => {
-                    self.pending_screen = Some((detection.state.clone(), now));
+                    self.pending_screen = Some((state, now));
                     return false;
                 }
             };
-            if now.duration_since(started) < Duration::from_millis(700) {
+            if now.duration_since(started) < settle {
                 return false;
             }
         }
         self.pending_screen = None;
         let previous = self.status.clone();
-        self.status.state = detection.state;
+        self.status.state = state;
         self.status.source = Some("screen".into());
-        if self.status != previous {
-            self.status.message = None;
-        }
+        self.status.message = None;
+        self.authority = Authority::Screen;
         self.status != previous
     }
 
+    /// The state a detection may impose, and how long it must persist first.
+    /// Unmatched or unknown screens never override other evidence, and
+    /// agreeing screens leave the reporter's source and message intact.
+    fn screen_verdict(&self, detection: &Detection) -> Option<(AgentState, Option<Duration>)> {
+        let current = &self.status.state;
+        if detection.skip_state_update || detection.state == *current {
+            return None;
+        }
+        // Idle screens do not acknowledge an unread completion.
+        if *current == AgentState::Done && detection.state == AgentState::Idle {
+            return None;
+        }
+        let positive = detection.rule.is_some() && detection.state != AgentState::Unknown;
+        match self.authority {
+            Authority::Explicit => None,
+            Authority::Hook => {
+                positive.then(|| (detection.state.clone(), Some(HOOK_OVERRIDE_SETTLE)))
+            }
+            Authority::Process if !positive => None,
+            Authority::Process | Authority::Screen => {
+                let settle = (matches!(current, AgentState::Working | AgentState::Blocked)
+                    && matches!(detection.state, AgentState::Idle | AgentState::Unknown))
+                .then_some(SCREEN_SETTLE);
+                Some((detection.state.clone(), settle))
+            }
+        }
+    }
+
+    /// Ignores screen and OSC evidence produced before `revision`.
     pub fn suppress_old_screen(&mut self, revision: u64) {
         self.screen_floor = Some(revision);
+        self.suppress_old_signals(revision);
+    }
+
+    /// Ignores OSC titles and progress produced before `revision`; a fresh
+    /// agent repaints its screen but may leave a prior program's title.
+    pub fn suppress_old_signals(&mut self, revision: u64) {
         self.signal_floor = revision;
         self.screen_revision = None;
         self.pending_screen = None;
@@ -359,14 +428,14 @@ impl AgentLifecycle {
     }
 
     pub fn has_observed_process(&self) -> bool {
-        self.observed_process && !self.ended
+        self.observed.is_some() && !self.ended
     }
 
     pub fn is_stale(&self, now: Instant, process_alive: impl Fn(AgentProcess) -> bool) -> bool {
         if self.ended {
             return now.duration_since(self.last_seen) >= UNVERIFIED_AGENT_TTL;
         }
-        match self.process {
+        match self.observed.or(self.process) {
             Some(process) => !process_alive(process),
             None => now.duration_since(self.last_seen) >= UNVERIFIED_AGENT_TTL,
         }
@@ -374,15 +443,21 @@ impl AgentLifecycle {
 
     /// Returns None for a report belonging to an older session or turn.
     /// Otherwise returns whether the visible status changed.
-    pub fn apply(&mut self, report: AgentReport, now: Instant) -> Option<bool> {
+    /// Accepted reports that assert a state ignore screens before `revision`.
+    pub fn apply(&mut self, report: AgentReport, revision: u64, now: Instant) -> Option<bool> {
         if report
             .session_id
             .as_ref()
             .is_some_and(|session| self.retired_sessions.contains(session))
         {
+            // The reporter must be the current agent, or a child of it.
             let verified_restart = report.event == AgentEvent::SessionStart
-                && report.process.is_some()
-                && report.process == self.process;
+                && report.process.is_some_and(|incoming| {
+                    Some(incoming) == self.process
+                        || self
+                            .observed
+                            .is_some_and(|observed| incoming.start_time >= observed.start_time)
+                });
             if !verified_restart {
                 return None;
             }
@@ -408,6 +483,7 @@ impl AgentLifecycle {
         if different_session
             && self
                 .process
+                .or(self.observed)
                 .zip(report.process)
                 .is_some_and(|(current, incoming)| incoming.start_time < current.start_time)
         {
@@ -446,11 +522,12 @@ impl AgentLifecycle {
 
         let previous = self.status.clone();
         self.last_seen = now;
-        self.screen_revision = None;
-        self.pending_screen = None;
         self.ended = false;
         if different_session || restarted {
-            self.status = AgentStatus::default();
+            self.status = AgentStatus {
+                agent: self.status.agent.take(),
+                ..AgentStatus::default()
+            };
             self.process = report.process;
             self.turn_id = None;
             self.turn_complete = false;
@@ -466,53 +543,56 @@ impl AgentLifecycle {
         }
         if let Some(agent) = report.agent {
             self.status.agent = Some(agent);
-        }
-        if let Some(source) = report.source {
-            self.status.source = Some(source);
+            self.named_by_report = true;
         }
 
-        match report.event {
+        let asserted = match report.event {
             AgentEvent::SessionStart
                 if different_session || restarted || previous.state == AgentState::Unknown =>
             {
-                self.status.state = AgentState::Idle;
-                self.status.message = None;
+                Some((AgentState::Idle, None))
             }
-            AgentEvent::SessionStart => {}
+            AgentEvent::SessionStart => None,
             AgentEvent::TurnStart => {
                 self.turn_id = report.turn_id;
                 self.turn_complete = false;
                 self.blocked_tool_id = None;
-                self.status.state = AgentState::Working;
-                self.status.message = None;
+                Some((AgentState::Working, None))
             }
             AgentEvent::PermissionRequest => {
                 self.blocked_tool_id = report.tool_use_id;
-                self.status.state = AgentState::Blocked;
-                self.status.message = report.message;
+                Some((AgentState::Blocked, report.message))
             }
             AgentEvent::ToolFinished => {
                 let matches_tool =
                     self.blocked_tool_id.is_none() || self.blocked_tool_id == report.tool_use_id;
-                if self.status.state == AgentState::Blocked && matches_tool {
-                    self.status.state = AgentState::Working;
-                    self.status.message = None;
-                    self.blocked_tool_id = None;
-                }
+                // A finished tool says nothing about a dialog only the screen saw.
+                (self.status.state == AgentState::Blocked
+                    && self.authority == Authority::Hook
+                    && matches_tool)
+                    .then(|| {
+                        self.blocked_tool_id = None;
+                        (AgentState::Working, None)
+                    })
             }
             AgentEvent::TurnFinished => {
                 self.turn_complete = true;
                 self.blocked_tool_id = None;
-                self.status.state = AgentState::Done;
-                self.status.message = report.message;
+                Some((AgentState::Done, report.message))
             }
             AgentEvent::Interrupt => {
                 self.turn_complete = true;
                 self.blocked_tool_id = None;
-                self.status.state = AgentState::Idle;
-                self.status.message = None;
+                Some((AgentState::Idle, None))
             }
             AgentEvent::SessionEnd => unreachable!("session end is handled by the manager"),
+        };
+        if let Some((state, message)) = asserted {
+            self.status.state = state;
+            self.status.message = message;
+            self.status.source = report.source;
+            self.authority = Authority::Hook;
+            self.suppress_old_screen(revision);
         }
         Some(self.status != previous)
     }
@@ -532,13 +612,16 @@ impl AgentLifecycle {
     }
 
     pub fn end(&mut self, now: Instant) {
-        self.ended_process = self.process;
+        self.ended_process = self.observed.or(self.process);
         self.status = AgentStatus::default();
+        self.authority = Authority::Process;
+        self.named_by_report = false;
         self.turn_id = None;
         self.turn_complete = true;
         self.blocked_tool_id = None;
         self.process = None;
-        self.observed_process = false;
+        self.observed = None;
+        self.observed_name = None;
         self.last_seen = now;
         self.ended = true;
         self.detection = None;
@@ -546,7 +629,10 @@ impl AgentLifecycle {
     }
 
     pub fn is_active(&self) -> bool {
-        !self.ended && (self.process.is_some() || self.status.state != AgentState::Unknown)
+        !self.ended
+            && (self.observed.is_some()
+                || self.process.is_some()
+                || self.status.state != AgentState::Unknown)
     }
 }
 
@@ -639,8 +725,8 @@ mod tests {
         assert!(!agent.scan_screen(&detector, &idle, true, now + Duration::from_millis(300)));
         assert!(agent.scan_screen(&detector, &idle, true, now + Duration::from_millis(700)));
         assert_eq!(agent.status.state, AgentState::Idle);
-        agent.apply(report(AgentEvent::TurnStart, "s", None), now);
-        agent.apply(report(AgentEvent::TurnFinished, "s", None), now);
+        agent.apply(report(AgentEvent::TurnStart, "s", None), 0, now);
+        agent.apply(report(AgentEvent::TurnFinished, "s", None), 0, now);
         assert!(!agent.scan_screen(&detector, &screen(&idle.text, "", 3), true, now));
         assert_eq!(agent.status.state, AgentState::Done);
     }
@@ -657,7 +743,7 @@ mod tests {
             "codex".into(),
             now,
         );
-        agent.apply(report(AgentEvent::TurnStart, "old", None), now);
+        agent.apply(report(AgentEvent::TurnStart, "old", None), 0, now);
         let working = screen("", "⠋ Codex", 3);
         agent.suppress_old_screen(3);
         assert!(!agent.scan_screen(&detector, &working, true, now));
@@ -679,14 +765,172 @@ mod tests {
         assert!(!agent.scan_screen(&detector, &new_screen, true, now));
         assert_eq!(agent.status.state, AgentState::Unknown);
         assert_eq!(
-            agent.apply(report(AgentEvent::TurnFinished, "old", None), now),
+            agent.apply(report(AgentEvent::TurnFinished, "old", None), 0, now),
             None
         );
-        agent.apply(report(AgentEvent::TurnStart, "new", None), now);
+        agent.apply(report(AgentEvent::TurnStart, "new", None), 0, now);
         assert_eq!(
-            agent.apply(report(AgentEvent::TurnFinished, "old", None), now),
+            agent.apply(report(AgentEvent::TurnFinished, "old", None), 0, now),
             None
         );
+    }
+
+    const CLAUDE_IDLE: &str = "──────\n❯\n──────";
+    const CLAUDE_BLOCKED: &str = "Bash command\n  ls\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n";
+
+    fn claude(now: Instant) -> AgentLifecycle {
+        AgentLifecycle::detected(
+            AgentProcess {
+                pid: 10,
+                start_time: 5,
+            },
+            "claude".into(),
+            now,
+        )
+    }
+
+    #[test]
+    fn hooks_from_a_wrapped_child_process_stay_accepted() {
+        let now = Instant::now();
+        let wrapper = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        let mut agent = claude(now);
+        let mut start = report(AgentEvent::SessionStart, "s", None);
+        start.process = Some(AgentProcess {
+            pid: 11,
+            start_time: 6,
+        });
+        assert_eq!(agent.apply(start, 0, now), Some(true));
+        assert!(!agent.observe_process(wrapper, "claude", 1, now));
+        assert_eq!(
+            agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 1, now),
+            Some(true)
+        );
+        assert_eq!(agent.status.state, AgentState::Working);
+        assert_eq!(agent.process(), Some(wrapper));
+    }
+
+    #[test]
+    fn ambiguous_screens_never_override_hooks() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
+        let unmatched = screen("some unrelated redraw", "", 1);
+        for ms in [0, 800, 5000] {
+            assert!(!agent.scan_screen(
+                &detector,
+                &unmatched,
+                true,
+                now + Duration::from_millis(ms)
+            ));
+        }
+        assert_eq!(agent.status.state, AgentState::Working);
+        assert_eq!(agent.authority(), Authority::Hook);
+    }
+
+    #[test]
+    fn agreeing_screens_keep_the_hook_source_and_message() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
+        let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
+        permission.message = Some("needs Bash".into());
+        agent.apply(permission, 0, now);
+        assert!(!agent.scan_screen(&detector, &screen(CLAUDE_BLOCKED, "", 1), true, now));
+        assert_eq!(agent.status.source.as_deref(), Some("hook"));
+        assert_eq!(agent.status.message.as_deref(), Some("needs Bash"));
+        assert_eq!(
+            agent.detection.as_ref().and_then(|d| d.rule.as_deref()),
+            Some("bash_permission_prompt")
+        );
+    }
+
+    #[test]
+    fn sustained_positive_screens_correct_missed_hooks() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
+        let idle = screen(CLAUDE_IDLE, "", 1);
+        assert!(!agent.scan_screen(&detector, &idle, true, now));
+        assert!(!agent.scan_screen(
+            &detector,
+            &idle,
+            true,
+            now + SCREEN_SETTLE + Duration::from_millis(100)
+        ));
+        assert_eq!(agent.status.state, AgentState::Working);
+        assert!(agent.scan_screen(&detector, &idle, true, now + HOOK_OVERRIDE_SETTLE));
+        assert_eq!(agent.status.state, AgentState::Idle);
+        assert_eq!(agent.authority(), Authority::Screen);
+        // A fresh hook outranks the screen again.
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("u")), 1, now);
+        assert!(!agent.scan_screen(&detector, &idle, true, now + HOOK_OVERRIDE_SETTLE * 2));
+        assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn screen_blockers_survive_unrelated_tool_completion() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        assert!(agent.scan_screen(&detector, &screen(CLAUDE_BLOCKED, "", 1), true, now));
+        assert_eq!(agent.status.state, AgentState::Blocked);
+        let finished = report(AgentEvent::ToolFinished, "s", None);
+        assert_eq!(agent.apply(finished, 1, now), Some(false));
+        assert_eq!(agent.status.state, AgentState::Blocked);
+    }
+
+    #[test]
+    fn explicit_statuses_and_reported_names_outrank_detection() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = AgentLifecycle::explicit(
+            AgentStatus {
+                state: AgentState::Blocked,
+                agent: Some("deploy-bot".into()),
+                source: None,
+                message: Some("awaiting approval".into()),
+            },
+            now,
+        );
+        let process = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        agent.observe_process(process, "claude", 0, now);
+        let idle = screen(CLAUDE_IDLE, "", 1);
+        assert!(!agent.scan_screen(&detector, &idle, true, now));
+        assert!(!agent.scan_screen(&detector, &idle, true, now + Duration::from_secs(5)));
+        assert_eq!(agent.status.state, AgentState::Blocked);
+        assert_eq!(agent.status.message.as_deref(), Some("awaiting approval"));
+
+        let mut agent = claude(now);
+        let mut start = report(AgentEvent::SessionStart, "s", None);
+        start.agent = Some("claude-code".into());
+        agent.apply(start, 0, now);
+        assert!(!agent.observe_process(process, "claude", 0, now));
+        assert_eq!(agent.status.agent.as_deref(), Some("claude-code"));
+        let working = screen("", "⠋ Claude", 1);
+        assert!(!agent.scan_screen(&detector, &working, true, now));
+        assert!(agent.scan_screen(&detector, &working, true, now + HOOK_OVERRIDE_SETTLE));
+        assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn fresh_detection_ignores_a_prior_programs_title() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        agent.suppress_old_signals(1);
+        assert!(!agent.scan_screen(&detector, &screen("", "⠋ Claude", 1), true, now));
+        assert_eq!(agent.status.state, AgentState::Unknown);
+        assert!(agent.scan_screen(&detector, &screen(CLAUDE_IDLE, "", 2), true, now));
+        assert_eq!(agent.status.state, AgentState::Idle);
     }
 
     fn report(event: AgentEvent, session: &str, turn: Option<&str>) -> AgentReport {
@@ -706,9 +950,9 @@ mod tests {
     fn compaction_start_preserves_working_turn() {
         let now = Instant::now();
         let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
-        agent.apply(report(AgentEvent::SessionStart, "s", None), now);
-        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), now);
-        agent.apply(report(AgentEvent::SessionStart, "s", None), now);
+        agent.apply(report(AgentEvent::SessionStart, "s", None), 0, now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
+        agent.apply(report(AgentEvent::SessionStart, "s", None), 0, now);
         assert_eq!(agent.status.state, AgentState::Working);
     }
 
@@ -721,14 +965,14 @@ mod tests {
             pid: 42,
             start_time: 7,
         });
-        agent.apply(start, now);
-        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), now);
+        agent.apply(start, 0, now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut resume = report(AgentEvent::SessionStart, "s", None);
         resume.process = Some(AgentProcess {
             pid: 43,
             start_time: 8,
         });
-        agent.apply(resume, now);
+        agent.apply(resume, 0, now);
         assert_eq!(agent.status.state, AgentState::Idle);
         assert_eq!(agent.process.unwrap().pid, 43);
     }
@@ -737,21 +981,25 @@ mod tests {
     fn late_events_cannot_overwrite_a_new_turn_or_session() {
         let now = Instant::now();
         let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
-        agent.apply(report(AgentEvent::TurnStart, "s", Some("old")), now);
-        agent.apply(report(AgentEvent::TurnStart, "s", Some("new")), now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("old")), 0, now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("new")), 0, now);
         assert_eq!(
-            agent.apply(report(AgentEvent::TurnFinished, "s", Some("old")), now),
+            agent.apply(report(AgentEvent::TurnFinished, "s", Some("old")), 0, now),
             None
         );
         assert_eq!(agent.status.state, AgentState::Working);
         let mut unscoped = report(AgentEvent::TurnFinished, "s", None);
-        assert_eq!(agent.apply(unscoped, now), None);
+        assert_eq!(agent.apply(unscoped, 0, now), None);
         unscoped = report(AgentEvent::TurnFinished, "s", Some("new"));
         unscoped.session_id = None;
-        assert_eq!(agent.apply(unscoped, now), None);
-        agent.apply(report(AgentEvent::SessionStart, "next", None), now);
+        assert_eq!(agent.apply(unscoped, 0, now), None);
+        agent.apply(report(AgentEvent::SessionStart, "next", None), 0, now);
         assert_eq!(
-            agent.apply(report(AgentEvent::PermissionRequest, "s", Some("old")), now),
+            agent.apply(
+                report(AgentEvent::PermissionRequest, "s", Some("old")),
+                0,
+                now
+            ),
             None
         );
         assert!(!agent.matches_session(Some("s")));
@@ -762,28 +1010,32 @@ mod tests {
     fn completed_tool_resumes_only_the_matching_blocked_turn() {
         let now = Instant::now();
         let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
-        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
         permission.tool_use_id = Some("approval".to_string());
-        agent.apply(permission, now);
+        agent.apply(permission, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         assert_eq!(
-            agent.apply(report(AgentEvent::ToolFinished, "s", Some("other")), now),
+            agent.apply(report(AgentEvent::ToolFinished, "s", Some("other")), 0, now),
             None
         );
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut other_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
         other_tool.tool_use_id = Some("other".to_string());
-        agent.apply(other_tool, now);
+        agent.apply(other_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut approved_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
         approved_tool.tool_use_id = Some("approval".to_string());
-        agent.apply(approved_tool, now);
+        agent.apply(approved_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Working);
-        agent.apply(report(AgentEvent::TurnFinished, "s", Some("t")), now);
+        agent.apply(report(AgentEvent::TurnFinished, "s", Some("t")), 0, now);
         agent.status.state = AgentState::Idle;
         assert_eq!(
-            agent.apply(report(AgentEvent::PermissionRequest, "s", Some("t")), now),
+            agent.apply(
+                report(AgentEvent::PermissionRequest, "s", Some("t")),
+                0,
+                now
+            ),
             None
         );
         assert_eq!(agent.status.state, AgentState::Idle);
@@ -804,7 +1056,7 @@ mod tests {
             pid: 42,
             start_time: 7,
         });
-        agent.apply(start, now);
+        agent.apply(start, 0, now);
         assert!(!agent.is_stale(now + UNVERIFIED_AGENT_TTL, |p| p.start_time == 7));
         assert!(agent.is_stale(now, |p| p.start_time == 8));
     }

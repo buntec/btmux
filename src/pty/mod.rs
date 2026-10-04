@@ -161,6 +161,10 @@ impl PtyHandle {
             .map(|p| p.to_string_lossy().into_owned())
     }
 
+    pub fn screen_revision(&self) -> u64 {
+        self.scrollback.lock().unwrap().screen_revision()
+    }
+
     pub fn screen_snapshot(&self) -> screen::ScreenSnapshot {
         self.scrollback.lock().unwrap().screen_snapshot()
     }

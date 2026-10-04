@@ -691,6 +691,7 @@ mod tests {
         pane.pty.ensure_spawned(80, 24).unwrap();
         let input = pane.pty.input_tx.clone();
         let shell_pid = pane.pty.shell_pid().unwrap();
+        // Titles from before detection are stale.
         let command = format!(
             "printf '\\033]2;Action Required\\007'; '{}'\r",
             executable.display()
@@ -698,6 +699,23 @@ mod tests {
         input.send_wait(command.into_bytes()).await.unwrap();
         let state = Arc::new(RwLock::new(manager));
         spawn_agent_reaper(state.clone());
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while state.read().await.running_agent_panes().is_empty() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("process scan detects the agent");
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        assert_eq!(
+            state.read().await.agent_status(pane_id).unwrap().state,
+            AgentState::Unknown
+        );
+        // The fake agent (cat) echoes the title back.
+        input
+            .send_wait(b"\x1b]2;Action Required\x07\r".to_vec())
+            .await
+            .unwrap();
         let detected = tokio::time::timeout(Duration::from_secs(8), async {
             loop {
                 if state

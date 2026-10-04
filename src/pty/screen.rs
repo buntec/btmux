@@ -59,6 +59,10 @@ impl LiveScreen {
         }
     }
 
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn snapshot(&self) -> ScreenSnapshot {
         let screen = self.parser.screen();
         let (_, cols) = screen.size();

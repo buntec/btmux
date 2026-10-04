@@ -130,7 +130,7 @@ impl SessionManager {
             let Some(pane) = self.find_pane(*pane_id) else {
                 continue;
             };
-            let revision = pane.pty.screen_snapshot().revision;
+            let revision = pane.pty.screen_revision();
             if self
                 .agents
                 .get(pane_id)
@@ -143,9 +143,7 @@ impl SessionManager {
                 continue;
             }
             let mut agent = AgentLifecycle::detected(*process, name.clone(), Instant::now());
-            if self.agents.contains_key(pane_id) {
-                agent.suppress_old_screen(revision);
-            }
+            agent.suppress_old_signals(revision);
             self.agents.insert(*pane_id, agent);
             changed = true;
         }
@@ -175,7 +173,7 @@ impl SessionManager {
                     .agents
                     .get(&pane.id)
                     .filter(|agent| agent.is_active())?;
-                let process = agent.process()?;
+                let process = agent.observed_process()?;
                 let group = unsafe { libc::getpgid(process.pid as libc::pid_t) };
                 let foreground = group > 0 && pane.pty.foreground_pgrp() == Some(group);
                 Some((pane.id, pane.pty.screen_snapshot(), foreground))
@@ -197,6 +195,7 @@ impl SessionManager {
         let agent = self.agents.get(&pane_id).filter(|agent| agent.is_active());
         serde_json::json!({
             "status": agent.map(|agent| &agent.status),
+            "authority": agent.map(AgentLifecycle::authority),
             "process": agent.and_then(AgentLifecycle::process),
             "detection": agent.and_then(|agent| agent.detection.as_ref()),
         })
@@ -231,7 +230,7 @@ impl SessionManager {
         report: AgentReport,
         now: Instant,
     ) -> Option<bool> {
-        let revision = self.find_pane(pane_id)?.pty.screen_snapshot().revision;
+        let revision = self.find_pane(pane_id)?.pty.screen_revision();
         if report.event == AgentEvent::SessionEnd {
             let current = self.agents.get_mut(&pane_id)?;
             if !current.matches_session(report.session_id.as_deref()) {
@@ -240,22 +239,10 @@ impl SessionManager {
             current.end(now);
             return Some(true);
         }
-        let agent = self.agents.entry(pane_id).or_insert_with(|| {
-            AgentLifecycle::explicit(
-                AgentStatus {
-                    state: AgentState::Idle,
-                    agent: None,
-                    source: None,
-                    message: None,
-                },
-                now,
-            )
-        });
-        let changed = agent.apply(report, now)?;
-        if changed {
-            agent.suppress_old_screen(revision);
-        }
-        Some(changed)
+        self.agents
+            .entry(pane_id)
+            .or_insert_with(|| AgentLifecycle::reported(now))
+            .apply(report, revision, now)
     }
 
     pub fn config(&self) -> &ClientConfig {

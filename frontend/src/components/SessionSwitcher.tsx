@@ -1,14 +1,26 @@
-import { Dialog } from '@astryxdesign/core/Dialog';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { Layout, LayoutContent, LayoutFooter, LayoutPanel, HStack, VStack } from '@astryxdesign/core/Layout';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Text } from '@astryxdesign/core/Text';
+import { Kbd } from '@astryxdesign/core/Kbd';
+import { Badge } from '@astryxdesign/core/Badge';
+import { Token } from '@astryxdesign/core/Token';
+import { StatusDot } from '@astryxdesign/core/StatusDot';
+import { AspectRatio } from '@astryxdesign/core/AspectRatio';
+import { Icon } from '@astryxdesign/core/Icon';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { ChevronDown, ChevronRight, Maximize2 } from 'lucide-react';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
-import { chromePalette, withAlpha } from '../lib/chrome-colors';
+import { chromePalette } from '../lib/chrome-colors';
 import { SessionState } from '../state/types';
 import { WindowThumbnail } from './WindowThumbnail';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
-import { getAnimations, getSessionSort, getTerminalFontSize, getWindowSort } from '../state/configDefaults';
+import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -26,7 +38,6 @@ type Row =
  * tree on the left and a live pane-layout preview of the selected window on the
  * right. Selecting a window switches to it (across sessions); `m` renames the
  * selected session or window and `x` kills the selected session or window.
- * Theme-driven via `chromePalette`.
  *
  * Like WindowGrid it's lazily mounted on first open and kept mounted (display
  * toggles) so the preview mirrors stay warm. It owns the keyboard while open —
@@ -53,14 +64,11 @@ export function SessionSwitcher({ send }: Props) {
   // tree to sessions whose name (or a window's name) matches.
   const [filterMode, setFilterMode] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
-  const [hoveredRowKey, setHoveredRowKey] = useState<string | null>(null);
   const [hoveredPaneId, setHoveredPaneId] = useState<string | null>(null);
-  // Closing flag for exit animation (165ms before actual unmount).
-  const [closing, setClosing] = useState(false);
-  const closingTimerRef = useRef<number>(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const selectedRef = useRef<HTMLDivElement>(null);
-  const prevFocusRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const previewRef = useRef<HTMLElement>(null);
+  const selectedRef = useRef<HTMLLIElement>(null);
+  const isNarrow = useMediaQuery('(max-width: 767px)');
 
   // Track viewport aspect ratio so the preview box matches the real terminal window.
   const viewportAspect = useSyncExternalStore(
@@ -116,22 +124,17 @@ export function SessionSwitcher({ send }: Props) {
 
   const sessionById = useMemo(() => new Map(allSessions.map((s) => [s.id, s])), [allSessions]);
 
-  // On open: remember prior focus, focus the modal, reset the filter, and select
-  // the active session's row (the tree starts collapsed, so windows aren't shown).
+  // On open: reset the filter and select the active session's row (the tree
+  // starts collapsed, so windows aren't shown).
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
-      clearTimeout(closingTimerRef.current);
-      setClosing(false);
-      prevFocusRef.current = document.activeElement as HTMLElement | null;
       setFilterMode(false);
       setFilterQuery('');
-      setHoveredRowKey(null);
       setHoveredPaneId(null);
       setExpanded(new Set());
       const idx = activeSession ? rows.findIndex((r) => r.kind === 'session' && r.sessionId === activeSession.id) : -1;
       setSelectedIdx(idx >= 0 ? idx : 0);
-      containerRef.current?.focus();
     }
     wasOpen.current = open;
   }, [open, rows.length]);
@@ -140,15 +143,6 @@ export function SessionSwitcher({ send }: Props) {
   useEffect(() => {
     if (open) selectedRef.current?.scrollIntoView({ block: 'nearest' });
   }, [selectedIdx, open, rows.length]);
-
-  // A kill from the switcher opens a confirm overlay (which grabs focus); when it
-  // closes, return keyboard focus to the switcher so navigation keeps working.
-  useEffect(() => {
-    if (open && !overlay) {
-      const id = window.setTimeout(() => containerRef.current?.focus(), 0);
-      return () => window.clearTimeout(id);
-    }
-  }, [open, overlay]);
 
   const clampedIdx = Math.min(selectedIdx, Math.max(0, rows.length - 1));
   const selected = rows[clampedIdx];
@@ -199,24 +193,14 @@ export function SessionSwitcher({ send }: Props) {
         )
       : -1;
 
-  const cancel = () => {
-    if (closing) return;
-    const prev = prevFocusRef.current;
-    const doClose = () => {
-      setClosing(false);
-      setOpen(false);
-      if (prev && prev.isConnected) {
-        window.setTimeout(() => {
-          if (prev.isConnected) prev.focus();
-        }, 0);
-      }
-    };
-    if (!getAnimations(config)) {
-      doClose();
-      return;
-    }
-    setClosing(true);
-    closingTimerRef.current = window.setTimeout(doClose, 165);
+  const cancel = () => setOpen(false);
+
+  const exitFilter = () => {
+    setFilterMode(false);
+    setFilterQuery('');
+    setSelectedIdx(0);
+    // The filter input unmounts; keep keyboard focus inside the dialog.
+    dialogRef.current?.focus();
   };
 
   const switchToWindow = (sess: SessionState, windowIndex: number) => {
@@ -313,13 +297,8 @@ export function SessionSwitcher({ send }: Props) {
     if (e.key === 'Escape') {
       e.preventDefault();
       // Escape first exits filter mode, then closes the modal.
-      if (filterMode) {
-        setFilterMode(false);
-        setFilterQuery('');
-        setSelectedIdx(0);
-      } else {
-        cancel();
-      }
+      if (filterMode) exitFilter();
+      else cancel();
       return;
     }
 
@@ -338,22 +317,9 @@ export function SessionSwitcher({ send }: Props) {
       return;
     }
 
-    // Filter mode: printable keys edit the query; arrows (handled above) move the
+    // Filter mode: the input owns text editing; arrows (handled above) move the
     // cursor. j/k/h/l/x are reserved for typing while filtering.
-    if (filterMode) {
-      if (e.key === 'Backspace') {
-        e.preventDefault();
-        setFilterQuery((q) => q.slice(0, -1));
-        setSelectedIdx(0);
-        return;
-      }
-      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        setFilterQuery((q) => q + e.key);
-        setSelectedIdx(0);
-      }
-      return;
-    }
+    if (filterMode) return;
 
     if (e.key === '/') {
       e.preventDefault();
@@ -436,303 +402,181 @@ export function SessionSwitcher({ send }: Props) {
   if (!mountedOnce.current) return null;
 
   const c = chromePalette(config?.theme ?? null);
-  const termFont = getTerminalFontSize(config);
-  const font = Math.max(11, Math.min(15, Math.round(termFont * 0.72)));
   const animations = getAnimations(config);
+
+  const tree = (
+    <VStack gap={2}>
+      {filterMode && (
+        <TextInput
+          label="Filter sessions"
+          isLabelHidden
+          placeholder="Filter sessions and windows"
+          size="sm"
+          value={filterQuery}
+          hasAutoFocus
+          onChange={(value) => {
+            setFilterQuery(value);
+            setSelectedIdx(0);
+          }}
+        />
+      )}
+      {rows.length === 0 ? (
+        <Text color="secondary">{query ? `No sessions matching "${filterQuery.trim()}".` : 'No sessions.'}</Text>
+      ) : (
+        <List density="compact">
+          {rows.map((row, i) => {
+            const isSelected = i === clampedIdx;
+            const sess = sessionById.get(row.sessionId);
+            if (!sess) return null;
+            if (row.kind === 'session') {
+              return (
+                <ListItem
+                  key={`s-${row.sessionId}`}
+                  ref={isSelected ? selectedRef : null}
+                  label={sess.name}
+                  isSelected={isSelected}
+                  startContent={<Icon icon={row.expanded ? ChevronDown : ChevronRight} size="sm" color="secondary" />}
+                  endContent={
+                    <HStack gap={1} vAlign="center">
+                      {sess.id === activeSession?.id && <Token label="attached" size="sm" color="blue" />}
+                      <Badge variant="neutral" label={sess.windows.length} />
+                    </HStack>
+                  }
+                  onClick={() => {
+                    setSelectedIdx(i);
+                    setSessionExpanded(row.sessionId, !row.expanded);
+                  }}
+                  onDoubleClick={() => activate(row)}
+                />
+              );
+            }
+            const win = sess.windows[row.windowIndex];
+            if (!win) return null;
+            const paneCount = win.panes.length;
+            return (
+              <ListItem
+                key={`w-${row.windowId}`}
+                ref={isSelected ? selectedRef : null}
+                label={win.name}
+                isSelected={isSelected}
+                className="pl-8"
+                startContent={
+                  <Token
+                    label={String(row.displayIndex)}
+                    size="sm"
+                    color={win.id === activeWindowId ? 'blue' : 'gray'}
+                  />
+                }
+                endContent={
+                  <HStack gap={2} vAlign="center">
+                    {win.zoomed_pane && <Icon icon={Maximize2} size="sm" color="secondary" label="Zoomed" />}
+                    <Text color="secondary">
+                      {paneCount} {paneCount === 1 ? 'pane' : 'panes'}
+                    </Text>
+                  </HStack>
+                }
+                onClick={() => setSelectedIdx(i)}
+                onDoubleClick={() => activate(row)}
+              />
+            );
+          })}
+        </List>
+      )}
+    </VStack>
+  );
+
+  const preview = (
+    <VStack ref={previewRef} gap={3}>
+      <HStack gap={2} vAlign="center">
+        <Text>
+          {previewWindowIndex >= 0 ? `${previewWindowIndex}: ` : ''}
+          {debouncedPreviewWindow?.name ?? '—'}
+        </Text>
+        <Text color="secondary">preview</Text>
+      </HStack>
+      {debouncedPreviewWindow ? (
+        <AspectRatio ratio={viewportAspect}>
+          <WindowThumbnail
+            window={debouncedPreviewWindow}
+            visible={open}
+            c={c}
+            activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
+            hoveredPaneId={hoveredPaneId}
+            onHoveredPaneChange={setHoveredPaneId}
+            onSelectPane={(paneId) => {
+              if (debouncedPreviewContext) {
+                switchToPane(debouncedPreviewContext.sess, debouncedPreviewContext.windowIndex, paneId);
+              }
+            }}
+            animations={animations}
+          />
+        </AspectRatio>
+      ) : (
+        <Text color="secondary">No window.</Text>
+      )}
+    </VStack>
+  );
 
   return (
     <Dialog
+      ref={dialogRef}
+      tabIndex={-1}
       isOpen={open && !overlay}
       onOpenChange={(value) => {
         if (!value) cancel();
       }}
-      aria-label="Session switcher"
       width={960}
       maxHeight="85dvh"
-      padding={0}
+      style={{ height: 'min(560px, 85dvh)' }}
+      onKeyDown={onKeyDown}
+      onFocus={(e) => {
+        // MirrorPane's Terminal.open() focuses its textarea; keep keys on the dialog.
+        if (previewRef.current?.contains(e.target as Node)) dialogRef.current?.focus();
+      }}
     >
-      <div
-        ref={containerRef}
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        onFocus={(e) => {
-          // MirrorPane's ghostty-web Terminal.open() calls element.focus() which
-          // steals keyboard focus away from this container. Reclaim it immediately
-          // by checking if focus arrived from a child element.
-          if (e.target !== e.currentTarget) {
-            e.currentTarget.focus();
-          }
-        }}
-        onMouseDown={(e) => {
-          if (e.target === e.currentTarget) cancel();
-        }}
-        className="flex min-h-0 outline-none"
-      >
-        <div
-          style={{
-            width: '100%',
-            maxWidth: '100%',
-            height: '440px',
-            maxHeight: '80dvh',
-            display: 'flex',
-            borderRadius: 'var(--radius-container)',
-            overflow: 'hidden',
-            background: c.panelBg,
-            border: 'none',
-            boxShadow: 'none',
-            animation: animations ? (closing ? 'btm-out .17s ease forwards' : 'btm-in .18s ease') : undefined,
-          }}
-        >
-          {/* Tree */}
-          <div
-            style={{
-              width: '340px',
-              flex: 'none',
-              borderRight: `1px solid ${c.borderDim}`,
-              display: 'flex',
-              flexDirection: 'column',
+      <Layout
+        header={
+          <DialogHeader
+            title="Sessions"
+            onOpenChange={(value) => {
+              if (!value) cancel();
             }}
-          >
-            <div
-              style={{
-                padding: '14px 16px 10px',
-                color: c.fgDim,
-                fontSize: '11px',
-                letterSpacing: '.14em',
-                textTransform: 'uppercase',
-                fontWeight: 700,
-              }}
-            >
-              Sessions
-            </div>
-            <div style={{ flex: 1, overflow: 'auto', padding: '0 8px 12px' }}>
-              {rows.length === 0 && (
-                <div style={{ color: c.fgDim, padding: '8px 10px', fontSize: '12.5px' }}>
-                  {query ? `No sessions matching "${filterQuery.trim()}".` : 'No sessions.'}
-                </div>
-              )}
-              {rows.map((row, i) => {
-                const isSelected = i === clampedIdx;
-                const sess = sessionById.get(row.sessionId);
-                if (!sess) return null;
-                if (row.kind === 'session') {
-                  const rowKey = `s-${row.sessionId}`;
-                  const isHovered = hoveredRowKey === rowKey;
-                  return (
-                    <div
-                      key={rowKey}
-                      ref={isSelected ? selectedRef : null}
-                      onMouseEnter={() => setHoveredRowKey(rowKey)}
-                      onMouseLeave={() => setHoveredRowKey(null)}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        setSelectedIdx(i);
-                      }}
-                      onClick={() => setSessionExpanded(row.sessionId, !row.expanded)}
-                      onDoubleClick={() => activate(row)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '8px 10px 7px',
-                        color: c.fgBright,
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        borderRadius: '7px',
-                        background: isSelected
-                          ? withAlpha(c.accent, 0.12)
-                          : isHovered
-                            ? withAlpha(c.fgBright, 0.055)
-                            : 'transparent',
-                        boxShadow: isHovered
-                          ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.09)}`
-                          : undefined,
-                        transition: animations ? 'background 100ms ease, box-shadow 100ms ease' : undefined,
-                      }}
-                    >
-                      <span style={{ color: row.expanded ? c.accent : c.fgDim }}>{row.expanded ? '▾' : '▸'}</span>
-                      {sess.name}
-                      <span style={{ color: c.fgDim, fontWeight: 500, fontSize: '11.5px' }}>
-                        {sess.id === activeSession?.id ? 'attached · ' : ''}
-                        {sess.windows.length} win
-                      </span>
-                    </div>
-                  );
-                }
-                const win = sess.windows[row.windowIndex];
-                if (!win) return null;
-                const isActiveWin = win.id === activeWindowId;
-                const paneCount = win.panes.length;
-                const rowKey = `w-${row.windowId}`;
-                const isHovered = hoveredRowKey === rowKey;
-                return (
-                  <div
-                    key={rowKey}
-                    ref={isSelected ? selectedRef : null}
-                    onMouseEnter={() => setHoveredRowKey(rowKey)}
-                    onMouseLeave={() => setHoveredRowKey(null)}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setSelectedIdx(i);
-                    }}
-                    onDoubleClick={() => activate(row)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '9px',
-                      padding: '6px 10px 6px 30px',
-                      margin: '2px 0',
-                      borderRadius: '7px',
-                      cursor: 'pointer',
-                      fontSize: '12.5px',
-                      background: isSelected ? c.accent : isHovered ? withAlpha(c.fgBright, 0.065) : 'transparent',
-                      color: isSelected ? c.accentInk : isHovered ? c.fg : c.fgMuted,
-                      fontWeight: isSelected ? 700 : 400,
-                      boxShadow: isHovered
-                        ? `inset 0 0 0 1px ${withAlpha(isSelected ? c.accentInk : c.fgBright, 0.1)}`
-                        : undefined,
-                      transition: animations
-                        ? 'background 100ms ease, color 100ms ease, box-shadow 100ms ease'
-                        : undefined,
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        minWidth: '16px',
-                        height: '16px',
-                        padding: '0 4px',
-                        borderRadius: '4px',
-                        background: isSelected ? c.accentInk : withAlpha(c.fgMuted, 0.22),
-                        color: isSelected ? c.accent : c.fgMuted,
-                        fontSize: '11px',
-                        fontWeight: 800,
-                      }}
-                    >
-                      {row.displayIndex}
-                    </span>
-                    {win.name}
-                    {isActiveWin && <span style={{ color: isSelected ? c.accentInk : c.accent }}>*</span>}
-                    {win.zoomed_pane && <span style={{ color: isSelected ? c.accentInk : c.zoom }}>⛶</span>}
-                    <span style={{ flex: 1 }} />
-                    <span
-                      style={{
-                        color: isSelected ? withAlpha(c.accentInk, 0.7) : c.fgDim,
-                        fontSize: '11px',
-                      }}
-                    >
-                      {paneCount} {paneCount === 1 ? 'pane' : 'panes'}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            {/* Filter bar (tmux-style), shown while filtering. */}
-            {filterMode && (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 14px',
-                  borderTop: `1px solid ${c.borderDim}`,
-                  color: c.fg,
-                }}
-              >
-                <span style={{ color: c.accent }}>/</span>
-                <span>
-                  {filterQuery}
-                  <span
-                    style={{ color: c.accent, animation: animations ? 'btm-blink 1.05s steps(1) infinite' : undefined }}
-                  >
-                    ▏
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Preview */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px 18px', minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', marginBottom: '12px' }}>
-              <span style={{ color: c.fgBright, fontWeight: 700 }}>
-                {previewWindowIndex >= 0 ? `${previewWindowIndex}: ` : ''}
-                {debouncedPreviewWindow?.name ?? '—'}
-              </span>
-              <span style={{ color: c.fgDim, fontSize: '12px' }}>preview</span>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div
-                style={{
-                  aspectRatio: `${viewportAspect}`,
-                  maxWidth: '100%',
-                  maxHeight: '100%',
-                  width: '100%',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-              >
-                {debouncedPreviewWindow ? (
-                  <WindowThumbnail
-                    window={debouncedPreviewWindow}
-                    visible={open}
-                    c={c}
-                    activePaneId={debouncedPreviewWindow.panes[debouncedPreviewWindow.active_pane]?.id ?? null}
-                    hoveredPaneId={hoveredPaneId}
-                    onHoveredPaneChange={setHoveredPaneId}
-                    onSelectPane={(paneId) => {
-                      if (debouncedPreviewContext) {
-                        switchToPane(debouncedPreviewContext.sess, debouncedPreviewContext.windowIndex, paneId);
-                      }
-                    }}
-                    animations={animations}
-                  />
-                ) : (
-                  <div style={{ color: c.fgDim }}>No window.</div>
-                )}
-              </div>
-            </div>
-            <div
-              style={{
-                marginTop: '12px',
-                display: 'flex',
-                flexWrap: 'wrap',
-                columnGap: '16px',
-                rowGap: '6px',
-                color: c.fgDim,
-                fontSize: '11.5px',
-              }}
-            >
-              <span>
-                <span style={{ color: c.fgMuted }}>↑↓</span> navigate
-              </span>
-              <span>
-                <span style={{ color: c.fgMuted }}>←→</span> fold
-              </span>
-              <span>
-                <span style={{ color: c.fgMuted }}>/</span> filter
-              </span>
-              <span>
-                <span style={{ color: c.fgMuted }}>↵</span> switch
-              </span>
-              <span>
-                <span style={{ color: c.fgMuted }}>c</span> new
-              </span>
-              <span>
-                <span style={{ color: c.fgMuted }}>m</span> rename
-              </span>
-              <span>
-                <span style={{ color: c.fgMuted }}>x</span> kill
-              </span>
-              <span>
-                <span style={{ color: c.fgMuted }}>esc</span> close
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+          />
+        }
+        start={
+          isNarrow ? undefined : (
+            <LayoutPanel width={340} hasDivider padding={2}>
+              {tree}
+            </LayoutPanel>
+          )
+        }
+        content={<LayoutContent padding={isNarrow ? 2 : 4}>{isNarrow ? tree : preview}</LayoutContent>}
+        footer={
+          <LayoutFooter hasDivider>
+            <HStack gap={4} wrap="wrap">
+              {HINTS.map(([keys, label]) => (
+                <HStack key={label} gap={1} vAlign="center">
+                  {keys.map((key) => (
+                    <Kbd key={key} keys={key} />
+                  ))}
+                  <Text color="secondary">{label}</Text>
+                </HStack>
+              ))}
+            </HStack>
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   );
 }
+
+const HINTS: [string[], string][] = [
+  [['up', 'down'], 'navigate'],
+  [['left', 'right'], 'fold'],
+  [['/'], 'filter'],
+  [['enter'], 'switch'],
+  [['c'], 'new'],
+  [['m'], 'rename'],
+  [['x'], 'kill'],
+  [['esc'], 'close'],
+];

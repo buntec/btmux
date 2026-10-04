@@ -185,7 +185,6 @@ export function PaneCorner({
   status?: AgentStatus;
   isActive: boolean;
 }) {
-  const c = chromePalette(theme);
   return (
     <div
       style={{
@@ -202,7 +201,7 @@ export function PaneCorner({
       }}
     >
       <AgentStatusBadge theme={theme} status={status} />
-      <Token color="gray" aria-label={`Pane ${index}`} label={String(index)} />
+      <Token color={isActive ? 'blue' : 'gray'} aria-label={`Pane ${index}`} label={String(index)} />
     </div>
   );
 }

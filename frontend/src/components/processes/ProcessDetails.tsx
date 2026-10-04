@@ -1,14 +1,20 @@
+import { HStack, VStack } from '@astryxdesign/core/Layout';
+import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
+import { Text } from '@astryxdesign/core/Text';
 import { formatBytes, formatCpu, formatElapsed, formatMemoryPercent, formatStarted } from '@/lib/processFormat';
 import { useProcessStore } from '@/state/processStore';
+import { Placeholder } from '../files/Placeholder';
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 gap-3">
-      <span className="w-24 shrink-0 text-muted-foreground">{label}</span>
-      <span className="min-w-0 truncate" title={value}>
+    <HStack gap={3} className="min-w-0">
+      <Text size="sm" color="secondary" className="w-28 flex-none">
+        {label}
+      </Text>
+      <Text size="sm" maxLines={1} className="min-w-0 flex-1">
         {value}
-      </span>
-    </div>
+      </Text>
+    </HStack>
   );
 }
 
@@ -17,36 +23,42 @@ export function ProcessDetails() {
   const process = useProcessStore((s) => s.processes.find((item) => item.pid === focusedPid));
   const snapshot = useProcessStore((s) => s.snapshot);
 
-  if (!process) {
-    return <div className="flex flex-1 items-center justify-center text-muted-foreground">Select a process</div>;
-  }
+  if (!process) return <Placeholder>Select a process</Placeholder>;
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-      <div className="mb-4 flex items-baseline gap-2 border-b border-border pb-2">
-        <span className="text-lg font-medium">{process.name || 'Process'}</span>
-        <span className="font-mono text-muted-foreground">PID {process.pid}</span>
-      </div>
-      <div className="flex flex-col gap-2 text-sm">
-        <Detail label="command" value={process.command} />
-        <Detail label="parent" value={process.parent_pid === null ? '—' : String(process.parent_pid)} />
-        <Detail label="UID" value={process.user ?? '—'} />
-        <Detail label="status" value={process.status} />
-        <Detail label="CPU" value={formatCpu(process.cpu)} />
-        <Detail
-          label="memory"
-          value={`${formatBytes(process.memory)} (${formatMemoryPercent(process.memory, snapshot?.mem_total ?? 0)})`}
-        />
-        <Detail label="virtual memory" value={formatBytes(process.virtual_memory)} />
-        <Detail label="elapsed" value={formatElapsed(process)} />
-        <Detail label="started" value={formatStarted(process)} />
-      </div>
-      <div className="mt-6">
-        <div className="mb-1 text-muted-foreground">command line</div>
-        <pre className="whitespace-pre-wrap break-all rounded-sm border border-border bg-muted/30 p-2 font-mono text-sm">
-          {process.command}
-        </pre>
-      </div>
-    </div>
+    <ScrollableArea label="Process details" padding={4} className="min-h-0 flex-1">
+      <VStack gap={4}>
+        <HStack gap={2} vAlign="center" className="min-w-0 border-b border-border pb-2">
+          <Text type="large" weight="medium" maxLines={1} className="min-w-0">
+            {process.name || 'Process'}
+          </Text>
+          <Text type="code" size="sm" color="secondary" textWrap="nowrap">
+            PID {process.pid}
+          </Text>
+        </HStack>
+        <VStack gap={2}>
+          <Detail label="Command" value={process.command} />
+          <Detail label="Parent" value={process.parent_pid === null ? '—' : String(process.parent_pid)} />
+          <Detail label="User" value={process.user ?? '—'} />
+          <Detail label="Status" value={process.status} />
+          <Detail label="CPU" value={formatCpu(process.cpu)} />
+          <Detail
+            label="Memory"
+            value={`${formatBytes(process.memory)} (${formatMemoryPercent(process.memory, snapshot?.mem_total ?? 0)})`}
+          />
+          <Detail label="Virtual memory" value={formatBytes(process.virtual_memory)} />
+          <Detail label="Elapsed" value={formatElapsed(process)} />
+          <Detail label="Started" value={formatStarted(process)} />
+        </VStack>
+        <VStack gap={1}>
+          <Text size="sm" color="secondary">
+            Command line
+          </Text>
+          <pre className="whitespace-pre-wrap break-all rounded-sm border border-border bg-muted/30 p-2 font-mono text-sm">
+            {process.command}
+          </pre>
+        </VStack>
+      </VStack>
+    </ScrollableArea>
   );
 }

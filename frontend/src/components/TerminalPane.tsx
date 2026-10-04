@@ -684,7 +684,7 @@ export function TerminalPane({
         <div
           role="status"
           className={cn(
-            'absolute inset-0 flex items-center justify-center text-sm text-muted-foreground',
+            'absolute inset-0 flex items-center justify-center text-sm text-secondary',
             animations && 'animate-pulse',
           )}
           style={{ zIndex: 30 }}

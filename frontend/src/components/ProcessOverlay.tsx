@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { HStack, VStack } from '@astryxdesign/core/Layout';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { Text } from '@astryxdesign/core/Text';
 import { useProcessSocket } from '@/hooks/useProcessSocket';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
 import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
-import { getAnimations, getTerminalFontSize, MIN_FONT_SIZE } from '@/state/configDefaults';
+import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
 import { buildProcessRows } from '@/lib/processTree';
-import { Kbd, KbdGroup } from '@/components/ui/kbd';
+import { KeyHint } from './KeyHint';
 import { ProcessDetails } from './processes/ProcessDetails';
 import { ProcessModeHeader } from './processes/ProcessModeHeader';
 import { ProcessTree } from './processes/ProcessTree';
@@ -27,19 +30,6 @@ interface ProcessOverlayProps {
   paneId: string;
   send: (msg: ClientMessage) => void;
   onClose: () => void;
-}
-
-function Hint({ keys, label }: { keys: string[]; label: string }) {
-  return (
-    <span>
-      <KbdGroup>
-        {keys.map((key) => (
-          <Kbd key={key}>{key}</Kbd>
-        ))}
-      </KbdGroup>{' '}
-      {label}
-    </span>
-  );
 }
 
 export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOverlayProps) {
@@ -248,79 +238,82 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   }, [onClose, pendingKill, sendKill]);
 
   return (
-    <div
+    <VStack
       ref={rootRef}
       tabIndex={-1}
-      className="flex h-full min-h-0 flex-col overflow-hidden outline-none"
-      style={{
-        fontSize: `${fontSize}px`,
-        fontFamily: 'var(--btmux-font)',
-        fontWeight: 'var(--btmux-font-weight)',
-      }}
+      className="h-full min-h-0 overflow-hidden outline-none"
+      style={{ fontSize: `${fontSize}px` }}
       onMouseDown={() => {
         if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
         rootRef.current?.focus();
       }}
     >
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div
-          className="flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden"
-          style={{ width: `${sidebarRatio * 100}%` }}
-        >
-          <ProcessModeHeader connectionState={connectionState} animations={animations} />
+      <HStack gap={3} vAlign="center" className="min-w-0 flex-none border-b border-border px-3 py-1.5">
+        <ProcessModeHeader connectionState={connectionState} animations={animations} />
+        <IconButton label="Close process viewer" icon={<X />} variant="ghost" size="sm" onClick={onClose} />
+      </HStack>
+
+      <HStack className="min-h-0 min-w-0 flex-1 items-stretch overflow-hidden">
+        <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ width: `${sidebarRatio * 100}%` }}>
           <ProcessTree rows={rows} />
-        </div>
+        </VStack>
         <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize process list"
           onMouseDown={onDividerMouseDown}
-          className="w-1 shrink-0 cursor-col-resize border-r border-border hover:bg-accent active:bg-accent"
+          className="w-1 flex-none cursor-col-resize border-r border-border hover:bg-accent-bg active:bg-accent-bg"
         />
-        <div className="file-preview-scroll file-preview-content flex min-h-0 min-w-0 flex-1 flex-col">
+        <VStack className="min-h-0 min-w-0 flex-1">
           <ProcessDetails />
-        </div>
-      </div>
+        </VStack>
+      </HStack>
 
-      <button
-        onClick={onClose}
-        aria-label="Close process viewer"
-        className="absolute right-2 top-2 rounded-sm bg-background/80 p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <X className="size-3.5" />
-      </button>
-
-      <div
-        className="flex items-center gap-4 border-t border-border px-3 py-1 text-muted-foreground"
-        style={{ fontSize: `${Math.max(MIN_FONT_SIZE, fontSize - 2)}px` }}
-      >
+      <HStack gap={4} vAlign="center" className="flex-none overflow-hidden border-t border-border px-3 py-1">
         {pendingKill ? (
-          <span className="text-foreground">
-            {pendingKill.signal === 'kill' ? 'kill (SIGKILL)' : 'terminate'}{' '}
-            <span className="text-yellow-400">{pendingKill.name}</span>{' '}
-            <span className="text-muted-foreground">(PID {pendingKill.pid})</span>?{' '}
-            <Hint keys={['y']} label="confirm" /> <Hint keys={['n']} label="cancel" />
-          </span>
+          <>
+            <Text size="sm">
+              {pendingKill.signal === 'kill' ? 'Kill (SIGKILL) ' : 'Terminate '}
+              <Text size="sm" color="inherit" className="text-yellow-vivid">
+                {pendingKill.name}
+              </Text>{' '}
+              <Text size="sm" color="secondary">
+                (PID {pendingKill.pid})
+              </Text>
+              ?
+            </Text>
+            <KeyHint keys={['y']} label="confirm" />
+            <KeyHint keys={['n']} label="cancel" />
+          </>
         ) : (
           <>
             {message && (
-              <span className={message.type === 'error' || !message.success ? 'text-theme-red' : 'text-theme-green'}>
+              <Text
+                size="sm"
+                color="inherit"
+                textWrap="nowrap"
+                className={message.type === 'error' || !message.success ? 'text-error' : 'text-success'}
+              >
                 {message.message}
-              </span>
+              </Text>
             )}
-            <Hint keys={['j', 'k']} label="navigate" />
+            <KeyHint keys={['j', 'k']} label="navigate" />
             {treeMode && (
               <>
-                <Hint keys={['h', 'l']} label="fold/unfold" />
-                <Hint keys={['Tab', 'Enter']} label="toggle" />
+                <KeyHint keys={['h', 'l']} label="fold/unfold" />
+                <KeyHint keys={['tab', 'enter']} label="toggle" />
               </>
             )}
-            <Hint keys={['x', 'X']} label="term/kill" />
-            <Hint keys={['F']} label="follow" />
-            <Hint keys={['s']} label="sort" />
-            <Hint keys={['F5', 'V']} label={treeMode ? 'flat' : 'tree'} />
-            <Hint keys={['g', 'G']} label="top/bottom" />
-            <Hint keys={['Esc', 'q']} label="close" />
+            <KeyHint keys={['x', 'shift+x']} label="term/kill" />
+            <KeyHint keys={['shift+f']} label="follow" />
+            <KeyHint keys={['s']} label="sort" />
+            <KeyHint keys={['f5', 'shift+v']} label={treeMode ? 'flat' : 'tree'} />
+            <KeyHint keys={['/']} label="filter" />
+            <KeyHint keys={['g', 'shift+g']} label="top/bottom" />
+            <KeyHint keys={['esc', 'q']} label="close" />
           </>
         )}
-      </div>
-    </div>
+      </HStack>
+    </VStack>
   );
 }

@@ -1,7 +1,6 @@
-import { useEffect, useCallback, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
-import { Kbd } from '@astryxdesign/core/Kbd';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Token } from '@astryxdesign/core/Token';
@@ -19,6 +18,7 @@ import { GitCommitDiffPreview } from './files/GitCommitDiffPreview';
 import { GitCommitModal } from './files/GitCommitModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
+import { KeyHint, type Hint } from './KeyHint';
 import { cn, getParent } from '@/lib/utils';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
@@ -1352,28 +1352,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
       <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
     </VStack>
-  );
-}
-
-interface Hint {
-  keys: string[];
-  label: ReactNode;
-}
-
-function KeyHint({ keys, label }: Hint) {
-  return (
-    <HStack gap={1} vAlign="center" className="flex-none">
-      {keys.map((key) => (
-        <Kbd key={key} keys={key} />
-      ))}
-      {typeof label === 'string' ? (
-        <Text size="sm" color="secondary">
-          {label}
-        </Text>
-      ) : (
-        label
-      )}
-    </HStack>
   );
 }
 

@@ -11,33 +11,6 @@
 @plugin "@tailwindcss/typography";
 @custom-variant dark (&:is([data-theme="dark"] *));
 
-/* Compatibility aliases for surfaces being migrated. Astryx owns their values. */
-@theme inline {
-  --font-sans: var(--font-family-body);
-  --font-heading: var(--font-family-heading);
-  --font-mono: var(--font-family-code);
-  --color-background: var(--color-background-body);
-  --color-foreground: var(--color-text-primary);
-  --color-card: var(--color-background-card);
-  --color-card-foreground: var(--color-text-primary);
-  --color-popover: var(--color-background-popover);
-  --color-popover-foreground: var(--color-text-primary);
-  --color-primary-foreground: var(--color-on-accent);
-  --color-muted: var(--color-background-muted);
-  --color-muted-foreground: var(--color-text-secondary);
-  --color-accent-foreground: var(--color-on-accent);
-  --color-destructive: var(--color-error);
-  --color-input: var(--color-border);
-  --color-ring: var(--color-accent);
-  --color-theme-red: var(--color-text-red);
-  --color-theme-orange: var(--color-text-orange);
-  --color-theme-yellow: var(--color-text-yellow);
-  --color-theme-green: var(--color-text-green);
-  --color-theme-cyan: var(--color-text-cyan);
-  --color-theme-blue: var(--color-text-blue);
-  --color-theme-magenta: var(--color-text-purple);
-  --color-theme-brown: var(--color-text-gray);
-}
 
 @layer base {
   body {

@@ -1,4 +1,8 @@
 import { Activity } from 'lucide-react';
+import { HStack } from '@astryxdesign/core/Layout';
+import { Icon } from '@astryxdesign/core/Icon';
+import { Text } from '@astryxdesign/core/Text';
+import { Token } from '@astryxdesign/core/Token';
 import { useProcessStore } from '@/state/processStore';
 import { formatBytes } from '@/lib/processFormat';
 import { PROCESS_SORT_LABELS } from '@/lib/processTree';
@@ -22,39 +26,33 @@ export function ProcessModeHeader({
   const memoryPercent = snapshot && snapshot.mem_total > 0 ? (snapshot.mem_used / snapshot.mem_total) * 100 : 0;
 
   return (
-    <div className="flex min-h-0 items-center gap-2 border-b border-border px-2 py-1.5">
-      <Activity className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="font-medium">Processes</span>
-      <span className="truncate text-muted-foreground" style={{ fontSize: '0.85em' }}>
-        {processCount} processes
-      </span>
-      <span className="shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
-        sort: {PROCESS_SORT_LABELS[sortMode]}
-      </span>
-      <span className="shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
-        {treeMode ? 'tree' : 'flat'}
-      </span>
-      {followFocus && (
-        <span className="shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
-          follow
-        </span>
-      )}
+    <HStack gap={2} vAlign="center" className="min-w-0 flex-1 overflow-hidden">
+      <Icon icon={Activity} size="sm" color="secondary" />
+      <Text weight="medium" textWrap="nowrap">
+        Processes
+      </Text>
+      <Text size="sm" color="secondary" textWrap="nowrap">
+        {processCount}
+      </Text>
+      <Token size="sm" label={`sort: ${PROCESS_SORT_LABELS[sortMode]}`} />
+      <Token size="sm" label={treeMode ? 'tree' : 'flat'} />
+      {followFocus && <Token size="sm" color="blue" label="follow" />}
       {filterActive && (
-        <span className="shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
-          filter: <span className="text-foreground">{filterQuery || '...'}</span>
-        </span>
-      )}
-      {snapshot && (
-        <span className="ml-auto shrink-0 text-muted-foreground" style={{ fontSize: '0.85em' }}>
-          {snapshot.cpu_count} cores · {memoryPercent.toFixed(0)}% / {formatBytes(snapshot.mem_total)} · load{' '}
-          {snapshot.load_average[0].toFixed(2)}
-        </span>
+        <Text size="sm" color="secondary" textWrap="nowrap">
+          Filter: <Text size="sm">{filterQuery || '…'}</Text>
+        </Text>
       )}
       {connectionState !== 'connected' && (
-        <span className={cn('shrink-0 text-muted-foreground', animations && 'animate-pulse')} role="status">
+        <Text size="sm" color="secondary" role="status" className={cn(animations && 'animate-pulse')}>
           {CONNECTION_STATE_LABEL[connectionState]}
-        </span>
+        </Text>
       )}
-    </div>
+      {snapshot && (
+        <Text size="sm" color="secondary" textWrap="nowrap" hasTabularNumbers className="ml-auto">
+          {snapshot.cpu_count} cores · {memoryPercent.toFixed(0)}% / {formatBytes(snapshot.mem_total)} · load{' '}
+          {snapshot.load_average[0].toFixed(2)}
+        </Text>
+      )}
+    </HStack>
   );
 }

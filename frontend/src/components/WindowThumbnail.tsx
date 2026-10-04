@@ -9,6 +9,8 @@ const EMPTY_RATIOS: Map<string, number> = new Map();
 interface Props {
   window: SessionState['windows'][number];
   visible: boolean;
+  /** Keep mirrors mounted (suspended) while hidden; defaults to `visible`. */
+  isMounted?: boolean;
   c: ReturnType<typeof chromePalette>;
   terminalConfig?: ClientConfig | null;
   shaderId?: string | null;
@@ -23,6 +25,7 @@ interface Props {
 export function WindowThumbnail({
   window: win,
   visible,
+  isMounted = visible,
   c,
   terminalConfig,
   shaderId,
@@ -83,7 +86,7 @@ export function WindowThumbnail({
                   : undefined,
               }}
             >
-              {visible && (
+              {isMounted && (
                 <MirrorPane
                   paneId={r.paneId}
                   config={terminalConfig}

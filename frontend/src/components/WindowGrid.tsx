@@ -1,22 +1,22 @@
-import { Dialog } from '@astryxdesign/core/Dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { Layout, LayoutContent, LayoutFooter, HStack, VStack } from '@astryxdesign/core/Layout';
+import { Grid } from '@astryxdesign/core/Grid';
+import { SelectableCard } from '@astryxdesign/core/SelectableCard';
+import { Text } from '@astryxdesign/core/Text';
+import { Kbd } from '@astryxdesign/core/Kbd';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
-import { DEFAULT_THEME } from '../state/defaultTheme';
+import { chromePalette } from '../lib/chrome-colors';
 import { getWindowMruOrder } from '../state/windowMru';
-import { computeRectsAndDividers } from '../state/layout';
-import { LayoutNode } from '../state/types';
-import { MirrorPane } from './MirrorPane';
-import { getWindowGridCount } from '../state/configDefaults';
+import type { SessionState } from '../state/types';
+import { WindowThumbnail } from './WindowThumbnail';
+import { getAnimations, getWindowGridCount } from '../state/configDefaults';
 
 interface Props {
   send: (msg: ClientMessage) => void;
 }
-
-// Thumbnails use each split's stored ratio (no live drag), so a single shared
-// empty override map suffices for every computeRectsAndDividers call.
-const EMPTY_RATIOS: Map<string, number> = new Map();
 
 interface GridEntry {
   sessionId: string;
@@ -24,9 +24,7 @@ interface GridEntry {
   windowId: string;
   windowName: string;
   windowIndex: number;
-  // Full split layout of the window — each leaf renders its own MirrorPane at its
-  // rect, so the thumbnail mirrors the real pane arrangement.
-  layout: LayoutNode;
+  window: SessionState['windows'][number];
 }
 
 /**
@@ -44,7 +42,7 @@ function buildEntries(allSessions: ReturnType<typeof useStore.getState>['allSess
         windowId: win.id,
         windowName: win.name,
         windowIndex,
-        layout: win.layout,
+        window: win,
       });
     });
   }
@@ -112,17 +110,12 @@ export function WindowGrid({ send }: Props) {
   const rows = Math.ceil(entries.length / cols);
 
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-  // The element focused before the grid grabbed focus (the active pane's
-  // contenteditable). Restored on cancel — see cancel().
-  const prevFocusRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
-  // On each open, remember the prior focus, focus the grid, and pre-select
-  // the currently active window.
+  // On each open, pre-select the currently active window.
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
-      prevFocusRef.current = document.activeElement as HTMLElement | null;
       // Derive the active window from the URL + session state (same approach as
       // SessionPool). Pre-select it in the grid so the user sees their current
       // window highlighted.
@@ -132,27 +125,14 @@ export function WindowGrid({ send }: Props) {
       const activeWindowId = activeSession ? activeSession.windows[activeSession.active_window]?.id : undefined;
       const idx = activeWindowId ? entries.findIndex((e) => e.windowId === activeWindowId) : -1;
       setSelectedIdx(idx >= 0 ? idx : 0);
-      containerRef.current?.focus();
     }
     wasOpen.current = open;
   }, [open, entries.length]);
 
   const clampedIdx = Math.min(selectedIdx, Math.max(0, entries.length - 1));
 
-  // Cancel: close and return focus to the pane that had it. The grid div holds
-  // focus while open; hiding it (display:none) drops focus to <body> as part of
-  // the commit, so we restore on a macrotask (setTimeout 0) which lands after the
-  // reset and wins. (On select() we navigate instead, which re-focuses the target
-  // pane via SessionPane's focus effect.)
-  const cancel = () => {
-    setOpen(false);
-    const prev = prevFocusRef.current;
-    if (prev && prev.isConnected) {
-      window.setTimeout(() => {
-        if (prev.isConnected) prev.focus();
-      }, 0);
-    }
-  };
+  // The native dialog restores focus to the pane on close.
+  const cancel = () => setOpen(false);
 
   const select = (entry: GridEntry | undefined) => {
     if (!entry) return;
@@ -222,140 +202,98 @@ export function WindowGrid({ send }: Props) {
   const mounted = useStore((s) => s.windowGridMounted);
   if (!mounted) return null;
 
-  const theme = config?.theme;
-  const bg = theme?.background ?? DEFAULT_THEME.background;
-  const fg = theme?.foreground ?? DEFAULT_THEME.foreground;
-  const dimFg = theme?.brightBlack ?? DEFAULT_THEME.brightBlack;
-  const ringColor = theme?.blue ?? DEFAULT_THEME.blue;
-  const cellBorder = theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
-  const labelBg = theme?.background ?? DEFAULT_THEME.background;
+  const c = chromePalette(config?.theme ?? null);
+  const animations = getAnimations(config);
 
   return (
     <Dialog
+      ref={dialogRef}
+      tabIndex={-1}
       isOpen={open}
       onOpenChange={(value) => {
         if (!value) cancel();
       }}
-      aria-label="Window overview"
       variant="fullscreen"
-      padding={0}
+      onKeyDown={onKeyDown}
+      onFocus={(e) => {
+        // MirrorPane's Terminal.open() focuses its textarea; keep keys on the dialog.
+        if ((e.target as Element).closest('[data-window-thumbnail]')) dialogRef.current?.focus();
+      }}
     >
-      <div
-        ref={containerRef}
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        style={{
-          position: 'relative',
-          height: '100dvh',
-          display: open ? 'grid' : 'none',
-          gridTemplateColumns: `repeat(${cols}, 1fr)`,
-          gridTemplateRows: `repeat(${rows}, 1fr)`,
-          gap: '8px',
-          padding: '8px',
-          background: bg,
-          outline: 'none',
-          zIndex: 30,
-          boxSizing: 'border-box',
-          fontFamily: 'var(--btmux-font)',
-          fontWeight: 'var(--btmux-font-weight)',
-        }}
-      >
-        {entries.length === 0 && <div style={{ color: dimFg, padding: '16px' }}>No windows.</div>}
-        {entries.map((entry, i) => {
-          const isSelected = i === clampedIdx;
-          const { rects, dividers } = computeRectsAndDividers(
-            entry.layout,
-            { top: 0, left: 0, width: 100, height: 100 },
-            EMPTY_RATIOS,
-          );
-          return (
-            <div
-              key={entry.windowId}
-              onClick={() => select(entry)}
-              style={{
-                position: 'relative',
-                overflow: 'hidden',
-                cursor: 'pointer',
-                border: `2px solid ${isSelected ? ringColor : cellBorder}`,
-                boxShadow: isSelected ? `0 0 0 2px ${ringColor}` : undefined,
-                boxSizing: 'border-box',
-                background: bg,
-              }}
-            >
-              {/* Live thumbnail of the full split layout. */}
-              {rects.map((r) => (
-                <div
-                  key={r.paneId}
-                  style={{
-                    position: 'absolute',
-                    top: `${r.top}%`,
-                    left: `${r.left}%`,
-                    width: `${r.width}%`,
-                    height: `${r.height}%`,
-                    padding: '2px',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
-                    {mirrorsReady && <MirrorPane paneId={r.paneId} visible={open} />}
-                  </div>
-                </div>
-              ))}
-              {/* Pane dividers */}
-              {dividers.map((d) => (
-                <div
-                  key={d.id}
-                  style={
-                    d.orientation === 'vertical'
-                      ? {
-                          position: 'absolute',
-                          top: `${d.crossStart}%`,
-                          left: `${d.position}%`,
-                          transform: 'translateX(-50%)',
-                          width: '1px',
-                          height: `${d.crossSize}%`,
-                          background: cellBorder,
-                          pointerEvents: 'none',
-                          zIndex: 1,
-                        }
-                      : {
-                          position: 'absolute',
-                          top: `${d.position}%`,
-                          left: `${d.crossStart}%`,
-                          transform: 'translateY(-50%)',
-                          width: `${d.crossSize}%`,
-                          height: '1px',
-                          background: cellBorder,
-                          pointerEvents: 'none',
-                          zIndex: 1,
-                        }
-                  }
-                />
-              ))}
-              {/* Label over the bottom edge. */}
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  padding: '2px 6px',
-                  fontSize: '11px',
-                  color: fg,
-                  background: `${labelBg}cc`,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  pointerEvents: 'none',
-                }}
+      <Layout
+        header={
+          <DialogHeader
+            title="Windows"
+            onOpenChange={(value) => {
+              if (!value) cancel();
+            }}
+          />
+        }
+        content={
+          <LayoutContent isScrollable={false} padding={4}>
+            {entries.length === 0 ? (
+              <Text color="secondary">No windows.</Text>
+            ) : (
+              <Grid
+                columns={cols}
+                gap={3}
+                height="100%"
+                style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
               >
-                <span style={{ opacity: 0.5 }}>{i + 1}. </span>
-                {entry.sessionName} <span style={{ opacity: 0.5 }}>›</span> {entry.windowName}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                {entries.map((entry, i) => (
+                  <SelectableCard
+                    key={entry.windowId}
+                    label={`${entry.sessionName} › ${entry.windowName}`}
+                    isSelected={i === clampedIdx}
+                    onChange={() => select(entry)}
+                    padding={2}
+                    height="100%"
+                  >
+                    <VStack gap={2} className="h-full min-h-0">
+                      <HStack gap={2} vAlign="center" className="min-w-0">
+                        {i < 9 && <Kbd keys={String(i + 1)} />}
+                        <Text color="secondary">{entry.sessionName}</Text>
+                        <Text>{entry.windowName}</Text>
+                      </HStack>
+                      <VStack data-window-thumbnail className="relative min-h-0 flex-1 overflow-hidden">
+                        <WindowThumbnail
+                          window={entry.window}
+                          visible={open}
+                          isMounted={mirrorsReady}
+                          c={c}
+                          activePaneId={entry.window.panes[entry.window.active_pane]?.id ?? null}
+                          animations={animations}
+                        />
+                      </VStack>
+                    </VStack>
+                  </SelectableCard>
+                ))}
+              </Grid>
+            )}
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter hasDivider>
+            <HStack gap={4} wrap="wrap">
+              {HINTS.map(([keys, label]) => (
+                <HStack key={label} gap={1} vAlign="center">
+                  {keys.map((key) => (
+                    <Kbd key={key} keys={key} />
+                  ))}
+                  <Text color="secondary">{label}</Text>
+                </HStack>
+              ))}
+            </HStack>
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   );
 }
+
+const HINTS: [string[], string][] = [
+  [['up', 'down', 'left', 'right'], 'move'],
+  [['1', '9'], 'jump to cell'],
+  [['enter'], 'switch'],
+  [['esc'], 'close'],
+];

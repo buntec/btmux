@@ -173,7 +173,9 @@ export function AgentGrid({ send }: Props) {
         content={
           <LayoutContent padding={4}>
             {entries.length === 0 ? (
-              <Text color="secondary">No agents detected. Start Claude, Codex, Gemini, or Antigravity in a pane.</Text>
+              <Text color="secondary">
+                No agents detected. Start Claude, Codex, Gemini, Antigravity, or OpenCode in a pane.
+              </Text>
             ) : (
               <Grid
                 columns={cols}

@@ -119,6 +119,16 @@ pub fn agent_name(process: &PaneProcess) -> Option<&'static str> {
         {
             Some("claude")
         }
+        "opencode"
+            if !args.first().is_some_and(|arg| {
+                matches!(
+                    arg.as_str(),
+                    "run" | "serve" | "web" | "acp" | "mcp" | "models" | "auth" | "upgrade"
+                )
+            }) =>
+        {
+            Some("opencode")
+        }
         "agy"
             if !args
                 .iter()

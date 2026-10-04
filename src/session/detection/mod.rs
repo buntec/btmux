@@ -14,6 +14,7 @@ const BUNDLED: &[(&str, &str)] = &[
     ("codex", include_str!("manifests/codex.toml")),
     ("gemini", include_str!("manifests/gemini.toml")),
     ("agy", include_str!("manifests/agy.toml")),
+    ("opencode", include_str!("manifests/opencode.toml")),
 ];
 
 pub struct DetectionInput<'a> {
@@ -471,6 +472,20 @@ mod tests {
                 "",
                 AgentState::Working,
                 Some("spinner_working"),
+            ),
+            (
+                "opencode",
+                "△ Permission required",
+                "",
+                AgentState::Blocked,
+                Some("permission_required"),
+            ),
+            (
+                "opencode",
+                "esc to interrupt",
+                "",
+                AgentState::Working,
+                Some("interrupt_hint_working"),
             ),
         ];
         for (agent, screen, title, state, rule) in cases {

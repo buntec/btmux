@@ -6,21 +6,25 @@ default:
 # Vite (vite.config.ts) proxies /ws and /api here.
 dev_port := "8044"
 
+# Fixed dev access token. Only for the loopback `--profile dev` backend.
+dev_token := "1234"
+
 # Demo backend port — kept distinct from both the production default and the
 # development backend.
 demo_port := "8045"
 
 # Run both backend and frontend in dev mode. Default backend logging to debug;
-# an explicitly exported BTMUX_*_LOG value still wins.
-dev:
-    BTMUX_CONSOLE_LOG="${BTMUX_CONSOLE_LOG:-debug}" BTMUX_FILE_LOG="${BTMUX_FILE_LOG:-debug}" \
-      bunx concurrently --names backend,frontend --prefix-colors blue,green \
-        "cargo run -- --no-browser --profile dev --public-url http://localhost:5173 --public-url http://127.0.0.1:5173 --port {{dev_port}}" \
-        "cd frontend && bunx vite --open"
+# an explicitly exported BTMUX_*_LOG value still wins. Pass a frontend port
+# (`just dev 5174`) to run next to another instance.
+dev frontend_port="5173":
+    BTMUX_AUTH_TOKEN={{dev_token}} BTMUX_CONSOLE_LOG="${BTMUX_CONSOLE_LOG:-debug}" BTMUX_FILE_LOG="${BTMUX_FILE_LOG:-debug}" \
+      bunx concurrently --kill-others --success first --names backend,frontend --prefix-colors blue,green \
+        "cargo run -- --no-browser --profile dev --public-url http://localhost:{{frontend_port}} --public-url http://127.0.0.1:{{frontend_port}} --port {{dev_port}}" \
+        "cd frontend && bunx vite --open --port {{frontend_port}}"
 
 # Run only the backend
 dev-backend:
-    cargo run -- --profile dev --public-url http://localhost:5173 --public-url http://127.0.0.1:5173 --port {{dev_port}}
+    BTMUX_AUTH_TOKEN={{dev_token}} cargo run -- --profile dev --public-url http://localhost:5173 --public-url http://127.0.0.1:5173 --port {{dev_port}}
 
 # Run only the frontend
 dev-frontend:

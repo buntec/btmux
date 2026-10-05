@@ -5,6 +5,8 @@ use std::time::Duration;
 use clap::Parser;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 
+use crate::session::NotificationLevel;
+
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8004;
 pub const DEFAULT_SHELL: &str = "/bin/bash";
@@ -202,6 +204,27 @@ impl Default for LogConfig {
     }
 }
 
+/// OS notification preferences. In-app toasts are unaffected.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct NotificationConfig {
+    /// Show OS notifications while btmux is hidden or unfocused.
+    pub os: bool,
+    /// Lowest level that triggers an OS notification.
+    #[serde(rename = "os-level")]
+    pub os_level: NotificationLevel,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            os: true,
+            os_level: NotificationLevel::Attention,
+        }
+    }
+}
+
 /// User config read from `config.toml`. Every field is optional so a missing or
 /// partial file still yields working defaults.
 #[derive(Deserialize, Clone)]
@@ -337,6 +360,8 @@ pub struct FileConfig {
     pub resolved_colors: Option<BaseTheme>,
     /// Logging configuration.
     pub log: LogConfig,
+    /// OS notification preferences.
+    pub notifications: NotificationConfig,
 }
 
 impl Default for FileConfig {
@@ -376,6 +401,7 @@ impl Default for FileConfig {
             colors: None,
             resolved_colors: None,
             log: LogConfig::default(),
+            notifications: NotificationConfig::default(),
         }
     }
 }
@@ -707,6 +733,8 @@ pub struct ClientConfig {
     pub keys: BTreeMap<String, String>,
     /// Logging levels configured for the server.
     pub log: LogConfig,
+    /// OS notification preferences.
+    pub notifications: NotificationConfig,
     /// Built-in command-palette entries (prefix + `:`).
     pub commands: Vec<Command>,
     pub terminal: TerminalOptions,
@@ -1213,6 +1241,12 @@ pub fn generate_config_toml() -> String {
 # console-level = "{DEFAULT_CONSOLE_LOG}"    # stderr output (keep the terminal quiet)
 # file-level = "{DEFAULT_FILE_LOG}"       # file output ($XDG_STATE_HOME/btmux/log/btmux.log.YYYY-MM-DD, falling back to ~/.local/state/btmux/)
 
+# OS notifications for agent and pane events while btmux is hidden or
+# unfocused. In-app toasts are unaffected.
+# [notifications]
+# os = true
+# os-level = "attention"   # lowest level shown: "info", "success", "attention", or "error"
+
 # Color scheme from $XDG_CONFIG_HOME/btmux/colors/<name>.yaml (falling back to
 # ~/.config/btmux/colors/; base16/base24 YAML files), an absolute or ~/relative
 # local path, or a URL to a base16/base24 YAML file.
@@ -1421,6 +1455,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         shell: file.shell.clone(),
         keys: file.keys.clone(),
         log: file.log.clone(),
+        notifications: file.notifications.clone(),
         commands: default_commands(),
         terminal: file.terminal.clone(),
         theme,
@@ -1509,6 +1544,8 @@ pub struct ConfigUpdate {
     pub animations: Option<bool>,
     pub console_level: Option<String>,
     pub file_level: Option<String>,
+    pub os_notifications: Option<bool>,
+    pub os_notification_level: Option<NotificationLevel>,
     pub wallpaper: Option<String>,
     pub wallpaper_shader: Option<String>,
     pub wallpaper_opacity: Option<f32>,
@@ -1615,6 +1652,12 @@ impl ConfigUpdate {
         }
         if other.file_level.is_some() {
             self.file_level = other.file_level.clone();
+        }
+        if other.os_notifications.is_some() {
+            self.os_notifications = other.os_notifications;
+        }
+        if other.os_notification_level.is_some() {
+            self.os_notification_level = other.os_notification_level;
         }
         if other.wallpaper.is_some() {
             self.wallpaper = other.wallpaper.clone();
@@ -1762,6 +1805,12 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(file_level) = &overrides.file_level {
         file.log.file_level = file_level.clone();
+    }
+    if let Some(os) = overrides.os_notifications {
+        file.notifications.os = os;
+    }
+    if let Some(level) = overrides.os_notification_level {
+        file.notifications.os_level = level;
     }
     if let Some(wallpaper) = &overrides.wallpaper {
         file.wallpaper = Some(wallpaper.clone()).filter(|s| !s.is_empty());
@@ -2022,6 +2071,8 @@ palette:
                 scroll_sensitivity: Some(2.0),
                 console_level: Some("debug".to_string()),
                 file_level: Some("trace".to_string()),
+                os_notifications: Some(false),
+                os_notification_level: Some(NotificationLevel::Error),
                 ..ConfigUpdate::default()
             },
         );
@@ -2049,6 +2100,22 @@ palette:
         assert_eq!(resolved.terminal.scroll_sensitivity, Some(2.0));
         assert_eq!(resolved.log.console_level, "debug");
         assert_eq!(resolved.log.file_level, "trace");
+        assert_eq!(
+            resolved.notifications,
+            NotificationConfig {
+                os: false,
+                os_level: NotificationLevel::Error,
+            }
+        );
+    }
+
+    #[test]
+    fn notification_preferences_parse_with_defaults() {
+        let file: FileConfig = toml::from_str("[notifications]\nos-level = \"info\"").unwrap();
+        assert!(file.notifications.os);
+        assert_eq!(file.notifications.os_level, NotificationLevel::Info);
+        assert!(toml::from_str::<FileConfig>("[notifications]\nlevel = \"info\"").is_err());
+        assert!(toml::from_str::<FileConfig>("[notifications]\nos-level = \"loud\"").is_err());
     }
 
     #[test]

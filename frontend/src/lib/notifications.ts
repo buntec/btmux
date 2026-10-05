@@ -8,6 +8,13 @@ export interface Notification {
   action?: { label: string; run: () => void };
 }
 
+const RANK: Record<NotificationLevel, number> = { info: 0, success: 1, attention: 2, error: 3 };
+
+/** Whether `level` is at least as severe as `min`. */
+export function atLeast(level: NotificationLevel, min: NotificationLevel) {
+  return RANK[level] >= RANK[min];
+}
+
 let sink: ((notification: Notification) => void) | null = null;
 const pending: Notification[] = [];
 

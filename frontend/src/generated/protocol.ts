@@ -45,6 +45,17 @@ export type LogConfig = {
 "file-level": string, };
 
 // prettier-ignore
+export type NotificationConfig = { 
+/**
+ * Show OS notifications while btmux is hidden or unfocused.
+ */
+os: boolean, 
+/**
+ * Lowest level that triggers an OS notification.
+ */
+"os-level": NotificationLevel, };
+
+// prettier-ignore
 export type Bind = { key: string, action: string, };
 
 // prettier-ignore
@@ -79,6 +90,10 @@ keys: { [key in string]: string },
  * Logging levels configured for the server.
  */
 log: LogConfig, 
+/**
+ * OS notification preferences.
+ */
+notifications: NotificationConfig, 
 /**
  * Built-in command-palette entries (prefix + `:`).
  */
@@ -216,7 +231,7 @@ fonts: Array<FontEntry>, };
 export type ServerInfo = { version: string, profile: string | null, config_file: string | null, state_file: string | null, token_file: string | null, token_source: string, listen_address: string, executable: string | null, };
 
 // prettier-ignore
-export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, show_nav_header?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, wallpaper?: string, wallpaper_shader?: string, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, 
+export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, show_nav_header?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, 
 /**
  * Post-process effect name; the empty string clears it.
  */

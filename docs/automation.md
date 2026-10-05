@@ -130,7 +130,10 @@ session is active.
 Attention and error notifications show a toast unless you are looking at that
 pane, and an OS notification while the btmux window is hidden or unfocused. The
 first one offers to enable OS notifications, because browsers only grant the
-permission from a click. A permission `Notification` that repeats a pending
+permission from a click. `[notifications]` in `config.toml` (or Settings →
+Notifications) turns OS notifications off with `os = false` or changes the
+lowest level shown with `os-level` (`info`, `success`, `attention`, or
+`error`; default `attention`). A permission `Notification` that repeats a pending
 `PermissionRequest`, and an `idle_prompt` after the turn already finished, are
 not shown again. A finished agent stays `done` until its pane is viewed in a
 focused window.

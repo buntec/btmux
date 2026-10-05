@@ -42,7 +42,7 @@ file locations, so you can retrieve its token without reading service logs.
 
 Tokens survive restarts. To rotate a generated token, stop the server, delete
 its token file, and restart it to generate a new one. Alternatively, start the
-server with `BTMUX_AUTH_TOKEN` set to at least 32 ASCII letters, digits, `-`, or
+server with `BTMUX_AUTH_TOKEN` set to at least 4 ASCII letters, digits, `-`, or
 `_`; this overrides the token file.
 
 The token grants access to the instance's shells, sessions, and files available

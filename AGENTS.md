@@ -269,7 +269,7 @@ Every backend route, WebSocket upgrade, and MCP call passes through `auth.rs`.
 A profile's owner-only `state.token` contains its access credential, or
 `BTMUX_AUTH_TOKEN` supplies one. Browsers use the token as their password; Vite's
 frontend has an access-token form. Automation sends `Authorization: Bearer …`.
-The token must be at least 32 URL-safe ASCII characters. Host and browser Origin
+The token must be at least 4 URL-safe ASCII characters. Host and browser Origin
 are checked against the local authority and explicit `--public-url` values;
 forwarded headers do not grant trust.
 PTY shells receive `BTMUX_AUTH_TOKEN` so generated notification hooks work.

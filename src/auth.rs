@@ -30,14 +30,13 @@ impl Auth {
         port: u16,
         public_urls: &[String],
     ) -> Result<Self, String> {
-        if token.len() < 32
+        if token.len() < 4
             || !token
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
         {
             return Err(
-                "BTMUX_AUTH_TOKEN must contain at least 32 ASCII letters, digits, '-' or '_'"
-                    .into(),
+                "BTMUX_AUTH_TOKEN must contain at least 4 ASCII letters, digits, '-' or '_'".into(),
             );
         }
         let mut urls = public_urls.to_vec();

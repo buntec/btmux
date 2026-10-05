@@ -134,6 +134,10 @@ bump-and-commit level="patch": (bump level)
 update-nix-package:
     ./scripts/update-nix-package.sh
 
+# Write the Homebrew formula and cask for the latest release into a tap checkout.
+update-homebrew-tap tap_dir version="":
+    ./scripts/update-homebrew-tap.sh {{tap_dir}} {{version}}
+
 # Install the binary to ~/.cargo/bin
 install: build
     cargo install --path .

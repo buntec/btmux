@@ -150,3 +150,28 @@ jobs:
         with:
           files: btmux-*
           generate_release_notes: true
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: buntec/homebrew-btmux
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-btmux
+
+      - name: Update formula and cask
+        run: ./scripts/update-homebrew-tap.sh homebrew-btmux "${{ github.ref_name }}"
+
+      - name: Push tap
+        working-directory: homebrew-btmux
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula Casks
+          git diff --cached --quiet || git commit -m "btmux ${GITHUB_REF_NAME#v}"
+          git push

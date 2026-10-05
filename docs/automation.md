@@ -266,4 +266,8 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
   "$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/notify"
 ```
 
+Custom callers may add `title`, `body`, and `level`. A `title` or `body`
+replaces only that part of the event's default text. Titles are capped at 200
+characters and bodies at 1000.
+
 [Back to the README](../README.md)

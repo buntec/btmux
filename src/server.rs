@@ -233,10 +233,16 @@ impl PaneNotifyRequest {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
+    /// Explicit `title`/`body` override the event's defaults field by field.
     fn resolve_title_body(&self, event: &str) -> (Option<String>, Option<String>) {
-        if self.title.is_some() || self.body.is_some() {
-            return (self.title.clone(), self.body.clone());
-        }
+        let (title, body) = self.event_title_body(event);
+        (
+            cap_text(self.title.clone().or(title), 200),
+            cap_text(self.body.clone().or(body), 1000),
+        )
+    }
+
+    fn event_title_body(&self, event: &str) -> (Option<String>, Option<String>) {
         match event {
             "Stop" => (
                 Some("Done".to_string()),
@@ -287,11 +293,10 @@ impl PaneNotifyRequest {
                 (Some(format!("Permission: {tool}")), desc)
             }
             "Notification" => (
-                self.title
+                self.notification_type
                     .clone()
-                    .or_else(|| self.notification_type.clone())
                     .or_else(|| Some("Notification".to_string())),
-                self.message.clone().or_else(|| self.body.clone()),
+                self.message.clone(),
             ),
             _ => (None, None),
         }
@@ -364,6 +369,19 @@ impl PaneNotifyRequest {
     }
 }
 
+/// Trims and caps caller text at `max` characters, keeping line breaks.
+fn cap_text(value: Option<String>, max: usize) -> Option<String> {
+    let value = value?;
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(match value.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", &value[..end]),
+        None => value.to_string(),
+    })
+}
+
 fn truncate_msg(s: &str, max: usize) -> String {
     let first_line = s.lines().next().unwrap_or(s);
     if first_line.len() <= max {
@@ -424,13 +442,14 @@ async fn api_pane_notify(
         return StatusCode::NO_CONTENT.into_response();
     }
 
+    // Bodies can quote agent output, so they stay out of info-level logs.
     tracing::info!(
         pane_id = %pane_id,
         event = %event,
         title = title.as_deref().unwrap_or("-"),
-        body = notif_body.as_deref().unwrap_or("-"),
         "hook notification"
     );
+    tracing::debug!(pane_id = %pane_id, body = notif_body.as_deref().unwrap_or("-"), "hook notification body");
 
     if let Some(pane) = mgr.find_pane_mut(pane_id) {
         pane.notify(PaneAlert {
@@ -904,6 +923,52 @@ mod pane_notification_tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert_eq!(unread().await, None);
+    }
+
+    #[test]
+    fn explicit_title_keeps_the_event_body() {
+        let request: PaneNotifyRequest = serde_json::from_value(serde_json::json!({
+            "hook_event_name": "Notification",
+            "title": "Claude Code",
+            "notification_type": "permission_prompt",
+            "message": "Claude needs your permission to use Bash"
+        }))
+        .unwrap();
+        assert_eq!(
+            request.resolve_title_body("Notification"),
+            (
+                Some("Claude Code".to_string()),
+                Some("Claude needs your permission to use Bash".to_string())
+            )
+        );
+
+        let request: PaneNotifyRequest = serde_json::from_value(serde_json::json!({
+            "hook_event_name": "Stop",
+            "body": "custom body",
+            "last_assistant_message": "ignored"
+        }))
+        .unwrap();
+        assert_eq!(
+            request.resolve_title_body("Stop"),
+            (Some("Done".to_string()), Some("custom body".to_string()))
+        );
+    }
+
+    #[test]
+    fn caps_explicit_title_and_body() {
+        let request: PaneNotifyRequest = serde_json::from_value(serde_json::json!({
+            "event": "custom",
+            "title": "t".repeat(500),
+            "body": format!("first line\n{}", "b".repeat(2000)),
+        }))
+        .unwrap();
+        let (title, body) = request.resolve_title_body("custom");
+        assert_eq!(title, Some(format!("{}…", "t".repeat(200))));
+        let body = body.unwrap();
+        assert!(body.starts_with("first line\nbbb"));
+        assert_eq!(body.chars().count(), 1001);
+        assert_eq!(cap_text(Some("  ".into()), 10), None);
+        assert_eq!(cap_text(Some("🙂🙂🙂".into()), 2), Some("🙂🙂…".into()));
     }
 
     #[test]

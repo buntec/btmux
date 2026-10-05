@@ -12,6 +12,20 @@ curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.s
 It downloads the latest release binary to `~/.local/bin`. Set
 `BTMUX_INSTALL_DIR` to choose another location.
 
+## Homebrew
+
+The [buntec/homebrew-btmux](https://github.com/buntec/homebrew-btmux) tap has a
+formula for the server/CLI (Apple Silicon macOS, x86-64/ARM64 Linux) and a cask
+for the desktop app (Apple Silicon macOS):
+
+```sh
+brew install buntec/btmux/btmux          # server/CLI
+brew install --cask buntec/btmux/btmux   # desktop app
+```
+
+The desktop app is not notarized; the cask clears its quarantine attribute so
+macOS does not block it. Both are updated with each release.
+
 ## Access tokens and reverse proxies
 
 ### First sign-in

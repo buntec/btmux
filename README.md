@@ -27,7 +27,13 @@ https://github.com/user-attachments/assets/9180b2ed-43cb-4dbb-bccd-ac5f0cfc4944
 
 ### Desktop app
 
-Download a `btmux-desktop-*` package from [Releases](https://github.com/buntec/btmux/releases/latest):
+On macOS (Apple Silicon), install with [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask buntec/btmux/btmux
+```
+
+Or download a `btmux-desktop-*` package from [Releases](https://github.com/buntec/btmux/releases/latest):
 
 - **macOS (Apple Silicon):** unzip the `.zip` and move `btmux.app` to Applications.
   The app is not signed with an Apple Developer certificate. If macOS blocks it,
@@ -50,7 +56,14 @@ On macOS (Apple Silicon) or Linux:
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 ```
 
-This installs the latest release binary to `~/.local/bin`. Then start btmux:
+This installs the latest release binary to `~/.local/bin`. With
+[Homebrew](https://brew.sh), use instead:
+
+```sh
+brew install buntec/btmux/btmux
+```
+
+Then start btmux:
 
 ```sh
 btmux

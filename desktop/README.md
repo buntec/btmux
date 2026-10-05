@@ -12,6 +12,8 @@ Credentials stay in Rust and are installed as HTTP-only cookies before opening t
 
 `just desktop-check` compiles the launcher and its bundled server. `cargo test --manifest-path desktop/src-tauri/Cargo.toml` checks registration privacy and authenticated discovery. `just test-desktop-launcher` exercises the startup picker with Playwright, including connection choices, refresh, and startup failures, without starting a server.
 
+While the window is hidden, attention and error notifications from connected loopback servers appear as OS notifications. Clicking one focuses the app and its pane.
+
 On macOS, the window is transparent with a theme-colored tint, defaulting to 95% opacity. Set `desktop-background-opacity = 0.95` in `config.toml` to adjust the tint from clear (`0`) to opaque (`1`); changes reload live. The Linux window remains opaque. macOS transparency requires Tauri's `macos-private-api` feature, so this build cannot be distributed through the Mac App Store.
 
 Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users.

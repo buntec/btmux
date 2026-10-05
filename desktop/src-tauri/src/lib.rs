@@ -303,6 +303,36 @@ fn login_path(shell: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+// Shows an OS notification; a click focuses the window and runs the page's onclick.
+#[tauri::command]
+fn notify(window: WebviewWindow, id: String, title: String, body: String) {
+    #[cfg(target_os = "macos")]
+    let _ = notify_rust::set_application(if tauri::is_dev() {
+        "com.apple.Terminal"
+    } else {
+        &window.config().identifier
+    });
+    std::thread::spawn(move || {
+        let mut clicked = false;
+        match notify_rust::Notification::new()
+            .summary(&title)
+            .body(&body)
+            .action("default", "Show")
+            .show()
+        {
+            Ok(handle) => handle.wait_for_action(|action| clicked = action == "default"),
+            Err(error) => eprintln!("btmux notification failed: {error}"),
+        }
+        if clicked {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        let id = serde_json::to_string(&id).unwrap();
+        let _ = window.eval(format!("window.__btmuxNotificationDone?.({id}, {clicked})"));
+    });
+}
+
 fn unused_loopback_port() -> std::io::Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
@@ -314,7 +344,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             discover_servers,
             connect_server,
-            start_server
+            start_server,
+            notify
         ])
         .on_menu_event(|app, event| {
             if event.id() == SWITCH_SERVER
@@ -350,7 +381,8 @@ pub fn run() {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("")
                     .inner_size(1200.0, 800.0)
-                    .min_inner_size(640.0, 400.0);
+                    .min_inner_size(640.0, 400.0)
+                    .initialization_script(include_str!("notification.js"));
             #[cfg(target_os = "macos")]
             let window_builder = window_builder
                 .transparent(true)

@@ -54,7 +54,8 @@ export function useControlSocket() {
             timestamp: Date.now(),
           });
           if (msg.level === 'attention' || msg.level === 'error') {
-            if (document.hidden) {
+            // Some webviews (e.g. WKWebView) lack the Notification API.
+            if (document.hidden && typeof Notification !== 'undefined') {
               const title = msg.title || `Agent: ${msg.event}`;
               if (Notification.permission === 'granted') {
                 // tag per pane so a burst from one pane coalesces into a single

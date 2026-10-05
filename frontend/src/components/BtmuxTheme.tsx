@@ -3,7 +3,6 @@ import { Theme } from '@astryxdesign/core/theme';
 import type { Theme as TerminalTheme } from '../state/types';
 import { ToastLayer } from './ToastLayer';
 import { useStore } from '../state/store';
-import { DEFAULT_THEME } from '../state/defaultTheme';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { getAnimations, getTerminalFontFamily, getTerminalFontWeight } from '../state/configDefaults';
 import { createBtmuxTheme, terminalColorMode } from '../lib/astryx-theme';
@@ -18,7 +17,7 @@ function useEffectiveConfig() {
 
 export function useTerminalPalette(): TerminalTheme {
   const effective = useEffectiveConfig();
-  return effective ? (effective.theme ?? DEFAULT_THEME) : STARTUP_THEME;
+  return effective ? effective.theme : STARTUP_THEME;
 }
 
 export function BtmuxTheme({ children }: { children: ReactNode }) {

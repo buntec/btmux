@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use clap::Parser;
@@ -738,9 +739,10 @@ pub struct ClientConfig {
     /// Built-in command-palette entries (prefix + `:`).
     pub commands: Vec<Command>,
     pub terminal: TerminalOptions,
-    /// Resolved `ITheme`, or `null` when no `[theme]` is configured (the frontend
-    /// then falls back to its built-in default theme).
-    pub theme: Option<Theme>,
+    /// Resolved `ITheme`; the bundled default when no palette is configured.
+    pub theme: Theme,
+    /// The bundled default theme, for previewing an unset `colors`.
+    pub default_theme: Theme,
     pub vi_mode: bool,
     /// Whether CSS animations/transitions are enabled in the browser.
     pub animations: bool,
@@ -892,6 +894,18 @@ fn expand_color_scheme_path(value: &str) -> PathBuf {
     } else {
         PathBuf::from(value)
     }
+}
+
+/// Bundled default palette (kauz-dark, base24).
+static DEFAULT_THEME: LazyLock<Theme> = LazyLock::new(|| {
+    parse_color_scheme(include_str!("../extras/colors/kauz-dark.yml"))
+        .expect("bundled default color scheme parses")
+        .to_theme()
+});
+
+/// The theme used when no `[theme]` or `colors` is configured.
+pub fn default_theme() -> Theme {
+    DEFAULT_THEME.clone()
 }
 
 /// Load a color scheme YAML file by name from the colors directory, or from an
@@ -1409,7 +1423,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .theme
         .as_ref()
         .map(BaseTheme::to_theme)
-        .or_else(|| selected_color_theme.clone());
+        .or_else(|| selected_color_theme.clone())
+        .unwrap_or_else(default_theme);
 
     let (wallpaper_url, wallpaper_path) = match &file.wallpaper {
         Some(raw) if raw.starts_with('/') => (
@@ -1459,6 +1474,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         commands: default_commands(),
         terminal: file.terminal.clone(),
         theme,
+        default_theme: default_theme(),
         vi_mode: file.vi_mode,
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
@@ -1918,6 +1934,16 @@ palette:
     }
 
     #[test]
+    fn unset_colors_use_bundled_default_theme() {
+        let resolved = resolve_binds(&FileConfig::default());
+
+        assert_eq!(resolved.theme, default_theme());
+        assert_eq!(resolved.theme.background, "#0e333e");
+        // base24 bright slot, not the base16 accent.
+        assert_eq!(resolved.theme.bright_red, "#ffd4e1");
+    }
+
+    #[test]
     fn remote_color_scheme_is_used_as_the_active_theme() {
         let url = "https://example.com/theme.yml";
         let mut file = FileConfig::default();
@@ -1928,7 +1954,7 @@ palette:
 
         assert!(is_color_scheme_url(url));
         assert_eq!(resolved.active_color_scheme.as_deref(), Some(url));
-        assert_eq!(resolved.theme.as_ref().unwrap().background, "#000000");
+        assert_eq!(resolved.theme.background, "#000000");
         assert!(resolved.color_schemes.iter().any(|scheme| scheme == url));
         assert!(resolved.color_scheme_themes.contains_key(url));
     }
@@ -1949,7 +1975,7 @@ palette:
             resolved.active_color_scheme.as_deref(),
             Some(path_string.as_str())
         );
-        assert_eq!(resolved.theme.as_ref().unwrap().background, "#000000");
+        assert_eq!(resolved.theme.background, "#000000");
         assert!(resolved.color_schemes.contains(&path_string));
         assert_eq!(
             resolved

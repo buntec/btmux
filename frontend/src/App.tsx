@@ -17,7 +17,6 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { ShaderWallpaper } from './components/ShaderWallpaper';
 import { ConfigPage } from './components/ConfigPage';
 import { NotificationToasts } from './components/NotificationToasts';
-import { DEFAULT_THEME } from './state/defaultTheme';
 import { STARTUP_THEME } from './state/startupTheme';
 import {
   getAnimations,
@@ -383,7 +382,7 @@ export function App() {
 
   useEffect(() => {
     document.body.style.background = pageBackground(
-      effectiveConfig ? (effectiveConfig.theme?.background ?? DEFAULT_THEME.background) : STARTUP_THEME.background,
+      effectiveConfig ? effectiveConfig.theme.background : STARTUP_THEME.background,
       getDesktopBackgroundOpacity(effectiveConfig),
     );
   }, [effectiveConfig?.theme, effectiveConfig?.desktop_background_opacity]);

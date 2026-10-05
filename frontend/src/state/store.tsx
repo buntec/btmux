@@ -4,7 +4,6 @@ import type { Terminal } from 'ghostty-web';
 import { SessionState, SessionSummary, ClientConfig, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
-import { DEFAULT_THEME } from './defaultTheme';
 
 export type FileBrowserMode = 'files' | 'git' | 'process';
 
@@ -131,7 +130,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setConfig: (config) => {
     set({ config });
     try {
-      localStorage.setItem('btmux-theme', JSON.stringify(config.theme ?? DEFAULT_THEME));
+      localStorage.setItem('btmux-theme', JSON.stringify(config.theme));
     } catch {}
   },
   setConfigPreview: (configPreview) => set({ configPreview }),

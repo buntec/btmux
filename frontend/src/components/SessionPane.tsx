@@ -8,7 +8,7 @@ import { ClientConfig, LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
 import { useStore } from '../state/store';
-import { DEFAULT_THEME } from '../state/defaultTheme';
+import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
 import { useWindowAttended } from '../lib/windowAttention';
 
@@ -343,8 +343,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         rects.map((rect) => {
           const n = paneNumberById.get(rect.paneId);
           if (n === undefined) return null;
-          const accent = config?.theme?.yellow ?? DEFAULT_THEME.yellow;
-          const bg = config?.theme?.background ?? DEFAULT_THEME.background;
+          const accent = config?.theme?.yellow ?? STARTUP_THEME.yellow;
+          const bg = config?.theme?.background ?? STARTUP_THEME.background;
           return (
             <div
               key={`num-${rect.paneId}`}

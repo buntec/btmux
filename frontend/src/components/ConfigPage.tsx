@@ -6,7 +6,6 @@ import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS, findPaneSwitchEffect } from '../li
 import { colorSchemeLabel } from '../lib/colorSchemeLabel';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
-import { DEFAULT_THEME } from '../state/defaultTheme';
 import {
   getDesktopBackgroundOpacity,
   getFontWeightRange,
@@ -433,9 +432,9 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
 }
 
 function previewTheme(config: ClientConfig, draft: Draft, colorSchemeTouched: boolean) {
-  if (!colorSchemeTouched) return config.theme ?? DEFAULT_THEME;
-  if (!draft.colors) return DEFAULT_THEME;
-  return config.color_scheme_themes[draft.colors] ?? DEFAULT_THEME;
+  if (!colorSchemeTouched) return config.theme;
+  if (!draft.colors) return config.default_theme;
+  return config.color_scheme_themes[draft.colors] ?? config.default_theme;
 }
 
 const TAB_LABELS = {

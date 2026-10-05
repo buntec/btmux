@@ -1,5 +1,5 @@
 import type { Theme } from '../state/types';
-import { DEFAULT_THEME } from '../state/defaultTheme';
+import { STARTUP_THEME } from '../state/startupTheme';
 
 // Palette roles for specialized terminal, file, and preview rendering.
 
@@ -98,10 +98,10 @@ export interface ChromePalette {
 
 /**
  * Derive the chrome palette from the resolved theme (falling back to the
- * built-in default theme for any unset field).
+ * startup theme before the server's config arrives).
  */
 export function chromePalette(theme: Theme | null): ChromePalette {
-  const t = theme ?? DEFAULT_THEME;
+  const t = theme ?? STARTUP_THEME;
   const accent = t.blue;
   const bodyBg = t.background;
   const barBg = lift(bodyBg, 10);

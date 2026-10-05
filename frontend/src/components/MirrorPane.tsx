@@ -3,7 +3,7 @@ import { Terminal } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { useTerminalOptions } from './TerminalPane';
 import type { ClientConfig } from '../state/types';
-import { DEFAULT_THEME } from '../state/defaultTheme';
+import { STARTUP_THEME } from '../state/startupTheme';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../state/configDefaults';
 import { findShaderEffect } from '../lib/terminalFxShaders';
 import { pumpRenders } from '../lib/pumpRenders';
@@ -190,7 +190,7 @@ export function MirrorPane({ paneId, config: configOverride, shaderId, animation
   }, [animations, shaderEffect?.animated, shaderEffect?.src, termOptions, renderer]);
 
   useEffect(() => {
-    termRef.current?.renderer?.setTheme(config?.theme ?? DEFAULT_THEME);
+    termRef.current?.renderer?.setTheme(config?.theme ?? STARTUP_THEME);
   }, [config?.theme, termOptions]);
 
   // Park / wake with the grid's visibility (sockets keep streaming either way).

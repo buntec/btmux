@@ -99,10 +99,13 @@ notifications: NotificationConfig,
  */
 commands: Array<Command>, terminal: TerminalOptions, 
 /**
- * Resolved `ITheme`, or `null` when no `[theme]` is configured (the frontend
- * then falls back to its built-in default theme).
+ * Resolved `ITheme`; the bundled default when no palette is configured.
  */
-theme: Theme | null, vi_mode: boolean, 
+theme: Theme, 
+/**
+ * The bundled default theme, for previewing an unset `colors`.
+ */
+default_theme: Theme, vi_mode: boolean, 
 /**
  * Whether CSS animations/transitions are enabled in the browser.
  */

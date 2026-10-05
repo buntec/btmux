@@ -3,7 +3,7 @@ import { Terminal, FitAddon } from 'ghostty-web';
 import { useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
-import { DEFAULT_THEME } from '../state/defaultTheme';
+import { STARTUP_THEME } from '../state/startupTheme';
 import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders';
@@ -79,7 +79,7 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   const opts: ConstructorParameters<typeof Terminal>[0] = {
     fontSize: getTerminalFontSize(config),
     fontFamily: buildFontFamily(getTerminalFontFamily(config)),
-    theme: config?.theme ?? DEFAULT_THEME,
+    theme: config?.theme ?? STARTUP_THEME,
     cursorBlink: t?.cursorBlink ?? CONFIG_DEFAULTS.terminal.cursorBlink,
   };
   // Experimental WebGL backend (ghostty-web fork); falls back to Canvas2D if
@@ -507,7 +507,7 @@ export function TerminalPane({
     const term = termRef.current;
     if (!term) return;
     if (!match) return term.clearDecorations();
-    const background = withAlpha(config?.theme?.yellow ?? DEFAULT_THEME.yellow, 0.35);
+    const background = withAlpha(config?.theme?.yellow ?? STARTUP_THEME.yellow, 0.35);
     term.setDecorations(match.cells.map((cell) => ({ ...cell, background })));
   };
   // Highlights hold absolute buffer lines, which go stale on any rescan.
@@ -625,9 +625,9 @@ export function TerminalPane({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    const cursor = config?.theme?.cursor ?? DEFAULT_THEME.cursor;
+    const cursor = config?.theme?.cursor ?? STARTUP_THEME.cursor;
     term.renderer?.setTheme({
-      ...(config?.theme ?? DEFAULT_THEME),
+      ...(config?.theme ?? STARTUP_THEME),
       cursor: isActive ? cursor : 'rgba(0, 0, 0, 0)',
     });
   }, [isActive, config?.theme, termOptions]);
@@ -687,14 +687,14 @@ export function TerminalPane({
     if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
   };
 
-  const borderActive = config?.theme?.blue ?? DEFAULT_THEME.blue;
-  const borderInactive = config?.theme?.selectionBackground ?? DEFAULT_THEME.selectionBackground;
-  const borderZoomed = config?.theme?.magenta ?? DEFAULT_THEME.magenta;
+  const borderActive = config?.theme?.blue ?? STARTUP_THEME.blue;
+  const borderInactive = config?.theme?.selectionBackground ?? STARTUP_THEME.selectionBackground;
+  const borderZoomed = config?.theme?.magenta ?? STARTUP_THEME.magenta;
   const borderColor = isZoomed ? borderZoomed : isActive ? borderActive : borderInactive;
   // Brighter than the resting focus ring so the draw reads as motion on top of
   // the (already accent-colored) static border; `borderEdgeColor` is the near-
   // white leading edge for the `sweep` style.
-  const borderTraceColor = mix(borderColor, config?.theme?.foreground ?? DEFAULT_THEME.foreground, 0.55);
+  const borderTraceColor = mix(borderColor, config?.theme?.foreground ?? STARTUP_THEME.foreground, 0.55);
   const borderEdgeColor = mix(borderColor, '#ffffff', 0.7);
   const animations = getAnimations(config);
   const showTitle = getShowPaneTitles(config);
@@ -840,7 +840,7 @@ export function TerminalPane({
           minHeight: 0,
           // Cover wallpaper/transparency only while the terminal canvas is
           // hidden; once revealed, restore the pane's normal transparency.
-          background: initialReplayRendered ? 'transparent' : (config?.theme?.background ?? DEFAULT_THEME.background),
+          background: initialReplayRendered ? 'transparent' : (config?.theme?.background ?? STARTUP_THEME.background),
         }}
       >
         <div
@@ -868,7 +868,7 @@ export function TerminalPane({
               fontSize: Math.max(10, Math.round(termFont * 0.75)),
               fontWeight: 700,
               cursor: 'pointer',
-              color: config?.theme?.background ?? DEFAULT_THEME.background,
+              color: config?.theme?.background ?? STARTUP_THEME.background,
               background: withAlpha(borderActive, 0.85),
               zIndex: 5,
             }}

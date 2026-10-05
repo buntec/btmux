@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { DEFAULT_THEME } from './src/state/defaultTheme';
+import { FALLBACK_THEME } from './src/state/startupTheme';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
 const token = process.env.BTMUX_AUTH_TOKEN;
@@ -22,7 +22,7 @@ const browser = await chromium.launch({ headless: true, channel: process.env.BTM
 try {
   const startup = await browser.newContext();
   await startup.addInitScript((theme) => localStorage.setItem('btmux-theme', JSON.stringify(theme)), {
-    ...DEFAULT_THEME,
+    ...FALLBACK_THEME,
     background: '#273549',
   });
   await startup.route('**/api/sessions', (route) => route.fulfill({ json: [] }));
@@ -73,12 +73,11 @@ try {
   const theme = await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const config = useStore.getState().config;
-    const { DEFAULT_THEME } = await import('/src/state/defaultTheme.ts' as string);
     const { getTerminalFontFamily } = await import('/src/state/configDefaults.ts' as string);
     const css = getComputedStyle(document.body);
     return {
       background: css.getPropertyValue('--color-background-body').trim(),
-      palette: (config.theme ?? DEFAULT_THEME).background,
+      palette: config.theme.background,
       font: css.fontFamily,
       terminalFont: getTerminalFontFamily(config),
     };

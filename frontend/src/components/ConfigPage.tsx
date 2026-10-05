@@ -480,6 +480,8 @@ export function ConfigPage({ config, send }: Props) {
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
   const [colorSchemeTouched, setColorSchemeTouched] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showToml, setShowToml] = useState(false);
+  const [clearBackdrop, setClearBackdrop] = useState(false);
   const toml = useMemo(() => toToml(draft), [draft]);
 
   const previewConfig = useMemo<ClientConfig>(
@@ -700,23 +702,23 @@ export function ConfigPage({ config, send }: Props) {
         if (!open) goBack();
       }}
       purpose="form"
-      width={1200}
+      width={showToml ? 1200 : 640}
       maxHeight="90dvh"
-      className="h-full"
+      className={clearBackdrop ? 'h-full btm-clear-backdrop' : 'h-full'}
     >
       <Layout
         header={
           <DialogHeader
             title="Settings"
-            subtitle="Preview changes in the terminal and UI. Apply for this run, or copy TOML to save them."
+            subtitle="Preview changes in the terminal and UI. Apply for this run, or show and copy TOML to save them."
             hasDivider={false}
             onOpenChange={(open) => {
               if (!open) goBack();
             }}
           />
         }
-        end={isNarrow ? undefined : tomlPanel}
-        footer={isNarrow ? tomlPanel : undefined}
+        end={showToml && !isNarrow ? tomlPanel : undefined}
+        footer={showToml && isNarrow ? tomlPanel : undefined}
         content={
           <Layout
             header={
@@ -908,7 +910,11 @@ export function ConfigPage({ config, send }: Props) {
             footer={
               <LayoutFooter hasDivider>
                 <HStack gap={2} wrap="wrap" hAlign="between">
-                  <Button label="Reset" onClick={reset} />
+                  <HStack gap={4} wrap="wrap">
+                    <Button label="Reset" onClick={reset} />
+                    <Switch label="Show TOML" value={showToml} onChange={setShowToml} />
+                    <Switch label="Clear background" value={clearBackdrop} onChange={setClearBackdrop} />
+                  </HStack>
                   <HStack gap={2} wrap="wrap">
                     <Button label="Close" onClick={goBack} />
                     <Button label="Apply" variant="primary" onClick={apply} isDisabled={dirty.size === 0} />

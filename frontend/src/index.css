@@ -219,3 +219,10 @@
     from, to { --btm-bi-pct: 100%; }
   }
 }
+
+/* Optional: drop the dialog's blur and dim to inspect visual changes. */
+.btm-clear-backdrop::backdrop {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

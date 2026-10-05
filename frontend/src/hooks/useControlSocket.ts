@@ -24,8 +24,6 @@ export function useControlSocket() {
   const setConfig = useStore((s) => s.setConfig);
   const setControlConnectionState = useStore((s) => s.setControlConnectionState);
   const showToast = useStore((s) => s.showToast);
-  const setPaneNotification = useStore((s) => s.setPaneNotification);
-  const clearPaneNotification = useStore((s) => s.clearPaneNotification);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -57,14 +55,6 @@ export function useControlSocket() {
         } else if (msg.type === 'toast') {
           showToast(msg.message, msg.level);
         } else if (msg.type === 'pane_notification') {
-          setPaneNotification({
-            paneId: msg.pane_id,
-            event: msg.event,
-            level: msg.level,
-            title: msg.title,
-            body: msg.body,
-            timestamp: Date.now(),
-          });
           if (msg.level === 'attention' || msg.level === 'error') {
             const away = !windowAttended();
             // Some webviews (e.g. WKWebView) lack the Notification API.
@@ -104,8 +94,6 @@ export function useControlSocket() {
               });
             }
           }
-        } else if (msg.type === 'pane_notification_clear') {
-          clearPaneNotification(msg.pane_id);
         } else if (msg.type === 'open_file_browser') {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setFileBrowserOpen(true, msg.path, msg.pane_id, msg.mode, msg.focus_file);
@@ -139,16 +127,7 @@ export function useControlSocket() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [
-    setSessions,
-    setAllSessions,
-    setAgentPanes,
-    setConfig,
-    setControlConnectionState,
-    showToast,
-    setPaneNotification,
-    clearPaneNotification,
-  ]);
+  }, [setSessions, setAllSessions, setAgentPanes, setConfig, setControlConnectionState, showToast]);
 
   const send = useCallback((msg: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

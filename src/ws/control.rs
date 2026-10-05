@@ -257,8 +257,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             session_id,
             pane_id,
         } => mgr.select_pane(session_id, pane_id),
-        ClientMessage::AcknowledgeAgent { pane_id } => {
-            mgr.acknowledge_agent(pane_id);
+        ClientMessage::AcknowledgePane { pane_id } => {
+            mgr.acknowledge_pane(pane_id);
         }
         ClientMessage::CyclePane { session_id, delta } => mgr.cycle_pane(session_id, delta),
         ClientMessage::SwapPane { session_id, delta } => mgr.swap_pane(session_id, delta),
@@ -351,7 +351,7 @@ fn validate_command(
         CapturePane { pane_id, .. } if mgr.find_pane(*pane_id).is_none() => {
             return Err("Pane no longer exists".into())
         }
-        AcknowledgeAgent { pane_id } if mgr.find_pane(*pane_id).is_none() => {
+        AcknowledgePane { pane_id } if mgr.find_pane(*pane_id).is_none() => {
             return Err("Pane no longer exists".into())
         }
         SwitchWindow { index, .. }
@@ -725,7 +725,8 @@ pub(crate) enum ClientMessage {
         session_id: Uuid,
         pane_id: Uuid,
     },
-    AcknowledgeAgent {
+    /// The user viewed this pane: clears its unread notification and a finished agent.
+    AcknowledgePane {
         pane_id: Uuid,
     },
     CyclePane {
@@ -812,9 +813,6 @@ pub enum ServerMessage {
         title: Option<String>,
         body: Option<String>,
     },
-    PaneNotificationClear {
-        pane_id: Uuid,
-    },
     OpenFileBrowser {
         pane_id: Uuid,
         path: String,
@@ -840,15 +838,7 @@ pub enum ToastLevel {
     Error,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub enum NotificationLevel {
-    Info,
-    Attention,
-    Success,
-    Error,
-}
+pub use crate::session::NotificationLevel;
 
 #[cfg(test)]
 mod tests {

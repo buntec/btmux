@@ -135,6 +135,11 @@ permission from a click. A permission `Notification` that repeats a pending
 not shown again. A finished agent stays `done` until its pane is viewed in a
 focused window.
 
+The server keeps each pane's most severe unread notification in the state
+snapshot, so every tab shows the same colored dot, and a reload keeps it.
+Viewing the pane in any focused window, or `DELETE /notify`, clears it for all
+tabs. Unread notifications are not saved across restarts.
+
 btmux detects interactive Codex, Claude Code, and Gemini CLI processes under each
 pane's shell, including known Node/Bun entry points. It checks process identity
 roughly every second and uses the foreground job to select the agent whose

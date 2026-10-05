@@ -71,6 +71,59 @@ impl Window {
 pub struct Pane {
     pub id: Uuid,
     pub pty: PtyHandle,
+    /// The most severe notification since the pane was last viewed.
+    pub unread: Option<PaneAlert>,
+}
+
+impl Pane {
+    pub fn new(id: Uuid, pty: PtyHandle) -> Self {
+        Self {
+            id,
+            pty,
+            unread: None,
+        }
+    }
+
+    /// Keeps the more severe of the pending and incoming notifications; ties take the newer.
+    pub fn notify(&mut self, alert: PaneAlert) {
+        if self
+            .unread
+            .as_ref()
+            .is_none_or(|pending| alert.level.rank() >= pending.level.rank())
+        {
+            self.unread = Some(alert);
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum NotificationLevel {
+    Info,
+    Attention,
+    Success,
+    Error,
+}
+
+impl NotificationLevel {
+    fn rank(self) -> u8 {
+        match self {
+            Self::Info => 0,
+            Self::Success => 1,
+            Self::Attention => 2,
+            Self::Error => 3,
+        }
+    }
+}
+
+/// A pane notification nobody has viewed yet.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PaneAlert {
+    pub level: NotificationLevel,
+    pub title: Option<String>,
+    pub body: Option<String>,
 }
 
 /// Lifecycle states for an agent occupying a pane.
@@ -117,6 +170,8 @@ pub struct PaneSnapshot {
     pub cwd: Option<String>,
     #[serde(default)]
     pub agent_status: AgentStatus,
+    #[serde(default)]
+    pub unread: Option<PaneAlert>,
 }
 
 /// One entry per session for the StatusBar and the session picker.

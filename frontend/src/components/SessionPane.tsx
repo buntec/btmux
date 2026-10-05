@@ -60,6 +60,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const zoomedPaneId = activeWindow?.zoomed_pane ?? null;
   const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
   const focusedAgentState = focusedPane?.agent_status.state ?? null;
+  const focusedUnread = focusedPane?.unread != null;
   const attended = useWindowAttended();
 
   // Lazy-but-sticky pool membership. We don't mount *every* window's panes the
@@ -113,7 +114,6 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   // closing the grid leaves activePaneId unchanged, and a setTimeout(0) refocus
   // would lose the race to the browser dropping focus to <body> as the
   // display:none'd grid unmounts from the focus path).
-  const clearPaneNotification = useStore((s) => s.clearPaneNotification);
   useEffect(() => {
     const focusId = zoomedPaneId ?? activePaneId;
     // Don't steal focus into the terminal while the file browser occupies that pane.
@@ -131,11 +131,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
       return;
     }
     // A hidden or unfocused tab must not mark the pane as seen.
-    if (attended) {
-      clearPaneNotification(focusId);
-      if (focusedAgentState === 'done') {
-        send({ type: 'acknowledge_agent', pane_id: focusId });
-      }
+    if (attended && (focusedUnread || focusedAgentState === 'done')) {
+      send({ type: 'acknowledge_pane', pane_id: focusId });
     }
     const id = window.setTimeout(() => {
       registryRef.current.get(focusId)?.focus();
@@ -154,10 +151,10 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     settingsOpen,
     previewConfig,
     focusedAgentState,
+    focusedUnread,
     attended,
     send,
     config,
-    clearPaneNotification,
   ]);
 
   const handleDividerMouseDown = useCallback(

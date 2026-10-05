@@ -108,9 +108,11 @@ fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> 
                 .as_array_mut()
                 .expect("pane snapshots serialize as an array")
             {
-                pane.as_object_mut()
-                    .expect("pane snapshots serialize as an object")
-                    .remove("agent_status");
+                let pane = pane
+                    .as_object_mut()
+                    .expect("pane snapshots serialize as an object");
+                pane.remove("agent_status");
+                pane.remove("unread");
             }
         }
     }
@@ -121,12 +123,13 @@ fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> 
 mod agent_status_tests {
     use super::*;
     use crate::session::{
-        layout::Layout, manager::WindowSnapshot, AgentState, AgentStatus, PaneSnapshot,
+        layout::Layout, manager::WindowSnapshot, AgentState, AgentStatus, NotificationLevel,
+        PaneAlert, PaneSnapshot,
     };
     use uuid::Uuid;
 
     #[test]
-    fn excludes_live_agent_status_from_saved_state() {
+    fn excludes_live_agent_status_and_notifications_from_saved_state() {
         let pane_id = Uuid::new_v4();
         let snapshots = vec![SessionSnapshot {
             id: Uuid::new_v4(),
@@ -144,6 +147,11 @@ mod agent_status_tests {
                         source: Some("hook".to_string()),
                         message: Some("private prompt".to_string()),
                     },
+                    unread: Some(PaneAlert {
+                        level: NotificationLevel::Attention,
+                        title: Some("Done".to_string()),
+                        body: Some("private reply".to_string()),
+                    }),
                 }],
                 active_pane: 0,
                 layout: Layout::Leaf { pane_id },
@@ -154,6 +162,7 @@ mod agent_status_tests {
         let json = serialize_snapshots(&snapshots).unwrap();
         assert!(!json.contains("agent_status"));
         assert!(!json.contains("private prompt"));
+        assert!(!json.contains("private reply"));
         let restored: Vec<SessionSnapshot> = serde_json::from_str(&json).unwrap();
         assert_eq!(
             restored[0].windows[0].panes[0].agent_status.state,

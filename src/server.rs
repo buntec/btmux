@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::file_search::FileIndex;
 use crate::session::{
     agent::{AgentEvent, AgentProcess, AgentReport},
-    AgentState, AgentStatus,
+    AgentState, AgentStatus, PaneAlert,
 };
 use crate::ws;
 use crate::AppState;
@@ -432,6 +432,14 @@ async fn api_pane_notify(
         "hook notification"
     );
 
+    if let Some(pane) = mgr.find_pane_mut(pane_id) {
+        pane.notify(PaneAlert {
+            level,
+            title: title.clone(),
+            body: notif_body.clone(),
+        });
+    }
+    ws::control::broadcast_state(&mgr);
     let msg = ws::control::ServerMessage::PaneNotification {
         pane_id,
         event,
@@ -511,13 +519,13 @@ async fn api_pane_notify_clear(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
 ) -> Response {
-    let mgr = state.read().await;
-    if mgr.find_pane(pane_id).is_none() {
+    let mut mgr = state.write().await;
+    let Some(pane) = mgr.find_pane_mut(pane_id) else {
         return StatusCode::NOT_FOUND.into_response();
+    };
+    if pane.unread.take().is_some() {
+        ws::control::broadcast_state(&mgr);
     }
-
-    let msg = ws::control::ServerMessage::PaneNotificationClear { pane_id };
-    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
 
     StatusCode::NO_CONTENT.into_response()
 }
@@ -818,6 +826,83 @@ mod pane_notification_tests {
             }
             assert_eq!(titles, expected.into_iter().collect::<Vec<_>>(), "{hook}");
         }
+    }
+
+    #[tokio::test]
+    async fn unread_notifications_keep_the_most_severe_until_viewed() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let state = Arc::new(tokio::sync::RwLock::new(manager));
+        let app = create_app(state.clone());
+        let send = |method: &str, body: serde_json::Value| {
+            Request::builder()
+                .method(method)
+                .uri(format!("/api/panes/{pane}/notify"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let unread = || async {
+            state.read().await.snapshot_by_id(session).unwrap().windows[0].panes[0]
+                .unread
+                .clone()
+        };
+        let notify = |level: &str, title: &str| {
+            send(
+                "POST",
+                serde_json::json!({"event": "custom", "level": level, "title": title, "body": "details"}),
+            )
+        };
+
+        app.clone()
+            .oneshot(notify("attention", "Done"))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(notify("info", "helper done"))
+            .await
+            .unwrap();
+        assert_eq!(
+            unread().await,
+            Some(PaneAlert {
+                level: ws::control::NotificationLevel::Attention,
+                title: Some("Done".into()),
+                body: Some("details".into()),
+            })
+        );
+        app.clone()
+            .oneshot(notify("error", "Failed"))
+            .await
+            .unwrap();
+        assert_eq!(unread().await.unwrap().title.as_deref(), Some("Failed"));
+
+        assert!(state.write().await.acknowledge_pane(pane));
+        assert_eq!(unread().await, None);
+
+        app.clone()
+            .oneshot(notify("attention", "Done"))
+            .await
+            .unwrap();
+        assert!(unread().await.is_some());
+        let response = app
+            .clone()
+            .oneshot(send("DELETE", serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(unread().await, None);
     }
 
     #[test]

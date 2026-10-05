@@ -699,7 +699,13 @@ export function TerminalPane({
   const animations = getAnimations(config);
   const showTitle = getShowPaneTitles(config);
   const termFont = getTerminalFontSize(config);
-  const notification = useStore((s) => s.notifications.get(paneId));
+  const notification = useStore(
+    (s) =>
+      s.allSessions
+        .find((session) => session.id === sessionId)
+        ?.windows.flatMap((win) => win.panes)
+        .find((pane) => pane.id === paneId)?.unread?.level ?? null,
+  );
 
   const accentGlow = withAlpha(borderColor, 0.2);
 
@@ -748,7 +754,7 @@ export function TerminalPane({
           cols={dims?.cols ?? null}
           rows={dims?.rows ?? null}
           isActive={isActive}
-          notification={notification?.level ?? null}
+          notification={notification}
           latexCount={latexMatches.length}
           latexOpen={latexOpen}
           onToggleLatex={toggleLatex}

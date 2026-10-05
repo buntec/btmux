@@ -365,7 +365,7 @@ impl SessionManager {
             self.scrollback_lines(),
         );
 
-        let pane = Pane { id: pane_id, pty };
+        let pane = Pane::new(pane_id, pty);
         let wname = window_name
             .unwrap_or_else(|| self.unique_window_name_in(&[], &shell_name(&self.shell)));
         let window = Window {
@@ -435,16 +435,20 @@ impl SessionManager {
     /// Mark a completed agent as seen by the shared btmux clients. Other
     /// lifecycle states remain untouched because focusing a pane does not mean
     /// that work has stopped or that a blocked prompt was answered.
-    pub fn acknowledge_agent(&mut self, pane_id: Uuid) -> bool {
+    pub fn acknowledge_pane(&mut self, pane_id: Uuid) -> bool {
+        let unread = self
+            .find_pane_mut(pane_id)
+            .and_then(|pane| pane.unread.take())
+            .is_some();
         let Some(agent) = self.agents.get_mut(&pane_id) else {
-            return false;
+            return unread;
         };
         if agent.status.state == AgentState::Done {
             agent.status.state = AgentState::Idle;
             agent.status.message = None;
             return true;
         }
-        false
+        unread
     }
 
     fn session_mut(&mut self, session_id: Uuid) -> Option<&mut Session> {
@@ -470,10 +474,7 @@ impl SessionManager {
             self.port,
             self.scrollback_lines(),
         );
-        let new_pane = Pane {
-            id: new_pane_id,
-            pty,
-        };
+        let new_pane = Pane::new(new_pane_id, pty);
 
         let Some(session) = self.session_mut(session_id) else {
             return;
@@ -686,7 +687,7 @@ impl SessionManager {
             self.port,
             self.scrollback_lines(),
         );
-        let pane = Pane { id: pane_id, pty };
+        let pane = Pane::new(pane_id, pty);
         let base = name.unwrap_or_else(|| shell_name(&self.shell));
 
         let Some(session) = self.session_mut(session_id) else {
@@ -1033,7 +1034,7 @@ impl SessionManager {
                     self.port,
                     self.scrollback_lines(),
                 );
-                Pane { id: p.id, pty }
+                Pane::new(p.id, pty)
             })
             .collect();
         if panes.is_empty() {
@@ -1082,6 +1083,7 @@ impl SessionManager {
                             title: p.pty.title.lock().unwrap().clone(),
                             cwd: p.pty.effective_cwd(),
                             agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
+                            unread: p.unread.clone(),
                         })
                         .collect(),
                     active_pane: w.active_pane,

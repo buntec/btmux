@@ -21,7 +21,6 @@ window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
 export function StatusBar({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
   const sessions = useStore((state) => state.allSessions);
   const config = useStore((state) => state.config);
-  const notifications = useStore((state) => state.notifications);
   const prefixActive = useStore((state) => state.prefixActive);
   const navigate = useNavigate();
   useSyncExternalStore(
@@ -63,7 +62,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       >
         {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }) => {
           const notification = win.panes
-            .map((pane) => notifications.get(pane.id))
+            .map((pane) => pane.unread)
             .filter((item) => item != null)
             .sort(
               (a, b) =>

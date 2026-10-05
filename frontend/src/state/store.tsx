@@ -6,15 +6,6 @@ import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
 import { DEFAULT_THEME } from './defaultTheme';
 
-export interface PaneNotification {
-  paneId: string;
-  event: string;
-  level: NotificationLevel;
-  title: string | null;
-  body: string | null;
-  timestamp: number;
-}
-
 export type FileBrowserMode = 'files' | 'git' | 'process';
 
 interface AppStore {
@@ -62,9 +53,6 @@ interface AppStore {
   // that run outside the pane tree — e.g. capture-pane in useKeybindings — can
   // read a pane's emulator buffer. SessionPane's registryRef is for focus only.
   terminals: Map<string, Terminal>;
-  // Per-pane notifications from external agent harnesses and tools.
-  // Keyed by pane ID; cleared when the user focuses the pane.
-  notifications: Map<string, PaneNotification>;
   // Panes whose LaTeX overlay is open. Local UI state, never sent to the server.
   latexPanes: Set<string>;
   // Router navigate fn, registered by AppInner (which lives inside <BrowserRouter>).
@@ -96,8 +84,6 @@ interface AppStore {
     level?: NotificationLevel,
     opts?: { body?: string; paneId?: string; action?: { label: string; run: () => void } },
   ) => void;
-  setPaneNotification: (n: PaneNotification) => void;
-  clearPaneNotification: (paneId: string) => void;
   toggleLatex: (paneId: string) => void;
   setFileBrowserOpen: (
     open: boolean,
@@ -137,7 +123,6 @@ export const useStore = create<AppStore>((set, get) => ({
   fileBrowserPaneId: null,
   controlConnectionState: 'connecting',
   terminals: new Map(),
-  notifications: new Map(),
   latexPanes: new Set(),
   navigateFn: null,
   controlSendFn: null,
@@ -179,19 +164,6 @@ export const useStore = create<AppStore>((set, get) => ({
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
   showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
-  setPaneNotification: (n) =>
-    set((s) => {
-      const next = new Map(s.notifications);
-      next.set(n.paneId, n);
-      return { notifications: next };
-    }),
-  clearPaneNotification: (paneId) =>
-    set((s) => {
-      if (!s.notifications.has(paneId)) return s;
-      const next = new Map(s.notifications);
-      next.delete(paneId);
-      return { notifications: next };
-    }),
   toggleLatex: (paneId) =>
     set((s) => {
       const next = new Set(s.latexPanes);

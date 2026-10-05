@@ -11,7 +11,7 @@ export function NotificationToasts() {
   const toast = useToast();
   useEffect(
     () =>
-      subscribeNotifications(({ message, level, body, paneId }) => {
+      subscribeNotifications(({ message, level, body, paneId, action }) => {
         toast({
           type: level === 'error' ? 'error' : 'info',
           body: (
@@ -29,7 +29,9 @@ export function NotificationToasts() {
               {body && <Text>{body}</Text>}
             </VStack>
           ),
-          endContent: paneId ? (
+          endContent: action ? (
+            <Button label={action.label} variant="ghost" onClick={action.run} />
+          ) : paneId ? (
             <Button label="View pane" variant="ghost" onClick={() => useStore.getState().navigateToPane(paneId)} />
           ) : undefined,
         });

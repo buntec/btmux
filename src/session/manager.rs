@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 use super::{
-    agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport},
+    agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority},
     layout::{Layout, LayoutPreset},
     AgentState, AgentStatus, Pane, PaneSnapshot, Session, SessionSummary, Window,
 };
@@ -103,6 +103,19 @@ impl SessionManager {
             .get(&pane_id)
             .filter(|agent| agent.is_active())
             .map(|agent| &agent.status)
+    }
+
+    /// The agent state and blocked tool, while the last hook report still owns them.
+    pub fn hook_agent_state(&self, pane_id: Uuid) -> Option<(AgentState, Option<String>)> {
+        self.agents
+            .get(&pane_id)
+            .filter(|agent| agent.is_active() && agent.authority() == Authority::Hook)
+            .map(|agent| {
+                (
+                    agent.status.state.clone(),
+                    agent.blocked_tool_id().map(str::to_owned),
+                )
+            })
     }
 
     pub fn pane_shells(&self) -> Vec<(Uuid, u32, Option<u32>)> {

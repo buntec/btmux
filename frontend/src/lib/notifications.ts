@@ -5,6 +5,7 @@ export interface Notification {
   level: NotificationLevel;
   body?: string;
   paneId?: string;
+  action?: { label: string; run: () => void };
 }
 
 let sink: ((notification: Notification) => void) | null = null;

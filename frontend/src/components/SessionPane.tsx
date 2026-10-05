@@ -10,6 +10,7 @@ import { ClientMessage } from '../protocol/messages';
 import { useStore } from '../state/store';
 import { DEFAULT_THEME } from '../state/defaultTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
+import { useWindowAttended } from '../lib/windowAttention';
 
 interface Props {
   sessionId: string;
@@ -59,6 +60,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const zoomedPaneId = activeWindow?.zoomed_pane ?? null;
   const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
   const focusedAgentState = focusedPane?.agent_status.state ?? null;
+  const attended = useWindowAttended();
 
   // Lazy-but-sticky pool membership. We don't mount *every* window's panes the
   // instant a session is entered — that would just move the mount-cost burst to
@@ -128,9 +130,12 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     ) {
       return;
     }
-    clearPaneNotification(focusId);
-    if (focusedAgentState === 'done') {
-      send({ type: 'acknowledge_agent', pane_id: focusId });
+    // A hidden or unfocused tab must not mark the pane as seen.
+    if (attended) {
+      clearPaneNotification(focusId);
+      if (focusedAgentState === 'done') {
+        send({ type: 'acknowledge_agent', pane_id: focusId });
+      }
     }
     const id = window.setTimeout(() => {
       registryRef.current.get(focusId)?.focus();
@@ -149,6 +154,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     settingsOpen,
     previewConfig,
     focusedAgentState,
+    attended,
     send,
     config,
     clearPaneNotification,

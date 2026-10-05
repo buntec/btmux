@@ -91,7 +91,11 @@ interface AppStore {
   setAgentPanes: (paneIds: string[]) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
-  showToast: (message: string, level?: NotificationLevel, opts?: { body?: string; paneId?: string }) => void;
+  showToast: (
+    message: string,
+    level?: NotificationLevel,
+    opts?: { body?: string; paneId?: string; action?: { label: string; run: () => void } },
+  ) => void;
   setPaneNotification: (n: PaneNotification) => void;
   clearPaneNotification: (paneId: string) => void;
   toggleLatex: (paneId: string) => void;

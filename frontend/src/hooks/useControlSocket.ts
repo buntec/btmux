@@ -1,8 +1,20 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../state/store';
 import { ClientMessage, ServerMessage } from '../protocol/messages';
+import { windowAttended } from '../lib/windowAttention';
 
 let nextRequestId = 0;
+let osNotificationsOffered = false;
+
+// Browsers ignore permission requests outside a user gesture, so ask from a toast button.
+function offerOsNotifications(showToast: ReturnType<typeof useStore.getState>['showToast']) {
+  if (osNotificationsOffered || typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+  osNotificationsOffered = true;
+  showToast('Enable desktop notifications?', 'info', {
+    body: 'Get alerted when an agent needs you while btmux is in the background.',
+    action: { label: 'Enable', run: () => void Notification.requestPermission() },
+  });
+}
 
 export function useControlSocket() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -54,28 +66,25 @@ export function useControlSocket() {
             timestamp: Date.now(),
           });
           if (msg.level === 'attention' || msg.level === 'error') {
+            const away = !windowAttended();
             // Some webviews (e.g. WKWebView) lack the Notification API.
-            if (document.hidden && typeof Notification !== 'undefined') {
-              const title = msg.title || `Agent: ${msg.event}`;
-              if (Notification.permission === 'granted') {
-                // tag per pane so a burst from one pane coalesces into a single
-                // updating banner instead of stacking N popups (renotify
-                // defaults to false, so updates don't re-alert).
-                const notification = new Notification(title, {
-                  body: msg.body ?? undefined,
-                  tag: `btmux-pane-${msg.pane_id}`,
-                });
-                const paneId = msg.pane_id;
-                notification.onclick = () => {
-                  window.focus();
-                  useStore.getState().navigateToPane(paneId);
-                  notification.close();
-                };
-              } else if (Notification.permission !== 'denied') {
-                Notification.requestPermission();
-              }
+            if (away && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+              // tag per pane so a burst from one pane coalesces into a single
+              // updating banner instead of stacking N popups (renotify
+              // defaults to false, so updates don't re-alert).
+              const notification = new Notification(msg.title || `Agent: ${msg.event}`, {
+                body: msg.body ?? undefined,
+                tag: `btmux-pane-${msg.pane_id}`,
+              });
+              const paneId = msg.pane_id;
+              notification.onclick = () => {
+                window.focus();
+                useStore.getState().navigateToPane(paneId);
+                notification.close();
+              };
             }
-            // Show an in-app toast unless the notified pane is currently focused.
+            offerOsNotifications(showToast);
+            // Show an in-app toast unless the user is looking at the notified pane.
             const state = useStore.getState();
             const match = window.location.pathname.match(/^\/s\/([^/]+)/);
             const activeSessionName = match ? decodeURIComponent(match[1]) : null;
@@ -87,7 +96,7 @@ export function useControlSocket() {
                   activeSession.windows[activeSession.active_window]?.active_pane
                 ]?.id
               : null;
-            if (msg.pane_id !== focusedPaneId) {
+            if (away || msg.pane_id !== focusedPaneId) {
               const label = msg.title || msg.event;
               showToast(label, msg.level, {
                 body: msg.body ?? undefined,

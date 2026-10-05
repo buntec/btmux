@@ -328,6 +328,42 @@ impl PaneNotifyRequest {
     }
 }
 
+impl PaneNotifyRequest {
+    /// Whether an earlier hook already announced this prompt. Claude Code sends
+    /// both PermissionRequest and a permission Notification for one dialog, and
+    /// an idle reminder after Stop.
+    fn repeats_hook_state(
+        &self,
+        event: &str,
+        before: Option<(AgentState, Option<String>)>,
+    ) -> bool {
+        let Some((state, blocked_tool)) = before else {
+            return false;
+        };
+        match state {
+            AgentState::Blocked => match event {
+                "PermissionRequest" => {
+                    self.tool_use_id.is_none()
+                        || blocked_tool.is_none()
+                        || self.tool_use_id == blocked_tool
+                }
+                _ => {
+                    infer_agent_event(event, self.notification_type.as_deref())
+                        == Some(AgentEvent::PermissionRequest)
+                }
+            },
+            AgentState::Done | AgentState::Idle => {
+                event == "Notification"
+                    && self
+                        .notification_type
+                        .as_deref()
+                        .is_some_and(|kind| kind.eq_ignore_ascii_case("idle_prompt"))
+            }
+            _ => false,
+        }
+    }
+}
+
 fn truncate_msg(s: &str, max: usize) -> String {
     let first_line = s.lines().next().unwrap_or(s);
     if first_line.len() <= max {
@@ -363,6 +399,7 @@ async fn api_pane_notify(
     if mgr.find_pane(pane_id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let repeated = body.repeats_hook_state(&event, mgr.hook_agent_state(pane_id));
     if let Some(report) = report {
         match mgr.apply_agent_report(pane_id, report, Instant::now()) {
             None => return StatusCode::NO_CONTENT.into_response(),
@@ -382,7 +419,8 @@ async fn api_pane_notify(
             | "PermissionDenied"
             | "AfterTool"
             | "Interrupt"
-    ) {
+    ) || repeated
+    {
         return StatusCode::NO_CONTENT.into_response();
     }
 
@@ -705,6 +743,80 @@ mod pane_notification_tests {
             assert_eq!(diagnostics["status"]["state"], "unknown");
             assert_eq!(diagnostics["process"]["pid"], 42);
             assert!(diagnostics["detection"].is_null());
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_permission_and_idle_hooks_notify_once() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let mut events = manager.events().subscribe();
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        let hooks = [
+            (serde_json::json!({"hook_event_name": "SessionStart"}), None),
+            (
+                serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+                None,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PermissionRequest", "tool_use_id": "t1", "tool_name": "Bash"}),
+                Some("Permission: Bash"),
+            ),
+            (
+                serde_json::json!({"hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "Claude needs your permission"}),
+                None,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PostToolUse", "tool_use_id": "t1"}),
+                None,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "Claude needs your permission"}),
+                Some("permission_prompt"),
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PermissionRequest", "tool_use_id": "t2", "tool_name": "Edit"}),
+                None,
+            ),
+            (serde_json::json!({"hook_event_name": "Stop"}), Some("Done")),
+            (
+                serde_json::json!({"hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "Claude is waiting for your input"}),
+                None,
+            ),
+        ];
+        for (mut hook, expected) in hooks {
+            hook["session_id"] = "s".into();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/api/panes/{pane}/notify"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(hook.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            let mut titles = Vec::new();
+            while let Ok(event) = events.try_recv() {
+                let event: serde_json::Value = serde_json::from_str(&event).unwrap();
+                if event["type"] == "pane_notification" {
+                    titles.push(event["title"].as_str().unwrap().to_string());
+                }
+            }
+            assert_eq!(titles, expected.into_iter().collect::<Vec<_>>(), "{hook}");
         }
     }
 

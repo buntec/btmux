@@ -325,6 +325,10 @@ impl AgentLifecycle {
         self.observed
     }
 
+    pub fn blocked_tool_id(&self) -> Option<&str> {
+        self.blocked_tool_id.as_deref()
+    }
+
     pub fn authority(&self) -> Authority {
         self.authority
     }

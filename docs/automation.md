@@ -127,6 +127,14 @@ running in the pane can use them to display a colored dot or toast when it
 stops, needs permission, fails, or finishes work—even when another pane or
 session is active.
 
+Attention and error notifications show a toast unless you are looking at that
+pane, and an OS notification while the btmux window is hidden or unfocused. The
+first one offers to enable OS notifications, because browsers only grant the
+permission from a click. A permission `Notification` that repeats a pending
+`PermissionRequest`, and an `idle_prompt` after the turn already finished, are
+not shown again. A finished agent stays `done` until its pane is viewed in a
+focused window.
+
 btmux detects interactive Codex, Claude Code, and Gemini CLI processes under each
 pane's shell, including known Node/Bun entry points. It checks process identity
 roughly every second and uses the foreground job to select the agent whose

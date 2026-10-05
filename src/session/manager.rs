@@ -31,6 +31,9 @@ pub struct SessionManager {
     exit_tx: mpsc::UnboundedSender<Uuid>,
     meta_tx: mpsc::UnboundedSender<()>,
     port: u16,
+    next_client: u32,
+    /// The control client the user focused most recently; it alone shows OS notifications.
+    alert_client: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -73,6 +76,8 @@ impl SessionManager {
             config,
             events,
             agents: HashMap::new(),
+            next_client: 0,
+            alert_client: None,
             exit_tx,
             meta_tx,
             port,
@@ -282,6 +287,25 @@ impl SessionManager {
             .entry(pane_id)
             .or_insert_with(|| AgentLifecycle::reported(now))
             .apply(report, revision, now)
+    }
+
+    pub fn register_client(&mut self) -> u32 {
+        self.next_client = self.next_client.wrapping_add(1);
+        self.next_client
+    }
+
+    pub fn focus_client(&mut self, client: u32) {
+        self.alert_client = Some(client);
+    }
+
+    pub fn release_client(&mut self, client: u32) {
+        if self.alert_client == Some(client) {
+            self.alert_client = None;
+        }
+    }
+
+    pub fn alert_client(&self) -> Option<u32> {
+        self.alert_client
     }
 
     pub fn config(&self) -> &ClientConfig {
@@ -1276,6 +1300,31 @@ mod agent_tests {
         );
         assert!(mgr.update_detected_agents(&[(second, two, "codex".to_string())], |_| true));
         assert_eq!(mgr.running_agent_panes(), vec![second]);
+    }
+
+    #[test]
+    fn the_most_recently_focused_client_gets_os_notifications() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let browser = mgr.register_client();
+        let desktop = mgr.register_client();
+        assert_ne!(browser, desktop);
+        assert_eq!(mgr.alert_client(), None);
+        mgr.focus_client(browser);
+        mgr.focus_client(desktop);
+        assert_eq!(mgr.alert_client(), Some(desktop));
+        mgr.release_client(browser);
+        assert_eq!(mgr.alert_client(), Some(desktop));
+        mgr.release_client(desktop);
+        assert_eq!(mgr.alert_client(), None);
     }
 
     #[tokio::test]

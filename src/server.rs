@@ -446,6 +446,7 @@ async fn api_pane_notify(
         level,
         title,
         body: notif_body,
+        os_client: mgr.alert_client(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
     StatusCode::NO_CONTENT.into_response()

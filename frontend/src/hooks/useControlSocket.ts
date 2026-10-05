@@ -30,6 +30,15 @@ export function useControlSocket() {
     let ws: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let disposed = false;
+    // This connection's id; the server names the client that shows OS notifications.
+    let clientId: number | null = null;
+    const reportFocus = () => {
+      if (clientId != null && ws?.readyState === WebSocket.OPEN && windowAttended()) {
+        ws.send(JSON.stringify({ type: 'focus_client' }));
+      }
+    };
+    window.addEventListener('focus', reportFocus);
+    document.addEventListener('visibilitychange', reportFocus);
 
     function connect() {
       if (disposed) return;
@@ -44,7 +53,10 @@ export function useControlSocket() {
 
       ws.onmessage = (ev) => {
         const msg: ServerMessage = JSON.parse(ev.data);
-        if (msg.type === 'state') {
+        if (msg.type === 'client') {
+          clientId = msg.id;
+          reportFocus();
+        } else if (msg.type === 'state') {
           setSessions(msg.sessions);
           setAllSessions(msg.all_sessions);
           setAgentPanes(msg.agent_panes);
@@ -59,8 +71,15 @@ export function useControlSocket() {
           const away = !windowAttended();
           const prefs = useStore.getState().config?.notifications;
           const osWanted = (prefs?.os ?? true) && atLeast(msg.level, prefs?.['os-level'] ?? 'attention');
+          const osTarget = msg.os_client == null || msg.os_client === clientId;
           // Some webviews (e.g. WKWebView) lack the Notification API.
-          if (osWanted && away && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          if (
+            osWanted &&
+            osTarget &&
+            away &&
+            typeof Notification !== 'undefined' &&
+            Notification.permission === 'granted'
+          ) {
             // tag per pane so a burst from one pane coalesces into a single
             // updating banner instead of stacking N popups (renotify
             // defaults to false, so updates don't re-alert).
@@ -115,6 +134,7 @@ export function useControlSocket() {
             })
             .catch(() => {});
         wsRef.current = null;
+        clientId = null;
         setControlConnectionState('reconnecting');
         if (!disposed) {
           console.log('[btmux] control socket closed, reconnecting in 2s...');
@@ -127,6 +147,8 @@ export function useControlSocket() {
 
     return () => {
       disposed = true;
+      window.removeEventListener('focus', reportFocus);
+      document.removeEventListener('visibilitychange', reportFocus);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };

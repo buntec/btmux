@@ -133,7 +133,8 @@ first one offers to enable OS notifications, because browsers only grant the
 permission from a click. `[notifications]` in `config.toml` (or Settings →
 Notifications) turns OS notifications off with `os = false` or changes the
 lowest level shown with `os-level` (`info`, `success`, `attention`, or
-`error`; default `attention`). A permission `Notification` that repeats a pending
+`error`; default `attention`). When several browser tabs or the desktop app
+are connected, only the one you focused most recently shows OS notifications. A permission `Notification` that repeats a pending
 `PermissionRequest`, and an `idle_prompt` after the turn already finished, are
 not shown again. A finished agent stays `done` until its pane is viewed in a
 focused window.

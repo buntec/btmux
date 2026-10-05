@@ -62,13 +62,16 @@ async fn resynchronize(
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     // Subscribe and snapshot under one guard; never hold it during socket I/O.
-    let (mut events, initial) = {
-        let mgr = state.read().await;
-        (mgr.events().subscribe(), initial_messages(&mgr))
+    let (client, mut events, initial) = {
+        let mut mgr = state.write().await;
+        let client = mgr.register_client();
+        (client, mgr.events().subscribe(), initial_messages(&mgr))
     };
     let (reply_tx, mut replies) = tokio::sync::mpsc::channel::<String>(32);
     let send = async {
-        let mut pending = Vec::from(initial);
+        let mut pending =
+            vec![serde_json::to_string(&ServerMessage::Client { id: client }).unwrap()];
+        pending.extend(initial);
         loop {
             for json in pending.drain(..) {
                 if !matches!(
@@ -109,6 +112,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
             let result = match value.and_then(serde_json::from_value::<ClientMessage>) {
+                Ok(ClientMessage::FocusClient) => {
+                    state.write().await.focus_client(client);
+                    Ok(())
+                }
                 Ok(cmd) => handle_command(cmd, &state).await,
                 Err(error) => Err(format!("Invalid command: {error}")),
             };
@@ -128,6 +135,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Cancelling either half drops the other, so failures cannot leave a socket
     // that still accepts commands but has stopped delivering state.
     tokio::select! { _ = send => {}, _ = receive => {} }
+    state.write().await.release_client(client);
 }
 
 async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), String> {
@@ -281,7 +289,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::UpdateConfig { .. }
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
-        | ClientMessage::OpenFile { .. } => unreachable!(),
+        | ClientMessage::OpenFile { .. }
+        | ClientMessage::FocusClient => unreachable!(),
     }
 
     broadcast_state(&mgr);
@@ -729,6 +738,8 @@ pub(crate) enum ClientMessage {
     AcknowledgePane {
         pane_id: Uuid,
     },
+    /// This client's window gained focus, so it now shows OS notifications.
+    FocusClient,
     CyclePane {
         session_id: Uuid,
         delta: i32,
@@ -812,6 +823,12 @@ pub enum ServerMessage {
         level: NotificationLevel,
         title: Option<String>,
         body: Option<String>,
+        /// The client that should show an OS notification; `None` lets every client decide.
+        os_client: Option<u32>,
+    },
+    /// Sent first on every control connection: this socket's client id.
+    Client {
+        id: u32,
     },
     OpenFileBrowser {
         pane_id: Uuid,

@@ -15,6 +15,7 @@ import type { AgentStatus } from '../state/types';
 import { AgentStatusBadge } from './PaneTitleBar';
 import { MirrorPane } from './MirrorPane';
 import { KeyCap } from './KeyHint';
+import { chromePalette } from '../lib/chrome-colors';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -67,6 +68,7 @@ export function AgentGrid({ send }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
   const entries = useMemo(() => buildEntries(allSessions, agentPanes), [allSessions, agentPanes]);
+  const terminalBg = chromePalette(config?.theme ?? null).bodyBg;
 
   const [mirrorsReady, setMirrorsReady] = useState(false);
   const hasEverBeenReady = useRef(false);
@@ -211,7 +213,11 @@ export function AgentGrid({ send }: Props) {
                             <AgentStatusBadge status={entry.agentStatus} />
                           </HStack>
                         </HStack>
-                        <VStack data-agent-mirror className="relative min-h-0 flex-1 overflow-hidden">
+                        <VStack
+                          data-agent-mirror
+                          className="relative min-h-0 flex-1 overflow-hidden"
+                          style={{ background: terminalBg }}
+                        >
                           {mirrorsReady && <MirrorPane paneId={entry.paneId} visible={open} />}
                         </VStack>
                       </VStack>

@@ -3,13 +3,14 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from '@astryxdesign/core/AppShell';
 import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2, Bot } from 'lucide-react';
+import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2 } from 'lucide-react';
 import { useStore } from '../state/store';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { getAnimations, getSessionSort, getShowNavHeader, getWindowSort } from '../state/configDefaults';
 import { AnimatedAppIcon } from './AnimatedAppIcon';
 import { SessionNavItem } from './SessionNavItem';
+import { AgentNavItem } from './AgentNavItem';
 import { useTerminalPalette } from './BtmuxTheme';
 import type { ClientMessage } from '../protocol/messages';
 
@@ -150,9 +151,8 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
                 }}
               />
             )}
-            <SideNavItem
-              label="Agents"
-              icon={Bot}
+            <AgentNavItem
+              collapsed={collapsed}
               onClick={() => {
                 closeSurfaces();
                 setAgentGridOpen(true);

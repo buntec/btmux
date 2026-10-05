@@ -201,7 +201,107 @@
   }
 }
 
+/* ── Agents nav indicators (components/AgentNavItem.tsx) ──────────────────── */
+[data-agent-state='waiting'] {
+  --btm-agent: var(--color-warning);
+}
+[data-agent-state='working'] {
+  --btm-agent: var(--color-accent);
+}
+[data-agent-state='done'] {
+  --btm-agent: var(--color-success);
+}
+[data-agent-state='idle'] {
+  --btm-agent: var(--color-icon-secondary);
+}
+.btm-agent-light {
+  fill: var(--btm-agent, currentColor);
+  stroke: var(--btm-agent, currentColor);
+  transition:
+    fill 300ms ease,
+    stroke 300ms ease;
+}
+.btm-agent-halo {
+  fill: var(--btm-agent, currentColor);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.btm-agent-dot {
+  position: relative;
+  background: var(--btm-agent);
+}
+.btm-agent-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  opacity: 0;
+}
+[data-agent-animate][data-agent-state='working'] .btm-agent-light {
+  animation: btm-agent-breathe 2.4s ease-in-out infinite;
+}
+[data-agent-animate][data-agent-state='waiting'] .btm-agent-halo {
+  animation: btm-agent-halo 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.btm-agent-dot[data-agent-animate] {
+  animation: btm-agent-in 320ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.btm-agent-dot[data-agent-animate][data-agent-state='working'] {
+  animation:
+    btm-agent-in 320ms cubic-bezier(0.2, 0, 0, 1) both,
+    btm-agent-breathe 2.4s ease-in-out 320ms infinite;
+}
+/* Working dots breathe as a gentle wave. */
+.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(2) {
+  animation-delay: 0ms, 620ms;
+}
+.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(3) {
+  animation-delay: 0ms, 920ms;
+}
+.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(4) {
+  animation-delay: 0ms, 1220ms;
+}
+.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(5) {
+  animation-delay: 0ms, 1520ms;
+}
+.btm-agent-dot[data-agent-animate][data-agent-state='waiting']::after {
+  animation: btm-agent-halo 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes btm-agent-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes btm-agent-halo {
+  0% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+@keyframes btm-agent-in {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  [data-agent-animate],
+  [data-agent-animate] *,
+  [data-agent-animate]::after {
+    animation: none !important;
+  }
   @keyframes btm-bloom {
     from { opacity: 0.3; }
     to   { opacity: 1; }

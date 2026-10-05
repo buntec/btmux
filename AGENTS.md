@@ -172,6 +172,11 @@ so the same struct round-trips both ways. Unset fields serialize as `null`;
 palette. `colors` may instead name a palette in the config colors directory, an
 absolute or `~/`-relative YAML path, or an HTTP(S) YAML file; both top-level and
 `palette`-wrapped documents are supported. An inline `[theme]` takes precedence.
+Schemes in `extras/colors/` are compiled in (`BUNDLED_COLOR_SCHEMES`) and
+resolvable by name; a colors-directory file of the same name wins. With nothing
+configured the server sends `btmux-default-dark`, so `ClientConfig.theme` is never
+null. The frontend's `FALLBACK_THEME` (`state/startupTheme.ts`) mirrors it for
+first paint and is checked by a Rust test.
 `BaseTheme::to_theme`
 translates it to ghostty-web's `ITheme` (fg/bg/cursor/
 selection + 16 ANSI colors) using the canonical tinted-theming ANSI mapping. **base24

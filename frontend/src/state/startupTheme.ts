@@ -1,29 +1,29 @@
 import type { Theme } from './types';
 
 // First-paint fallback before the server's config arrives; mirrors the
-// bundled default in extras/colors/kauz-dark.yml.
+// bundled default in extras/colors/btmux-default-dark.yml (checked by a Rust test).
 export const FALLBACK_THEME: Theme = {
-  background: '#0e333e',
-  foreground: '#8cb3bf',
-  cursor: '#8cb3bf',
-  cursorAccent: '#0e333e',
-  selectionBackground: '#406470',
-  black: '#0e333e',
-  red: '#e6b8c5',
-  green: '#a0d3c8',
-  yellow: '#b9c6eb',
-  blue: '#e6bcaa',
-  magenta: '#d4bde0',
-  cyan: '#d4c69e',
-  white: '#8cb3bf',
-  brightBlack: '#597e8a',
-  brightRed: '#ffd4e1',
-  brightGreen: '#bcefe4',
-  brightYellow: '#d6e2ff',
-  brightBlue: '#ffd8c5',
-  brightMagenta: '#f1d8fc',
-  brightCyan: '#f1e2ba',
-  brightWhite: '#c3eaf8',
+  background: '#14110b',
+  foreground: '#b5b1a5',
+  cursor: '#b5b1a5',
+  cursorAccent: '#14110b',
+  selectionBackground: '#363329',
+  black: '#14110b',
+  red: '#f29199',
+  green: '#80c490',
+  yellow: '#cbaf53',
+  blue: '#84b5eb',
+  magenta: '#da96d6',
+  cyan: '#59c6bc',
+  white: '#b5b1a5',
+  brightBlack: '#5c584c',
+  brightRed: '#ffacb3',
+  brightGreen: '#92e0a5',
+  brightYellow: '#e9c85e',
+  brightBlue: '#97d0ff',
+  brightMagenta: '#f9abf5',
+  brightCyan: '#65e2d7',
+  brightWhite: '#efebe1',
 };
 
 function readStartupTheme(): Theme {

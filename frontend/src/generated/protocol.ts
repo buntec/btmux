@@ -212,8 +212,8 @@ window_grid_count: number,
  */
 version: string, 
 /**
- * Available color scheme names from `$XDG_CONFIG_HOME/btmux/colors/`, falling
- * back to `~/.config/btmux/colors/`.
+ * Available color scheme names: bundled schemes plus files from
+ * `$XDG_CONFIG_HOME/btmux/colors/`, falling back to `~/.config/btmux/colors/`.
  */
 color_schemes: Array<string>, 
 /**

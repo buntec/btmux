@@ -807,8 +807,8 @@ pub struct ClientConfig {
     pub window_grid_count: u32,
     /// btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
     pub version: String,
-    /// Available color scheme names from `$XDG_CONFIG_HOME/btmux/colors/`, falling
-    /// back to `~/.config/btmux/colors/`.
+    /// Available color scheme names: bundled schemes plus files from
+    /// `$XDG_CONFIG_HOME/btmux/colors/`, falling back to `~/.config/btmux/colors/`.
     pub color_schemes: Vec<String>,
     /// Resolved themes for locally previewing available color schemes in the
     /// browser without applying a session-only override.
@@ -896,9 +896,35 @@ fn expand_color_scheme_path(value: &str) -> PathBuf {
     }
 }
 
-/// Bundled default palette (kauz-dark, base24).
+/// Color schemes compiled into the binary, selectable by name. A file of the
+/// same name in the colors directory takes precedence.
+const BUNDLED_COLOR_SCHEMES: &[(&str, &str)] = &[
+    (
+        "btmux-default-dark",
+        include_str!("../extras/colors/btmux-default-dark.yml"),
+    ),
+    (
+        "btmux-default-light",
+        include_str!("../extras/colors/btmux-default-light.yml"),
+    ),
+    ("kauz-dark", include_str!("../extras/colors/kauz-dark.yml")),
+    (
+        "kauz-light",
+        include_str!("../extras/colors/kauz-light.yml"),
+    ),
+];
+
+const DEFAULT_COLOR_SCHEME: &str = "btmux-default-dark";
+
+fn bundled_color_scheme(name: &str) -> Option<BaseTheme> {
+    BUNDLED_COLOR_SCHEMES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .and_then(|(_, yaml)| parse_color_scheme(yaml))
+}
+
 static DEFAULT_THEME: LazyLock<Theme> = LazyLock::new(|| {
-    parse_color_scheme(include_str!("../extras/colors/kauz-dark.yml"))
+    bundled_color_scheme(DEFAULT_COLOR_SCHEME)
         .expect("bundled default color scheme parses")
         .to_theme()
 });
@@ -908,25 +934,28 @@ pub fn default_theme() -> Theme {
     DEFAULT_THEME.clone()
 }
 
-/// Load a color scheme YAML file by name from the colors directory, or from an
-/// absolute/`~/`-relative path. Forgiving: looks for base00–base0F (and
+/// Load a color scheme YAML file by name from the colors directory (falling
+/// back to the bundled schemes), or from an absolute/`~/`-relative path. Forgiving: looks for base00–base0F (and
 /// optionally base10–base17) at the top level or under a `palette` key. Returns
 /// `None` if the file doesn't exist or doesn't contain the required keys.
 pub fn load_color_scheme(name: &str) -> Option<BaseTheme> {
     let path = if is_color_scheme_path(name) {
         expand_color_scheme_path(name)
     } else {
-        let dir = colors_dir()?;
-        let yaml_path = dir.join(format!("{name}.yaml"));
-        if yaml_path.exists() {
-            yaml_path
-        } else {
-            let yml_path = dir.join(format!("{name}.yml"));
-            if yml_path.exists() {
-                yml_path
-            } else {
-                tracing::warn!("color scheme '{name}' not found in {}", dir.display());
-                return None;
+        let found = colors_dir().and_then(|dir| {
+            ["yaml", "yml"]
+                .iter()
+                .map(|ext| dir.join(format!("{name}.{ext}")))
+                .find(|path| path.exists())
+        });
+        match found {
+            Some(path) => path,
+            None => {
+                let bundled = bundled_color_scheme(name);
+                if bundled.is_none() {
+                    tracing::warn!("color scheme '{name}' not found");
+                }
+                return bundled;
             }
         }
     };
@@ -1063,15 +1092,13 @@ fn extract_palette(map: &HashMap<String, serde_yaml::Value>) -> Option<BaseTheme
     Some(theme)
 }
 
-/// List available color scheme names (filenames without extension) from the
-/// colors directory. Returns an empty vec if the directory doesn't exist.
+/// List available color scheme names: the bundled schemes plus filenames
+/// (without extension) from the colors directory.
 pub fn list_color_schemes() -> Vec<String> {
-    let Some(dir) = colors_dir() else {
-        return vec![];
-    };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return vec![];
-    };
+    let entries = colors_dir()
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .into_iter()
+        .flatten();
     let mut names: Vec<String> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
@@ -1083,8 +1110,10 @@ pub fn list_color_schemes() -> Vec<String> {
                 None
             }
         })
+        .chain(BUNDLED_COLOR_SCHEMES.iter().map(|(n, _)| n.to_string()))
         .collect();
     names.sort();
+    names.dedup();
     names
 }
 
@@ -1264,6 +1293,8 @@ pub fn generate_config_toml() -> String {
 # Color scheme from $XDG_CONFIG_HOME/btmux/colors/<name>.yaml (falling back to
 # ~/.config/btmux/colors/; base16/base24 YAML files), an absolute or ~/relative
 # local path, or a URL to a base16/base24 YAML file.
+# Bundled: btmux-default-dark (the default), btmux-default-light, kauz-dark,
+# kauz-light. A colors-directory file of the same name takes precedence.
 # A `palette` wrapper is supported.
 # An inline [theme] below overrides this.
 # colors = "catppuccin-mocha"
@@ -1938,9 +1969,32 @@ palette:
         let resolved = resolve_binds(&FileConfig::default());
 
         assert_eq!(resolved.theme, default_theme());
-        assert_eq!(resolved.theme.background, "#0e333e");
+        assert_eq!(resolved.theme.background, "#14110b");
         // base24 bright slot, not the base16 accent.
-        assert_eq!(resolved.theme.bright_red, "#ffd4e1");
+        assert_eq!(resolved.theme.bright_red, "#ffacb3");
+    }
+
+    #[test]
+    fn bundled_color_schemes_parse_and_are_listed() {
+        let listed = list_color_schemes();
+        for (name, _) in BUNDLED_COLOR_SCHEMES {
+            let palette = bundled_color_scheme(name).expect("bundled scheme parses");
+            assert!(palette.is_base24(), "{name} should be base24");
+            assert!(listed.iter().any(|n| n == name));
+        }
+    }
+
+    #[test]
+    fn frontend_fallback_theme_matches_default() {
+        let source = include_str!("../frontend/src/state/startupTheme.ts");
+        let expected = serde_json::to_value(default_theme()).unwrap();
+        for (key, value) in expected.as_object().unwrap() {
+            let line = format!("  {key}: '{}',", value.as_str().unwrap());
+            assert!(
+                source.contains(&line),
+                "FALLBACK_THEME should contain `{line}`"
+            );
+        }
     }
 
     #[test]

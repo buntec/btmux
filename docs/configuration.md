@@ -36,8 +36,11 @@ in the editor's General tab as **Show sidebar header**.
 
 The `colors` option accepts:
 
+- the name of a bundled scheme: `btmux-default-dark` (the default),
+  `btmux-default-light`, `kauz-dark`, or `kauz-light`;
 - the name of a base16/base24 YAML file in `$XDG_CONFIG_HOME/btmux/colors/`
-  (falling back to `~/.config/btmux/colors/`);
+  (falling back to `~/.config/btmux/colors/`), which takes precedence over a
+  bundled scheme of the same name;
 - an absolute or `~/`-relative local YAML path; or
 - an `http://` or `https://` URL to a YAML palette.
 

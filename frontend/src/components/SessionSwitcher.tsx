@@ -21,7 +21,7 @@ import { SessionIcon } from './SessionIcon';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
-import { KeyCap } from './KeyHint';
+import { KeyCap, KeyHint } from './KeyHint';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -66,6 +66,12 @@ export function SessionSwitcher({ send }: Props) {
   const [filterMode, setFilterMode] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
   const [hoveredPaneId, setHoveredPaneId] = useState<string | null>(null);
+  // Inline kill confirmation shown in the footer (like the file browser).
+  const [pendingKill, setPendingKill] = useState<{
+    kind: 'session' | 'window';
+    name: string;
+    msg: ClientMessage;
+  } | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const previewRef = useRef<HTMLElement>(null);
   const selectedRef = useRef<HTMLLIElement>(null);
@@ -196,6 +202,10 @@ export function SessionSwitcher({ send }: Props) {
 
   const cancel = () => setOpen(false);
 
+  useEffect(() => {
+    if (!open) setPendingKill(null);
+  }, [open]);
+
   const exitFilter = () => {
     setFilterMode(false);
     setFilterQuery('');
@@ -238,19 +248,11 @@ export function SessionSwitcher({ send }: Props) {
     const sess = sessionById.get(row.sessionId);
     if (!sess) return;
     if (row.kind === 'session') {
-      setOverlay({
-        mode: 'confirm',
-        title: `kill session "${sess.name}"?`,
-        onConfirm: () => send({ type: 'kill_session', id: sess.id }),
-      });
+      setPendingKill({ kind: 'session', name: sess.name, msg: { type: 'kill_session', id: sess.id } });
     } else {
       const win = sess.windows[row.windowIndex];
       if (!win) return;
-      setOverlay({
-        mode: 'confirm',
-        title: `kill window "${win.name}"?`,
-        onConfirm: () => send({ type: 'kill_window', window_id: win.id }),
-      });
+      setPendingKill({ kind: 'window', name: win.name, msg: { type: 'kill_window', window_id: win.id } });
     }
   };
 
@@ -294,6 +296,17 @@ export function SessionSwitcher({ send }: Props) {
   const onKeyDown = (e: React.KeyboardEvent) => {
     e.stopPropagation();
     const n = rows.length;
+
+    if (pendingKill) {
+      e.preventDefault();
+      if (e.key === 'y' || e.key === 'Y') {
+        send(pendingKill.msg);
+        setPendingKill(null);
+      } else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') {
+        setPendingKill(null);
+      }
+      return;
+    }
 
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -560,14 +573,28 @@ export function SessionSwitcher({ send }: Props) {
         footer={
           <LayoutFooter hasDivider>
             <HStack gap={4} wrap="wrap">
-              {HINTS.map(([keys, label]) => (
-                <HStack key={label} gap={1} vAlign="center">
-                  {keys.map((key) => (
-                    <KeyCap key={key} keys={key} />
-                  ))}
-                  <Text color="secondary">{label}</Text>
-                </HStack>
-              ))}
+              {pendingKill ? (
+                <>
+                  <Text size="sm">
+                    Kill {pendingKill.kind}{' '}
+                    <Text size="sm" color="inherit" className="text-yellow-vivid">
+                      {pendingKill.name}
+                    </Text>
+                    ?
+                  </Text>
+                  <KeyHint keys={['y']} label="confirm" />
+                  <KeyHint keys={['n']} label="cancel" />
+                </>
+              ) : (
+                HINTS.map(([keys, label]) => (
+                  <HStack key={label} gap={1} vAlign="center">
+                    {keys.map((key) => (
+                      <KeyCap key={key} keys={key} />
+                    ))}
+                    <Text color="secondary">{label}</Text>
+                  </HStack>
+                ))
+              )}
             </HStack>
           </LayoutFooter>
         }

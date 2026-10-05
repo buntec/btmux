@@ -633,6 +633,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           else store.getState().setIsFilterActive(false);
         } else if (isGitMode) {
           exitGitMode();
+        } else if (store.getState().yankRegister) {
+          store.getState().setYankRegister(null);
         } else {
           onClose();
         }

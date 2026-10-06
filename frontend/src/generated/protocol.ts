@@ -107,6 +107,10 @@ theme: Theme,
  */
 default_theme: Theme, vi_mode: boolean, 
 /**
+ * Repeat window in ms for repeatable keys; 0 disables.
+ */
+repeat_time: number, 
+/**
  * Whether CSS animations/transitions are enabled in the browser.
  */
 animations: boolean, 

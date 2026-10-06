@@ -9,6 +9,7 @@ import { PANE_SWITCH_EFFECTS, SHADER_EFFECTS, findPaneSwitchEffect } from '../li
 import {
   getFontWeightRange,
   getPrefix,
+  getRepeatTime,
   getTerminalFontFamily,
   getTerminalFontWeight,
   getWindowSort,
@@ -16,6 +17,7 @@ import {
 } from '../state/configDefaults';
 
 import { parsePrefix, prefixBytes, type ParsedKey } from '../lib/prefixKey';
+import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
 
@@ -58,6 +60,17 @@ function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) 
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
 }
 
+/** Actions that stay armed for `repeat-time` after the prefix (tmux `bind -r`). */
+function isRepeatable(action: string): boolean {
+  return action.startsWith('navigate-') || action.startsWith('resize-pane-');
+}
+
+/** Resolve the second key, trying `C-`/`M-` modified names before the bare key. */
+function bindFor(e: KeyboardEvent, binds: Map<string, string>): string | undefined {
+  const mods = (e.ctrlKey ? 'C-' : '') + (e.altKey ? 'M-' : '');
+  return (mods ? binds.get(mods + e.key) : undefined) ?? binds.get(e.key);
+}
+
 export function useKeybindings(
   sessionId: string,
   send: (msg: ClientMessage) => void,
@@ -73,6 +86,8 @@ export function useKeybindings(
   const settingsOpen = useStore((s) => s.settingsOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const timeoutRef = useRef<number>(0);
+  const repeatActiveRef = useRef(false);
+  const repeatTimerRef = useRef<number>(0);
 
   const prefix = useMemo(() => parsePrefix(getPrefix(config)), [config?.prefix]);
   const binds = useMemo(() => {
@@ -91,6 +106,7 @@ export function useKeybindings(
   const settingsOpenRef = useRef(settingsOpen);
   const paneNumbersVisibleRef = useRef(paneNumbersVisible);
   const prefixRef = useRef(prefix);
+  const repeatTimeRef = useRef(getRepeatTime(config));
   const bindsRef = useRef(binds);
   const sessionIdRef = useRef(sessionId);
   const sendRef = useRef(send);
@@ -104,12 +120,24 @@ export function useKeybindings(
   settingsOpenRef.current = settingsOpen;
   paneNumbersVisibleRef.current = paneNumbersVisible;
   prefixRef.current = prefix;
+  repeatTimeRef.current = getRepeatTime(config);
   bindsRef.current = binds;
   sessionIdRef.current = sessionId;
   sendRef.current = send;
   onSwitchToSessionRef.current = onSwitchToSession;
 
   useEffect(() => {
+    const endRepeat = () => {
+      clearTimeout(repeatTimerRef.current);
+      repeatActiveRef.current = false;
+    };
+    const armRepeat = () => {
+      clearTimeout(repeatTimerRef.current);
+      if (repeatTimeRef.current <= 0) return;
+      repeatActiveRef.current = true;
+      repeatTimerRef.current = window.setTimeout(endRepeat, repeatTimeRef.current);
+    };
+
     const handler = (e: KeyboardEvent) => {
       const isFKey = e.key.startsWith('F') && e.key.length >= 2 && e.key.length <= 3 && !isNaN(Number(e.key.slice(1)));
       if (e.metaKey || isFKey) {
@@ -138,6 +166,7 @@ export function useKeybindings(
       }
 
       if (!prefixActiveRef.current && matchesPrefix(e, prefixRef.current)) {
+        endRepeat();
         e.preventDefault();
         e.stopPropagation();
         setPrefixActive(true);
@@ -148,6 +177,21 @@ export function useKeybindings(
           prefixActiveRef.current = false;
         }, 2000);
         return;
+      }
+
+      // Repeat window: a repeatable key runs without the prefix; anything else
+      // ends the window and reaches the terminal as normal typing.
+      if (repeatActiveRef.current && !prefixActiveRef.current) {
+        if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+        const action = bindFor(e, bindsRef.current);
+        if (action && isRepeatable(action)) {
+          e.preventDefault();
+          e.stopPropagation();
+          runAction(action, sessionIdRef.current, sendRef.current, onSwitchToSessionRef.current);
+          armRepeat();
+          return;
+        }
+        endRepeat();
       }
 
       if (prefixActiveRef.current) {
@@ -164,13 +208,23 @@ export function useKeybindings(
           sendPrefix(sessionIdRef.current, prefixRef.current, sendRef.current);
           return;
         }
-        dispatch(e, sessionIdRef.current, bindsRef.current, sendRef.current, onSwitchToSessionRef.current);
+        const action = dispatch(
+          e,
+          sessionIdRef.current,
+          bindsRef.current,
+          sendRef.current,
+          onSwitchToSessionRef.current,
+        );
+        if (action && isRepeatable(action)) armRepeat();
         return;
       }
     };
 
     document.addEventListener('keydown', handler, true);
-    return () => document.removeEventListener('keydown', handler, true);
+    return () => {
+      document.removeEventListener('keydown', handler, true);
+      clearTimeout(repeatTimerRef.current);
+    };
     // Register once — all mutable values are read via refs above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setPrefixActive]);
@@ -182,7 +236,7 @@ function dispatch(
   binds: Map<string, string>,
   send: (msg: ClientMessage) => void,
   onSwitchToSession: (sessionName: string) => void,
-) {
+): string | null {
   if (!binds.has(e.key) && e.key >= '0' && e.key <= '9') {
     // The digit is a *display* position; map it to the backend window index so
     // the hotkey matches the (possibly sorted) status-bar numbering.
@@ -190,11 +244,13 @@ function dispatch(
     if (target !== null) {
       send({ type: 'switch_window', session_id: sessionId, index: target });
     }
-    return;
+    return null;
   }
 
-  const action = binds.get(e.key);
-  if (action) runAction(action, sessionId, send, onSwitchToSession);
+  const action = bindFor(e, binds);
+  if (!action) return null;
+  runAction(action, sessionId, send, onSwitchToSession);
+  return action;
 }
 
 export function runAction(
@@ -472,6 +528,11 @@ export function runAction(
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'process');
       break;
     }
+    default: {
+      const m = action.match(/^resize-pane-(left|right|up|down)(?:-(\d+))?$/);
+      if (m) resizePane(sessionId, m[1] as ResizeDirection, Number(m[2] ?? 1), send);
+      break;
+    }
   }
 }
 
@@ -505,6 +566,18 @@ function confirmKill(target: 'pane' | 'window', sessionId: string, send: (msg: C
   } else {
     store.showToast('Cannot kill the last session', 'error');
   }
+}
+
+/** tmux resize-pane: move the active pane's edge by `cells` via its split ratio. */
+function resizePane(sessionId: string, direction: ResizeDirection, cells: number, send: (msg: ClientMessage) => void) {
+  const store = useStore.getState();
+  const session = store.getSession(sessionId);
+  const win = session?.windows[session.active_window];
+  const paneId = store.getActivePaneId(sessionId);
+  const term = paneId ? store.terminals.get(paneId) : undefined;
+  if (!win || !paneId || !term || win.zoomed_pane) return;
+  const r = resizeRatio(win.layout, paneId, direction, cells, { cols: term.cols, rows: term.rows });
+  if (r) send({ type: 'resize_split', session_id: sessionId, split_id: r.splitId, ratio: r.ratio });
 }
 
 /** Show the display-panes number overlay and arm its auto-hide timer. */

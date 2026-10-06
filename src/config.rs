@@ -16,6 +16,7 @@ pub const DEFAULT_PTY_ROWS: u16 = 24;
 
 pub const DEFAULT_PREFIX: &str = "C-b";
 pub const DEFAULT_VI_MODE: bool = false;
+pub const DEFAULT_REPEAT_TIME: u32 = 500;
 pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
 pub const DEFAULT_SHOW_NAV_HEADER: bool = true;
@@ -240,6 +241,10 @@ pub struct FileConfig {
     /// `l` becomes navigate-right; rebind it via `[keys]` if needed.
     #[serde(rename = "vi-mode")]
     pub vi_mode: bool,
+    /// Milliseconds after a repeatable key (pane navigation and resizing) during
+    /// which another repeatable key runs without the prefix. 0 disables.
+    #[serde(rename = "repeat-time")]
+    pub repeat_time: u32,
     /// Enable CSS animations/transitions in the browser (e.g. border highlight
     /// when switching panes). Set to false to disable all animated effects.
     pub animations: bool,
@@ -371,6 +376,7 @@ impl Default for FileConfig {
             prefix: None,
             shell: None,
             vi_mode: DEFAULT_VI_MODE,
+            repeat_time: DEFAULT_REPEAT_TIME,
             animations: DEFAULT_ANIMATIONS,
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
             show_nav_header: DEFAULT_SHOW_NAV_HEADER,
@@ -744,6 +750,8 @@ pub struct ClientConfig {
     /// The bundled default theme, for previewing an unset `colors`.
     pub default_theme: Theme,
     pub vi_mode: bool,
+    /// Repeat window in ms for repeatable keys; 0 disables.
+    pub repeat_time: u32,
     /// Whether CSS animations/transitions are enabled in the browser.
     pub animations: bool,
     /// Whether panes render a per-pane title bar.
@@ -836,6 +844,14 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("c", "new-window"),
     ("n", "next-window"),
     ("p", "prev-window"),
+    ("C-ArrowLeft", "resize-pane-left"),
+    ("C-ArrowRight", "resize-pane-right"),
+    ("C-ArrowUp", "resize-pane-up"),
+    ("C-ArrowDown", "resize-pane-down"),
+    ("M-ArrowLeft", "resize-pane-left-5"),
+    ("M-ArrowRight", "resize-pane-right-5"),
+    ("M-ArrowUp", "resize-pane-up-5"),
+    ("M-ArrowDown", "resize-pane-down-5"),
     (",", "rename-window"),
     ("&", "kill-window"),
     ("C", "new-session"),
@@ -1164,6 +1180,10 @@ pub fn generate_config_toml() -> String {
 # The default `l → last-window` binding is dropped because `l` becomes
 # navigate-right; rebind it via `[keys]` if you need it.
 # vi-mode = {DEFAULT_VI_MODE}
+
+# Milliseconds after a pane navigation or resize key during which another one
+# runs without pressing the prefix again (tmux repeat-time). 0 disables.
+# repeat-time = {DEFAULT_REPEAT_TIME}
 
 # Enable CSS animations/transitions in the browser (e.g. border highlight when
 # switching panes). Set to false to disable all animated effects.
@@ -1507,6 +1527,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         theme,
         default_theme: default_theme(),
         vi_mode: file.vi_mode,
+        repeat_time: file.repeat_time,
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
         show_nav_header: file.show_nav_header,
@@ -2051,6 +2072,11 @@ palette:
             .iter()
             .any(|bind| bind.key == "a" && bind.action == "agent-grid"));
         assert!(!config.vi_mode);
+        assert_eq!(config.repeat_time, DEFAULT_REPEAT_TIME);
+        assert!(resolved
+            .binds
+            .iter()
+            .any(|bind| bind.key == "C-ArrowLeft" && bind.action == "resize-pane-left"));
         assert_eq!(config.prefix, None);
         assert_eq!(config.shell, None);
         assert!(config.animations);

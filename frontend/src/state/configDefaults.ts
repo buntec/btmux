@@ -7,6 +7,7 @@ import type { ClientConfig, FontEntry } from './types';
  */
 export const CONFIG_DEFAULTS = {
   prefix: 'C-b',
+  repeatTime: 500,
   animations: true,
   showPaneTitles: false,
   showNavHeader: true,
@@ -56,6 +57,10 @@ type ConfigLike = ClientConfig | null | undefined;
 
 export function getPrefix(config: ConfigLike): string {
   return config?.prefix ?? CONFIG_DEFAULTS.prefix;
+}
+
+export function getRepeatTime(config: ConfigLike): number {
+  return config?.repeat_time ?? CONFIG_DEFAULTS.repeatTime;
 }
 
 export function getAnimations(config: ConfigLike): boolean {

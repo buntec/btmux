@@ -49,20 +49,8 @@ palettes are fetched whenever the configuration loads.
 
 ## tmux behaviors
 
-- `<prefix> <prefix>` sends the prefix key to the pane (tmux `send-prefix`), so
-  `C-b C-b` reaches nested tmux or readline.
-- `<prefix> x` and `<prefix> &` ask for confirmation. Killing the last pane
-  closes its window, and killing the last window kills the session; the last
-  session cannot be killed. This applies to the browser's control socket; REST
-  and MCP keep refusing to remove the last pane or window.
-- `<prefix> C-Arrow` resizes the active pane by 1 cell and `<prefix> M-Arrow`
-  by 5: its edge in that direction moves (`resize-pane-left`, `-right`, `-up`,
-  `-down`, plus `-5` variants). macOS reserves Ctrl+Arrow for Spaces; rebind
-  under `[keys]`, e.g. `resize-pane-left = "M-ArrowLeft"`. Any
-  `resize-pane-<direction>-<cells>` name works as an action.
-- Pane navigation and resizing repeat: for `repeat-time` ms (default 500, `0`
-  disables) after one, further arrow keys run without the prefix. Any other
-  key ends the window and goes to the terminal.
+Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described in
+[btmux for tmux users](tmux.md).
 
 ## LaTeX overlay
 

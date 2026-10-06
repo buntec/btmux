@@ -55,6 +55,7 @@ Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the comm
 
 - [Installation](docs/installation.md): services, tokens, remote access, and shell completions
 - [Configuration](docs/configuration.md): `~/.config/btmux/config.toml`, themes, and profiles
+- [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux
 - [Automation and AI agents](docs/automation.md): REST API, MCP, and agent notifications
 
 ## Development

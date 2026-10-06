@@ -580,9 +580,7 @@ impl SessionManager {
                     window.prev_pane = Some(prev);
                     window.active_pane = idx;
                 }
-                if window.zoomed_pane.is_some() {
-                    window.zoomed_pane = Some(next_id);
-                }
+                window.zoomed_pane = None;
             }
         }
     }
@@ -1199,7 +1197,7 @@ mod pane_tests {
     use super::*;
 
     #[tokio::test]
-    async fn zoomed_navigation_follows_the_full_layout() {
+    async fn zoomed_navigation_follows_the_full_layout_and_unzooms() {
         let (exit_tx, _) = mpsc::unbounded_channel();
         let (meta_tx, _) = mpsc::unbounded_channel();
         let mut mgr = SessionManager::new(
@@ -1219,7 +1217,6 @@ mod pane_tests {
         mgr.split_pane(session_id, top_right, "h".to_string()).await;
         let bottom_right = mgr.sessions[0].windows[0].panes[3].id;
         mgr.select_pane(session_id, top_left);
-        mgr.zoom_pane(session_id, top_left);
 
         for (direction, expected) in [
             ("right", top_right),
@@ -1228,18 +1225,18 @@ mod pane_tests {
             ("up", top_left),
             ("left", bottom_right),
         ] {
+            let current =
+                mgr.sessions[0].windows[0].panes[mgr.sessions[0].windows[0].active_pane].id;
+            mgr.zoom_pane(session_id, current);
             let previous = mgr.sessions[0].windows[0].active_pane;
             mgr.navigate(session_id, direction.to_string());
             let window = &mgr.snapshot_by_id(session_id).unwrap().windows[0];
             assert_eq!(window.panes[window.active_pane].id, expected);
-            assert_eq!(window.zoomed_pane, Some(expected));
+            assert_eq!(window.zoomed_pane, None);
             assert_eq!(mgr.sessions[0].windows[0].prev_pane, Some(previous));
         }
 
-        mgr.zoom_pane(session_id, bottom_right);
         let window = &mgr.snapshot_by_id(session_id).unwrap().windows[0];
-        assert_eq!(window.zoomed_pane, None);
-        assert_eq!(window.panes[window.active_pane].id, bottom_right);
         assert_eq!(window.layout.pane_ids().len(), 4);
     }
 }

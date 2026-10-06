@@ -759,6 +759,20 @@ export function ConfigPage({ config, send }: Props) {
                   {tab === 'general' && (
                     <VStack gap={4} id="settings-general" role="tabpanel" aria-label={TAB_LABELS.general}>
                       <FormLayout>
+                        <Selector
+                          label="Color scheme"
+                          value={draft.colors || DEFAULT_COLOR_SCHEME}
+                          hasSearch
+                          presentation="adaptive"
+                          options={config.color_schemes.map((value) => ({
+                            value,
+                            label: colorSchemeLabel(value),
+                          }))}
+                          onChange={(value) => {
+                            setColorSchemeTouched(true);
+                            update('colors', value);
+                          }}
+                        />
                         {text('prefix', 'Prefix key', 'Use tmux notation such as C-b, C-a, or M-x.')}
                         {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
                         {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
@@ -786,20 +800,6 @@ export function ConfigPage({ config, send }: Props) {
                   {tab === 'terminal' && (
                     <VStack gap={4} id="settings-terminal" role="tabpanel" aria-label={TAB_LABELS.terminal}>
                       <FormLayout>
-                        <Selector
-                          label="Color scheme"
-                          value={draft.colors || DEFAULT_COLOR_SCHEME}
-                          hasSearch
-                          presentation="adaptive"
-                          options={config.color_schemes.map((value) => ({
-                            value,
-                            label: colorSchemeLabel(value),
-                          }))}
-                          onChange={(value) => {
-                            setColorSchemeTouched(true);
-                            update('colors', value);
-                          }}
-                        />
                         <Selector
                           label="Font family"
                           value={draft.fontFamily}

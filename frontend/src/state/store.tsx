@@ -54,6 +54,9 @@ interface AppStore {
   terminals: Map<string, Terminal>;
   // Panes whose LaTeX overlay is open. Local UI state, never sent to the server.
   latexPanes: Set<string>;
+  // Pane whose scrollback search bar is open (prefix + /), if any.
+  searchPaneId: string | null;
+  setSearchPaneId: (paneId: string | null) => void;
   // Router navigate fn, registered by AppInner (which lives inside <BrowserRouter>).
   // Lets code outside the router — the control socket's OS-notification onclick —
   // do SPA navigation. Non-reactive (set once, read on demand).
@@ -123,6 +126,8 @@ export const useStore = create<AppStore>((set, get) => ({
   controlConnectionState: 'connecting',
   terminals: new Map(),
   latexPanes: new Set(),
+  searchPaneId: null,
+  setSearchPaneId: (paneId) => set({ searchPaneId: paneId }),
   navigateFn: null,
   controlSendFn: null,
   setSessions: (sessions) => set({ sessions }),

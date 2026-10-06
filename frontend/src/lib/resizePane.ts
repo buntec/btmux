@@ -33,6 +33,8 @@ function ancestors(layout: LayoutNode, paneId: string): Step[] | null {
  * a divider of the nearest enclosing split on that axis with the pane on the
  * matching side; failing that, the nearest split on the axis moves instead.
  * `size` is the pane's current terminal size, used to convert cells to a ratio.
+ * `pending` holds ratios sent but not yet echoed by the server, so rapid
+ * repeats build on each other instead of the stale layout.
  */
 export function resizeRatio(
   layout: LayoutNode,
@@ -40,6 +42,7 @@ export function resizeRatio(
   direction: ResizeDirection,
   cells: number,
   size: { cols: number; rows: number },
+  pending?: ReadonlyMap<string, number>,
 ): { splitId: string; ratio: number } | null {
   const vertical = direction === 'left' || direction === 'right';
   const forward = direction === 'right' || direction === 'down';
@@ -57,6 +60,6 @@ export function resizeRatio(
 
   const percentPerCell = paneSpan / cellCount;
   const delta = (cells * percentPerCell) / divider.boundsSize;
-  const ratio = split.ratio + (forward ? delta : -delta);
+  const ratio = (pending?.get(split.id) ?? split.ratio) + (forward ? delta : -delta);
   return { splitId: split.id, ratio: Math.min(MAX_RATIO, Math.max(MIN_RATIO, ratio)) };
 }

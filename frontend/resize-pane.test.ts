@@ -45,3 +45,10 @@ test('ignores splits on the other axis and clamps', () => {
   expect(resizeRatio(layout, 'c', 'right', 1, size)).toBeNull();
   expect(resizeRatio(row('s', leaf('a'), leaf('b'), 0.94), 'a', 'right', 50, size)?.ratio).toBe(0.95);
 });
+
+test('pending ratios chain rapid repeats', () => {
+  const layout = row('s', leaf('a'), leaf('b'));
+  const first = resizeRatio(layout, 'a', 'right', 5, size)!;
+  const second = resizeRatio(layout, 'a', 'right', 5, size, new Map([['s', first.ratio]]))!;
+  expect(second.ratio).toBeCloseTo(0.5 + 10 / 200, 5);
+});

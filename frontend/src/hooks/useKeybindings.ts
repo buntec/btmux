@@ -62,7 +62,7 @@ function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) 
 
 /** Actions that stay armed for `repeat-time` after the prefix (tmux `bind -r`). */
 function isRepeatable(action: string): boolean {
-  return action.startsWith('navigate-') || action.startsWith('resize-pane-');
+  return action.startsWith('navigate-') || action.startsWith('resize-pane-') || action.startsWith('scroll-page-');
 }
 
 /** Resolve the second key, trying `C-`/`M-` modified names before the bare key. */
@@ -84,6 +84,7 @@ export function useKeybindings(
   const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
+  const searchOpen = useStore((s) => s.searchPaneId !== null);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const timeoutRef = useRef<number>(0);
   const repeatActiveRef = useRef(false);
@@ -104,6 +105,7 @@ export function useKeybindings(
   const agentGridOpenRef = useRef(agentGridOpen);
   const switcherOpenRef = useRef(switcherOpen);
   const settingsOpenRef = useRef(settingsOpen);
+  const searchOpenRef = useRef(searchOpen);
   const paneNumbersVisibleRef = useRef(paneNumbersVisible);
   const prefixRef = useRef(prefix);
   const repeatTimeRef = useRef(getRepeatTime(config));
@@ -118,6 +120,7 @@ export function useKeybindings(
   agentGridOpenRef.current = agentGridOpen;
   switcherOpenRef.current = switcherOpen;
   settingsOpenRef.current = settingsOpen;
+  searchOpenRef.current = searchOpen;
   paneNumbersVisibleRef.current = paneNumbersVisible;
   prefixRef.current = prefix;
   repeatTimeRef.current = getRepeatTime(config);
@@ -147,6 +150,8 @@ export function useKeybindings(
 
       if (overlayRef.current) return;
       if (settingsOpenRef.current) return;
+      // The search bar owns the keyboard while open.
+      if (searchOpenRef.current) return;
       // While a grid or the session switcher is open it owns the keyboard
       // (arrows/enter/esc/digits navigate it); don't let pane binds fire.
       if (windowGridOpenRef.current || agentGridOpenRef.current || switcherOpenRef.current) return;
@@ -321,6 +326,29 @@ export function runAction(
       send({ type: 'capture_pane', pane_id: paneId, content });
       break;
     }
+    case 'scroll-page-up':
+    case 'scroll-page-down': {
+      const term = paneId ? store.terminals.get(paneId) : undefined;
+      term?.scrollPages(action === 'scroll-page-up' ? -1 : 1);
+      break;
+    }
+    case 'paste-clipboard': {
+      const term = paneId ? store.terminals.get(paneId) : undefined;
+      if (!term) break;
+      const blocked = () => store.showToast('Clipboard access was blocked by the browser', 'error');
+      if (!navigator.clipboard?.readText) {
+        blocked();
+        break;
+      }
+      navigator.clipboard
+        .readText()
+        .then((text) => text && term.paste(text))
+        .catch(blocked);
+      break;
+    }
+    case 'search-pane':
+      if (paneId) store.setSearchPaneId(paneId);
+      break;
     case 'toggle-latex':
       if (paneId) store.toggleLatex(paneId);
       break;
@@ -568,6 +596,10 @@ function confirmKill(target: 'pane' | 'window', sessionId: string, send: (msg: C
   }
 }
 
+/** Ratios sent by resize-pane that the server may not have echoed yet. */
+const PENDING_RESIZE_MS = 300;
+const pendingResizes = new Map<string, { ratio: number; at: number }>();
+
 /** tmux resize-pane: move the active pane's edge by `cells` via its split ratio. */
 function resizePane(sessionId: string, direction: ResizeDirection, cells: number, send: (msg: ClientMessage) => void) {
   const store = useStore.getState();
@@ -576,7 +608,14 @@ function resizePane(sessionId: string, direction: ResizeDirection, cells: number
   const paneId = store.getActivePaneId(sessionId);
   const term = paneId ? store.terminals.get(paneId) : undefined;
   if (!win || !paneId || !term || win.zoomed_pane) return;
-  const r = resizeRatio(win.layout, paneId, direction, cells, { cols: term.cols, rows: term.rows });
+  const now = performance.now();
+  const pending = new Map<string, number>();
+  for (const [id, p] of pendingResizes) {
+    if (now - p.at < PENDING_RESIZE_MS) pending.set(id, p.ratio);
+    else pendingResizes.delete(id);
+  }
+  const r = resizeRatio(win.layout, paneId, direction, cells, { cols: term.cols, rows: term.rows }, pending);
+  if (r) pendingResizes.set(r.splitId, { ratio: r.ratio, at: now });
   if (r) send({ type: 'resize_split', session_id: sessionId, split_id: r.splitId, ratio: r.ratio });
 }
 

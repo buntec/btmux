@@ -9,7 +9,7 @@ The default prefix is `C-b` and most default keys match tmux. Press
 swap pane, `Space` next layout, `q` pane numbers, arrows navigate, `c` new
 window, `n` `p` `l` window next/prev/last, `0`-`9` select window, `,` rename
 window, `&` kill window, `$` rename session, `(` `)` previous/next session, `L`
-last session, `[` capture scrollback, `?` key list, `:` prompt.
+last session, `[` capture scrollback, `/` search, `]` paste, `?` key list, `:` prompt.
 
 ## Same key, different meaning
 
@@ -44,6 +44,14 @@ Rebind any of them under `[keys]` in `config.toml`.
 - **Repeat.** Navigation and resize keys repeat for `repeat-time` ms (default
   500, `0` disables) without the prefix. Any other key ends the window and goes
   to the terminal.
+- **Scrolling and search.** `<prefix> PageUp` and `PageDown` scroll the active
+  pane by a page and repeat like the arrow keys. `<prefix> /` opens a search bar
+  over the pane's scrollback: Enter jumps to the next older match, Shift+Enter
+  to a newer one, Esc closes it. It is a plain substring search, case-insensitive
+  unless the query has an uppercase letter, and it searches a snapshot taken
+  when the bar opens.
+- **Paste.** `<prefix> ]` pastes the system clipboard, not a tmux buffer. The
+  browser may ask for clipboard permission.
 - **Prefix timeout.** The prefix expires after 2 seconds; tmux waits
   indefinitely.
 - **Sessions are per tab.** The session you see comes from the URL, so two
@@ -66,8 +74,8 @@ Rebind any of them under `[keys]` in `config.toml`.
 
 ## Not available
 
-- Copy mode, search, paste buffers (`]`, `=`, `#`), and `PageUp` scrolling via
-  the prefix. Use the mouse wheel or `<prefix> [`.
+- Copy mode and paste buffers (`=`, `#`). Select with the mouse; btmux has no
+  buffer stack.
 - tmux commands in `:`. The prompt is a palette of btmux commands, such as
   `select-layout-*`, not `split-window -h` or `resize-pane -R 5`.
 - `d` detach, `!` break-pane, `.` move-window, `'` select window by prompt,

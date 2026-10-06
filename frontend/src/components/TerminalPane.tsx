@@ -13,6 +13,7 @@ import { pumpRenders } from '../lib/pumpRenders';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
 import { LatexOverlay } from './LatexOverlay';
+import { PaneSearch } from './PaneSearch';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
 import { cn } from '../lib/utils';
 import { desktopTransparency } from '../lib/desktopTransparency';
@@ -502,6 +503,7 @@ export function TerminalPane({
   const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, visible);
   latexPokeRef.current = latexPoke;
   const latexOpen = useStore((s) => s.latexPanes.has(paneId));
+  const searchOpen = useStore((s) => s.searchPaneId === paneId);
   const toggleLatex = () => useStore.getState().toggleLatex(paneId);
   const highlightLatex = (match: PaneLatexMatch | null) => {
     const term = termRef.current;
@@ -875,6 +877,14 @@ export function TerminalPane({
           >
             ∑ {latexMatches.length}
           </button>
+        )}
+        {searchOpen && termRef.current && (
+          <PaneSearch
+            term={termRef.current}
+            theme={config?.theme ?? null}
+            termFont={termFont}
+            onClose={() => useStore.getState().setSearchPaneId(null)}
+          />
         )}
         {latexOpen && (
           <LatexOverlay

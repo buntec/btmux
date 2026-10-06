@@ -773,6 +773,17 @@ export function ConfigPage({ config, send }: Props) {
                             update('colors', value);
                           }}
                         />
+                        <Selector
+                          label="Font family"
+                          value={draft.fontFamily}
+                          presentation="adaptive"
+                          options={config.fonts.map((font) => ({ value: font.family, label: font.family }))}
+                          onChange={(value) => {
+                            const { min, max } = getFontWeightRange(config.fonts, value);
+                            update('fontFamily', value);
+                            update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
+                          }}
+                        />
                         {text('prefix', 'Prefix key', 'Use tmux notation such as C-b, C-a, or M-x.')}
                         {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
                         {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
@@ -800,17 +811,6 @@ export function ConfigPage({ config, send }: Props) {
                   {tab === 'terminal' && (
                     <VStack gap={4} id="settings-terminal" role="tabpanel" aria-label={TAB_LABELS.terminal}>
                       <FormLayout>
-                        <Selector
-                          label="Font family"
-                          value={draft.fontFamily}
-                          presentation="adaptive"
-                          options={config.fonts.map((font) => ({ value: font.family, label: font.family }))}
-                          onChange={(value) => {
-                            const { min, max } = getFontWeightRange(config.fonts, value);
-                            update('fontFamily', value);
-                            update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
-                          }}
-                        />
                         {range('fontSize', 'Terminal font size', 8, 36)}
                         {range('fontWeight', 'Font weight', weightMin, weightMax, 100)}
                         {choose('renderer', 'Renderer', [

@@ -3,7 +3,7 @@ import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
 import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS, findPaneSwitchEffect } from '../lib/terminalFxShaders';
-import { colorSchemeLabel } from '../lib/colorSchemeLabel';
+import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import {
@@ -788,16 +788,16 @@ export function ConfigPage({ config, send }: Props) {
                       <FormLayout>
                         <Selector
                           label="Color scheme"
-                          value={draft.colors || 'none'}
+                          value={draft.colors || DEFAULT_COLOR_SCHEME}
                           hasSearch
                           presentation="adaptive"
-                          options={[
-                            { value: 'none', label: 'Built-in default' },
-                            ...config.color_schemes.map((value) => ({ value, label: colorSchemeLabel(value) })),
-                          ]}
+                          options={config.color_schemes.map((value) => ({
+                            value,
+                            label: colorSchemeLabel(value),
+                          }))}
                           onChange={(value) => {
                             setColorSchemeTouched(true);
-                            update('colors', value === 'none' ? '' : value);
+                            update('colors', value);
                           }}
                         />
                         <Selector

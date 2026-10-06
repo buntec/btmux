@@ -16,7 +16,7 @@ import {
 } from '../state/configDefaults';
 
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
-import { colorSchemeLabel } from '../lib/colorSchemeLabel';
+import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -381,11 +381,12 @@ export function runAction(
       break;
     case 'choose-colors': {
       const schemes = store.config?.color_schemes ?? [];
-      const active = store.config?.active_color_scheme;
-      const items: PickerItem[] = [
-        { id: '', label: 'Built-in default', active: !active },
-        ...schemes.map((s) => ({ id: s, label: colorSchemeLabel(s), active: s === active })),
-      ];
+      const active = store.config?.active_color_scheme || DEFAULT_COLOR_SCHEME;
+      const items: PickerItem[] = schemes.map((s) => ({
+        id: s,
+        label: colorSchemeLabel(s),
+        active: s === active,
+      }));
       openOverlay({
         mode: 'picker',
         title: 'Color scheme',

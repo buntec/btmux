@@ -47,6 +47,15 @@ The `colors` option accepts:
 Palettes may be defined at the top level or nested under `palette`. Remote
 palettes are fetched whenever the configuration loads.
 
+## tmux behaviors
+
+- `<prefix> <prefix>` sends the prefix key to the pane (tmux `send-prefix`), so
+  `C-b C-b` reaches nested tmux or readline.
+- `<prefix> x` and `<prefix> &` ask for confirmation. Killing the last pane
+  closes its window, and killing the last window kills the session; the last
+  session cannot be killed. This applies to the browser's control socket; REST
+  and MCP keep refusing to remove the last pane or window.
+
 ## LaTeX overlay
 
 btmux scans the visible part of each pane for LaTeX: `$$…$$`, `\[…\]`,

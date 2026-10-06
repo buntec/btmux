@@ -845,6 +845,30 @@ impl SessionManager {
         }
     }
 
+    /// tmux-style kill for the control socket: the last pane closes its window
+    /// and the last window kills its session (never the last session).
+    pub fn kill_pane_cascading(&mut self, session_id: Uuid, pane_id: Uuid) {
+        let Some(session) = self.sessions.iter().find(|s| s.id == session_id) else {
+            return;
+        };
+        if session.windows[session.active_window].panes.len() > 1 {
+            self.kill_pane(session_id, pane_id);
+        } else {
+            self.close_window_cascading(session_id);
+        }
+    }
+
+    pub fn close_window_cascading(&mut self, session_id: Uuid) {
+        let Some(session) = self.sessions.iter().find(|s| s.id == session_id) else {
+            return;
+        };
+        if session.windows.len() > 1 {
+            self.close_window(session_id);
+        } else {
+            self.kill_session(session_id);
+        }
+    }
+
     pub fn zoom_pane(&mut self, session_id: Uuid, pane_id: Uuid) {
         let Some(session) = self.session_mut(session_id) else {
             return;
@@ -1238,6 +1262,45 @@ mod pane_tests {
 
         let window = &mgr.snapshot_by_id(session_id).unwrap().windows[0];
         assert_eq!(window.layout.pane_ids().len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod kill_cascade_tests {
+    use super::*;
+
+    async fn manager() -> SessionManager {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn last_pane_closes_window_then_session_but_never_the_last_session() {
+        let mut mgr = manager().await;
+        let first = mgr.create_session(Some("a".into())).await;
+        let second = mgr.create_session(Some("b".into())).await;
+        mgr.create_window(first).await;
+        assert_eq!(mgr.sessions[0].windows.len(), 2);
+
+        let pane = mgr.sessions[0].windows[1].panes[0].id;
+        mgr.kill_pane_cascading(first, pane);
+        assert_eq!(mgr.sessions[0].windows.len(), 1);
+
+        let pane = mgr.sessions[0].windows[0].panes[0].id;
+        mgr.kill_pane_cascading(first, pane);
+        assert_eq!(mgr.sessions.len(), 1);
+        assert_eq!(mgr.sessions[0].id, second);
+
+        mgr.close_window_cascading(second);
+        assert_eq!(mgr.sessions.len(), 1);
     }
 }
 

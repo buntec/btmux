@@ -245,7 +245,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         ClientMessage::KillPane {
             session_id,
             pane_id,
-        } => mgr.kill_pane(session_id, pane_id),
+        } => mgr.kill_pane_cascading(session_id, pane_id),
         ClientMessage::Navigate {
             session_id,
             direction,
@@ -253,7 +253,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         ClientMessage::CreateWindow { session_id } => mgr.create_window(session_id).await,
         ClientMessage::SwitchWindow { session_id, index } => mgr.switch_window(session_id, index),
         ClientMessage::RenameWindow { session_id, name } => mgr.rename_window(session_id, name),
-        ClientMessage::CloseWindow { session_id } => mgr.close_window(session_id),
+        ClientMessage::CloseWindow { session_id } => mgr.close_window_cascading(session_id),
         ClientMessage::KillWindow { window_id } => mgr.kill_window(window_id),
         ClientMessage::ZoomPane {
             session_id,
@@ -335,8 +335,10 @@ fn validate_command(
         KillSession { .. } if mgr.sessions.len() <= 1 => {
             return Err("Cannot kill the last session".into())
         }
-        CloseWindow { .. } if session.is_some_and(|s| s.windows.len() <= 1) => {
-            return Err("Cannot close the last window; kill the session instead".into())
+        CloseWindow { .. }
+            if mgr.sessions.len() <= 1 && session.is_some_and(|s| s.windows.len() <= 1) =>
+        {
+            return Err("Cannot kill the last session".into())
         }
         Split { pane_id, .. }
         | KillPane { pane_id, .. }
@@ -345,8 +347,12 @@ fn validate_command(
             if !window.is_some_and(|w| w.panes.iter().any(|p| p.id == *pane_id)) {
                 return Err("Pane is no longer in the active window".into());
             }
-            if matches!(cmd, KillPane { .. }) && window.is_some_and(|w| w.panes.len() <= 1) {
-                return Err("Cannot kill the last pane; close the window instead".into());
+            if matches!(cmd, KillPane { .. })
+                && mgr.sessions.len() <= 1
+                && session.is_some_and(|s| s.windows.len() <= 1)
+                && window.is_some_and(|w| w.panes.len() <= 1)
+            {
+                return Err("Cannot kill the last session".into());
             }
         }
         KillWindow { window_id }

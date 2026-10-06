@@ -15,6 +15,7 @@ import {
   FONT_WEIGHT_STEP,
 } from '../state/configDefaults';
 
+import { parsePrefix, prefixBytes, type ParsedKey } from '../lib/prefixKey';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
 
@@ -47,21 +48,14 @@ export function paneSwitchPickerItems(configured: string | null): PickerItem[] {
 /** Auto-hide timer for the display-panes overlay (module-scoped: one at a time). */
 let paneNumbersTimer = 0;
 
-interface ParsedKey {
-  ctrl: boolean;
-  alt: boolean;
-  key: string;
-}
-
-function parsePrefix(prefix: string): ParsedKey {
-  const parts = prefix.split('-');
-  const key = (parts.pop() ?? '').toLowerCase();
-  const mods = new Set(parts.map((p) => p.toUpperCase()));
-  return { ctrl: mods.has('C'), alt: mods.has('M'), key };
-}
-
 function matchesPrefix(e: KeyboardEvent, p: ParsedKey): boolean {
   return e.ctrlKey === p.ctrl && e.altKey === p.alt && e.key.toLowerCase() === p.key;
+}
+
+function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
+  const paneId = useStore.getState().getActivePaneId(sessionId);
+  const text = prefixBytes(p);
+  if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
 }
 
 export function useKeybindings(
@@ -165,6 +159,11 @@ export function useKeybindings(
         clearTimeout(timeoutRef.current);
         setPrefixActive(false);
         prefixActiveRef.current = false;
+        // prefix prefix → send the prefix key itself to the pane (tmux send-prefix).
+        if (matchesPrefix(e, prefixRef.current)) {
+          sendPrefix(sessionIdRef.current, prefixRef.current, sendRef.current);
+          return;
+        }
         dispatch(e, sessionIdRef.current, bindsRef.current, sendRef.current, onSwitchToSessionRef.current);
         return;
       }
@@ -241,7 +240,7 @@ export function runAction(
       send({ type: 'navigate', session_id: sessionId, direction: 'down' });
       break;
     case 'kill-pane':
-      if (paneId) send({ type: 'kill_pane', session_id: sessionId, pane_id: paneId });
+      confirmKill('pane', sessionId, send);
       break;
     case 'zoom-pane':
       if (paneId) send({ type: 'zoom_pane', session_id: sessionId, pane_id: paneId });
@@ -295,7 +294,7 @@ export function runAction(
       break;
     }
     case 'kill-window':
-      send({ type: 'close_window', session_id: sessionId });
+      confirmKill('window', sessionId, send);
       break;
     case 'new-session':
       openOverlay({
@@ -473,6 +472,38 @@ export function runAction(
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'process');
       break;
     }
+  }
+}
+
+/**
+ * Confirm, then kill. The server cascades pane → window → session when the
+ * target is the last of its parent; the prompt only names what will go.
+ */
+function confirmKill(target: 'pane' | 'window', sessionId: string, send: (msg: ClientMessage) => void) {
+  const store = useStore.getState();
+  const session = store.getSession(sessionId);
+  const win = session?.windows[session.active_window];
+  if (!session || !win) return;
+  const ask = (title: string, onConfirm: () => void) => store.setOverlay({ mode: 'confirm', title, onConfirm });
+
+  if (target === 'pane' && win.panes.length > 1) {
+    const paneId = store.getActivePaneId(sessionId);
+    if (paneId) ask('Kill pane?', () => send({ type: 'kill_pane', session_id: sessionId, pane_id: paneId }));
+    return;
+  }
+  const msg = (): ClientMessage => {
+    const paneId = store.getActivePaneId(sessionId);
+    return target === 'pane' && paneId
+      ? { type: 'kill_pane', session_id: sessionId, pane_id: paneId }
+      : { type: 'close_window', session_id: sessionId };
+  };
+  if (session.windows.length > 1) {
+    const what = target === 'pane' ? 'last pane and window' : 'window';
+    ask(`Kill ${what} "${win.name}"?`, () => send(msg()));
+  } else if (store.allSessions.length > 1) {
+    ask(`Kill last ${target} and session "${session.name}"?`, () => send(msg()));
+  } else {
+    store.showToast('Cannot kill the last session', 'error');
   }
 }
 

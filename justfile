@@ -90,10 +90,9 @@ setup:
     cd frontend && bun install
     cargo fetch
 
-# Refresh the vendored Radiant shader catalog at the revision pinned by the script.
-# Pass a local checkout to avoid downloading: just sync-radiant /path/to/radiant
-sync-radiant source="":
-    node scripts/sync-radiant.mjs {{source}}
+# Refresh wallpaper parameter metadata from the pinned Shaders dependency.
+sync-shaders:
+    node scripts/sync-shaders.mjs
 
 # Clean build artifacts
 clean:
@@ -233,6 +232,7 @@ test:
 
 # Frontend unit tests
 test-frontend:
+    node scripts/sync-shaders.mjs --check
     cd frontend && bun test
 
 # Generate the TypeScript wire contract from Rust
@@ -241,4 +241,4 @@ protocol:
 
 # Browser regressions against an isolated dev stack (requires BTMUX_AUTH_TOKEN)
 test-browser:
-    cd frontend && bun reliability-test.ts && bun astryx-browser-test.ts
+    cd frontend && bun reliability-test.ts && bun astryx-browser-test.ts && bun shader-wallpaper-browser-test.ts

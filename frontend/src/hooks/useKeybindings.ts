@@ -5,7 +5,6 @@ import { Overlay, PickerItem } from '../state/types';
 import { paneIdsInOrder } from '../state/layout';
 import { adjacentSession } from '../state/sessionNavigation';
 import { sortWindows } from '../state/windowMru';
-import { SHADER_EFFECTS } from '../lib/terminalFxShaders';
 import {
   getFontWeightRange,
   getPrefix,
@@ -23,18 +22,6 @@ import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel'
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
-
-/**
- * Picker rows for the `shader: choose effect` command — the registered
- * post-process effects plus a "None" row that clears the setting. Shared
- * with the command palette's own dispatch in Overlay.tsx.
- */
-export function shaderPickerItems(activeId: string | null): PickerItem[] {
-  return [
-    { id: '', label: 'None', active: !activeId },
-    ...SHADER_EFFECTS.map((e) => ({ id: e.id, label: e.label, active: e.id === activeId })),
-  ];
-}
 
 /** Auto-hide timer for the display-panes overlay (module-scoped: one at a time). */
 let paneNumbersTimer = 0;
@@ -503,15 +490,6 @@ export function runAction(
         onSelect: (id) => {
           send({ type: 'update_config', update: { font_weight: parseInt(id, 10) } });
         },
-      });
-      break;
-    }
-    case 'choose-shader': {
-      openOverlay({
-        mode: 'picker',
-        title: 'Shader effect',
-        items: shaderPickerItems(store.config?.shader ?? null),
-        onSelect: (id) => send({ type: 'update_config', update: { shader: id } }),
       });
       break;
     }

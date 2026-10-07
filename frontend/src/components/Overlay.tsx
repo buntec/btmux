@@ -84,7 +84,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
   },
   {
     title: 'General',
-    actions: ['command-palette', 'list-keys', 'choose-colors', 'choose-font', 'choose-font-weight', 'choose-shader'],
+    actions: ['command-palette', 'list-keys', 'choose-colors', 'choose-font', 'choose-font-weight'],
   },
 ];
 

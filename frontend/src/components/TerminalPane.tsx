@@ -6,9 +6,7 @@ import { ClientMessage } from '../protocol/messages';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
-import { findShaderEffect } from '../lib/terminalFxShaders';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
-import { pumpRenders } from '../lib/pumpRenders';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
 import { LatexOverlay } from './LatexOverlay';
@@ -95,7 +93,7 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   // Let wallpapers and the desktop backdrop show through the terminal.
   const hasWallpaper = config?.wallpaper != null || config?.wallpaper_shader != null;
   const allowTransparency = t?.allowTransparency ?? (hasWallpaper || desktopTransparency ? true : null);
-  if (allowTransparency != null) opts.allowTransparency = allowTransparency;
+  opts.allowTransparency = allowTransparency ?? false;
   if (t?.convertEol != null) opts.convertEol = t.convertEol;
   if (t?.disableStdin != null) opts.disableStdin = t.disableStdin;
   if (t?.smoothScrollDuration != null) opts.smoothScrollDuration = t.smoothScrollDuration;
@@ -105,11 +103,15 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   return opts;
 }
 
-// Key only the options that require a new emulator. Theme and shader updates
-// have their own effects and must not reconnect all pooled panes.
+export function terminalTransparency(config: ClientConfig | null): boolean {
+  return buildTerminalOptions(config)?.allowTransparency ?? false;
+}
+
+// Allocate alpha-capable canvases once; wallpaper visibility changes in place.
+// Only construction options belong in the emulator lifetime key.
 export function useTerminalOptions(config: ClientConfig | null) {
   const options = buildTerminalOptions(config);
-  const key = JSON.stringify(options ? { ...options, theme: undefined } : null);
+  const key = JSON.stringify(options ? { ...options, theme: undefined, allowTransparency: true } : null);
   return useMemo(() => JSON.parse(key) as ReturnType<typeof buildTerminalOptions>, [key]);
 }
 
@@ -531,26 +533,10 @@ export function TerminalPane({
     }
   }, [visible, termOptions]);
 
-  // The persistent post-process effect chosen with `shader: choose effect`
-  // (config `shader = "..."`). Re-runs on termOptions because a config reload
-  // rebuilds the Terminal, which drops whatever shader was installed on the old
-  // renderer.
-  const shaderId = config?.shader ?? null;
+  const allowTransparency = terminalTransparency(config);
   useEffect(() => {
-    termRef.current?.renderer?.setPostProcessShader?.(findShaderEffect(shaderId)?.src ?? null);
-  }, [shaderId, termOptions]);
-
-  // u_time-driven effects only animate while frames keep coming, and an idle
-  // terminal paints none — so a visible pane with an animated base effect
-  // needs a permanent render pump (Infinity: cancelled by the cleanup, never
-  // by timeout). Hidden panes are suspended, and `animations = false` opts out
-  // of motion entirely; both leave the effect installed but frozen.
-  const baseShaderAnimated = findShaderEffect(shaderId)?.animated ?? false;
-  const pumpBaseShader = baseShaderAnimated && visible && getAnimations(config);
-  useEffect(() => {
-    if (!pumpBaseShader) return;
-    return pumpRenders(() => [termRef.current?.renderer], Infinity);
-  }, [pumpBaseShader, termOptions]);
+    if (termRef.current) termRef.current.options.allowTransparency = allowTransparency;
+  }, [allowTransparency, termOptions]);
 
   // One-shot border-draw effect on the pane you switch to (`pane-switch-border`,
   // style-selectable, `trace` by default; null = disabled). Pure CSS/SVG, keyed

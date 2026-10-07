@@ -201,17 +201,17 @@ modifiers + key),
 captures keys in the capture phase, and on the second keystroke either sends a
 `ClientMessage` or opens an **overlay** (`components/Overlay.tsx`): `prompt`
 (rename window/session, new session), `keys` (keybinding help), `command`
-(command palette), `picker` (colors/fonts/shaders), or `confirm`. While an
+(command palette), `picker` (colors/fonts), or `confirm`. While an
 overlay is open the keybinding hook early-returns so typing goes to the overlay,
 not the terminal.
 
-**Post-process shaders:** panes render through ghostty-web's
-`renderer.setPostProcessShader` hook (WebGL only). `terminalFxShaders.ts` holds
-every fragment shader and the `SHADER_EFFECTS` registry, which the frontend
-owns end-to-end — the backend only stores the chosen id (`shader`,
-`shader: choose effect`), and an unknown id falls back. Any `u_time`-driven
-shader also needs `pumpRenders` — an idle terminal paints no frames, so
-animated effects freeze without one.
+**Shader wallpapers:** `shaders` provides native WebGPU generators. `wallpaperCatalog.ts`
+resolves IDs and kebab-case parameters; `wallpaperRenderer.ts` wraps the core renderer
+with runtime FPS, resolution, pause, seed, and cursor controls. No terminal post-processing.
+`just sync-shaders` regenerates parameter metadata and lazy loaders from the pinned package;
+`just test-frontend` checks that metadata is current. Config parameters live in
+`[wallpaper-shader-params.<id>]` and the session-only `wallpaper_shader_params` override.
+GPU failure leaves the theme background visible. Core rendering has no telemetry collector.
 
 `PANE_BORDER_STYLES` in `lib/paneSwitchBorder.ts` is a CSS/SVG one-shot border
 draw on the pane you switch to, controlled by `pane-switch-border` and

@@ -3,7 +3,7 @@
  * (`pane-switch-border`). The backend only stores the chosen id and passes it
  * through untouched; the geometry + keyframes live here and in `index.css`, and
  * an unknown id falls back to the first entry (which matches the backend's
- * default style) — same contract as the shader registry in `terminalFxShaders.ts`.
+ * default style).
  *
  * - `wipe` — a linear `border-image` gradient slid across the border box on the
  *   -45° diagonal (the default).

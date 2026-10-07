@@ -44,7 +44,7 @@ export function SessionPool({ send }: Props) {
   // Promote the active session to the front and evict beyond the cap. This is
   // the only place the pool grows. A never-seen session joins on the next frame:
   // App has already told the wallpaper to pause in this commit, and yielding a
-  // frame lets the iframe receive that message before TerminalPane synchronously
+  // frame lets the wallpaper pause before TerminalPane synchronously
   // creates the new WebGL contexts. Already-warm sessions promote immediately.
   // Navigating to "/" leaves activeSessionId null and so leaves the pool as-is.
   // Evicting an id drops its SessionPane, disposing terminals and sockets.

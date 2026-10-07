@@ -170,6 +170,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
       {wallpaperShader ? (
         <ShaderWallpaper
           shaderId={wallpaperShader}
+          params={effectiveConfig?.wallpaper_shader_params ?? {}}
           opacity={wallpaperOpacity}
           blur={wallpaperBlur}
           saturate={wallpaperSaturate}

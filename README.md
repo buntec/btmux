@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/9180b2ed-43cb-4dbb-bccd-ac5f0cfc4944
 - Single static binary that bundles all assets
 - Sessions, windows, splits, zoom, and preset layouts
 - Live window thumbnails, file browser, and Git UI
-- Base16/24 themes, wallpapers, and WebGL effects, all hot-reloaded
+- Base16/24 themes and WebGPU shader wallpapers, all hot-reloaded
 - Notifications for coding agents, plus a REST API and MCP server
 
 ## Install
@@ -78,3 +78,46 @@ token is in `~/.local/state/btmux/dev/state.token`.
 ## License
 
 [MIT](LICENSE)
+
+### Shader wallpapers
+
+Shader wallpapers use the MIT-licensed [Shaders](https://shaders.com/docs/guide)
+components, bundled locally with btmux. Choose a generator in Settings → Wallpaper,
+edit its native parameters, and copy the generated TOML to persist the settings.
+Parameter changes preview immediately; Apply changes only the running server.
+
+```toml
+wallpaper-shader = "aurora"
+wallpaper-opacity = 0.25
+wallpaper-speed = 0.2
+wallpaper-fps = 30
+wallpaper-resolution = 0.4
+
+[wallpaper-shader-params.aurora]
+color-a = "#a533f8"
+color-b = "#22ee88"
+curtain-count = 3
+speed = 2.0
+center = { x = 0.5, y = 0.0 }
+```
+
+Each generator has its own parameter table. Names use kebab-case, matching the
+Settings TOML export; colors, numbers, booleans, positions, and gradient stop arrays
+are supported. The global wallpaper speed multiplies native speed parameters.
+The wallpaper seed supplies a numeric seed only when a generator's own `seed`
+parameter is unset. Cursor-following moves `center` or `position` on generators
+that expose those parameters.
+
+WebGPU is required; unsupported browsers and GPU failures leave the theme
+background visible. Frame rates are capped to 10–60 FPS, and background tabs,
+modal transitions, and disabled animations pause continuous rendering. Wallpaper
+changes preserve terminal instances and pane sockets. No hosted presets or
+runtime shader downloads are used, and shader telemetry is disabled by using the
+core renderer without a telemetry collector.
+
+The old Radiant and custom wallpaper IDs are retired; select one of the new
+generators instead. Terminal post-processing is also retired: old `shader = ...`
+config entries are accepted and ignored.
+
+After updating the pinned `shaders` dependency, run `just sync-shaders` to refresh
+its parameter metadata and lazy loaders.

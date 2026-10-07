@@ -13,7 +13,6 @@ interface Props {
   isMounted?: boolean;
   c: ReturnType<typeof chromePalette>;
   terminalConfig?: ClientConfig | null;
-  shaderId?: string | null;
   activePaneId?: string | null;
   /** How the active pane stands out: an accent border, or dimming the others. */
   activeIndicator?: 'border' | 'dim';
@@ -30,7 +29,6 @@ export function WindowThumbnail({
   isMounted = visible,
   c,
   terminalConfig,
-  shaderId,
   activePaneId = null,
   activeIndicator = 'border',
   hoveredPaneId = null,
@@ -91,15 +89,7 @@ export function WindowThumbnail({
                   : undefined,
               }}
             >
-              {isMounted && (
-                <MirrorPane
-                  paneId={r.paneId}
-                  config={terminalConfig}
-                  shaderId={shaderId}
-                  animations={animations}
-                  visible={visible}
-                />
-              )}
+              {isMounted && <MirrorPane paneId={r.paneId} config={terminalConfig} visible={visible} />}
             </div>
           </div>
         );

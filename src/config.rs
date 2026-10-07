@@ -77,6 +77,39 @@ pub fn resolve_shell(configured: Option<&str>) -> String {
         .unwrap_or_else(|| DEFAULT_SHELL.to_string())
 }
 
+/// A JSON-compatible native shader parameter.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(untagged)]
+pub enum ShaderValue {
+    Null,
+    Number(f64),
+    Boolean(bool),
+    Text(String),
+    Array(Vec<ShaderValue>),
+    Object(BTreeMap<String, ShaderValue>),
+}
+
+pub type WallpaperShaderParams = BTreeMap<String, BTreeMap<String, ShaderValue>>;
+
+fn shader_params<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<WallpaperShaderParams, D::Error> {
+    fn finite(value: &ShaderValue) -> bool {
+        match value {
+            ShaderValue::Number(number) => number.is_finite(),
+            ShaderValue::Array(values) => values.iter().all(finite),
+            ShaderValue::Object(values) => values.values().all(finite),
+            _ => true,
+        }
+    }
+    let params = WallpaperShaderParams::deserialize(deserializer)?;
+    if !params.values().flat_map(BTreeMap::values).all(finite) {
+        return Err(D::Error::custom("shader parameters must be finite"));
+    }
+    Ok(params)
+}
+
 /// Command-line arguments. These take precedence over the file config where they overlap.
 #[derive(Parser, Clone)]
 #[command(name = "btmux", about = "Browser-based tmux")]
@@ -259,10 +292,13 @@ pub struct FileConfig {
     pub show_nav_header: bool,
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
-    /// Name of a procedural WebGL background displayed behind the app.
+    /// Name of a procedural WebGPU background displayed behind the app.
     /// Disabled by default.
     #[serde(rename = "wallpaper-shader")]
     pub wallpaper_shader: Option<String>,
+    /// Native generator parameters, grouped by wallpaper ID.
+    #[serde(rename = "wallpaper-shader-params", deserialize_with = "shader_params")]
+    pub wallpaper_shader_params: WallpaperShaderParams,
     /// How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
     /// Defaults to 0.10 when a wallpaper is configured.
     #[serde(rename = "wallpaper-opacity")]
@@ -293,7 +329,7 @@ pub struct FileConfig {
     /// resolution. Defaults to 0.40.
     #[serde(rename = "wallpaper-resolution")]
     pub wallpaper_resolution: Option<f32>,
-    /// Deterministic seed used to vary procedural wallpaper colors and form.
+    /// Deterministic seed used when the native shader seed is unset.
     /// Defaults to `mellow-nebula-dream`.
     #[serde(rename = "wallpaper-seed")]
     pub wallpaper_seed: Option<String>,
@@ -305,11 +341,9 @@ pub struct FileConfig {
     /// Defaults to false.
     #[serde(rename = "wallpaper-shader-follows-keyboard-input")]
     pub wallpaper_shader_follows_keyboard_input: bool,
-    /// Name of a persistent WebGL post-process effect applied to every pane
-    /// (`scanline`, `vignette`, …). The effect registry lives in the frontend
-    /// (`terminalFxShaders.ts`) — this is passed through untouched, and an
-    /// unknown name simply renders no effect.
-    pub shader: Option<String>,
+    /// Accepted for older configs; terminal effects have been retired.
+    #[serde(rename = "shader", skip_serializing)]
+    pub retired_shader: Option<String>,
     /// Blur radius in pixels behind modals. 0 = no blur. Defaults to 2.0.
     #[serde(rename = "backdrop-blur")]
     pub backdrop_blur: Option<f32>,
@@ -371,6 +405,7 @@ impl Default for FileConfig {
             show_nav_header: DEFAULT_SHOW_NAV_HEADER,
             wallpaper: None,
             wallpaper_shader: None,
+            wallpaper_shader_params: BTreeMap::new(),
             wallpaper_opacity: Some(DEFAULT_WALLPAPER_OPACITY),
             desktop_background_opacity: Some(DEFAULT_DESKTOP_BACKGROUND_OPACITY),
             wallpaper_blur: Some(DEFAULT_WALLPAPER_BLUR),
@@ -381,7 +416,7 @@ impl Default for FileConfig {
             wallpaper_seed: Some(DEFAULT_WALLPAPER_SEED.to_string()),
             wallpaper_shader_follows_mouse_cursor: DEFAULT_WALLPAPER_FOLLOWS_MOUSE,
             wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
-            shader: None,
+            retired_shader: None,
             backdrop_blur: None,
             backdrop_dim: None,
             pane_switch_border: Some(DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string()),
@@ -748,8 +783,9 @@ pub struct ClientConfig {
     /// URL of a background image displayed behind all terminal panes, or `null`.
     /// When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
     pub wallpaper: Option<String>,
-    /// Name of the procedural WebGL wallpaper rendered by the frontend.
+    /// Name of the procedural WebGPU wallpaper rendered by the frontend.
     pub wallpaper_shader: Option<String>,
+    pub wallpaper_shader_params: WallpaperShaderParams,
     /// The resolved absolute path to a local wallpaper file, if any. Not sent to
     /// the browser — used by the `/wallpaper` route to serve the file.
     #[serde(skip)]
@@ -769,13 +805,10 @@ pub struct ClientConfig {
     pub wallpaper_fps: u32,
     /// Procedural wallpaper render scale relative to native resolution.
     pub wallpaper_resolution: f32,
-    /// Deterministic seed used to vary procedural wallpaper colors and form.
+    /// Deterministic seed used when the native shader seed is unset.
     pub wallpaper_seed: String,
     pub wallpaper_shader_follows_mouse_cursor: bool,
     pub wallpaper_shader_follows_keyboard_input: bool,
-    /// Name of the persistent post-process shader effect applied to every pane,
-    /// or `null` for none. Resolved to GLSL by the frontend's effect registry.
-    pub shader: Option<String>,
     /// Blur radius in pixels behind modals (0–50).
     pub backdrop_blur: f32,
     /// Opacity of the dimming layer behind modals (0–1).
@@ -1184,8 +1217,8 @@ pub fn generate_config_toml() -> String {
 # Accepts a URL or a local file path (absolute or ~/relative).
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
-# Or use a procedural WebGL wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "radiant:aurora-curtain"
+# Or use a procedural WebGPU wallpaper (takes precedence over `wallpaper`).
+# wallpaper-shader = "aurora"
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = {DEFAULT_WALLPAPER_OPACITY:.2}
 # macOS desktop window theme tint: 0.0 = clear, 1.0 = opaque.
@@ -1196,21 +1229,15 @@ pub fn generate_config_toml() -> String {
 # wallpaper-saturate = {DEFAULT_WALLPAPER_SATURATE:.2}
 # Procedural wallpaper animation speed. 0 = frozen, 1 = normal.
 # wallpaper-speed = {DEFAULT_WALLPAPER_SPEED:.2}
-# Procedural wallpaper quality vs. performance: frame-rate cap (1-120) and
+# Procedural wallpaper quality vs. performance: frame-rate cap (10-60) and
 # render scale relative to native resolution (0.1-1.0). Lower is cheaper.
 # wallpaper-fps = {DEFAULT_WALLPAPER_FPS}
 # wallpaper-resolution = {DEFAULT_WALLPAPER_RESOLUTION:.2}
-# Deterministic seed for procedural wallpaper colors and form.
+# Seed for generators that expose a native seed; an explicit parameter wins.
 # wallpaper-seed = "{DEFAULT_WALLPAPER_SEED}"
 # Let the shader react to pointer movement and to the active terminal cursor.
 # wallpaper-shader-follows-mouse-cursor = {DEFAULT_WALLPAPER_FOLLOWS_MOUSE}
 # wallpaper-shader-follows-keyboard-input = {DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD}
-
-# Persistent WebGL post-process effect applied to every pane (webgl renderer
-# only). Pick one interactively with the `shader: choose effect` command
-# (prefix + :). Unset = no effect.
-# shader = "scanline"   # scanline | vignette | dither | chromatic-aberration
-#                       # | pixelate | glitch
 
 # Backdrop behind every modal (session switcher, file/git browser, overlays).
 # Blur radius in pixels (0-50) and dimming opacity (0.0-1.0).
@@ -1287,6 +1314,15 @@ pub fn generate_config_toml() -> String {
 # An inline [theme] below overrides this.
 # colors = "catppuccin-mocha"
 # colors = "https://example.com/theme.yml"
+
+# Native Shaders component parameters, kept separately for each wallpaper.
+# Use Settings > Wallpaper to explore defaults and copy the full TOML.
+# Parameter names use kebab-case; arrays and inline tables are supported.
+# [wallpaper-shader-params.aurora]
+# color-a = "#a533f8"
+# curtain-count = 3
+# speed = 2.0  # multiplied by wallpaper-speed
+# center = {{ x = 0.5, y = 0.0 }}
 
 # Inline base16 color palette. Uncomment the entire [theme] block to activate.
 # [theme]
@@ -1414,7 +1450,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     let wallpaper_fps = file
         .wallpaper_fps
         .unwrap_or(DEFAULT_WALLPAPER_FPS)
-        .clamp(1, 120);
+        .clamp(10, 60);
     let wallpaper_resolution = file
         .wallpaper_resolution
         .unwrap_or(DEFAULT_WALLPAPER_RESOLUTION)
@@ -1501,6 +1537,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         show_nav_header: file.show_nav_header,
         wallpaper: wallpaper_url,
         wallpaper_shader: file.wallpaper_shader.clone(),
+        wallpaper_shader_params: file.wallpaper_shader_params.clone(),
         wallpaper_path,
         wallpaper_opacity,
         desktop_background_opacity: file
@@ -1514,7 +1551,6 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_seed,
         wallpaper_shader_follows_mouse_cursor: file.wallpaper_shader_follows_mouse_cursor,
         wallpaper_shader_follows_keyboard_input: file.wallpaper_shader_follows_keyboard_input,
-        shader: file.shader.clone(),
         backdrop_blur,
         backdrop_dim,
         pane_switch_border,
@@ -1582,6 +1618,7 @@ pub struct ConfigUpdate {
     pub os_notification_level: Option<NotificationLevel>,
     pub wallpaper: Option<String>,
     pub wallpaper_shader: Option<String>,
+    pub wallpaper_shader_params: Option<WallpaperShaderParams>,
     pub wallpaper_opacity: Option<f32>,
     pub desktop_background_opacity: Option<f32>,
     pub wallpaper_blur: Option<f32>,
@@ -1592,8 +1629,6 @@ pub struct ConfigUpdate {
     pub wallpaper_seed: Option<String>,
     pub wallpaper_shader_follows_mouse_cursor: Option<bool>,
     pub wallpaper_shader_follows_keyboard_input: Option<bool>,
-    /// Post-process effect name; the empty string clears it.
-    pub shader: Option<String>,
     pub backdrop_blur: Option<f32>,
     pub backdrop_dim: Option<f32>,
     /// Border-draw style name; `"none"` (or the empty string) disables it.
@@ -1727,8 +1762,8 @@ impl ConfigUpdate {
             self.wallpaper_shader_follows_keyboard_input =
                 other.wallpaper_shader_follows_keyboard_input;
         }
-        if other.shader.is_some() {
-            self.shader = other.shader.clone();
+        if other.wallpaper_shader_params.is_some() {
+            self.wallpaper_shader_params = other.wallpaper_shader_params.clone();
         }
         if other.backdrop_blur.is_some() {
             self.backdrop_blur = other.backdrop_blur;
@@ -1858,7 +1893,7 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
         file.wallpaper_speed = Some(speed.clamp(0.0, 10.0));
     }
     if let Some(fps) = overrides.wallpaper_fps {
-        file.wallpaper_fps = Some(fps.clamp(1, 120));
+        file.wallpaper_fps = Some(fps.clamp(10, 60));
     }
     if let Some(resolution) = overrides.wallpaper_resolution {
         file.wallpaper_resolution = Some(resolution.clamp(0.1, 1.0));
@@ -1872,8 +1907,8 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     if let Some(enabled) = overrides.wallpaper_shader_follows_keyboard_input {
         file.wallpaper_shader_follows_keyboard_input = enabled;
     }
-    if let Some(shader) = &overrides.shader {
-        file.shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    if let Some(params) = &overrides.wallpaper_shader_params {
+        file.wallpaper_shader_params = params.clone();
     }
     if let Some(blur) = overrides.backdrop_blur {
         file.backdrop_blur = Some(blur.clamp(0.0, 50.0));
@@ -2203,7 +2238,6 @@ palette:
                 wallpaper_seed: Some("preview".to_string()),
                 wallpaper_shader_follows_mouse_cursor: Some(false),
                 wallpaper_shader_follows_keyboard_input: Some(false),
-                shader: Some("vignette".to_string()),
                 backdrop_blur: Some(12.0),
                 backdrop_dim: Some(0.25),
                 pane_switch_border: Some("none".to_string()),
@@ -2234,7 +2268,6 @@ palette:
         assert_eq!(resolved.wallpaper_seed, "preview");
         assert!(!resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);
-        assert_eq!(resolved.shader.as_deref(), Some("vignette"));
         assert_eq!(resolved.backdrop_blur, 12.0);
         assert_eq!(resolved.backdrop_dim, 0.25);
         assert_eq!(resolved.pane_switch_border, None);
@@ -2243,5 +2276,76 @@ palette:
         assert_eq!(file.wallpaper_shader, None);
         assert_eq!(file.terminal.font_size, Some(18.0));
         assert!(file.animations);
+    }
+    #[test]
+    fn shader_parameters_round_trip_and_override_without_changing_file() {
+        let file: FileConfig = toml::from_str(
+            r##"
+wallpaper-shader = "aurora"
+shader = "vignette"
+[wallpaper-shader-params.aurora]
+color-a = "#123456"
+curtain-count = 3
+speed = 2.5
+center = { x = 0.3, y = 0.7 }
+[wallpaper-shader-params.strands]
+pin-edges = true
+stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 }]
+"##,
+        )
+        .unwrap();
+        let resolved = resolve_binds(&file);
+        let wire = serde_json::to_value(&resolved).unwrap();
+        assert_eq!(
+            wire["wallpaper_shader_params"]["aurora"]["curtain-count"],
+            3.0
+        );
+        assert_eq!(
+            wire["wallpaper_shader_params"]["aurora"]["center"]["x"],
+            0.3
+        );
+        assert_eq!(
+            wire["wallpaper_shader_params"]["strands"]["pin-edges"],
+            true
+        );
+        assert!(wire.get("shader").is_none());
+        let mut overrides = ConfigUpdate::default();
+        let update: ConfigUpdate = serde_json::from_value(serde_json::json!({
+            "wallpaper_shader_params": { "aurora": { "speed": 4.0 } }
+        }))
+        .unwrap();
+        overrides.merge(&update);
+        overrides.merge(&ConfigUpdate {
+            wallpaper_opacity: Some(0.4),
+            ..ConfigUpdate::default()
+        });
+        let preview = resolve_with_overrides(&file, &overrides);
+        assert_eq!(
+            preview.wallpaper_shader_params["aurora"]["speed"],
+            ShaderValue::Number(4.0)
+        );
+        assert_eq!(
+            file.wallpaper_shader_params["aurora"]["speed"],
+            ShaderValue::Number(2.5)
+        );
+        overrides.merge(&ConfigUpdate {
+            wallpaper_shader_params: Some(BTreeMap::new()),
+            ..ConfigUpdate::default()
+        });
+        assert!(resolve_with_overrides(&file, &overrides)
+            .wallpaper_shader_params
+            .is_empty());
+        assert_eq!(
+            resolve_binds(&file).wallpaper_shader_params,
+            file.wallpaper_shader_params
+        );
+    }
+
+    #[test]
+    fn shader_parameters_reject_non_finite_numbers() {
+        for number in ["nan", "inf", "-inf"] {
+            let input = format!("[wallpaper-shader-params.aurora]\nspeed = {number}");
+            assert!(toml::from_str::<FileConfig>(&input).is_err());
+        }
     }
 }

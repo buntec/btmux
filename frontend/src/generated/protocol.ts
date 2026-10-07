@@ -34,22 +34,22 @@ export type SessionSort = "created" | "mru" | "alphabetical";
 export type WindowSort = "created" | "mru" | "alphabetical";
 
 // prettier-ignore
-export type LogConfig = { 
+export type LogConfig = {
 /**
  * Log level for stderr output. Defaults to "warn".
  */
-"console-level": string, 
+"console-level": string,
 /**
  * Log level for the file appender. Defaults to "info".
  */
 "file-level": string, };
 
 // prettier-ignore
-export type NotificationConfig = { 
+export type NotificationConfig = {
 /**
  * Show OS notifications while btmux is hidden or unfocused.
  */
-os: boolean, 
+os: boolean,
 /**
  * Lowest level that triggers an OS notification.
  */
@@ -68,7 +68,7 @@ export type FontEntry = { family: string, weight_min: number, weight_max: number
 export type Theme = { foreground: string, background: string, cursor: string, cursorAccent: string, selectionBackground: string, black: string, red: string, green: string, yellow: string, blue: string, magenta: string, cyan: string, white: string, brightBlack: string, brightRed: string, brightGreen: string, brightYellow: string, brightBlue: string, brightMagenta: string, brightCyan: string, brightWhite: string, };
 
 // prettier-ignore
-export type TerminalOptions = { renderer: "canvas" | "webgl" | null, cursorBlink: boolean | null, cursorStyle: "block" | "underline" | "bar" | null, scrollback: number | null, fontSize: number | null, fontFamily: string | null, fontWeight: number | null, allowTransparency: boolean | null, convertEol: boolean | null, disableStdin: boolean | null, smoothScrollDuration: number | null, 
+export type TerminalOptions = { renderer: "canvas" | "webgl" | null, cursorBlink: boolean | null, cursorStyle: "block" | "underline" | "bar" | null, scrollback: number | null, fontSize: number | null, fontFamily: string | null, fontWeight: number | null, allowTransparency: boolean | null, convertEol: boolean | null, disableStdin: boolean | null, smoothScrollDuration: number | null,
 /**
  * Wheel/trackpad scroll-speed multiplier for scrollback (1.0 = ghostty-web
  * default). Higher moves more lines per wheel notch / gesture. Applied by
@@ -77,146 +77,144 @@ export type TerminalOptions = { renderer: "canvas" | "webgl" | null, cursorBlink
 scrollSensitivity: number | null, };
 
 // prettier-ignore
-export type ClientConfig = { prefix: string, binds: Array<Bind>, 
+export type ShaderValue = null | number | boolean | string | Array<ShaderValue> | { [key in string]: ShaderValue };
+
+// prettier-ignore
+export type ClientConfig = { prefix: string, binds: Array<Bind>,
 /**
  * The configured shell for new panes, or `null` to use `$SHELL`.
  */
-shell: string | null, 
+shell: string | null,
 /**
  * Exact `[keys]` overrides from config.toml. `binds` is the effective table.
  */
-keys: { [key in string]: string }, 
+keys: { [key in string]: string },
 /**
  * Logging levels configured for the server.
  */
-log: LogConfig, 
+log: LogConfig,
 /**
  * OS notification preferences.
  */
-notifications: NotificationConfig, 
+notifications: NotificationConfig,
 /**
  * Built-in command-palette entries (prefix + `:`).
  */
-commands: Array<Command>, terminal: TerminalOptions, 
+commands: Array<Command>, terminal: TerminalOptions,
 /**
  * Resolved `ITheme`; the bundled default when no palette is configured.
  */
-theme: Theme, 
+theme: Theme,
 /**
  * The bundled default theme, for previewing an unset `colors`.
  */
-default_theme: Theme, vi_mode: boolean, 
+default_theme: Theme, vi_mode: boolean,
 /**
  * Repeat window in ms for repeatable keys; 0 disables.
  */
-repeat_time: number, 
+repeat_time: number,
 /**
  * Whether CSS animations/transitions are enabled in the browser.
  */
-animations: boolean, 
+animations: boolean,
 /**
  * Whether panes render a per-pane title bar.
  */
-show_pane_titles: boolean, 
+show_pane_titles: boolean,
 /**
  * Whether the sidebar renders the app icon and name.
  */
-show_nav_header: boolean, 
+show_nav_header: boolean,
 /**
  * URL of a background image displayed behind all terminal panes, or `null`.
  * When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
  */
-wallpaper: string | null, 
+wallpaper: string | null,
 /**
- * Name of the procedural WebGL wallpaper rendered by the frontend.
+ * Name of the procedural WebGPU wallpaper rendered by the frontend.
  */
-wallpaper_shader: string | null, 
+wallpaper_shader: string | null, wallpaper_shader_params: { [key in string]: { [key in string]: ShaderValue } },
 /**
  * Opacity of the wallpaper: 0.0 = invisible, 1.0 = fully visible.
  * Always `Some` when a wallpaper is configured (defaults to 0.10).
  */
-wallpaper_opacity: number | null, 
+wallpaper_opacity: number | null,
 /**
  * Opacity of the macOS desktop window's theme tint.
  */
-desktop_background_opacity: number, 
+desktop_background_opacity: number,
 /**
  * Blur radius in pixels for the wallpaper. `None` when no wallpaper.
  */
-wallpaper_blur: number | null, 
+wallpaper_blur: number | null,
 /**
  * Saturation multiplier for the wallpaper: 0.0 = grayscale, 1.0 = normal.
  */
-wallpaper_saturate: number | null, 
+wallpaper_saturate: number | null,
 /**
  * Animation speed multiplier for the procedural wallpaper.
  */
-wallpaper_speed: number, 
+wallpaper_speed: number,
 /**
  * Frame-rate cap for the procedural wallpaper.
  */
-wallpaper_fps: number, 
+wallpaper_fps: number,
 /**
  * Procedural wallpaper render scale relative to native resolution.
  */
-wallpaper_resolution: number, 
+wallpaper_resolution: number,
 /**
- * Deterministic seed used to vary procedural wallpaper colors and form.
+ * Deterministic seed used when the native shader seed is unset.
  */
-wallpaper_seed: string, wallpaper_shader_follows_mouse_cursor: boolean, wallpaper_shader_follows_keyboard_input: boolean, 
-/**
- * Name of the persistent post-process shader effect applied to every pane,
- * or `null` for none. Resolved to GLSL by the frontend's effect registry.
- */
-shader: string | null, 
+wallpaper_seed: string, wallpaper_shader_follows_mouse_cursor: boolean, wallpaper_shader_follows_keyboard_input: boolean,
 /**
  * Blur radius in pixels behind modals (0–50).
  */
-backdrop_blur: number, 
+backdrop_blur: number,
 /**
  * Opacity of the dimming layer behind modals (0–1).
  */
-backdrop_dim: number, 
+backdrop_dim: number,
 /**
  * Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
  * in the file). The frontend also gates this on `animations`.
  */
-pane_switch_border: string | null, 
+pane_switch_border: string | null,
 /**
  * Resolved seconds for the pane-switch border draw (default 0.10, clamped
  * 0.05–3.0).
  */
-pane_switch_border_speed: number, 
+pane_switch_border_speed: number,
 /**
  * Sort order for the session list.
  */
-session_sort: SessionSort, 
+session_sort: SessionSort,
 /**
  * Sort order for the window list (status bar, choose-tree, switcher).
  */
-window_sort: WindowSort, 
+window_sort: WindowSort,
 /**
  * How many recently-viewed windows the window-grid (`prefix + w`) shows.
  */
-window_grid_count: number, 
+window_grid_count: number,
 /**
  * btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
  */
-version: string, 
+version: string,
 /**
  * Available color scheme names: bundled schemes plus files from
  * `$XDG_CONFIG_HOME/btmux/colors/`, falling back to `~/.config/btmux/colors/`.
  */
-color_schemes: Array<string>, 
+color_schemes: Array<string>,
 /**
  * Resolved themes for locally previewing available color schemes in the
  * browser without applying a session-only override.
  */
-color_scheme_themes: { [key in string]: Theme }, 
+color_scheme_themes: { [key in string]: Theme },
 /**
  * Currently active color scheme name (from `colors` in config.toml), or null.
  */
-active_color_scheme: string | null, 
+active_color_scheme: string | null,
 /**
  * Bundled font families with their available weight ranges.
  */
@@ -226,11 +224,7 @@ fonts: Array<FontEntry>, };
 export type ServerInfo = { version: string, profile: string | null, config_file: string | null, state_file: string | null, token_file: string | null, token_source: string, listen_address: string, executable: string | null, };
 
 // prettier-ignore
-export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, show_nav_header?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, 
-/**
- * Post-process effect name; the empty string clears it.
- */
-shader?: string, backdrop_blur?: number, backdrop_dim?: number, 
+export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, show_nav_header?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_shader_params?: { [key in string]: { [key in string]: ShaderValue } }, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_seed?: string, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
 /**
  * Border-draw style name; `"none"` (or the empty string) disables it.
  */
@@ -240,7 +234,7 @@ pane_switch_border?: string, pane_switch_border_speed?: number, };
 export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_pane", pane_id: string, } | { "type": "reset_agent", pane_id: string, } | { "type": "focus_client" } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
-export type ServerMessage = { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: ToastLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null, 
+export type ServerMessage = { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: ToastLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null,
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */

@@ -1,98 +1,133 @@
-import { RADIANT_SHADERS } from '../generated/radiantShaders';
-import type { RadiantShaderParam } from './wallpaperRandom';
+import { WALLPAPER_SHADER_DEFINITIONS } from '../generated/wallpaperShaders';
+import type { ClientConfig, ShaderValue } from '../generated/protocol';
 
-export interface WallpaperCatalogItem {
-  id: string;
+export interface WallpaperParameter {
+  name: string;
+  key: string;
   label: string;
+  description: string;
+  kind: string;
+  default: ShaderValue;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: { label: string; value: string | number }[];
+  compileTime: boolean;
 }
 
-export interface WallpaperShaderDefinition {
-  id: string;
-  title: string;
-  desc?: string;
-  url: string;
-  tags?: readonly string[];
-  technique?: string;
-  params?: readonly RadiantShaderParam[];
-}
-
-/** A configured wallpaper resolved to the page the iframe loads. */
 export interface WallpaperShader {
   id: string;
-  title: string;
-  src: string;
-  params: readonly RadiantShaderParam[];
+  component: string;
+  label: string;
+  description: string;
+  params: WallpaperParameter[];
 }
 
-// Authored in this repo (frontend/public/shaders), apart from the vendored
-// Radiant set, which sync-radiant regenerates.
-export const BTMUX_WALLPAPER_SHADERS: readonly WallpaperShaderDefinition[] = [
-  {
-    id: 'hexagonal-truchet',
-    title: 'Hexagonal Truchet',
-    desc: 'Interlocking geometric paths and flowing energy circuits on a hexagonal lattice.',
-    url: '/shaders/hexagonal-truchet.html',
-    tags: ['geometric', 'lines', 'truchet', 'hexagonal'],
-    technique: 'webgl',
-    params: [
-      { name: 'SCALE', min: 0.5, max: 4.0, step: 0.1 },
-      { name: 'LINE_WIDTH', min: 0.01, max: 0.1, step: 0.01 },
-      { name: 'GLOW', min: 0.1, max: 2.0, step: 0.1 },
-      { name: 'SPEED', min: 0.2, max: 3.0, step: 0.1 },
-    ],
-  },
-  {
-    id: 'stave-flow',
-    title: 'Stave Flow',
-    desc: 'Stacked pen lines that calm at the edges and break into waves around a drifting center.',
-    url: '/shaders/stave-flow.html',
-    tags: ['lines', 'waves', 'webgl'],
-    technique: 'webgl',
-    params: [
-      { name: 'STAVE_WIDTH', min: 0.5, max: 3.0, step: 0.1 },
-      { name: 'LINE_WIDTH', min: 0.1, max: 1.0, step: 0.1 },
-    ],
-  },
-  {
-    id: 'ridgeline',
-    title: 'Ridgeline',
-    desc: 'Stacked noise-displaced lines with hidden-line occlusion and relief around a drifting center.',
-    url: '/shaders/ridgeline.html',
-    tags: ['lines', 'noise', 'webgl'],
-    technique: 'webgl',
-    params: [
-      { name: 'LINE_COUNT', min: 40, max: 170, step: 1 },
-      { name: 'NOISE_FREQ_X', min: 0.01, max: 0.18, step: 0.005 },
-      { name: 'NOISE_FREQ_Y', min: 0.005, max: 0.09, step: 0.005 },
-      { name: 'AMPLITUDE', min: 4, max: 60, step: 1 },
-      { name: 'CLUSTER_SIDE', min: 0, max: 1, step: 0.01 },
-      { name: 'PEN_OPACITY', min: 0.1, max: 1, step: 0.05 },
-      { name: 'LINE_WIDTH', min: 0.1, max: 1.0, step: 0.1 },
-    ],
-  },
-];
+export const WALLPAPER_SHADERS = WALLPAPER_SHADER_DEFINITIONS as WallpaperShader[];
+export type WallpaperShaderParams = ClientConfig['wallpaper_shader_params'];
 
-export const WALLPAPER_SHADERS: WallpaperCatalogItem[] = [
-  ...BTMUX_WALLPAPER_SHADERS.map((shader) => ({
-    id: `btmux:${shader.id}`,
-    label: `btmux · ${shader.title}`,
-  })),
-  ...RADIANT_SHADERS.map((shader) => ({
-    id: `radiant:${shader.id}`,
-    label: `Radiant · ${shader.title}`,
-  })),
-].sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
+export function findWallpaperShader(id: string): WallpaperShader | null {
+  return WALLPAPER_SHADERS.find((shader) => shader.id === id) ?? null;
+}
 
-/** Resolve a prefixed config id; `id` stays unprefixed to keep seeded randomization stable. */
-export function findWallpaperShader(configuredId: string): WallpaperShader | null {
-  if (configuredId.startsWith('btmux:')) {
-    const local = BTMUX_WALLPAPER_SHADERS.find((shader) => `btmux:${shader.id}` === configuredId);
-    return local ? { id: local.id, title: local.title, src: local.url, params: local.params ?? [] } : null;
+function validJson(value: ShaderValue): boolean {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length <= 64 && value.every(validJson);
+  if (value && typeof value === 'object') return Object.values(value).every(validJson);
+  return true;
+}
+
+export function parameterValue(param: WallpaperParameter, value: ShaderValue | undefined): ShaderValue {
+  if (value === undefined || !validJson(value)) return param.default;
+  if (param.kind === 'number') {
+    if (typeof value !== 'number') return param.default;
+    const bounded = Math.max(param.min ?? -Infinity, Math.min(param.max ?? Infinity, value));
+    return param.compileTime && Number.isInteger(param.default) && Number.isInteger(param.step)
+      ? Math.round(bounded)
+      : bounded;
   }
-  if (!configuredId.startsWith('radiant:')) return null;
-  const id = configuredId.slice('radiant:'.length);
-  const radiant = RADIANT_SHADERS.find((shader) => shader.id === id);
-  return radiant
-    ? { id: radiant.id, title: radiant.title, src: `/radiant/${radiant.file}`, params: radiant.params }
-    : null;
+  if (param.kind === 'position') {
+    if (
+      !value ||
+      Array.isArray(value) ||
+      typeof value !== 'object' ||
+      typeof value.x !== 'number' ||
+      typeof value.y !== 'number'
+    )
+      return param.default;
+    return { x: Math.max(0, Math.min(1, value.x)), y: Math.max(0, Math.min(1, value.y)) };
+  }
+  if (param.kind === 'select') return param.options?.some((option) => option.value === value) ? value : param.default;
+  if (
+    param.kind === 'color' &&
+    typeof value === 'string' &&
+    typeof CSS !== 'undefined' &&
+    !CSS.supports('color', value)
+  )
+    return param.default;
+  if (param.kind === 'json') {
+    if (param.name === 'stops' && value !== null) {
+      if (
+        !Array.isArray(value) ||
+        !value.every(
+          (stop) =>
+            stop &&
+            !Array.isArray(stop) &&
+            typeof stop === 'object' &&
+            typeof stop.color === 'string' &&
+            typeof stop.position === 'number' &&
+            stop.position >= 0 &&
+            stop.position <= 1 &&
+            (typeof CSS === 'undefined' || CSS.supports('color', stop.color)),
+        )
+      )
+        return param.default;
+    }
+    return value;
+  }
+  return typeof value === typeof param.default ? value : param.default;
+}
+
+export function wallpaperUniformValues(
+  shader: WallpaperShader,
+  params: WallpaperShaderParams,
+  seed: string,
+  speed: number,
+): Record<string, ShaderValue> {
+  let hash = 2166136261;
+  for (const character of seed) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return Object.fromEntries(
+    shader.params.map((param) => {
+      let value = parameterValue(param, params[shader.id]?.[param.key]);
+      if (param.name === 'seed' && params[shader.id]?.[param.key] === undefined) {
+        value = (hash >>> 0) % ((param.max ?? 100) + 1);
+      }
+      if (/speed$/i.test(param.name) && typeof value === 'number') value *= speed;
+      return [param.name, value];
+    }),
+  );
+}
+
+export function shaderValueToml(value: ShaderValue): string {
+  if (value === null) throw new Error('TOML does not support null');
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(shaderValueToml).join(', ')}]`;
+  if (typeof value === 'object') {
+    return `{ ${Object.entries(value)
+      .map(([key, entry]) => `${JSON.stringify(key)} = ${shaderValueToml(entry)}`)
+      .join(', ')} }`;
+  }
+  return String(value);
+}
+
+export function wallpaperParamsToml(params: WallpaperShaderParams): string[] {
+  return Object.entries(params).flatMap(([id, values]) => {
+    const entries = Object.entries(values).filter(([, value]) => value !== null);
+    return entries.length
+      ? [
+          `[wallpaper-shader-params.${JSON.stringify(id)}]`,
+          ...entries.map(([key, value]) => `${JSON.stringify(key)} = ${shaderValueToml(value)}`),
+        ]
+      : [];
+  });
 }

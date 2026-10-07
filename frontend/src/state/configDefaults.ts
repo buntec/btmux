@@ -7,7 +7,7 @@ import type { ClientConfig, FontEntry } from './types';
  */
 export const CONFIG_DEFAULTS = {
   prefix: 'C-b',
-  repeatTime: 500,
+  repeatTime: 0,
   animations: true,
   showPaneTitles: false,
   showNavHeader: true,

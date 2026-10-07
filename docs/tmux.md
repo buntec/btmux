@@ -42,7 +42,7 @@ Rebind any of them under `[keys]` in `config.toml`.
   so rebind (for example `resize-pane-left = "M-ArrowLeft"`). Any
   `resize-pane-<direction>-<cells>` name works as an action.
 - **Repeat.** Navigation and resize keys repeat for `repeat-time` ms (default
-  500, `0` disables) without the prefix. Any other key ends the window and goes
+  `0`, which disables; try `500`) without the prefix. Any other key ends the window and goes
   to the terminal.
 - **Scrolling and search.** `<prefix> PageUp` and `PageDown` scroll the active
   pane by a page and repeat like the arrow keys. `<prefix> /` opens a search bar

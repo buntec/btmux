@@ -16,7 +16,7 @@ pub const DEFAULT_PTY_ROWS: u16 = 24;
 
 pub const DEFAULT_PREFIX: &str = "C-b";
 pub const DEFAULT_VI_MODE: bool = false;
-pub const DEFAULT_REPEAT_TIME: u32 = 500;
+pub const DEFAULT_REPEAT_TIME: u32 = 0;
 pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
 pub const DEFAULT_SHOW_NAV_HEADER: bool = true;
@@ -1165,7 +1165,7 @@ pub fn generate_config_toml() -> String {
 # vi-mode = {DEFAULT_VI_MODE}
 
 # Milliseconds after a pane navigation or resize key during which another one
-# runs without pressing the prefix again (tmux repeat-time). 0 disables.
+# runs without pressing the prefix again (tmux repeat-time). 0 (default) disables.
 # repeat-time = {DEFAULT_REPEAT_TIME}
 
 # Enable CSS animations/transitions in the browser (e.g. border highlight when

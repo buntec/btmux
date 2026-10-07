@@ -170,25 +170,13 @@ wallpaper_seed: string, wallpaper_shader_follows_mouse_cursor: boolean, wallpape
  */
 shader: string | null, 
 /**
- * Name of the steady-state post-process effect applied to panes behind the
- * session switcher, or `null` to leave their persistent shader untouched.
+ * Blur radius in pixels behind modals (0–50).
  */
-session_view_shader: string | null, 
+backdrop_blur: number, 
 /**
- * Name of the one-shot effect played on the pane you switch to, or `null`
- * to use the frontend's default.
+ * Opacity of the dimming layer behind modals (0–1).
  */
-pane_switch_shader: string | null, 
-/**
- * Resolved intensity multiplier for the pane-switch effect (default 0.25,
- * clamped 0.0–3.0). The frontend bakes this into the effect's shader.
- */
-pane_switch_intensity: number, 
-/**
- * Resolved duration multiplier for the pane-switch effect (default 0.5,
- * clamped 0.1–5.0).
- */
-pane_switch_duration: number, 
+backdrop_dim: number, 
 /**
  * Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
  * in the file). The frontend also gates this on `animations`.
@@ -242,15 +230,7 @@ export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean,
 /**
  * Post-process effect name; the empty string clears it.
  */
-shader?: string, 
-/**
- * Session-switcher background effect name; the empty string clears it.
- */
-session_view_shader?: string, 
-/**
- * Pane-switch effect name; the empty string falls back to the default.
- */
-pane_switch_shader?: string, pane_switch_intensity?: number, pane_switch_duration?: number, 
+shader?: string, backdrop_blur?: number, backdrop_dim?: number, 
 /**
  * Border-draw style name; `"none"` (or the empty string) disables it.
  */

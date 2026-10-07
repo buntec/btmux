@@ -30,8 +30,10 @@ pub const DEFAULT_WALLPAPER_RESOLUTION: f32 = 0.40;
 pub const DEFAULT_WALLPAPER_SEED: &str = "mellow-nebula-dream";
 pub const DEFAULT_WALLPAPER_FOLLOWS_MOUSE: bool = true;
 pub const DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD: bool = false;
-pub const DEFAULT_PANE_SWITCH_INTENSITY: f32 = 0.25;
-pub const DEFAULT_PANE_SWITCH_DURATION: f32 = 0.5;
+/// Blur radius in pixels behind modals.
+pub const DEFAULT_BACKDROP_BLUR: f32 = 2.0;
+/// Opacity of the dimming layer behind modals.
+pub const DEFAULT_BACKDROP_DIM: f32 = 0.5;
 /// Default pane-switch border-draw style (`"none"` disables it). The style
 /// registry lives in the frontend (`lib/paneSwitchBorder.ts`); an unknown name
 /// falls back there.
@@ -308,30 +310,17 @@ pub struct FileConfig {
     /// (`terminalFxShaders.ts`) — this is passed through untouched, and an
     /// unknown name simply renders no effect.
     pub shader: Option<String>,
-    /// Name of the steady-state WebGL post-process effect applied to visible
-    /// panes behind the session switcher (`prefix + s`). Unset means no
-    /// switcher-specific effect; the pane's persistent shader remains active.
-    #[serde(rename = "session-view-shader")]
-    pub session_view_shader: Option<String>,
-    /// Name of the one-shot effect played on the pane you switch to
-    /// (`chromatic-aberration`, `block-glitch`, `pixelate`, `none`). Unset uses
-    /// the frontend's default; like `shader`, the registry lives there.
-    #[serde(rename = "pane-switch-shader")]
-    pub pane_switch_shader: Option<String>,
-    /// Intensity multiplier for the pane-switch effect (RGB-split amount, block
-    /// displacement, pixelation size, depending on the effect). 1.0 = the
-    /// effect's own default strength, 0.0 = imperceptible. Clamped to 0.0–3.0.
-    #[serde(rename = "pane-switch-intensity")]
-    pub pane_switch_intensity: Option<f32>,
-    /// Duration multiplier for the pane-switch effect's playback time. 1.0 =
-    /// the effect's own default duration. Clamped to 0.1–5.0.
-    #[serde(rename = "pane-switch-duration")]
-    pub pane_switch_duration: Option<f32>,
+    /// Blur radius in pixels behind modals. 0 = no blur. Defaults to 2.0.
+    #[serde(rename = "backdrop-blur")]
+    pub backdrop_blur: Option<f32>,
+    /// Opacity of the dimming layer behind modals: 0.0 = none, 1.0 = opaque.
+    /// Defaults to 0.5.
+    #[serde(rename = "backdrop-dim")]
+    pub backdrop_dim: Option<f32>,
     /// Border-draw effect played on the pane you switch to: `"none"`, `"trace"`
     /// (counter-clockwise perimeter draw), `"sweep"` (clockwise conic sweep), or
-    /// `"wipe"` (diagonal gradient wipe). A pure-CSS accent, independent of the
-    /// WebGL `pane-switch-shader`; the style registry lives in the frontend and
-    /// an unknown name falls back there. Disabled entirely when
+    /// `"wipe"` (diagonal gradient wipe). A pure-CSS accent; the style registry lives in the frontend and an
+    /// unknown name falls back there. Disabled entirely when
     /// `animations = false`. Defaults to `"wipe"`.
     #[serde(rename = "pane-switch-border")]
     pub pane_switch_border: Option<String>,
@@ -393,10 +382,8 @@ impl Default for FileConfig {
             wallpaper_shader_follows_mouse_cursor: DEFAULT_WALLPAPER_FOLLOWS_MOUSE,
             wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
             shader: None,
-            session_view_shader: None,
-            pane_switch_shader: None,
-            pane_switch_intensity: Some(DEFAULT_PANE_SWITCH_INTENSITY),
-            pane_switch_duration: Some(DEFAULT_PANE_SWITCH_DURATION),
+            backdrop_blur: None,
+            backdrop_dim: None,
             pane_switch_border: Some(DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string()),
             pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
@@ -789,18 +776,10 @@ pub struct ClientConfig {
     /// Name of the persistent post-process shader effect applied to every pane,
     /// or `null` for none. Resolved to GLSL by the frontend's effect registry.
     pub shader: Option<String>,
-    /// Name of the steady-state post-process effect applied to panes behind the
-    /// session switcher, or `null` to leave their persistent shader untouched.
-    pub session_view_shader: Option<String>,
-    /// Name of the one-shot effect played on the pane you switch to, or `null`
-    /// to use the frontend's default.
-    pub pane_switch_shader: Option<String>,
-    /// Resolved intensity multiplier for the pane-switch effect (default 0.25,
-    /// clamped 0.0–3.0). The frontend bakes this into the effect's shader.
-    pub pane_switch_intensity: f32,
-    /// Resolved duration multiplier for the pane-switch effect (default 0.5,
-    /// clamped 0.1–5.0).
-    pub pane_switch_duration: f32,
+    /// Blur radius in pixels behind modals (0–50).
+    pub backdrop_blur: f32,
+    /// Opacity of the dimming layer behind modals (0–1).
+    pub backdrop_dim: f32,
     /// Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
     /// in the file). The frontend also gates this on `animations`.
     pub pane_switch_border: Option<String>,
@@ -1233,28 +1212,13 @@ pub fn generate_config_toml() -> String {
 # shader = "scanline"   # scanline | vignette | dither | chromatic-aberration
 #                       # | pixelate | glitch
 
-# Steady-state WebGL effect applied to the terminal panes behind the session
-# switcher (prefix + s). Uses the same effects as `shader`; unset = no extra
-# effect, so the pane's persistent shader remains visible.
-# session-view-shader = "vignette"
+# Backdrop behind every modal (session switcher, file/git browser, overlays).
+# Blur radius in pixels (0-50) and dimming opacity (0.0-1.0).
+# backdrop-blur = {DEFAULT_BACKDROP_BLUR:.1}
+# backdrop-dim = {DEFAULT_BACKDROP_DIM:.2}
 
-# One-shot effect flashed on the pane you switch to (prefix + arrow, click,
-# window/session switch). Also pickable with `shader: choose pane-switch
-# effect`. Disabled entirely when `animations = false`.
-# pane-switch-shader = "none"   # none (default) | chromatic-aberration
-#                               # | block-glitch | pixelate
-
-# Intensity multiplier for the pane-switch effect (RGB-split amount, block
-# displacement, pixelation size — meaning depends on the effect). 1.0 = the
-# effect's own default strength, 0.0 = imperceptible. Clamped to 0.0-3.0.
-# pane-switch-intensity = {DEFAULT_PANE_SWITCH_INTENSITY:.2}
-
-# Duration multiplier for the pane-switch effect's playback time. 1.0 = the
-# effect's own default duration. Clamped to 0.1-5.0.
-# pane-switch-duration = {DEFAULT_PANE_SWITCH_DURATION:.1}
-
-# Border-draw effect played on the switched-to pane (pure CSS, independent of
-# `pane-switch-shader`). Disabled entirely when `animations = false`.
+# Border-draw effect played on the switched-to pane (pure CSS). Disabled
+# entirely when `animations = false`.
 # "none" | "trace" (counter-clockwise perimeter) | "sweep" (clockwise conic)
 # | "wipe" (diagonal gradient)
 # pane-switch-border = "{DEFAULT_PANE_SWITCH_BORDER_STYLE}"
@@ -1423,14 +1387,6 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     } else {
         None
     };
-    let pane_switch_intensity = file
-        .pane_switch_intensity
-        .unwrap_or(DEFAULT_PANE_SWITCH_INTENSITY)
-        .clamp(0.0, 3.0);
-    let pane_switch_duration = file
-        .pane_switch_duration
-        .unwrap_or(DEFAULT_PANE_SWITCH_DURATION)
-        .clamp(0.1, 5.0);
     let pane_switch_border_speed = file
         .pane_switch_border_speed
         .unwrap_or(DEFAULT_PANE_SWITCH_BORDER_SPEED)
@@ -1443,6 +1399,14 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .unwrap_or_else(|| DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string());
     let pane_switch_border = (!pane_switch_border.is_empty() && pane_switch_border != "none")
         .then_some(pane_switch_border);
+    let backdrop_blur = file
+        .backdrop_blur
+        .unwrap_or(DEFAULT_BACKDROP_BLUR)
+        .clamp(0.0, 50.0);
+    let backdrop_dim = file
+        .backdrop_dim
+        .unwrap_or(DEFAULT_BACKDROP_DIM)
+        .clamp(0.0, 1.0);
     let wallpaper_speed = file
         .wallpaper_speed
         .unwrap_or(DEFAULT_WALLPAPER_SPEED)
@@ -1551,10 +1515,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         wallpaper_shader_follows_mouse_cursor: file.wallpaper_shader_follows_mouse_cursor,
         wallpaper_shader_follows_keyboard_input: file.wallpaper_shader_follows_keyboard_input,
         shader: file.shader.clone(),
-        session_view_shader: file.session_view_shader.clone(),
-        pane_switch_shader: file.pane_switch_shader.clone(),
-        pane_switch_intensity,
-        pane_switch_duration,
+        backdrop_blur,
+        backdrop_dim,
         pane_switch_border,
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
@@ -1632,12 +1594,8 @@ pub struct ConfigUpdate {
     pub wallpaper_shader_follows_keyboard_input: Option<bool>,
     /// Post-process effect name; the empty string clears it.
     pub shader: Option<String>,
-    /// Session-switcher background effect name; the empty string clears it.
-    pub session_view_shader: Option<String>,
-    /// Pane-switch effect name; the empty string falls back to the default.
-    pub pane_switch_shader: Option<String>,
-    pub pane_switch_intensity: Option<f32>,
-    pub pane_switch_duration: Option<f32>,
+    pub backdrop_blur: Option<f32>,
+    pub backdrop_dim: Option<f32>,
     /// Border-draw style name; `"none"` (or the empty string) disables it.
     pub pane_switch_border: Option<String>,
     pub pane_switch_border_speed: Option<f32>,
@@ -1772,17 +1730,11 @@ impl ConfigUpdate {
         if other.shader.is_some() {
             self.shader = other.shader.clone();
         }
-        if other.session_view_shader.is_some() {
-            self.session_view_shader = other.session_view_shader.clone();
+        if other.backdrop_blur.is_some() {
+            self.backdrop_blur = other.backdrop_blur;
         }
-        if other.pane_switch_shader.is_some() {
-            self.pane_switch_shader = other.pane_switch_shader.clone();
-        }
-        if other.pane_switch_intensity.is_some() {
-            self.pane_switch_intensity = other.pane_switch_intensity;
-        }
-        if other.pane_switch_duration.is_some() {
-            self.pane_switch_duration = other.pane_switch_duration;
+        if other.backdrop_dim.is_some() {
+            self.backdrop_dim = other.backdrop_dim;
         }
         if other.pane_switch_border.is_some() {
             self.pane_switch_border = other.pane_switch_border.clone();
@@ -1923,17 +1875,11 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     if let Some(shader) = &overrides.shader {
         file.shader = Some(shader.clone()).filter(|s| !s.is_empty());
     }
-    if let Some(shader) = &overrides.session_view_shader {
-        file.session_view_shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    if let Some(blur) = overrides.backdrop_blur {
+        file.backdrop_blur = Some(blur.clamp(0.0, 50.0));
     }
-    if let Some(shader) = &overrides.pane_switch_shader {
-        file.pane_switch_shader = Some(shader.clone()).filter(|s| !s.is_empty());
-    }
-    if let Some(intensity) = overrides.pane_switch_intensity {
-        file.pane_switch_intensity = Some(intensity.clamp(0.0, 3.0));
-    }
-    if let Some(duration) = overrides.pane_switch_duration {
-        file.pane_switch_duration = Some(duration.clamp(0.1, 5.0));
+    if let Some(dim) = overrides.backdrop_dim {
+        file.backdrop_dim = Some(dim.clamp(0.0, 1.0));
     }
     if let Some(style) = &overrides.pane_switch_border {
         // Kept verbatim (including `"none"`); resolve_binds maps it to the wire.
@@ -2098,16 +2044,22 @@ palette:
         assert_eq!(resolved.wallpaper_seed, "mellow-nebula-dream");
         assert!(resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);
-        assert_eq!(resolved.session_view_shader, None);
-        assert_eq!(resolved.pane_switch_shader, None);
+        assert_eq!(resolved.backdrop_blur, 2.0);
+        assert_eq!(resolved.backdrop_dim, 0.5);
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
-        assert_eq!(resolved.pane_switch_intensity, 0.25);
-        assert_eq!(resolved.pane_switch_duration, 0.5);
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.10);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
+    }
+
+    #[test]
+    fn backdrop_settings_are_clamped() {
+        let file: FileConfig = toml::from_str("backdrop-blur = 99.0\nbackdrop-dim = 0.1").unwrap();
+        let resolved = resolve_binds(&file);
+        assert_eq!(resolved.backdrop_blur, 50.0);
+        assert_eq!(resolved.backdrop_dim, 0.1);
     }
 
     #[test]
@@ -2252,10 +2204,8 @@ palette:
                 wallpaper_shader_follows_mouse_cursor: Some(false),
                 wallpaper_shader_follows_keyboard_input: Some(false),
                 shader: Some("vignette".to_string()),
-                session_view_shader: Some("dither".to_string()),
-                pane_switch_shader: Some("pixelate".to_string()),
-                pane_switch_intensity: Some(1.5),
-                pane_switch_duration: Some(2.0),
+                backdrop_blur: Some(12.0),
+                backdrop_dim: Some(0.25),
                 pane_switch_border: Some("none".to_string()),
                 pane_switch_border_speed: Some(1.2),
                 ..ConfigUpdate::default()
@@ -2285,10 +2235,8 @@ palette:
         assert!(!resolved.wallpaper_shader_follows_mouse_cursor);
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);
         assert_eq!(resolved.shader.as_deref(), Some("vignette"));
-        assert_eq!(resolved.session_view_shader.as_deref(), Some("dither"));
-        assert_eq!(resolved.pane_switch_shader.as_deref(), Some("pixelate"));
-        assert_eq!(resolved.pane_switch_intensity, 1.5);
-        assert_eq!(resolved.pane_switch_duration, 2.0);
+        assert_eq!(resolved.backdrop_blur, 12.0);
+        assert_eq!(resolved.backdrop_dim, 0.25);
         assert_eq!(resolved.pane_switch_border, None);
         assert_eq!(resolved.pane_switch_border_speed, 1.2);
 

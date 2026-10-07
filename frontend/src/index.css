@@ -320,6 +320,17 @@
   }
 }
 
+/* Backdrop behind every modal. The values are the backdrop-blur/backdrop-dim
+   config, set on :root by useModalBackdrop. */
+dialog::backdrop {
+  backdrop-filter: blur(var(--btm-backdrop-blur, 2px)) !important;
+  background-color: color-mix(
+    in srgb,
+    light-dark(#011228, #111112) calc(var(--btm-backdrop-dim, 0.5) * 100%),
+    transparent
+  ) !important;
+}
+
 /* Optional: drop the dialog's blur and dim to inspect visual changes. */
 .btm-clear-backdrop::backdrop {
   background: transparent !important;

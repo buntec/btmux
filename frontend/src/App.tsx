@@ -36,124 +36,8 @@ import {
 } from './state/configDefaults';
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
-import {
-  PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC,
-  PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC,
-  findShaderEffect,
-} from './lib/terminalFxShaders';
-import { baseShaderSrc } from './lib/baseShader';
-import { pumpRenders } from './lib/pumpRenders';
+import { useModalBackdrop } from './hooks/useModalBackdrop';
 import { pageBackground } from './lib/desktopTransparency';
-
-// Must match the ramp shaders' own rampSeconds constants in terminalFxShaders.ts.
-const PIX_RAMP_IN_MS = 250;
-const PIX_RAMP_OUT_MS = 150;
-
-interface PaneRenderer {
-  setPostProcessShader?(shader: string | null): void;
-  requestRender?(): void;
-}
-
-function paneRenderers(paneIds: readonly string[]): PaneRenderer[] {
-  const terminals = useStore.getState().terminals;
-  return paneIds.flatMap((paneId) => {
-    const renderer = terminals.get(paneId)?.renderer;
-    return renderer ? [renderer] : [];
-  });
-}
-
-function setRenderersPostProcess(renderers: Iterable<PaneRenderer>, shader: string | null): void {
-  for (const renderer of renderers) renderer.setPostProcessShader?.(shader);
-}
-
-/**
- * Applies the WebGL pixelate post-process shader (terminalFxShaders.ts) to the
- * visible panes while the help overlay is open — its privacy backdrop.
- * Replaces an earlier whole-stage
- * SVG CSS filter that pixelated the entire SessionPool DOM subtree in one
- * shot; this instead asks each pane's own ghostty-web WebGL context to
- * pixelate its own content. Trade-off: title bars/borders/dividers (separate
- * DOM/React elements outside any pane's WebGL context) are no longer
- * pixelated, only terminal cell content is — accepted in favor of dropping
- * the SVG filter's hackiness.
- */
-function usePanePixelateOverlay(pixActive: boolean, animations: boolean, visiblePaneIds: readonly string[]): void {
-  const prevActive = useRef(false);
-  const visiblePaneIdsRef = useRef(visiblePaneIds);
-  const affectedRenderersRef = useRef<PaneRenderer[]>([]);
-  visiblePaneIdsRef.current = visiblePaneIds;
-
-  useEffect(() => {
-    if (!animations) {
-      setRenderersPostProcess(affectedRenderersRef.current, baseShaderSrc());
-      affectedRenderersRef.current = [];
-      prevActive.current = false;
-      return;
-    }
-    if (pixActive && !prevActive.current) {
-      // Only the active window is visible behind the overlay. Hidden terminals
-      // in the cross-session/window keep-alive pools are suspended and should
-      // not compile or render a privacy shader they can never display.
-      setRenderersPostProcess(affectedRenderersRef.current, baseShaderSrc());
-      const affected = paneRenderers(visiblePaneIdsRef.current);
-      affectedRenderersRef.current = affected;
-      setRenderersPostProcess(affected, PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC);
-      prevActive.current = pixActive;
-      return pumpRenders(() => affected, PIX_RAMP_IN_MS);
-    }
-    if (!pixActive && prevActive.current) {
-      // Restore exactly the renderers pixelated on entry. During a session
-      // selection the newly-visible pane is different and owns its own switch
-      // effect, while the old (now hidden) renderer still needs its base shader
-      // restored before it is shown again.
-      const affected = affectedRenderersRef.current;
-      setRenderersPostProcess(affected, PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC);
-      prevActive.current = pixActive;
-      // Hand the post-process slot back to the session-switcher effect when
-      // that modal is still open, otherwise to the persistent terminal effect.
-      return pumpRenders(
-        () => affected,
-        PIX_RAMP_OUT_MS,
-        () => {
-          const state = useStore.getState();
-          const restored = state.switcherOpen
-            ? (findShaderEffect(state.config?.session_view_shader)?.src ?? baseShaderSrc())
-            : baseShaderSrc();
-          setRenderersPostProcess(affected, restored);
-          if (affectedRenderersRef.current === affected) affectedRenderersRef.current = [];
-        },
-      );
-    }
-    prevActive.current = pixActive;
-  }, [pixActive, animations]);
-}
-
-/** Temporarily replaces the visible panes' base shader while `prefix + s` is open. */
-function useSessionViewShader(
-  active: boolean,
-  shaderId: string | null | undefined,
-  animations: boolean,
-  visiblePaneIds: readonly string[],
-): void {
-  const visiblePaneIdsRef = useRef(visiblePaneIds);
-  visiblePaneIdsRef.current = visiblePaneIds;
-  const effect = findShaderEffect(shaderId);
-
-  useEffect(() => {
-    if (!active || !effect) return;
-
-    const affected = paneRenderers(visiblePaneIdsRef.current);
-    setRenderersPostProcess(affected, effect.src);
-    for (const renderer of affected) renderer.requestRender?.();
-    const stopPump = effect.animated && animations ? pumpRenders(() => affected, Infinity) : undefined;
-
-    return () => {
-      stopPump?.();
-      setRenderersPostProcess(affected, baseShaderSrc());
-      for (const renderer of affected) renderer.requestRender?.();
-    };
-  }, [active, effect?.src, effect?.animated, animations]);
-}
 
 /**
  * Keep decorative GPU work stopped while a route change mounts a session's
@@ -243,15 +127,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
     ? [activeWindow.zoomed_pane]
     : (activeWindow?.panes.map((pane) => pane.id) ?? []);
 
-  // Apply transient shaders only to panes actually visible behind each modal.
-  useSessionViewShader(
-    switcherOpen && !helpOverlayActive && !settingsOpen,
-    config?.session_view_shader,
-    getAnimations(config),
-    visiblePaneIds,
-  );
-  usePanePixelateOverlay(helpOverlayActive && !settingsOpen, getAnimations(config), visiblePaneIds);
-
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
   // back to it — mirroring tmux's `switch-client -l`.
@@ -271,6 +146,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   }, [activeSessionId]);
 
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
+  useModalBackdrop(effectiveConfig);
   const wallpaper = effectiveConfig?.wallpaper ?? null;
   const wallpaperShader = getWallpaperShader(effectiveConfig);
   const wallpaperOpacity = getWallpaperOpacity(effectiveConfig);

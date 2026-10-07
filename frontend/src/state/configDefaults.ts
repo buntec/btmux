@@ -22,8 +22,8 @@ export const CONFIG_DEFAULTS = {
   wallpaperSeed: 'mellow-nebula-dream',
   wallpaperFollowsMouse: true,
   wallpaperFollowsKeyboard: false,
-  paneSwitchIntensity: 0.25,
-  paneSwitchDuration: 0.5,
+  backdropBlur: 2,
+  backdropDim: 0.5,
   paneSwitchBorder: 'wipe' as string | null,
   paneSwitchBorderSpeed: 0.1,
   sessionSort: 'mru' as const,
@@ -134,12 +134,12 @@ export function getWallpaperFollowsKeyboard(config: ConfigLike): boolean {
   return config?.wallpaper_shader_follows_keyboard_input ?? CONFIG_DEFAULTS.wallpaperFollowsKeyboard;
 }
 
-export function getPaneSwitchIntensity(config: ConfigLike): number {
-  return config?.pane_switch_intensity ?? CONFIG_DEFAULTS.paneSwitchIntensity;
+export function getBackdropBlur(config: ConfigLike): number {
+  return config?.backdrop_blur ?? CONFIG_DEFAULTS.backdropBlur;
 }
 
-export function getPaneSwitchDuration(config: ConfigLike): number {
-  return config?.pane_switch_duration ?? CONFIG_DEFAULTS.paneSwitchDuration;
+export function getBackdropDim(config: ConfigLike): number {
+  return config?.backdrop_dim ?? CONFIG_DEFAULTS.backdropDim;
 }
 
 export function getPaneSwitchBorderStyle(config: ConfigLike): string | null {

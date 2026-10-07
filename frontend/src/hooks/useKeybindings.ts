@@ -5,7 +5,7 @@ import { Overlay, PickerItem } from '../state/types';
 import { paneIdsInOrder } from '../state/layout';
 import { adjacentSession } from '../state/sessionNavigation';
 import { sortWindows } from '../state/windowMru';
-import { PANE_SWITCH_EFFECTS, SHADER_EFFECTS, findPaneSwitchEffect } from '../lib/terminalFxShaders';
+import { SHADER_EFFECTS } from '../lib/terminalFxShaders';
 import {
   getFontWeightRange,
   getPrefix,
@@ -36,17 +36,6 @@ export function shaderPickerItems(activeId: string | null): PickerItem[] {
   ];
 }
 
-/**
- * Picker rows for `shader: choose pane-switch effect`. Unlike the persistent
- * effect above, "None" is a registry entry with its own id rather than the
- * empty string — an unset `pane_switch_shader` means the default effect. The
- * default is currently "none", while keeping it as a registry entry lets an
- * explicit `none` remain a stable config-file value.
- */
-export function paneSwitchPickerItems(configured: string | null): PickerItem[] {
-  const active = findPaneSwitchEffect(configured);
-  return PANE_SWITCH_EFFECTS.map((e) => ({ id: e.id, label: e.label, active: e.id === active.id }));
-}
 /** Auto-hide timer for the display-panes overlay (module-scoped: one at a time). */
 let paneNumbersTimer = 0;
 
@@ -523,15 +512,6 @@ export function runAction(
         title: 'Shader effect',
         items: shaderPickerItems(store.config?.shader ?? null),
         onSelect: (id) => send({ type: 'update_config', update: { shader: id } }),
-      });
-      break;
-    }
-    case 'choose-pane-switch-shader': {
-      openOverlay({
-        mode: 'picker',
-        title: 'Pane-switch effect',
-        items: paneSwitchPickerItems(store.config?.pane_switch_shader ?? null),
-        onSelect: (id) => send({ type: 'update_config', update: { pane_switch_shader: id } }),
       });
       break;
     }

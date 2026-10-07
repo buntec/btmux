@@ -6,9 +6,8 @@ import { ClientMessage } from '../protocol/messages';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
-import { findPaneSwitchEffect, findShaderEffect } from '../lib/terminalFxShaders';
+import { findShaderEffect } from '../lib/terminalFxShaders';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
-import { baseShaderSrc } from '../lib/baseShader';
 import { pumpRenders } from '../lib/pumpRenders';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
@@ -22,8 +21,6 @@ import {
   getAnimations,
   getPaneSwitchBorderSpeed,
   getPaneSwitchBorderStyle,
-  getPaneSwitchDuration,
-  getPaneSwitchIntensity,
   getShowPaneTitles,
   getTerminalFontFamily,
   getTerminalFontSize,
@@ -535,12 +532,9 @@ export function TerminalPane({
   }, [visible, termOptions]);
 
   // The persistent post-process effect chosen with `shader: choose effect`
-  // (config `shader = "..."`). It is the *base* state of this pane's
-  // post-process slot: the transient effects below (and the privacy pixelate
-  // in App.tsx) temporarily take the slot over and restore this on the way
-  // out, hence baseShaderSrc rather than a plain `null`. Re-runs on
-  // termOptions because a config reload rebuilds the Terminal, which drops
-  // whatever shader was installed on the old renderer.
+  // (config `shader = "..."`). Re-runs on termOptions because a config reload
+  // rebuilds the Terminal, which drops whatever shader was installed on the old
+  // renderer.
   const shaderId = config?.shader ?? null;
   useEffect(() => {
     termRef.current?.renderer?.setPostProcessShader?.(findShaderEffect(shaderId)?.src ?? null);
@@ -558,52 +552,11 @@ export function TerminalPane({
     return pumpRenders(() => [termRef.current?.renderer], Infinity);
   }, [pumpBaseShader, termOptions]);
 
-  // Play the configured one-shot pane-switch effect (`pane-switch-shader`, off
-  // by default) when this pane *gains* active status while
-  // visible — pane-to-pane navigation (prefix+arrow, click), and also a
-  // window/session switch (whose newly-active pane transitions visible+
-  // active in the same update, so it reads as "revealing" the pane you
-  // switched to). Runs inside ghostty-web's own WebGL context
-  // (setPostProcessShader) — no extra DOM node, no cross-context canvas copy.
-  // An earlier external-overlay prototype (canvasFx.ts, removed) copied the
-  // live canvas into a second WebGL context every frame and measurably stalled
-  // typing; this hook was added to ghostty-web to avoid that class of bug. The
-  // effect's own animation needs continuous frames the terminal wouldn't
-  // otherwise paint while idle, hence the pump — see pumpRenders.ts.
-  const paneSwitchShaderId = config?.pane_switch_shader ?? null;
-  const paneSwitchIntensity = getPaneSwitchIntensity(config);
-  const paneSwitchDuration = getPaneSwitchDuration(config);
-  // Memoized so identity is stable across renders that don't touch these three
-  // config values — the effect below fires on *identity* change, and building
-  // a fresh object (findPaneSwitchEffect regenerates GLSL from the intensity/
-  // duration multipliers) on every render would replay the flash constantly.
-  const paneSwitchEffect = useMemo(
-    () => findPaneSwitchEffect(paneSwitchShaderId, paneSwitchIntensity, paneSwitchDuration),
-    [paneSwitchShaderId, paneSwitchIntensity, paneSwitchDuration],
-  );
-  const prevIsActiveForSwitchFx = useRef(isActive);
-  useEffect(() => {
-    const wasActive = prevIsActiveForSwitchFx.current;
-    prevIsActiveForSwitchFx.current = isActive;
-    const animations = getAnimations(config);
-    if (wasActive || !isActive || !visible || !animations) return;
-
-    const term = termRef.current;
-    if (!term || !paneSwitchEffect.src) return;
-    term.renderer?.setPostProcessShader?.(paneSwitchEffect.src);
-    return pumpRenders(
-      () => [term.renderer],
-      paneSwitchEffect.durationMs,
-      () => term.renderer?.setPostProcessShader?.(baseShaderSrc()),
-    );
-  }, [isActive, visible, config?.animations, paneSwitchEffect]);
-
   // One-shot border-draw effect on the pane you switch to (`pane-switch-border`,
   // style-selectable, `trace` by default; null = disabled). Pure CSS/SVG, keyed
-  // on this nonce so the element remounts and replays on every activation. Same
-  // activation transitions as the pane-switch shader above: pane-to-pane nav,
-  // and a window/session switch (where the newly active pane goes visible+active
-  // in one update). The nonce doubles as a mounted flag — bumped on activation,
+  // on this nonce so the element remounts and replays on every activation:
+  // pane-to-pane nav, and a window/session switch (where the newly active pane
+  // goes visible+active in one update). The nonce doubles as a mounted flag — bumped on activation,
   // cleared once the draw+fade has run so an idle pane carries no leftover node.
   const paneSwitchBorderStyleId = getPaneSwitchBorderStyle(config);
   const paneSwitchBorderStyle = paneSwitchBorderStyleId ? findPaneBorderStyle(paneSwitchBorderStyleId) : null;

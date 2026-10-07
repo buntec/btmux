@@ -142,19 +142,39 @@ export const CHROMATIC_ABERRATION_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
   }
 `;
 
-// vfx-js PixelateEffect, size 10px (its default).
+/**
+ * GLSL for `blockAverage(sizePx)`: the mean color of the sizePx-wide block
+ * containing v_uv, from an n×n grid of taps (n = block size, at most 8).
+ * Needs v_uv, u_scene and u_resolution. Sampling one point per block instead
+ * would show whatever single pixel it lands on, mostly background.
+ */
+const BLOCK_AVERAGE_GLSL = `
+  vec4 blockAverage(float sizePx) {
+    vec2 cellUv = sizePx / u_resolution;
+    vec2 origin = floor(v_uv / cellUv) * cellUv;
+    int n = int(clamp(ceil(sizePx), 1.0, 8.0));
+    vec4 sum = vec4(0.0);
+    for (int y = 0; y < n; y++) {
+      for (int x = 0; x < n; x++) {
+        vec2 tap = (vec2(float(x), float(y)) + 0.5) / float(n);
+        sum += texture(u_scene, clamp(origin + tap * cellUv, 0.0, 1.0));
+      }
+    }
+    return sum / float(n * n);
+  }
+`;
+
+// vfx-js PixelateEffect, size 10px (its default), block-averaged.
 export const PIXELATE_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
   precision highp float;
   in vec2 v_uv;
   out vec4 fragColor;
   uniform sampler2D u_scene;
   uniform vec2 u_resolution;
-
+${BLOCK_AVERAGE_GLSL}
   void main() {
     const float sizePx = 10.0;
-    vec2 cellUv = sizePx / u_resolution;
-    vec2 cell = (floor(v_uv / cellUv) + 0.5) * cellUv;
-    fragColor = texture(u_scene, clamp(cell, 0.0, 1.0));
+    fragColor = blockAverage(sizePx);
   }
 `;
 
@@ -241,377 +261,10 @@ export const GLITCH_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
 `;
 
 /**
- * Ported from vfx-js's "block glitch transition" example
- * (https://amagi.dev/vfx-js/examples/#block-glitch-transition,
- * packages/examples/works/block-glitch-transition.html, MIT). There it's a
- * scroll-triggered reveal driven by an `enterTime` uniform (elapsed seconds
- * since an IntersectionObserver fired) plus mouse proximity; multi-scale
- * noise picks blocks to displace, with the displacement magnitude decaying
- * from large to none as enterTime grows — chunky/glitchy at first, settling
- * to a clean view. u_time ("seconds since installed") is exactly that
- * enterTime, so it maps directly onto our contract with no extra plumbing;
- * we just install this on the pane we're transitioning away from and let it
- * play once.
- *
- * Adapted, not a literal port:
- *  - Dropped `mouse`/`offset` (proximity-based extra glitching, and DOM
- *    positioning) — no cursor-tracking or per-element offset concept here.
- *  - u_time is compressed (see ENTER_SPEED) so the original's 1.5s settle
- *    plays out over a couple hundred ms — right for a quick pane-transition
- *    flash, not a slow scroll reveal.
- *  - Fixed a channel bug: the original reads `.rrra` at each displaced
- *    UV — i.e. every output channel (R/G/B) comes from the *source's red
- *    channel only*, at three different offsets. That's a deliberate
- *    monochrome-red-ghost look for the demo's photos, but on typical
- *    terminal palettes (heavy cyan/green/white, often low red) it reads as
- *    dim/washed out. This version samples each output channel from the
- *    *matching* source channel instead — real RGB chromatic aberration.
- *
- * `intensity`/`duration` are the resolved `pane-switch-intensity` /
- * `pane-switch-duration` multipliers, baked into the block-displacement
- * magnitude and settle speed respectively (see chromaticFlashSrc above for
- * why this has to be string interpolation rather than a uniform).
- */
-function blockGlitchSrc(intensity: number, duration: number): string {
-  // Compresses the original's 1.5s settle-time to ~350ms of real time at
-  // duration = 1.0; scales linearly with the duration multiplier.
-  const enterSpeed = 1.5 / (0.35 * duration);
-  const moveScale = 0.07 * intensity;
-  return `#version 300 es
-  precision highp float;
-  in vec2 v_uv;
-  out vec4 fragColor;
-  uniform sampler2D u_scene;
-  uniform vec2 u_resolution;
-  uniform float u_time;
-
-  vec4 readTex(vec2 uv) {
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
-    return texture(u_scene, uv);
-  }
-
-  float rnd(vec3 p) {
-    return fract(sin(dot(p, vec3(892., 982., 48.))) * 4928.);
-  }
-
-  float noise(vec3 p) {
-    vec3 pi = floor(p);
-    vec3 pf = fract(p);
-    vec2 d = vec2(1, 0);
-    float r1 = mix(
-      mix(rnd(pi), rnd(pi + d.xyy), pf.x),
-      mix(rnd(pi + d.yxy), rnd(pi + d.xxy), pf.x),
-      pf.y
-    );
-    float r2 = mix(
-      mix(rnd(pi + d.yyx), rnd(pi + d.xyx), pf.x),
-      mix(rnd(pi + d.yxx), rnd(pi + d.xxx), pf.x),
-      pf.y
-    );
-    return mix(r1, r2, pf.z);
-  }
-
-  void main() {
-    const float enterSpeed = ${enterSpeed.toFixed(6)};
-
-    vec2 uv = v_uv;
-    vec2 p = uv * 2.0 - 1.0;
-    p.x *= u_resolution.x / u_resolution.y;
-
-    float t = clamp(u_time * enterSpeed, 0.0, 1.5);
-    float enter = mix(exp(t * -2.0) * 3.0, 0.0, t / 1.5);
-    float level = smoothstep(0.0, 0.2, t);
-
-    vec2 move = vec2(0.0);
-    vec2 block = vec2(0.3, 0.7);
-
-    for (int i = 0; i < 3; i++) {
-      float fi = float(i);
-      vec2 off = vec2(sin(fi * 94.0), sin(fi * 42.0)) * 0.5 + fi;
-      vec2 p2 = floor((p - off) * block) / block + off;
-      float n = noise(vec3(p2 * 3.0, fi * 7.0 + u_time * 0.3));
-      if (n > 0.5) {
-        float a = floor(n * 30.0 + fi * 9.0) * 0.5 * 3.141593;
-        move = vec2(sin(a), cos(a) * 0.1) * enter * ${moveScale.toFixed(6)};
-      }
-      block = block.yx * 3.5;
-    }
-
-    vec4 cr = readTex(uv + move);
-    vec4 cg = readTex(uv + move * 1.2);
-    vec4 cb = readTex(uv + move * 1.4);
-    vec4 c = vec4(cr.r, cg.g, cb.b, (cr.a + cg.a + cb.a) / 3.0);
-
-    fragColor = c * level;
-    fragColor.rgb *= 1.0 + length(move) * 3.0;
-  }
-`;
-}
-
-/**
- * Per-pane privacy-pixelate overlay (App.tsx's usePanePixelateOverlay),
- * replacing the old whole-stage SVG CSS filter (pix-filter.ts, removed).
- * Ramps in when installed and holds at full strength — u_time is "seconds
- * since this shader was installed", so once t reaches 1 the shader just
- * keeps rendering the fully-pixelated steady state; no separate hold-state
- * shader needed. Sizes/durations are the same values the SVG filter used
- * (PIX_MAX_BLOCK, PIX_RAMP_IN_MS).
- */
-export const PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
-  precision highp float;
-  in vec2 v_uv;
-  out vec4 fragColor;
-  uniform sampler2D u_scene;
-  uniform vec2 u_resolution;
-  uniform float u_time;
-
-  void main() {
-    const float rampSeconds = 0.25; // PIX_RAMP_IN_MS
-    const float maxSizePx = 16.0;
-    float t = clamp(u_time / rampSeconds, 0.0, 1.0);
-    t = 1.0 - pow(1.0 - t, 3.0); // ease-out cubic, matches the old ramp's easing
-    float sizePx = max(1.0, maxSizePx * t);
-
-    vec2 cellUv = sizePx / u_resolution;
-    vec2 cell = (floor(v_uv / cellUv) + 0.5) * cellUv;
-    fragColor = texture(u_scene, clamp(cell, 0.0, 1.0));
-  }
-`;
-
-/**
- * Ramp-out counterpart to PIXELATE_RAMP_IN_POSTPROCESS_FRAGMENT_SRC: shrinks
- * from full strength back to unpixelated over rampSeconds after being
- * installed. The caller (usePanePixelateOverlay) is responsible for calling
- * setPostProcessShader(null) once that duration elapses — this shader alone
- * doesn't remove itself, u_time only ever increases.
- */
-export const PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC = `#version 300 es
-  precision highp float;
-  in vec2 v_uv;
-  out vec4 fragColor;
-  uniform sampler2D u_scene;
-  uniform vec2 u_resolution;
-  uniform float u_time;
-
-  void main() {
-    const float rampSeconds = 0.15; // PIX_RAMP_OUT_MS
-    const float maxSizePx = 16.0;
-    float t = clamp(u_time / rampSeconds, 0.0, 1.0);
-    t = 1.0 - pow(1.0 - t, 3.0);
-    float sizePx = max(1.0, mix(maxSizePx, 1.0, t));
-
-    vec2 cellUv = sizePx / u_resolution;
-    vec2 cell = (floor(v_uv / cellUv) + 0.5) * cellUv;
-    fragColor = texture(u_scene, clamp(cell, 0.0, 1.0));
-  }
-`;
-
-/**
- * Parametrized variant of PIXELATE_RAMP_OUT_POSTPROCESS_FRAGMENT_SRC used by
- * the pane-switch effect registry below, where `intensity`/`duration` are the
- * resolved `pane-switch-intensity` / `pane-switch-duration` multipliers
- * (baked into maxSizePx and rampSeconds). The privacy overlay keeps using the
- * fixed const above — its ramp isn't user-configurable.
- */
-function pixelateRampOutSrc(intensity: number, duration: number): string {
-  const rampSeconds = 0.15 * duration;
-  const maxSizePx = 16.0 * intensity;
-  return `#version 300 es
-  precision highp float;
-  in vec2 v_uv;
-  out vec4 fragColor;
-  uniform sampler2D u_scene;
-  uniform vec2 u_resolution;
-  uniform float u_time;
-
-  void main() {
-    const float rampSeconds = ${rampSeconds.toFixed(6)};
-    const float maxSizePx = ${maxSizePx.toFixed(6)};
-    float t = clamp(u_time / rampSeconds, 0.0, 1.0);
-    t = 1.0 - pow(1.0 - t, 3.0);
-    float sizePx = max(1.0, mix(maxSizePx, 1.0, t));
-
-    vec2 cellUv = sizePx / u_resolution;
-    vec2 cell = (floor(v_uv / cellUv) + 0.5) * cellUv;
-    fragColor = texture(u_scene, clamp(cell, 0.0, 1.0));
-  }
-`;
-}
-
-/**
- * Pane-switch flash: the CHROMATIC_ABERRATION effect above, but with its
- * intensity driven by a short attack/decay envelope on u_time instead of held
- * constant — the RGB split snaps in as the pane gains focus and decays back to
- * a clean image. Everything else (the mirrored edge sampling, the radial
- * `pow(l, power)` falloff that keeps the center sharp and smears the corners)
- * is vfx-js's ChromaticEffect unchanged.
- *
- * `peak` is in vfx-js intensity units but is much *lower* than its 0.3 default
- * (which the steady-state effect above uses) — 0.3 is the value at the
- * *intensity multiplier's* default of 1.0. The split grows with `pow(l,
- * power)` where l is the aspect-corrected distance from the center, so on a
- * wide pane the corners sit at l² ≈ 5 and the shift there is ~15x what the
- * number suggests: at 0.3 the edge text is smeared unreadable. Chosen by
- * rendering the envelope's peak frame over a mock terminal at 0.03 / 0.06 /
- * 0.12 / 0.25 / 0.5 — 0.1 fringes the edges clearly while every line stays
- * legible, which is what you want from something that flashes on every
- * navigation.
- *
- * `intensity`/`duration` are the resolved `pane-switch-intensity` /
- * `pane-switch-duration` multipliers (see config.rs) baked straight into the
- * GLSL constants — ghostty-web's setPostProcessShader takes only a source
- * string, with no custom-uniform mechanism, so this is the only way to make
- * the effect's numbers configurable.
- */
-function chromaticFlashSrc(intensity: number, duration: number): string {
-  const attackSeconds = 0.06 * duration;
-  const decaySeconds = 0.24 * duration;
-  const peak = 0.3 * intensity;
-  return `#version 300 es
-  precision highp float;
-  in vec2 v_uv;
-  out vec4 fragColor;
-  uniform sampler2D u_scene;
-  uniform vec2 u_resolution;
-  uniform float u_time;
-
-  vec4 mirrorTex(vec2 uv) {
-    vec2 uv2 = 1.0 - abs(1.0 - mod(uv, 2.0));
-    return texture(u_scene, uv2);
-  }
-
-  void main() {
-    const float attackSeconds = ${attackSeconds.toFixed(6)};
-    const float decaySeconds = ${decaySeconds.toFixed(6)};
-    const float peak = ${peak.toFixed(6)};
-    const float power = 2.0;
-
-    float env = u_time < attackSeconds
-      ? u_time / attackSeconds
-      : 1.0 - clamp((u_time - attackSeconds) / decaySeconds, 0.0, 1.0);
-    env = env * env * (3.0 - 2.0 * env); // ease both the attack and the decay
-    float intensity = peak * env;
-
-    float aspect = u_resolution.x / u_resolution.y;
-    vec2 p = v_uv * 2.0 - 1.0;
-    p.x *= aspect;
-
-    float l = length(p);
-    float d = pow(l, power) * (intensity * 0.1);
-
-    vec2 uvR = (v_uv - 0.5) / (1.0 + d * 1.0) + 0.5;
-    vec2 uvG = (v_uv - 0.5) / (1.0 + d * 2.0) + 0.5;
-    vec2 uvB = (v_uv - 0.5) / (1.0 + d * 3.0) + 0.5;
-
-    vec4 cr = mirrorTex(uvR);
-    vec4 cg = mirrorTex(uvG);
-    vec4 cb = mirrorTex(uvB);
-
-    fragColor = vec4(cr.r, cg.g, cb.b, (cr.a + cg.a + cb.a) / 3.0);
-  }
-`;
-}
-
-/**
- * A one-shot effect played on the pane you just navigated to, selectable from
- * the command palette (`shader: choose pane-switch effect`) and persisted as
- * `pane-switch-shader = "<id>"` in config.toml. Its numbers are scaled by
- * `pane-switch-intensity` / `pane-switch-duration` (also config.toml-only —
- * both are continuous multipliers, not a discrete registry, so they don't
- * fit the picker pattern the id itself uses).
- *
- * Each entry plays from u_time = 0 and is expected to have settled to a clean
- * image by `durationMs`, at which point TerminalPane stops pumping frames and
- * hands the post-process slot back to the persistent effect (SHADER_EFFECTS).
- * A shader that never settles would freeze mid-effect on the pane, so
- * durationMs must cover the shader's own timeline — it scales with the
- * duration multiplier right alongside the GLSL constants that drive it, so
- * the two never drift apart.
- */
-export interface PaneSwitchEffect {
-  id: string;
-  label: string;
-  /** GLSL, or null for the "None" entry — nothing is installed at all. */
-  src: string | null;
-  durationMs: number;
-}
-
-/** id/label only, for the picker — see buildPaneSwitchEffect for the GLSL. */
-interface PaneSwitchEffectEntry {
-  id: string;
-  label: string;
-  build: (intensity: number, duration: number) => { src: string | null; durationMs: number };
-}
-
-/** Used when `pane_switch_shader` is unset or names an unknown effect. */
-const DEFAULT_PANE_SWITCH_EFFECT_ID = 'none';
-
-const PANE_SWITCH_EFFECT_ENTRIES: PaneSwitchEffectEntry[] = [
-  {
-    id: 'none',
-    label: 'None',
-    build: () => ({ src: null, durationMs: 0 }),
-  },
-  {
-    id: 'chromatic-aberration',
-    label: 'chromatic aberration (RGB split flash)',
-    build: (intensity, duration) => ({
-      src: chromaticFlashSrc(intensity, duration),
-      // attackSeconds + decaySeconds, rounded up.
-      durationMs: Math.ceil(320 * duration),
-    }),
-  },
-  {
-    id: 'block-glitch',
-    label: 'block glitch (displaced blocks)',
-    build: (intensity, duration) => ({
-      src: blockGlitchSrc(intensity, duration),
-      // >= the shader's own ~350ms settle time (see its enterSpeed).
-      durationMs: Math.ceil(400 * duration),
-    }),
-  },
-  {
-    id: 'pixelate',
-    label: 'pixelate (unblock reveal)',
-    build: (intensity, duration) => ({
-      src: pixelateRampOutSrc(intensity, duration),
-      // Matches its rampSeconds.
-      durationMs: Math.ceil(150 * duration),
-    }),
-  },
-];
-
-/** id/label rows for the `shader: choose pane-switch effect` picker. */
-export const PANE_SWITCH_EFFECTS: { id: string; label: string }[] = PANE_SWITCH_EFFECT_ENTRIES.map(({ id, label }) => ({
-  id,
-  label,
-}));
-
-/**
- * Resolve a configured `pane_switch_shader` id (falling back to the default)
- * and build its GLSL for the given intensity/duration multipliers (1.0 =
- * each effect's own default). Rebuilds the shader source on every call —
- * callers that install it as a WebGL post-process effect on every render
- * should memoize on (id, intensity, duration) to avoid needless recompiles
- * and, since a fresh object compares unequal by reference, spurious re-fires
- * of effects driven by this object's identity.
- */
-export function findPaneSwitchEffect(id: string | null | undefined, intensity = 1, duration = 1): PaneSwitchEffect {
-  const entry =
-    PANE_SWITCH_EFFECT_ENTRIES.find((e) => e.id === id) ??
-    PANE_SWITCH_EFFECT_ENTRIES.find((e) => e.id === DEFAULT_PANE_SWITCH_EFFECT_ID)!;
-  return { id: entry.id, label: entry.label, ...entry.build(intensity, duration) };
-}
-
-/**
  * A steady-state effect selectable from the command palette
  * (`shader: choose effect`) and persisted as `shader = "<id>"` in config.toml.
  * The backend stores the id verbatim — this registry is the only place ids are
  * defined, so an unknown id resolves to `null` (no effect).
- *
- * The transition shaders above (block-glitch, pixelate ramp in/out) are
- * deliberately absent: each plays once from u_time = 0 and then settles, so as
- * a persistent effect they'd render nothing.
  */
 export interface ShaderEffect {
   id: string;

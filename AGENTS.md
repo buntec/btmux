@@ -207,33 +207,22 @@ not the terminal.
 
 **Post-process shaders:** panes render through ghostty-web's
 `renderer.setPostProcessShader` hook (WebGL only). `terminalFxShaders.ts` holds
-every fragment shader plus two registries the frontend owns end-to-end — the
-backend only stores the chosen id (`shader` / `session-view-shader` /
-`pane-switch-shader`), and an unknown id falls back:
+every fragment shader and the `SHADER_EFFECTS` registry, which the frontend
+owns end-to-end — the backend only stores the chosen id (`shader`,
+`shader: choose effect`), and an unknown id falls back. Any `u_time`-driven
+shader also needs `pumpRenders` — an idle terminal paints no frames, so
+animated effects freeze without one.
 
-- `SHADER_EFFECTS` — _steady-state_ effects (`shader: choose effect`). The
-  configured one is the **base state** of a pane's single post-process slot.
-- `PANE_SWITCH_EFFECTS` — _one-shot_ effects played on the pane you switch to
-  (`shader: choose pane-switch effect`, disabled by default).
-  Each carries a `durationMs` that must cover its own timeline, since that's how
-  long `TerminalPane` pumps frames before restoring the base effect.
-
-`PANE_BORDER_STYLES` in `lib/paneSwitchBorder.ts` is a separate CSS/SVG
-one-shot border draw controlled by `pane-switch-border` and
-`pane-switch-border-speed`; it is independent of the WebGL pane-switch shader.
-Unknown border IDs fall back in the frontend, and `animations = false` disables
+`PANE_BORDER_STYLES` in `lib/paneSwitchBorder.ts` is a CSS/SVG one-shot border
+draw on the pane you switch to, controlled by `pane-switch-border` and
+`pane-switch-border-speed`. Unknown border IDs fall back in the frontend, and `animations = false` disables
 both animated shader and border effects.
 
-The session switcher's background panes can temporarily use any steady-state
-effect via `session-view-shader` (unset by default). This uses the same
-`SHADER_EFFECTS` registry and restores the pane's base shader when the switcher
-closes. The key-help overlay retains its privacy pixelation.
-
-Transient users of the slot (the pane-switch effect, session-view effect, and
-`App.tsx`'s privacy pixelate) must hand it back via `baseShaderSrc()`
-(`lib/baseShader.ts`) rather than `null`. Any `u_time`-driven shader also needs
-`pumpRenders` — an idle terminal paints no frames, so animated effects freeze
-without one.
+**Modal backdrop:** every Astryx `Dialog` shares one `dialog::backdrop` rule in
+`index.css`, driven by `backdrop-blur` and `backdrop-dim`. `useModalBackdrop`
+(`hooks/useModalBackdrop.ts`) publishes them as `--btm-backdrop-blur` /
+`--btm-backdrop-dim` on `:root`, from the effective config so Settings previews
+them. There is deliberately no pane shader behind modals.
 
 **LaTeX overlay:** frontend-only. `lib/latexDetect.ts` is a pure, tiered
 heuristic detector (explicit delimiters → bare `[`/`]` blocks → `$…$` → bare

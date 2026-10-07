@@ -2,16 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig } from '../state/types';
-import { SHADER_EFFECTS, PANE_SWITCH_EFFECTS, findPaneSwitchEffect } from '../lib/terminalFxShaders';
+import { SHADER_EFFECTS } from '../lib/terminalFxShaders';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import { WALLPAPER_SHADERS } from '../lib/wallpaperCatalog';
 import {
   getDesktopBackgroundOpacity,
   getFontWeightRange,
+  getBackdropBlur,
+  getBackdropDim,
   getPaneSwitchBorderSpeed,
-  getPaneSwitchDuration,
-  getPaneSwitchIntensity,
   getShowPaneTitles,
   getShowNavHeader,
   getTerminalFontFamily,
@@ -99,10 +99,8 @@ type Draft = {
   wallpaperFollowsMouse: boolean;
   wallpaperFollowsKeyboard: boolean;
   shader: string;
-  sessionViewShader: string;
-  paneSwitchShader: string;
-  paneSwitchIntensity: number;
-  paneSwitchDuration: number;
+  backdropBlur: number;
+  backdropDim: number;
   paneSwitchBorderStyle: string;
   paneSwitchBorderSpeed: number;
 };
@@ -209,10 +207,8 @@ function initialDraft(config: ClientConfig): Draft {
     wallpaperFollowsMouse: getWallpaperFollowsMouse(config),
     wallpaperFollowsKeyboard: getWallpaperFollowsKeyboard(config),
     shader: config.shader ?? '',
-    sessionViewShader: config.session_view_shader ?? '',
-    paneSwitchShader: config.pane_switch_shader ?? '',
-    paneSwitchIntensity: getPaneSwitchIntensity(config),
-    paneSwitchDuration: getPaneSwitchDuration(config),
+    backdropBlur: getBackdropBlur(config),
+    backdropDim: getBackdropDim(config),
     paneSwitchBorderStyle: config.pane_switch_border ?? 'none',
     paneSwitchBorderSpeed: getPaneSwitchBorderSpeed(config),
   };
@@ -253,8 +249,8 @@ const TOML_DEFAULTS = {
   wallpaperSeed: 'mellow-nebula-dream',
   wallpaperFollowsMouse: true,
   wallpaperFollowsKeyboard: false,
-  paneSwitchIntensity: 0.25,
-  paneSwitchDuration: 0.5,
+  backdropBlur: 2,
+  backdropDim: 0.5,
   paneSwitchBorderStyle: 'wipe',
   paneSwitchBorderSpeed: 0.1,
   renderer: 'webgl',
@@ -332,10 +328,8 @@ function toToml(draft: Draft): string {
       TOML_DEFAULTS.wallpaperFollowsKeyboard,
     ),
     optLine('shader', draft.shader),
-    optLine('session-view-shader', draft.sessionViewShader),
-    optLine('pane-switch-shader', draft.paneSwitchShader),
-    numLine('pane-switch-intensity', draft.paneSwitchIntensity, TOML_DEFAULTS.paneSwitchIntensity, 2),
-    numLine('pane-switch-duration', draft.paneSwitchDuration, TOML_DEFAULTS.paneSwitchDuration, 2),
+    numLine('backdrop-blur', draft.backdropBlur, TOML_DEFAULTS.backdropBlur, 1),
+    numLine('backdrop-dim', draft.backdropDim, TOML_DEFAULTS.backdropDim, 2),
     strLine('pane-switch-border', draft.paneSwitchBorderStyle, TOML_DEFAULTS.paneSwitchBorderStyle),
     numLine('pane-switch-border-speed', draft.paneSwitchBorderSpeed, TOML_DEFAULTS.paneSwitchBorderSpeed, 2),
   ].filter((line): line is string => line !== null);
@@ -422,10 +416,8 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
     update.wallpaper_shader_follows_keyboard_input = draft.wallpaperFollowsKeyboard;
   }
   if (dirty.has('shader')) update.shader = draft.shader;
-  if (dirty.has('sessionViewShader')) update.session_view_shader = draft.sessionViewShader;
-  if (dirty.has('paneSwitchShader')) update.pane_switch_shader = draft.paneSwitchShader;
-  if (dirty.has('paneSwitchIntensity')) update.pane_switch_intensity = draft.paneSwitchIntensity;
-  if (dirty.has('paneSwitchDuration')) update.pane_switch_duration = draft.paneSwitchDuration;
+  if (dirty.has('backdropBlur')) update.backdrop_blur = draft.backdropBlur;
+  if (dirty.has('backdropDim')) update.backdrop_dim = draft.backdropDim;
   if (dirty.has('paneSwitchBorderStyle')) update.pane_switch_border = draft.paneSwitchBorderStyle;
   if (dirty.has('paneSwitchBorderSpeed')) update.pane_switch_border_speed = draft.paneSwitchBorderSpeed;
   return update;
@@ -537,10 +529,8 @@ export function ConfigPage({ config, send }: Props) {
       wallpaper_shader_follows_mouse_cursor: draft.wallpaperFollowsMouse,
       wallpaper_shader_follows_keyboard_input: draft.wallpaperFollowsKeyboard,
       shader: draft.shader || null,
-      session_view_shader: draft.sessionViewShader || null,
-      pane_switch_shader: draft.paneSwitchShader || null,
-      pane_switch_intensity: draft.paneSwitchIntensity,
-      pane_switch_duration: draft.paneSwitchDuration,
+      backdrop_blur: draft.backdropBlur,
+      backdrop_dim: draft.backdropDim,
       pane_switch_border: draft.paneSwitchBorderStyle || null,
       pane_switch_border_speed: draft.paneSwitchBorderSpeed,
     }),
@@ -670,7 +660,6 @@ export function ConfigPage({ config, send }: Props) {
     { value: 'alphabetical', label: 'Alphabetical' },
   ];
   const effects = SHADER_EFFECTS.map((item) => ({ value: item.id, label: item.label }));
-  const paneSwitchOff = findPaneSwitchEffect(draft.paneSwitchShader).id === 'none';
   const paneBorderOff = !draft.paneSwitchBorderStyle || draft.paneSwitchBorderStyle === 'none';
 
   const tomlPanel = (
@@ -866,14 +855,8 @@ export function ConfigPage({ config, send }: Props) {
                     <VStack gap={4} id="settings-effects" role="tabpanel" aria-label={TAB_LABELS.effects}>
                       <FormLayout>
                         {choose('shader', 'Terminal shader', [none, ...effects])}
-                        {choose('sessionViewShader', 'Session switcher shader', [none, ...effects])}
-                        {choose(
-                          'paneSwitchShader',
-                          'Pane switch shader',
-                          PANE_SWITCH_EFFECTS.map((item) => ({ value: item.id, label: item.label })),
-                        )}
-                        {range('paneSwitchIntensity', 'Pane switch intensity', 0, 3, 0.05, paneSwitchOff)}
-                        {range('paneSwitchDuration', 'Pane switch duration multiplier', 0.1, 5, 0.05, paneSwitchOff)}
+                        {range('backdropBlur', 'Modal backdrop blur (px)', 0, 40, 0.5)}
+                        {range('backdropDim', 'Modal backdrop dimming', 0, 1, 0.05)}
                         {choose('paneSwitchBorderStyle', 'Pane switch border', [
                           none,
                           ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),

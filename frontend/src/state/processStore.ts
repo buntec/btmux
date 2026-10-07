@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ProcessInfo, ProcessKillResult, ProcessSnapshot } from '../protocol/process-messages';
+import { portKey, PORT_SORT_MODES, type PortSortMode } from '../lib/portRows';
 import { nextProcessSortMode, type ProcessSortMode } from '../lib/processTree';
 
 const MESSAGE_TIMEOUT_MS = 4000;
@@ -15,6 +16,15 @@ interface ProcessStore {
   snapshot: ProcessSnapshot | null;
   processes: ProcessInfo[];
   focusedPid: number | null;
+  viewMode: 'processes' | 'ports';
+  focusedPort: string | null;
+  portSortMode: PortSortMode;
+  expandedPorts: Set<string>;
+  togglePortExpanded: (key: string) => void;
+  toggleViewMode: () => void;
+  setFocusedPort: (key: string | null, pid: number | null) => void;
+  setPortSortMode: (mode: PortSortMode) => void;
+  cyclePortSortMode: () => void;
   followFocus: boolean;
   collapsedPids: Set<number>;
   sortMode: ProcessSortMode;
@@ -39,6 +49,10 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   snapshot: null,
   processes: [],
   focusedPid: null,
+  viewMode: 'processes',
+  focusedPort: null,
+  portSortMode: 'port',
+  expandedPorts: new Set(),
   followFocus: false,
   collapsedPids: new Set(),
   sortMode: 'cpu',
@@ -46,14 +60,32 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   filterQuery: '',
   filterActive: false,
   message: null,
-  // Focus repair happens in ProcessTree, which knows the displayed row order.
+  // Tables repair focus in displayed row order.
   setSnapshot: (snapshot) =>
     set((state) => {
       const pids = new Set(snapshot.processes.map((process) => process.pid));
       const collapsedPids = new Set([...state.collapsedPids].filter((pid) => pids.has(pid)));
-      return { snapshot, processes: snapshot.processes, collapsedPids };
+      const portKeys = snapshot.ports ? new Set(snapshot.ports.map(portKey)) : null;
+      const expandedPorts = portKeys
+        ? new Set([...state.expandedPorts].filter((key) => portKeys.has(key)))
+        : state.expandedPorts;
+      return { snapshot, processes: snapshot.processes, collapsedPids, expandedPorts };
     }),
   setFocusedPid: (pid) => set({ focusedPid: pid }),
+  toggleViewMode: () => set((state) => ({ viewMode: state.viewMode === 'processes' ? 'ports' : 'processes' })),
+  setFocusedPort: (focusedPort, focusedPid) => set({ focusedPort, focusedPid }),
+  togglePortExpanded: (key) =>
+    set((state) => {
+      const expandedPorts = new Set(state.expandedPorts);
+      if (expandedPorts.has(key)) expandedPorts.delete(key);
+      else expandedPorts.add(key);
+      return { expandedPorts };
+    }),
+  setPortSortMode: (portSortMode) => set({ portSortMode }),
+  cyclePortSortMode: () =>
+    set((state) => ({
+      portSortMode: PORT_SORT_MODES[(PORT_SORT_MODES.indexOf(state.portSortMode) + 1) % PORT_SORT_MODES.length],
+    })),
   toggleFollowFocus: () => set((state) => ({ followFocus: !state.followFocus })),
   toggleCollapsed: (pid) => {
     const collapsedPids = new Set(get().collapsedPids);
@@ -77,6 +109,10 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
       snapshot: null,
       processes: [],
       focusedPid: null,
+      viewMode: 'processes',
+      focusedPort: null,
+      portSortMode: 'port',
+      expandedPorts: new Set(),
       followFocus: false,
       collapsedPids: new Set(),
       sortMode: 'cpu',

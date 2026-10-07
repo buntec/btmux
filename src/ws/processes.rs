@@ -5,6 +5,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::WebSocketUpgrade;
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
+use netstat2::{iterate_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
 use serde::{Deserialize, Serialize};
 use sysinfo::{
     MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, Signal, System,
@@ -17,6 +18,9 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
+    SetPorts {
+        enabled: bool,
+    },
     Kill {
         pid: u32,
         /// Guards against PID reuse between snapshot and signal.
@@ -50,10 +54,100 @@ struct ProcessInfo {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PortInfo {
+    pid: Option<u32>,
+    protocol: String,
+    local_address: String,
+    local_port: u16,
+    remote_address: Option<String>,
+    state: String,
+}
+
+fn sample_ports() -> Result<Vec<PortInfo>, String> {
+    let sockets = iterate_sockets_info(
+        AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6,
+        ProtocolFlags::TCP | ProtocolFlags::UDP,
+    )
+    .map_err(|error| format!("Could not read network ports: {error}"))?;
+    let mut ports = Vec::new();
+    // Processes can close sockets during enumeration.
+    for socket in sockets.flatten() {
+        let (protocol, local_address, local_port, remote_address, state) =
+            match socket.protocol_socket_info {
+                ProtocolSocketInfo::Tcp(tcp) => (
+                    "TCP",
+                    tcp.local_addr.to_string(),
+                    tcp.local_port,
+                    (tcp.remote_port != 0).then(|| {
+                        std::net::SocketAddr::new(tcp.remote_addr, tcp.remote_port).to_string()
+                    }),
+                    tcp.state.to_string(),
+                ),
+                ProtocolSocketInfo::Udp(udp) => (
+                    "UDP",
+                    udp.local_addr.to_string(),
+                    udp.local_port,
+                    None,
+                    "BOUND".to_string(),
+                ),
+            };
+        if local_port == 0 {
+            continue;
+        }
+        let mut pids = socket.associated_pids;
+        pids.sort_unstable();
+        pids.dedup();
+        // Keep sockets whose owner is unavailable (permissions or process exit).
+        let owners: Vec<_> = if pids.is_empty() {
+            vec![None]
+        } else {
+            pids.into_iter().map(Some).collect()
+        };
+        for pid in owners {
+            ports.push(PortInfo {
+                pid,
+                protocol: protocol.to_string(),
+                local_address: local_address.clone(),
+                local_port,
+                remote_address: remote_address.clone(),
+                state: state.clone(),
+            });
+        }
+    }
+    ports.sort_by(|a, b| {
+        (
+            a.local_port,
+            &a.protocol,
+            &a.local_address,
+            &a.remote_address,
+            a.pid,
+        )
+            .cmp(&(
+                b.local_port,
+                &b.protocol,
+                &b.local_address,
+                &b.remote_address,
+                b.pid,
+            ))
+    });
+    ports.dedup_by(|a, b| {
+        a.pid == b.pid
+            && a.protocol == b.protocol
+            && a.local_address == b.local_address
+            && a.local_port == b.local_port
+            && a.remote_address == b.remote_address
+    });
+    Ok(ports)
+}
+
+#[derive(Debug, Serialize)]
 struct ProcessSnapshot {
     #[serde(rename = "type")]
     message_type: &'static str,
     processes: Vec<ProcessInfo>,
+    ports: Option<Vec<PortInfo>>,
+    ports_error: Option<String>,
     cpu_count: usize,
     mem_used: u64,
     mem_total: u64,
@@ -113,6 +207,7 @@ struct ProcessSampler {
     users: UserNames,
     refresh: ProcessRefreshKind,
     cpu_count: usize,
+    ports_enabled: bool,
 }
 
 impl ProcessSampler {
@@ -122,6 +217,7 @@ impl ProcessSampler {
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()),
             ),
             users: UserNames::new(),
+            ports_enabled: false,
             refresh: ProcessRefreshKind::nothing()
                 .with_cpu()
                 .with_memory()
@@ -170,10 +266,20 @@ impl ProcessSampler {
                 }
             })
             .collect();
+        let (ports, ports_error) = if self.ports_enabled {
+            match sample_ports() {
+                Ok(ports) => (Some(ports), None),
+                Err(error) => (None, Some(error)),
+            }
+        } else {
+            (None, None)
+        };
         let load = System::load_average();
         ProcessSnapshot {
             message_type: "snapshot",
             processes,
+            ports,
+            ports_error,
             cpu_count: self.cpu_count,
             mem_used: self.system.used_memory(),
             mem_total: self.system.total_memory(),
@@ -311,6 +417,10 @@ async fn handle_command(
     text: &str,
 ) -> Result<(), ()> {
     match serde_json::from_str::<ClientMessage>(text) {
+        Ok(ClientMessage::SetPorts { enabled }) => {
+            with_sampler(sampler, move |sampler| sampler.ports_enabled = enabled).await?;
+            send_snapshot(ws_tx, sampler).await
+        }
         Ok(ClientMessage::Kill {
             pid,
             start_time,
@@ -343,6 +453,41 @@ async fn send_json<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ports_include_tcp_listener_and_udp_owner() {
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let ports = sample_ports().unwrap();
+        for (protocol, port, state) in [
+            ("TCP", tcp.local_addr().unwrap().port(), "LISTEN"),
+            ("UDP", udp.local_addr().unwrap().port(), "BOUND"),
+        ] {
+            let entry = ports
+                .iter()
+                .find(|entry| {
+                    entry.protocol == protocol
+                        && entry.local_port == port
+                        && entry.pid == Some(std::process::id())
+                })
+                .unwrap_or_else(|| panic!("missing {protocol} port {port}"));
+            assert_eq!(entry.local_address, "127.0.0.1");
+            assert_eq!(entry.state, state);
+            assert!(entry.remote_address.is_none());
+        }
+    }
+
+    #[test]
+    fn process_snapshots_skip_ports_until_requested() {
+        let mut sampler = ProcessSampler::new();
+        let snapshot = sampler.snapshot();
+        assert!(snapshot.ports.is_none());
+        assert!(snapshot.ports_error.is_none());
+        sampler.ports_enabled = true;
+        assert!(sampler.snapshot().ports.is_some());
+        sampler.ports_enabled = false;
+        assert!(sampler.snapshot().ports.is_none());
+    }
 
     fn spawn_sleeper() -> std::process::Child {
         std::process::Command::new("sleep")
@@ -391,7 +536,9 @@ mod tests {
     fn kill_message_defaults_to_term() {
         let message: ClientMessage =
             serde_json::from_str(r#"{"type":"kill","pid":42,"start_time":7}"#).unwrap();
-        let ClientMessage::Kill { signal, .. } = message;
+        let ClientMessage::Kill { signal, .. } = message else {
+            panic!("expected kill")
+        };
         assert!(matches!(signal, KillSignal::Term));
     }
 }

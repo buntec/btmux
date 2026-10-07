@@ -8,10 +8,12 @@ import { useSidebarResize } from '@/hooks/useSidebarResize';
 import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
+import { buildPortRows } from '@/lib/portRows';
 import { buildProcessRows } from '@/lib/processTree';
 import { KeyHint } from './KeyHint';
 import { ProcessDetails } from './processes/ProcessDetails';
 import { ProcessModeHeader } from './processes/ProcessModeHeader';
+import { PortTable } from './processes/PortTable';
 import { ProcessTree } from './processes/ProcessTree';
 import type { ProcessSignal } from '@/protocol/process-messages';
 import type { ClientMessage } from '@/protocol/messages';
@@ -37,6 +39,9 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const config = useStore((s) => s.config);
   const fontSize = getTerminalFontSize(config);
   const animations = getAnimations(config);
+  const viewMode = useProcessStore((s) => s.viewMode);
+  const ports = useProcessStore((s) => s.snapshot?.ports);
+  const portSortMode = useProcessStore((s) => s.portSortMode);
   const processes = useProcessStore((s) => s.processes);
   const collapsedPids = useProcessStore((s) => s.collapsedPids);
   const sortMode = useProcessStore((s) => s.sortMode);
@@ -57,9 +62,17 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     () => buildProcessRows(processes, collapsedPids, sortMode, treeMode, filterActive ? filterQuery : ''),
     [processes, collapsedPids, sortMode, treeMode, filterActive, filterQuery],
   );
+  const portRows = useMemo(
+    () => buildPortRows(ports ?? [], processes, portSortMode, filterActive ? filterQuery : ''),
+    [ports, processes, portSortMode, filterActive, filterQuery],
+  );
+  const navigationRows =
+    viewMode === 'ports'
+      ? portRows.map((row) => ({ ...row, hasChildren: false }))
+      : rows.map((row) => ({ ...row, key: String(row.process.pid) }));
   // The key handler reads rows through a ref so snapshots don't re-register it.
-  const rowsRef = useRef(rows);
-  rowsRef.current = rows;
+  const rowsRef = useRef(navigationRows);
+  rowsRef.current = navigationRows;
 
   // Start the next open from a clean slate.
   useEffect(() => () => useProcessStore.getState().reset(), []);
@@ -112,13 +125,33 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
       // Same tree navigation language as git mode: j/k move between rows,
       // while h/l fold and unfold the focused tree.
       const count = rows.length;
-      const focusedIndex = rows.findIndex((row) => row.process.pid === store.focusedPid);
+      const focusedIndex = rows.findIndex(
+        (row) => row.key === (store.viewMode === 'ports' ? store.focusedPort : String(store.focusedPid)),
+      );
+      const focusRow = (index: number) => {
+        const row = rows[index];
+        if (!row) return;
+        if ('port' in row) store.setFocusedPort(row.key, row.port.pid);
+        else store.setFocusedPid(row.process.pid);
+      };
       const currentIndex = focusedIndex < 0 ? 0 : focusedIndex;
       const row = rows[currentIndex];
+      const setExpanded = (expanded?: boolean) => {
+        if (!row) return;
+        if ('port' in row) {
+          if (expanded === undefined || store.expandedPorts.has(row.key) !== expanded)
+            store.togglePortExpanded(row.key);
+        } else if (
+          row.hasChildren &&
+          (expanded === undefined || store.collapsedPids.has(row.process.pid) === expanded)
+        ) {
+          store.toggleCollapsed(row.process.pid);
+        }
+      };
       const move = (delta: number) => {
         if (count === 0) return;
         const next = Math.max(0, Math.min(currentIndex + delta, count - 1));
-        store.setFocusedPid(rows[next].process.pid);
+        focusRow(next);
       };
 
       if (store.filterActive) {
@@ -175,19 +208,24 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
           break;
         case 'g':
           e.preventDefault();
-          if (rows[0]) store.setFocusedPid(rows[0].process.pid);
+          focusRow(0);
           break;
         case 'G':
           e.preventDefault();
-          if (rows[count - 1]) store.setFocusedPid(rows[count - 1].process.pid);
+          focusRow(count - 1);
+          break;
+        case 'p':
+          e.preventDefault();
+          store.toggleViewMode();
           break;
         case 's':
           e.preventDefault();
-          store.cycleSortMode();
+          if (store.viewMode === 'ports') store.cyclePortSortMode();
+          else store.cycleSortMode();
           break;
         case 'V':
           e.preventDefault();
-          store.toggleTreeMode();
+          if (store.viewMode === 'processes') store.toggleTreeMode();
           break;
         case 'F':
           e.preventDefault();
@@ -200,23 +238,23 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
         case 'h':
         case 'ArrowLeft':
           e.preventDefault();
-          if (row?.hasChildren && !store.collapsedPids.has(row.process.pid)) store.toggleCollapsed(row.process.pid);
+          setExpanded(false);
           break;
         case 'l':
         case 'ArrowRight':
           e.preventDefault();
-          if (row?.hasChildren && store.collapsedPids.has(row.process.pid)) store.toggleCollapsed(row.process.pid);
+          setExpanded(true);
           break;
         case 'Tab':
         case 'Enter':
         case ' ':
           e.preventDefault();
-          if (row?.hasChildren) store.toggleCollapsed(row.process.pid);
+          setExpanded();
           break;
         case 'x':
         case 'X':
           e.preventDefault();
-          if (row) {
+          if (row?.process) {
             setPendingKill({
               pid: row.process.pid,
               startTime: row.process.start_time,
@@ -254,7 +292,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
 
       <VStack ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ height: `${tableRatio * 100}%` }}>
-          <ProcessTree rows={rows} />
+          {viewMode === 'ports' ? <PortTable rows={portRows} /> : <ProcessTree rows={rows} />}
         </VStack>
         <div
           role="separator"
@@ -297,16 +335,17 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
               </Text>
             )}
             <KeyHint keys={['j', 'k']} label="navigate" />
-            {treeMode && (
+            {(viewMode === 'ports' || treeMode) && (
               <>
                 <KeyHint keys={['h', 'l']} label="fold/unfold" />
-                <KeyHint keys={['tab', 'enter']} label="toggle" />
+                <KeyHint keys={['tab', 'enter']} label={viewMode === 'ports' ? 'connections' : 'toggle'} />
               </>
             )}
             <KeyHint keys={['x', 'X']} label="term/kill" />
             <KeyHint keys={['F']} label="follow" />
             <KeyHint keys={['s']} label="sort" />
-            <KeyHint keys={['V']} label={treeMode ? 'flat' : 'tree'} />
+            {viewMode === 'processes' && <KeyHint keys={['V']} label={treeMode ? 'flat' : 'tree'} />}
+            <KeyHint keys={['p']} label={viewMode === 'ports' ? 'processes' : 'ports'} />
             <KeyHint keys={['/']} label="filter" />
             <KeyHint keys={['g', 'G']} label="top/bottom" />
             <KeyHint keys={['esc', 'q']} label="close" />

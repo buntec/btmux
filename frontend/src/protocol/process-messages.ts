@@ -1,3 +1,6 @@
+export type { PortInfo } from '../generated/protocol';
+import type { PortInfo } from '../generated/protocol';
+
 export interface ProcessInfo {
   pid: number;
   parent_pid: number | null;
@@ -15,6 +18,8 @@ export interface ProcessInfo {
 export interface ProcessSnapshot {
   type: 'snapshot';
   processes: ProcessInfo[];
+  ports: PortInfo[] | null;
+  ports_error: string | null;
   cpu_count: number;
   mem_used: number;
   mem_total: number;
@@ -42,4 +47,9 @@ export interface ProcessKillRequest {
   pid: number;
   start_time: number;
   signal: ProcessSignal;
+}
+
+export interface ProcessPortsRequest {
+  type: 'set_ports';
+  enabled: boolean;
 }

@@ -251,3 +251,6 @@ export type ToastLevel = "info" | "error";
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";
+
+// prettier-ignore
+export type PortInfo = { pid: number | null, protocol: string, local_address: string, local_port: number, remote_address: string | null, state: string, };

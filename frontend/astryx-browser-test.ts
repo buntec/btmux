@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { createConnection, createServer, type Socket } from 'node:net';
+import { createSocket } from 'node:dgram';
 import { FALLBACK_THEME } from './src/state/startupTheme';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
@@ -84,6 +86,107 @@ try {
   });
   assert.equal(theme.background, theme.palette);
   assert(theme.font.includes(theme.terminalFont));
+
+  const portListener = createServer();
+  const udpSocket = createSocket('udp4');
+  const portClients: Socket[] = [];
+  await new Promise<void>((resolve) => portListener.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) => udpSocket.bind(0, '127.0.0.1', resolve));
+  try {
+    const tcpPort = (portListener.address() as { port: number }).port;
+    const udpPort = udpSocket.address().port;
+    for (let i = 0; i < 2; i++) {
+      await new Promise<void>((resolve) => {
+        portClients.push(createConnection({ port: tcpPort, host: '127.0.0.1' }, resolve));
+      });
+    }
+    await page.evaluate(async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      useStore.getState().setFileBrowserOpen(true, null, pane, 'process');
+    }, pane);
+    const viewer = page.getByRole('dialog', { name: 'Processes', exact: true });
+    await viewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
+    await page.keyboard.press('p');
+    await viewer.getByText('Ports', { exact: true }).waitFor();
+    await page.waitForFunction(
+      async ({ tcpPort, udpPort, pid }) => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        const ports = useProcessStore.getState().snapshot?.ports ?? [];
+        return (
+          ports.some((port) => port.pid === pid && port.local_port === tcpPort && port.protocol === 'TCP') &&
+          ports.some((port) => port.pid === pid && port.local_port === udpPort && port.protocol === 'UDP')
+        );
+      },
+      { tcpPort, udpPort, pid: process.pid },
+    );
+    await page.keyboard.press('/');
+    await page.keyboard.type(String(tcpPort));
+    const tcpRow = viewer.locator('tr[data-port-focused]').filter({ hasText: 'LISTEN' });
+    await tcpRow.first().click();
+    assert((await tcpRow.first().innerText()).includes(String(process.pid)));
+    assert.equal(await tcpRow.count(), 1, 'listener and connections share one port/PID row');
+    const details = viewer.getByRole('table', { name: `Connections for port ${tcpPort}, PID ${process.pid}` });
+    assert.equal(await details.count(), 0, 'connection details are collapsed initially');
+    await viewer
+      .getByRole('button', { name: `Show connections for port ${tcpPort}, PID ${process.pid}`, exact: true })
+      .click();
+    await details.waitFor();
+    assert.equal(await details.getByRole('row').count(), 4, 'listener plus two accepted connections');
+    assert.equal(await details.getByText('ESTABLISHED', { exact: true }).count(), 2);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('h');
+    await details.waitFor({ state: 'detached' });
+    await page.keyboard.press('Enter');
+    await details.waitFor();
+    await page.keyboard.press('Tab');
+    await details.waitFor({ state: 'detached' });
+    await page.keyboard.press('/');
+    await page.keyboard.type(String(tcpPort));
+    await page.keyboard.press('p');
+    assert.equal(await viewer.getByText('Ports', { exact: true }).count(), 1, 'p is text while filtering');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('/');
+    await page.keyboard.type(String(process.pid));
+    await page.waitForFunction(() => document.querySelectorAll('tr[data-port-focused]').length >= 2);
+    await page.keyboard.press('ArrowUp');
+    const focusedKey = await page.evaluate(async () => {
+      const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+      return useProcessStore.getState().focusedPort;
+    });
+    await page.keyboard.press('ArrowDown');
+    const nextKey = await page.evaluate(async () => {
+      const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+      return useProcessStore.getState().focusedPort;
+    });
+    assert.notEqual(nextKey, focusedKey, 'navigation distinguishes sockets owned by one process');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('s');
+    await viewer.getByText('sort: protocol', { exact: true }).waitFor();
+    await viewer.getByRole('button', { name: 'Sort by port', exact: true }).click();
+    await viewer.getByText('sort: port', { exact: true }).waitFor();
+    await page.keyboard.press('/');
+    await page.keyboard.type(String(udpPort));
+    await viewer.locator('tr[data-port-focused]').filter({ hasText: 'UDP' }).first().click();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('x');
+    await viewer.getByText('Terminate', { exact: false }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('p');
+    await viewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
+    await page.waitForFunction(async () => {
+      const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+      return useProcessStore.getState().snapshot?.ports === null;
+    });
+    await page.keyboard.press('p');
+    await viewer.locator('tr[data-port-focused]').first().waitFor();
+    await page.keyboard.press('q');
+    await viewer.waitFor({ state: 'detached' });
+    console.log('PASS grouped ports, connection expansion, process/port toggle, filtering, navigation and sorting');
+  } finally {
+    for (const client of portClients) client.destroy();
+    portListener.close();
+    udpSocket.close();
+  }
 
   const toastIsOnTop = async (message: string) => {
     await page.waitForFunction((message) => {

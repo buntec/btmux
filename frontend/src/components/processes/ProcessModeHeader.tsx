@@ -3,6 +3,7 @@ import { HStack } from '@astryxdesign/core/Layout';
 import { Icon } from '@astryxdesign/core/Icon';
 import { Text } from '@astryxdesign/core/Text';
 import { Token } from '@astryxdesign/core/Token';
+import { Button } from '@astryxdesign/core/Button';
 import { useProcessStore } from '@/state/processStore';
 import { formatBytes } from '@/lib/processFormat';
 import { portKey, PORT_SORT_LABELS } from '@/lib/portRows';
@@ -19,6 +20,7 @@ export function ProcessModeHeader({
 }) {
   const viewMode = useProcessStore((s) => s.viewMode);
   const portSortMode = useProcessStore((s) => s.portSortMode);
+  const setPortSortMode = useProcessStore((s) => s.setPortSortMode);
   const snapshot = useProcessStore((s) => s.snapshot);
   const processCount = useProcessStore((s) => s.processes.length);
   const sortMode = useProcessStore((s) => s.sortMode);
@@ -41,6 +43,17 @@ export function ProcessModeHeader({
         size="sm"
         label={`sort: ${viewMode === 'ports' ? PORT_SORT_LABELS[portSortMode] : PROCESS_SORT_LABELS[sortMode]}`}
       />
+      {viewMode === 'ports' && portSortMode !== 'listeners' && (
+        <Button
+          label="Sort by listeners first"
+          variant="ghost"
+          size="sm"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setPortSortMode('listeners')}
+        >
+          Listeners first
+        </Button>
+      )}
       {viewMode === 'processes' && <Token size="sm" label={treeMode ? 'tree' : 'flat'} />}
       {followFocus && <Token size="sm" color="blue" label="follow" />}
       {filterActive && (

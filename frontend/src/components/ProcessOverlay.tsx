@@ -66,10 +66,13 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     () => buildPortRows(ports ?? [], processes, portSortMode, filterActive ? filterQuery : ''),
     [ports, processes, portSortMode, filterActive, filterQuery],
   );
-  const navigationRows =
-    viewMode === 'ports'
-      ? portRows.map((row) => ({ ...row, hasChildren: false }))
-      : rows.map((row) => ({ ...row, key: String(row.process.pid) }));
+  const navigationRows = useMemo(
+    () =>
+      viewMode === 'ports'
+        ? portRows.map((row) => ({ ...row, hasChildren: false }))
+        : rows.map((row) => ({ ...row, key: String(row.process.pid) })),
+    [viewMode, portRows, rows],
+  );
   // The key handler reads rows through a ref so snapshots don't re-register it.
   const rowsRef = useRef(navigationRows);
   rowsRef.current = navigationRows;
@@ -261,6 +264,11 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
               name: row.process.name || row.process.command,
               signal: e.key === 'X' ? 'kill' : 'term',
             });
+          } else if (row && store.viewMode === 'ports') {
+            store.setMessage({
+              type: 'error',
+              message: 'Cannot signal this socket: process information is unavailable',
+            });
           }
           break;
         case 'q':
@@ -326,6 +334,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
           <>
             {message && (
               <Text
+                role="status"
                 size="sm"
                 color="inherit"
                 textWrap="nowrap"

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { buildPortRows, portKey, resolveFocusedPort } from './src/lib/portRows';
 import type { PortInfo, ProcessInfo } from './src/protocol/process-messages';
+import { useProcessStore } from './src/state/processStore';
 
 const owner: ProcessInfo = {
   pid: 42,
@@ -100,4 +101,75 @@ test('focus stays with the port group when individual remote connections change'
     'port',
   );
   expect(resolveFocusedPort(after, before.key, 42, 0, false)?.key).toBe(before.key);
+});
+
+test('listener sorting keeps UDP and connections visible and sorts each category numerically', () => {
+  const sockets = [
+    { ...port(50), state: 'ESTABLISHED', remote_address: '127.0.0.1:443' },
+    { ...port(53), protocol: 'UDP', state: 'BOUND' },
+    port(8004),
+    port(443),
+    { ...port(8004), state: 'ESTABLISHED', remote_address: '127.0.0.1:50001' },
+  ];
+  const rows = buildPortRows(sockets, [owner], 'listeners');
+  expect(rows.map((row) => row.port.local_port)).toEqual([443, 8004, 50, 53]);
+  expect(rows[1].sockets).toHaveLength(2);
+  expect(buildPortRows(sockets, [owner], 'port').map((row) => row.port.local_port)).toEqual([50, 53, 443, 8004]);
+  const selected = rows[1];
+  const refreshed = buildPortRows([...sockets, port(80)], [owner], 'listeners');
+  expect(resolveFocusedPort(refreshed, selected.key, owner.pid, 1, false)?.key).toBe(selected.key);
+  expect(buildPortRows(sockets, [owner], 'listeners', '50001')[0]?.key).toBe(selected.key);
+});
+
+test('unknown owners group by endpoints and protocol, with stable identity across state changes', () => {
+  const listener = port(8004, null);
+  const connection = { ...listener, state: 'ESTABLISHED', remote_address: '127.0.0.1:50001' };
+  const sockets = [
+    listener,
+    { ...listener, local_address: '::1' },
+    { ...listener, protocol: 'UDP', state: 'BOUND' },
+    connection,
+    { ...connection, remote_address: '127.0.0.1:50002' },
+  ];
+  const rows = buildPortRows(sockets, [], 'listeners');
+  expect(rows).toHaveLength(5);
+  expect(new Set(rows.map((row) => row.key)).size).toBe(5);
+  expect(rows.every((row) => row.process === null && row.sockets.length === 1)).toBe(true);
+  const changed = { ...connection, state: 'CLOSE_WAIT' };
+  expect(portKey(changed)).toBe(portKey(connection));
+  const refreshed = buildPortRows([changed, listener], [], 'listeners');
+  expect(resolveFocusedPort(refreshed, portKey(connection), null, 0, false)?.key).toBe(portKey(connection));
+  const filtered = buildPortRows(sockets, [], 'listeners', '50002');
+  expect(filtered).toHaveLength(1);
+  expect(filtered[0].sockets[0].remote_address).toBe('127.0.0.1:50002');
+  expect(buildPortRows([...sockets].reverse(), [], 'listeners')).toEqual(rows);
+});
+
+test('expanded unknown endpoints survive state changes and disappear independently', () => {
+  const store = useProcessStore.getState();
+  store.reset();
+  try {
+    expect(useProcessStore.getState().portSortMode).toBe('listeners');
+    const first = port(8004, null);
+    const second = { ...first, local_address: '::1' };
+    const snapshot = {
+      type: 'snapshot' as const,
+      processes: [],
+      ports: [first, second],
+      ports_error: null,
+      cpu_count: 1,
+      mem_used: 0,
+      mem_total: 0,
+      load_average: [0, 0, 0] as [number, number, number],
+    };
+    store.setSnapshot(snapshot);
+    store.togglePortExpanded(portKey(first));
+    store.togglePortExpanded(portKey(second));
+    store.setSnapshot({ ...snapshot, ports: [{ ...second, state: 'CLOSED' }] });
+    expect([...useProcessStore.getState().expandedPorts]).toEqual([portKey(second)]);
+    store.setSnapshot({ ...snapshot, ports: [] });
+    expect(useProcessStore.getState().expandedPorts.size).toBe(0);
+  } finally {
+    store.reset();
+  }
 });

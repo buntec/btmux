@@ -81,7 +81,6 @@ export function PortTable({ rows }: { rows: PortRow[] }) {
             {rows.map(({ key, port, process, sockets, connectionCount }) => (
               <Fragment key={key}>
                 <TableRow
-                  key={key}
                   data-port-focused={key === focusedPort}
                   aria-selected={key === focusedPort}
                   aria-expanded={expandedPorts.has(key)}
@@ -119,7 +118,7 @@ export function PortTable({ rows }: { rows: PortRow[] }) {
                   <TableCell>{port.pid ?? '—'}</TableCell>
                   <TableCell>
                     <Text type="inherit" color="inherit" textWrap="nowrap">
-                      {process?.name || 'Unavailable'}
+                      {process?.name || (port.pid === null ? 'Unknown owner' : 'Process unavailable')}
                     </Text>
                   </TableCell>
                   <TableCell>{connectionCount}</TableCell>

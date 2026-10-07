@@ -50,6 +50,23 @@ try {
     viewport: { width: 1440, height: 900 },
     permissions: ['clipboard-write'],
   });
+  await context.addInitScript(() => {
+    const Original = window.WebSocket;
+    (window as any).processTestSockets = [];
+    (window as any).processTestCommands = [];
+    window.WebSocket = class extends Original {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        if (this.url.endsWith('/ws/processes')) (window as any).processTestSockets.push(this);
+      }
+      send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        if (this.url.endsWith('/ws/processes') && typeof data === 'string') {
+          (window as any).processTestCommands.push(JSON.parse(data));
+        }
+        super.send(data);
+      }
+    };
+  });
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -119,6 +136,19 @@ try {
       },
       { tcpPort, udpPort, pid: process.pid },
     );
+    await viewer.getByText('sort: listeners first', { exact: true }).waitFor();
+    const assertListenersFirst = async () => {
+      const states = await viewer.locator('tr[data-port-focused] > td:nth-child(4)').allTextContents();
+      const firstOther = states.findIndex((state) => state !== 'LISTEN');
+      assert(firstOther >= 0, 'UDP and connection-only groups remain visible');
+      assert(states.slice(0, firstOther).length > 0, 'listeners are visible');
+      assert(
+        states.slice(firstOther).every((state) => state !== 'LISTEN'),
+        'listeners precede other rows',
+      );
+    };
+    await viewer.locator('tr[data-port-focused]').first().waitFor();
+    await assertListenersFirst();
     await page.keyboard.press('/');
     await page.keyboard.type(String(tcpPort));
     const tcpRow = viewer.locator('tr[data-port-focused]').filter({ hasText: 'LISTEN' });
@@ -161,9 +191,14 @@ try {
     assert.notEqual(nextKey, focusedKey, 'navigation distinguishes sockets owned by one process');
     await page.keyboard.press('Escape');
     await page.keyboard.press('s');
+    await viewer.getByText('sort: port', { exact: true }).waitFor();
+    await page.keyboard.press('s');
     await viewer.getByText('sort: protocol', { exact: true }).waitFor();
     await viewer.getByRole('button', { name: 'Sort by port', exact: true }).click();
     await viewer.getByText('sort: port', { exact: true }).waitFor();
+    await viewer.getByRole('button', { name: 'Sort by listeners first', exact: true }).click();
+    await viewer.getByText('sort: listeners first', { exact: true }).waitFor();
+    await assertListenersFirst();
     await page.keyboard.press('/');
     await page.keyboard.type(String(udpPort));
     await viewer.locator('tr[data-port-focused]').filter({ hasText: 'UDP' }).first().click();
@@ -179,6 +214,59 @@ try {
     });
     await page.keyboard.press('p');
     await viewer.locator('tr[data-port-focused]').first().waitFor();
+
+    const otherPage = await context.newPage();
+    try {
+      await otherPage.goto(`${url}/s/${encodeURIComponent(session.name)}`);
+      await otherPage.waitForFunction(async (pane) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        return useStore.getState().terminals.has(pane);
+      }, pane);
+      await otherPage.evaluate(async (pane) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        useStore.getState().setFileBrowserOpen(true, null, pane, 'process');
+      }, pane);
+      const otherViewer = otherPage.getByRole('dialog', { name: 'Processes', exact: true });
+      await otherViewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
+      await otherPage.waitForFunction(async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        return useProcessStore.getState().snapshot?.ports === null;
+      });
+      await page.evaluate(() => {
+        const sockets = (window as any).processTestSockets;
+        sockets.at(-1).close();
+      });
+      await page.waitForFunction(async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        const sockets = (window as any).processTestSockets;
+        return sockets.length >= 2 && sockets.at(-1).readyState === 1 && useProcessStore.getState().snapshot?.ports;
+      });
+      assert.deepEqual(
+        await page.evaluate(() => (window as any).processTestCommands.at(-1)),
+        { type: 'set_ports', enabled: true },
+        'reconnect restores ports subscription',
+      );
+      await otherPage.keyboard.press('p');
+      await otherViewer.locator('tr[data-port-focused]').first().waitFor();
+      await otherPage.keyboard.press('p');
+      await otherViewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
+      await otherPage.waitForFunction(async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        return useProcessStore.getState().snapshot?.ports === null;
+      });
+      const sample = await page.evaluate(async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        return useProcessStore.getState().snapshot;
+      });
+      await page.waitForFunction(async (previous) => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        const current = useProcessStore.getState().snapshot;
+        return current?.ports && JSON.stringify(current) !== JSON.stringify(previous);
+      }, sample);
+      console.log('PASS process socket reconnect restores ports and viewers toggle independently');
+    } finally {
+      await otherPage.close();
+    }
     await page.keyboard.press('q');
     await viewer.waitFor({ state: 'detached' });
     console.log('PASS grouped ports, connection expansion, process/port toggle, filtering, navigation and sorting');
@@ -186,6 +274,88 @@ try {
     for (const client of portClients) client.destroy();
     portListener.close();
     udpSocket.close();
+  }
+
+  const unavailablePage = await context.newPage();
+  const unavailableCommands: Array<{ type: string }> = [];
+  await unavailablePage.routeWebSocket(/\/ws\/processes$/, (socket) => {
+    const snapshot = {
+      type: 'snapshot',
+      processes: [],
+      ports: null,
+      ports_error: null,
+      cpu_count: 1,
+      mem_used: 0,
+      mem_total: 0,
+      load_average: [0, 0, 0],
+    };
+    socket.send(JSON.stringify(snapshot));
+    socket.onMessage((message) => {
+      const command = JSON.parse(String(message));
+      unavailableCommands.push(command);
+      if (command.type === 'set_ports') {
+        const port = {
+          pid: null,
+          protocol: 'TCP',
+          local_address: '127.0.0.1',
+          local_port: 62222,
+          remote_address: null,
+          state: 'LISTEN',
+        };
+        socket.send(
+          JSON.stringify({
+            ...snapshot,
+            ports: command.enabled
+              ? [
+                  port,
+                  { ...port, local_address: '::1' },
+                  { ...port, protocol: 'UDP', state: 'BOUND' },
+                  { ...port, pid: 99 },
+                ]
+              : null,
+          }),
+        );
+      }
+    });
+  });
+  try {
+    await unavailablePage.goto(`${url}/s/${encodeURIComponent(session.name)}`);
+    await unavailablePage.waitForFunction(async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().terminals.has(pane);
+    }, pane);
+    await unavailablePage.evaluate(async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      useStore.getState().setFileBrowserOpen(true, null, pane, 'process');
+    }, pane);
+    const viewer = unavailablePage.getByRole('dialog', { name: 'Processes', exact: true });
+    await viewer.getByText('No processes', { exact: true }).waitFor();
+    await unavailablePage.keyboard.press('p');
+    await viewer.locator('tr[data-port-focused]').first().waitFor();
+    assert.equal(await viewer.locator('tr[data-port-focused]').count(), 4);
+    assert.equal(await viewer.getByText('Unknown owner', { exact: true }).count(), 3);
+    await viewer.getByText('4', { exact: true }).waitFor();
+    for (const label of ['Unknown owner', 'Process unavailable']) {
+      await viewer.getByText(label, { exact: true }).first().click();
+      for (const key of ['x', 'X']) {
+        await unavailablePage.evaluate(async () => {
+          const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+          useProcessStore.getState().setMessage(null);
+        });
+        await unavailablePage.keyboard.press(key);
+        await viewer
+          .getByRole('status')
+          .getByText('Cannot signal this socket: process information is unavailable', { exact: true })
+          .waitFor();
+      }
+    }
+    assert(
+      unavailableCommands.every((command) => command.type !== 'kill'),
+      'unavailable owners cannot be signaled',
+    );
+    console.log('PASS unknown endpoint grouping, header count and unavailable process signal feedback');
+  } finally {
+    await unavailablePage.close();
   }
 
   const toastIsOnTop = async (message: string) => {
@@ -214,6 +384,7 @@ try {
   });
   assert(spacing >= 16, 'settings groups must retain Astryx container padding');
   await toastIsOnTop('Toast before settings');
+  await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await dialog.getByRole('button', { name: 'Copy TOML', exact: true }).click();
   await toastIsOnTop('Settings copied to clipboard');
   await page

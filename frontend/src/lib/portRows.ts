@@ -1,8 +1,9 @@
 import type { PortInfo, ProcessInfo } from '../protocol/process-messages';
 
-export const PORT_SORT_MODES = ['port', 'protocol', 'address', 'state', 'pid', 'command'] as const;
+export const PORT_SORT_MODES = ['listeners', 'port', 'protocol', 'address', 'state', 'pid', 'command'] as const;
 export type PortSortMode = (typeof PORT_SORT_MODES)[number];
 export const PORT_SORT_LABELS: Record<PortSortMode, string> = {
+  listeners: 'listeners first',
   port: 'port',
   protocol: 'protocol',
   address: 'address',
@@ -20,6 +21,9 @@ export interface PortRow {
 }
 
 export function portKey(port: PortInfo): string {
+  if (port.pid === null) {
+    return JSON.stringify([port.local_port, null, port.protocol, port.local_address, port.remote_address]);
+  }
   return JSON.stringify([port.local_port, port.pid]);
 }
 
@@ -87,6 +91,8 @@ export function buildPortRows(
   return rows.sort((a, b) => {
     const comparison = (() => {
       switch (sortMode) {
+        case 'listeners':
+          return Number(b.sockets.some(isListener)) - Number(a.sockets.some(isListener));
         case 'port':
           return a.port.local_port - b.port.local_port;
         case 'protocol':
@@ -103,6 +109,10 @@ export function buildPortRows(
     })();
     return comparison || a.port.local_port - b.port.local_port || a.key.localeCompare(b.key);
   });
+}
+
+function isListener(socket: PortInfo): boolean {
+  return socket.protocol === 'TCP' && socket.state === 'LISTEN';
 }
 
 export function resolveFocusedPort(

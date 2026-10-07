@@ -61,6 +61,10 @@ Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the comm
 ## Development
 
 Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and [`just`](https://github.com/casey/just).
+On macOS, install Xcode Command Line Tools (`xcode-select --install`): socket
+enumeration builds generate bindings using the macOS SDK and libclang. If
+libclang is installed separately, set `LIBCLANG_PATH` to its library directory.
+The pinned socket enumeration dependency does not require libclang on Linux.
 
 ```sh
 just setup  # install dependencies

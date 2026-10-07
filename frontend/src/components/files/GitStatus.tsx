@@ -10,6 +10,7 @@ export interface GitItem {
   kind: 'section-header' | 'file';
   section: string;
   path?: string;
+  oldPath?: string | null;
   status?: FileStatus;
   additions?: number;
   deletions?: number;
@@ -41,6 +42,7 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
           kind: 'file',
           section: 'staged',
           path: entry.path,
+          oldPath: entry.old_path,
           status: entry.status,
           additions: entry.additions,
           deletions: entry.deletions,
@@ -63,6 +65,7 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
           kind: 'file',
           section: 'unstaged',
           path: entry.path,
+          oldPath: entry.old_path,
           status: entry.status,
           additions: entry.additions,
           deletions: entry.deletions,
@@ -239,7 +242,7 @@ export function GitStatus() {
                     'flex items-center gap-2 px-2 pl-5 cursor-pointer leading-tight',
                     i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   )}
-                  title={path}
+                  title={item.oldPath ? `${item.oldPath} → ${path}` : path}
                 >
                   {statusIcon(item.status!)}
                   {/* The directory truncates first so the filename stays visible. */}
@@ -255,6 +258,16 @@ export function GitStatus() {
                       </span>
                     )}
                     <span className="min-w-0 shrink-0 truncate max-w-full">{filename}</span>
+                    {item.oldPath && (
+                      <span
+                        className={cn(
+                          'ml-2 min-w-0 truncate',
+                          i === gitFocusedIndex ? 'text-on-accent/70' : 'text-secondary',
+                        )}
+                      >
+                        ← {item.oldPath}
+                      </span>
+                    )}
                   </span>
                   <DiffStat additions={item.additions ?? 0} deletions={item.deletions ?? 0} />
                 </div>

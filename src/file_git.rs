@@ -1,6 +1,6 @@
 use git2::{
-    BranchType, DiffDelta, DiffHunk as GitDiffHunk, DiffLine as GitDiffLine, DiffOptions,
-    ErrorCode, Oid, Repository, Sort, Status, StatusOptions,
+    BranchType, DiffDelta, DiffFindOptions, DiffHunk as GitDiffHunk, DiffLine as GitDiffLine,
+    DiffOptions, ErrorCode, Oid, Repository, Sort, Status, StatusOptions,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -248,7 +248,9 @@ fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusRes
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
-        .include_unmodified(false);
+        .include_unmodified(false)
+        .renames_head_to_index(true)
+        .renames_index_to_workdir(true);
     if !prefix.is_empty() {
         opts.pathspec(&prefix);
     }
@@ -288,10 +290,11 @@ fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusRes
                 | Status::INDEX_RENAMED
                 | Status::INDEX_TYPECHANGE,
         ) {
+            let path = delta_new_path(entry.head_to_index()).unwrap_or_else(|| path.clone());
             staged.push(StatusEntry {
                 path: path.clone(),
                 status: index_status_to_enum(st),
-                old_path: None,
+                old_path: rename_old_path(entry.head_to_index(), &path),
                 additions: staged_stats.get(&path).map_or(0, |stats| stats.additions),
                 deletions: staged_stats.get(&path).map_or(0, |stats| stats.deletions),
             });
@@ -300,10 +303,11 @@ fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusRes
         if st.intersects(
             Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_TYPECHANGE | Status::WT_RENAMED,
         ) {
+            let path = delta_new_path(entry.index_to_workdir()).unwrap_or_else(|| path.clone());
             unstaged.push(StatusEntry {
                 path: path.clone(),
                 status: wt_status_to_enum(st),
-                old_path: None,
+                old_path: rename_old_path(entry.index_to_workdir(), &path),
                 additions: unstaged_stats.get(&path).map_or(0, |stats| stats.additions),
                 deletions: unstaged_stats.get(&path).map_or(0, |stats| stats.deletions),
             });
@@ -532,15 +536,11 @@ fn diff_line_stats(
     }
 
     let diff = if staged {
-        let head_tree = repo
-            .head()
-            .ok()
-            .and_then(|reference| reference.peel_to_tree().ok());
-        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts))
+        staged_diff(repo, &mut diff_opts)?
     } else {
         repo.diff_index_to_workdir(None, Some(&mut diff_opts))
-    }
-    .map_err(|e| format!("Failed to get diff stats: {}", e))?;
+            .map_err(|e| format!("Failed to get diff stats: {}", e))?
+    };
 
     let mut stats = HashMap::new();
     let mut file_cb = |_delta: DiffDelta<'_>, _progress: f32| true;
@@ -630,6 +630,26 @@ fn get_head_info(repo: &Repository) -> GitHead {
     }
 }
 
+fn delta_new_path(delta: Option<DiffDelta<'_>>) -> Option<String> {
+    Some(delta?.new_file().path()?.to_string_lossy().into_owned())
+}
+
+fn rename_old_path(delta: Option<DiffDelta<'_>>, path: &str) -> Option<String> {
+    let old = delta?.old_file().path()?.to_string_lossy().into_owned();
+    (old != path).then_some(old)
+}
+
+/// Staged diff (HEAD to index) with rename detection applied.
+fn staged_diff<'r>(repo: &'r Repository, opts: &mut DiffOptions) -> Result<git2::Diff<'r>, String> {
+    let head_tree = repo.head().ok().and_then(|r| r.peel_to_tree().ok());
+    let mut diff = repo
+        .diff_tree_to_index(head_tree.as_ref(), None, Some(opts))
+        .map_err(|e| format!("Failed to get diff: {}", e))?;
+    diff.find_similar(Some(DiffFindOptions::new().renames(true)))
+        .map_err(|e| format!("Failed to detect renames: {}", e))?;
+    Ok(diff)
+}
+
 fn index_status_to_enum(st: Status) -> FileStatus {
     if st.contains(Status::INDEX_NEW) {
         FileStatus::Added
@@ -689,7 +709,10 @@ fn git_diff_file_sync(
     let repo = open_repo(root)?;
 
     let mut diff_opts = DiffOptions::new();
-    diff_opts.pathspec(path);
+    // Staged diffs are filtered after rename detection: a pathspec would hide the rename source.
+    if !staged {
+        diff_opts.pathspec(path);
+    }
     diff_opts.ignore_whitespace(ignore_all_space);
 
     let workdir = repo.workdir().ok_or("Bare repository")?;
@@ -711,35 +734,44 @@ fn git_diff_file_sync(
     }
 
     let diff = if staged {
-        let head_tree = repo.head().ok().and_then(|r| r.peel_to_tree().ok());
-        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts))
+        staged_diff(&repo, &mut diff_opts)?
     } else {
         repo.diff_index_to_workdir(None, Some(&mut diff_opts))
-    }
-    .map_err(|e| format!("Failed to get diff: {}", e))?;
+            .map_err(|e| format!("Failed to get diff: {}", e))?
+    };
 
     let mut hunks: Vec<DiffHunk> = Vec::new();
     let mut is_binary = false;
     let mut diff_path = path.to_string();
     let mut old_path: Option<String> = None;
 
-    let num_deltas = diff.deltas().len();
-    for delta_idx in 0..num_deltas {
-        let delta = diff.deltas().nth(delta_idx).unwrap();
+    for patch_idx in 0..diff.deltas().len() {
+        let delta = diff.deltas().nth(patch_idx).unwrap();
+        let new_path = delta
+            .new_file()
+            .path()
+            .map(|p| p.to_string_lossy().into_owned());
+        let delta_path = new_path.clone().or_else(|| {
+            delta
+                .old_file()
+                .path()
+                .map(|p| p.to_string_lossy().into_owned())
+        });
+        if staged && delta_path.as_deref() != Some(path) {
+            continue;
+        }
         is_binary = delta.flags().is_binary();
-        if let Some(p) = delta.new_file().path() {
-            diff_path = p.to_string_lossy().to_string();
+        if let Some(p) = new_path {
+            diff_path = p;
         }
-        if let Some(p) = delta.old_file().path() {
-            let old = p.to_string_lossy().to_string();
-            if old != diff_path {
-                old_path = Some(old);
-            }
-        }
-    }
+        old_path = delta.old_file().path().and_then(|p| {
+            let old = p.to_string_lossy().into_owned();
+            (old != diff_path).then_some(old)
+        });
 
-    let mut patch_idx = 0;
-    while let Ok(Some(patch)) = git2::Patch::from_diff(&diff, patch_idx) {
+        let Ok(Some(patch)) = git2::Patch::from_diff(&diff, patch_idx) else {
+            continue;
+        };
         let num_hunks = patch.num_hunks();
         for hunk_idx in 0..num_hunks {
             let (hunk, _num_lines) = patch
@@ -768,7 +800,6 @@ fn git_diff_file_sync(
                 lines,
             });
         }
-        patch_idx += 1;
     }
 
     Ok(FileDiff {
@@ -813,7 +844,22 @@ fn git_unstage_file_sync(root: &Path, path: &str) -> Result<(), String> {
         .and_then(|r| r.peel_to_commit())
         .map_err(|e| format!("Failed to get HEAD: {}", e))?;
 
-    repo.reset_default(Some(head.as_object()), [path])
+    // A staged rename spans two paths; reset both so the pair stays consistent.
+    let mut paths = vec![path.to_string()];
+    if let Ok(diff) = staged_diff(&repo, &mut DiffOptions::new()) {
+        paths.extend(diff.deltas().find_map(|d| {
+            let new = d.new_file().path()?.to_string_lossy();
+            (d.status() == git2::Delta::Renamed && new == path)
+                .then(|| {
+                    d.old_file()
+                        .path()
+                        .map(|p| p.to_string_lossy().into_owned())
+                })
+                .flatten()
+        }));
+    }
+
+    repo.reset_default(Some(head.as_object()), paths)
         .map_err(|e| format!("Failed to unstage file: {}", e))?;
 
     Ok(())
@@ -900,6 +946,7 @@ mod tests {
     use super::{
         count_untracked_lines, git_commit_diff_sync, git_commit_sync,
         git_delete_untracked_file_sync, git_diff_file_sync, git_log_sync, git_status_sync,
+        git_unstage_file_sync,
     };
     use git2::{Repository, Signature};
     use std::fs;
@@ -973,6 +1020,46 @@ mod tests {
         let status = git_status_sync(&root, true).unwrap();
         assert_eq!(status.staged[0].additions, 2);
         assert_eq!(status.staged[0].deletions, 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_rename_is_reported_as_one_entry() {
+        let root = std::env::temp_dir().join(format!("btmux-git-rename-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let content = "alpha\nbeta\ngamma\ndelta\nepsilon\n";
+        fs::write(root.join("old.txt"), content).unwrap();
+
+        let repo = Repository::init(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("old.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+
+        fs::rename(root.join("old.txt"), root.join("new.txt")).unwrap();
+        index.remove_path(Path::new("old.txt")).unwrap();
+        index.add_path(Path::new("new.txt")).unwrap();
+        index.write().unwrap();
+
+        let status = git_status_sync(&root, true).unwrap();
+        assert_eq!(status.staged.len(), 1);
+        assert_eq!(status.staged[0].path, "new.txt");
+        assert_eq!(status.staged[0].old_path.as_deref(), Some("old.txt"));
+        assert!(matches!(
+            status.staged[0].status,
+            super::FileStatus::Renamed
+        ));
+
+        let diff = git_diff_file_sync(&root, "new.txt", true, false).unwrap();
+        assert_eq!(diff.old_path.as_deref(), Some("old.txt"));
+
+        git_unstage_file_sync(&root, "new.txt").unwrap();
+        let status = git_status_sync(&root, false).unwrap();
+        assert!(status.staged.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

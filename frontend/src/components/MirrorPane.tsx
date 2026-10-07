@@ -22,6 +22,8 @@ interface Props {
    * back in we resume and recompute the fit-scale (offsetWidth is 0 while hidden).
    */
   visible: boolean;
+  /** Reports the terminal's natural (unscaled) pixel size whenever it changes. */
+  onNaturalSize?: (width: number, height: number) => void;
 }
 
 /**
@@ -34,7 +36,14 @@ interface Props {
  * the live shell and clear its scrollback. The canvas downscales cleanly, so TUIs
  * stay pixel-faithful.
  */
-export function MirrorPane({ paneId, config: configOverride, shaderId, animations = true, visible }: Props) {
+export function MirrorPane({
+  paneId,
+  config: configOverride,
+  shaderId,
+  animations = true,
+  visible,
+  onNaturalSize,
+}: Props) {
   const cellRef = useRef<HTMLDivElement>(null);
   const scalerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -59,6 +68,8 @@ export function MirrorPane({ paneId, config: configOverride, shaderId, animation
   // would dispose+rebuild the terminal and reconnect the socket).
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const onNaturalSizeRef = useRef(onNaturalSize);
+  onNaturalSizeRef.current = onNaturalSize;
 
   // Recompute the CSS scale that fits the natural (full-size) canvas into the
   // grid cell, preserving aspect ratio and anchoring top-left like a terminal.
@@ -72,6 +83,7 @@ export function MirrorPane({ paneId, config: configOverride, shaderId, animation
     const naturalW = (canvas as HTMLCanvasElement | null)?.offsetWidth ?? scaler.offsetWidth;
     const naturalH = (canvas as HTMLCanvasElement | null)?.offsetHeight ?? scaler.offsetHeight;
     if (!naturalW || !naturalH) return;
+    onNaturalSizeRef.current?.(naturalW, naturalH);
     const scale = Math.min(cell.clientWidth / naturalW, cell.clientHeight / naturalH);
     scaler.style.transform = `scale(${scale})`;
   };

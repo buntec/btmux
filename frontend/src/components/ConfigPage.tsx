@@ -853,12 +853,12 @@ export function ConfigPage({ config, send }: Props) {
                         {toggle(
                           'wallpaperFollowsMouse',
                           'Follow mouse cursor',
-                          'Moves the center or position on effects that provide one.',
+                          'Drives interactive effects, or moves the center or position when provided.',
                         )}
                         {toggle(
                           'wallpaperFollowsKeyboard',
                           'Follow keyboard input',
-                          'Moves the effect center to the active terminal cursor.',
+                          'Drives interactive effects from the active terminal cursor.',
                         )}
                       </FormLayout>
                       <Text color="secondary">

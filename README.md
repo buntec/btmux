@@ -103,10 +103,17 @@ center = { x = 0.5, y = 0.0 }
 
 Each generator has its own parameter table. Names use kebab-case, matching the
 Settings TOML export; colors, numbers, booleans, positions, and gradient stop arrays
-are supported. The global wallpaper speed multiplies native speed parameters.
+are supported. The global wallpaper speed multiplies native speed parameters,
+or scales simulation time for interactive effects.
 The wallpaper seed supplies a numeric seed only when a generator's own `seed`
 parameter is unset. Cursor-following moves `center` or `position` on generators
-that expose those parameters.
+that expose those parameters and supplies input to interactive effects.
+
+Interactive wallpapers include `chroma-flow`, `cursor-trail`, `ink-flow`, and
+`boids`, with their native parameters available in Settings. The flow and trail
+effects respond to mouse or terminal-cursor movement; Boids animates an autonomous
+flock that can attract or repel the cursor. The cursor-following switches control
+which input sources reach them, and disabling animations freezes simulations.
 
 WebGPU is required; unsupported browsers and GPU failures leave the theme
 background visible. Frame rates are capped to 10–60 FPS, and background tabs,

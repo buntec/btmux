@@ -10,8 +10,16 @@ import {
 const aurora = findWallpaperShader('aurora')!;
 
 test('catalog contains native generators and rejects retired wallpaper IDs', () => {
-  expect(WALLPAPER_SHADERS.length).toBe(18);
+  expect(WALLPAPER_SHADERS.length).toBe(22);
   expect(aurora.component).toBe('Aurora');
+  for (const [id, component] of [
+    ['chroma-flow', 'ChromaFlow'],
+    ['cursor-trail', 'CursorTrail'],
+    ['ink-flow', 'InkFlow'],
+    ['boids', 'Boids'],
+  ]) {
+    expect(findWallpaperShader(id)?.component).toBe(component);
+  }
   expect(findWallpaperShader('radiant:aurora-curtain')).toBeNull();
   expect(findWallpaperShader('btmux:hexagonal-truchet')).toBeNull();
   expect(findWallpaperShader('missing')).toBeNull();

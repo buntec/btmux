@@ -90,6 +90,11 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
   }, []);
 
   return findWallpaperShader(props.shaderId) ? (
-    <canvas ref={canvasRef} aria-hidden="true" className="fixed -z-10 pointer-events-none" />
+    <canvas
+      ref={canvasRef}
+      data-shader-id={props.shaderId}
+      aria-hidden="true"
+      className="fixed -z-10 pointer-events-none"
+    />
   ) : null;
 }

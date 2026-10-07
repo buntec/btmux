@@ -10,26 +10,80 @@ export interface WallpaperRuntimeOptions {
   resolution: number;
   animated: boolean;
   paused: boolean;
+  followsMouseCursor: boolean;
+  followsKeyboardInput: boolean;
 }
+
+type FragmentParams = Parameters<GpuShaderDefinition['fragment']>[0];
+type NativeFrameParams = Parameters<Parameters<FragmentParams['onBeforeRender']>[0]>[0];
+type FrameParams = Omit<NativeFrameParams, 'pointer'> & {
+  pointer: NativeFrameParams['pointer'] & { seen?: boolean };
+};
 
 export async function loadWallpaperRenderer(id: string) {
   const load = WALLPAPER_SHADER_LOADERS[id as keyof typeof WALLPAPER_SHADER_LOADERS];
   const shader = findWallpaperShader(id);
   if (!load || !shader) return null;
   const { componentDefinition } = await load();
-  const definition = componentDefinition as GpuShaderDefinition;
+  const source = componentDefinition as GpuShaderDefinition;
   return (canvas: HTMLCanvasElement, options: WallpaperRuntimeOptions, onUnavailable: () => void) => {
     // The core API has no telemetry collector and gives us direct runtime controls.
     const renderer = shaderRendererGPU();
     let disposed = false;
     let current = options;
     let lastValues: Record<string, unknown> = {};
+    let pointer = { x: 0.5, y: 0.5, seen: false };
+    const running = () => current.animated && current.speed > 0 && !current.paused && !document.hidden;
+    const frame = (params: FrameParams): FrameParams => {
+      const seen = pointer.seen && (current.followsMouseCursor || current.followsKeyboardInput);
+      return {
+        ...params,
+        deltaTime: running() ? params.deltaTime * current.speed : 0,
+        pointer: source.name === 'Boids' && !seen ? { x: -10, y: -10 } : { ...pointer, seen },
+        pointerActive: seen,
+      };
+    };
+    const callbacks = (params: FragmentParams): FragmentParams => ({
+      ...params,
+      onBeforeRender: (callback) =>
+        params.onBeforeRender((params) => {
+          if (running()) callback(frame(params));
+        }),
+    });
+    // Route simulation input ourselves so native window listeners can't bypass settings.
+    const definition: GpuShaderDefinition = source.usesPointer
+      ? {
+          ...source,
+          usesPointer: false,
+          fragment: (params) => source.fragment(callbacks(params)),
+          compute: source.compute
+            ? (params) => {
+                const simulation = source.compute!(callbacks(params));
+                if (!simulation) return null;
+                let firstFrame = true;
+                return {
+                  ...simulation,
+                  getComputeNodes: (params) => {
+                    if (!running() && !firstFrame) return null;
+                    firstFrame = false;
+                    return simulation.getComputeNodes(frame(params as FrameParams));
+                  },
+                };
+              }
+            : undefined,
+        }
+      : source;
     const position = shader.params.find((param) => ['center', 'position'].includes(param.name));
     renderer.setOnUnavailable(onUnavailable);
     renderer.setOnDeviceLost(onUnavailable);
     renderer.registerNode('root', rootPassthrough.fragment, null, null, {}, rootPassthrough);
     const values = () =>
-      wallpaperUniformValues(shader, current.params, current.seed, current.animated ? current.speed : 0);
+      wallpaperUniformValues(
+        shader,
+        current.params,
+        current.seed,
+        source.usesPointer ? 1 : current.animated ? current.speed : 0,
+      );
     lastValues = values();
     renderer.registerNode(
       'wallpaper',
@@ -50,8 +104,7 @@ export async function loadWallpaperRenderer(id: string) {
         renderer.updateUniformValue('wallpaper', name, value);
         lastValues[name] = value;
       }
-      if (definition.animatedTime && next.animated && next.speed > 0 && !next.paused && !document.hidden)
-        renderer.startAnimation();
+      if ((source.animatedTime || source.usesPointer) && running()) renderer.startAnimation();
       else renderer.stopAnimation();
     };
     const resize = () => {
@@ -72,13 +125,15 @@ export async function loadWallpaperRenderer(id: string) {
       },
       update,
       pointer(clientX: number, clientY: number) {
-        if (disposed || !position || current.paused || !renderer.isInitialized()) return;
+        if (disposed || current.paused || !renderer.isInitialized() || (!position && !source.usesPointer)) return;
         const rect = canvas.getBoundingClientRect();
         if (!rect.width || !rect.height) return;
         const value = {
           x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
           y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
         };
+        if (source.usesPointer) pointer = { ...value, seen: true };
+        if (!position) return;
         renderer.updateUniformValue('wallpaper', position.name, value);
         lastValues[position.name] = value;
       },

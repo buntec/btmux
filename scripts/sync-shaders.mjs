@@ -7,10 +7,14 @@ const root = resolve(import.meta.dirname, "..");
 const require = createRequire(resolve(root, "frontend/package.json"));
 const components = [
   "Aurora",
+  "Boids",
   "Checkerboard",
+  "ChromaFlow",
+  "CursorTrail",
   "FractalNoise",
   "GaborNoise",
   "Grid",
+  "InkFlow",
   "IsometricCubes",
   "LinearGradient",
   "Marble",

@@ -129,7 +129,7 @@ try {
     assert.notEqual(await capture(), initial, 'native parameter changes must change rendered pixels');
     const frozen = await capture();
     await page.waitForTimeout(250);
-    assert.equal(await capture(), frozen, 'disabled animations must preserve the last frame');
+    assert((await capture()) === frozen, 'disabled animations must preserve the last frame');
     console.log('PASS WebGPU rendering, resolution, live parameters, and frozen animation');
     const generators = await page.evaluate(async () => {
       const { WALLPAPER_SHADERS } = await import('/src/lib/wallpaperCatalog.ts' as string);
@@ -142,7 +142,17 @@ try {
         const create = await loadWallpaperRenderer(shader.id);
         const renderer = create!(
           canvas,
-          { params: {}, seed: 'test', speed: 1, fps: 10, resolution: 0.4, animated: false, paused: false },
+          {
+            params: {},
+            seed: 'test',
+            speed: 1,
+            fps: 10,
+            resolution: 0.4,
+            animated: false,
+            paused: false,
+            followsMouseCursor: true,
+            followsKeyboardInput: false,
+          },
           () => unavailable.push(shader.id),
         );
         try {
@@ -155,7 +165,82 @@ try {
       return unavailable;
     });
     assert.deepEqual(generators, [], 'all native generators must initialize');
-    console.log('PASS all 18 native generators initialize');
+    console.log('PASS all 22 native generators initialize');
+    const interactive = ['chroma-flow', 'cursor-trail', 'ink-flow', 'boids'];
+    const configure = async (update: Record<string, unknown>) => {
+      await send({ type: 'update_config', update });
+      await page.waitForFunction(
+        (update) =>
+          Object.entries(update).every(
+            ([key, value]) =>
+              JSON.stringify((window as any).shaderStore.getState().config[key]) === JSON.stringify(value),
+          ),
+        update,
+      );
+      await page.waitForTimeout(150);
+    };
+    const move = async (keyboard = false) => {
+      for (let step = 0; step <= 12; step++) {
+        const x = 150 + step * 50;
+        const y = 250 + Math.sin(step / 3) * 100;
+        if (keyboard)
+          await page.evaluate(
+            ({ x, y }) =>
+              window.dispatchEvent(new CustomEvent('btmux:wallpaper-keyboard-cursor', { detail: { x, y } })),
+            { x, y },
+          );
+        else await page.mouse.move(x, y);
+        await page.waitForTimeout(60);
+      }
+    };
+    for (const id of interactive) {
+      await configure({
+        wallpaper_shader: id,
+        animations: true,
+        wallpaper_speed: 1,
+        wallpaper_shader_follows_mouse_cursor: false,
+        wallpaper_shader_follows_keyboard_input: false,
+      });
+      await page.waitForFunction((id) => {
+        const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]');
+        return canvas?.dataset.shaderId === id && canvas.dataset.shaderState === 'ready';
+      }, id);
+      const idle = await capture();
+      await move();
+      if (id !== 'boids') assert((await capture()) === idle, `${id} must ignore disabled pointer input`);
+      else assert.notEqual(await capture(), idle, 'Boids must animate without pointer input');
+      await configure({ wallpaper_shader_follows_mouse_cursor: true });
+      const before = await capture();
+      await move();
+      assert.notEqual(await capture(), before, `${id} must respond to pointer movement`);
+      await configure({ animations: false });
+      const frozen = await capture();
+      await move();
+      assert((await capture()) === frozen, `${id} must freeze with animations disabled`);
+      await configure({ animations: true, wallpaper_speed: 0 });
+      const stopped = await capture();
+      await move();
+      assert((await capture()) === stopped, `${id} must freeze at zero global speed`);
+      await configure({
+        wallpaper_speed: 1,
+        wallpaper_shader_follows_mouse_cursor: false,
+        wallpaper_shader_follows_keyboard_input: true,
+      });
+      const keyboard = await capture();
+      await move(true);
+      assert.notEqual(await capture(), keyboard, `${id} must respond to terminal cursor movement`);
+      await sameTerminal();
+      console.log(`PASS ${id} pointer input, terminal cursor, animation pause, and zero speed`);
+    }
+    await configure({
+      wallpaper_shader: 'aurora',
+      animations: false,
+      wallpaper_shader_follows_mouse_cursor: false,
+      wallpaper_shader_follows_keyboard_input: false,
+    });
+    await page.waitForFunction(
+      () => document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderState === 'ready',
+    );
   } else console.log('SKIP WebGPU pixel checks: the test browser has no usable adapter');
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });

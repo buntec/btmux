@@ -14,7 +14,6 @@ interface ShaderWallpaperProps {
   resolution: number;
   animated: boolean;
   paused?: boolean;
-  seed: string;
   followsMouseCursor: boolean;
   followsKeyboardInput: boolean;
 }

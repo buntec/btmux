@@ -4,7 +4,6 @@ import { findWallpaperShader, wallpaperUniformValues, type WallpaperShaderParams
 
 export interface WallpaperRuntimeOptions {
   params: WallpaperShaderParams;
-  seed: string;
   speed: number;
   fps: number;
   resolution: number;
@@ -78,12 +77,7 @@ export async function loadWallpaperRenderer(id: string) {
     renderer.setOnDeviceLost(onUnavailable);
     renderer.registerNode('root', rootPassthrough.fragment, null, null, {}, rootPassthrough);
     const values = () =>
-      wallpaperUniformValues(
-        shader,
-        current.params,
-        current.seed,
-        source.usesPointer ? 1 : current.animated ? current.speed : 0,
-      );
+      wallpaperUniformValues(shader, current.params, source.usesPointer ? 1 : current.animated ? current.speed : 0);
     lastValues = values();
     renderer.registerNode(
       'wallpaper',

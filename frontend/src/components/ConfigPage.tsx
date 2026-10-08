@@ -29,7 +29,6 @@ import {
   getWallpaperOpacity,
   getWallpaperResolution,
   getWallpaperSaturate,
-  getWallpaperSeed,
   getWallpaperSpeed,
 } from '../state/configDefaults';
 import { useStore } from '../state/store';
@@ -100,7 +99,6 @@ type Draft = {
   wallpaperSpeed: number;
   wallpaperFps: number;
   wallpaperResolution: number;
-  wallpaperSeed: string;
   wallpaperFollowsMouse: boolean;
   wallpaperFollowsKeyboard: boolean;
   wallpaperShaderParams: WallpaperShaderParams;
@@ -153,7 +151,6 @@ function initialDraft(config: ClientConfig): Draft {
     wallpaperSpeed: getWallpaperSpeed(config),
     wallpaperFps: getWallpaperFps(config),
     wallpaperResolution: getWallpaperResolution(config),
-    wallpaperSeed: getWallpaperSeed(config),
     wallpaperFollowsMouse: getWallpaperFollowsMouse(config),
     wallpaperFollowsKeyboard: getWallpaperFollowsKeyboard(config),
     wallpaperShaderParams: config.wallpaper_shader_params,
@@ -196,7 +193,6 @@ const TOML_DEFAULTS = {
   wallpaperSpeed: 0.2,
   wallpaperFps: 30,
   wallpaperResolution: 0.4,
-  wallpaperSeed: 'mellow-nebula-dream',
   wallpaperFollowsMouse: true,
   wallpaperFollowsKeyboard: false,
   backdropBlur: 2,
@@ -270,7 +266,6 @@ function toToml(draft: Draft): string {
     numLine('wallpaper-speed', draft.wallpaperSpeed, TOML_DEFAULTS.wallpaperSpeed, 2),
     intLine('wallpaper-fps', draft.wallpaperFps, TOML_DEFAULTS.wallpaperFps),
     numLine('wallpaper-resolution', draft.wallpaperResolution, TOML_DEFAULTS.wallpaperResolution, 2),
-    strLine('wallpaper-seed', draft.wallpaperSeed, TOML_DEFAULTS.wallpaperSeed),
     boolLine('wallpaper-shader-follows-mouse-cursor', draft.wallpaperFollowsMouse, TOML_DEFAULTS.wallpaperFollowsMouse),
     boolLine(
       'wallpaper-shader-follows-keyboard-input',
@@ -358,7 +353,6 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('wallpaperSpeed')) update.wallpaper_speed = draft.wallpaperSpeed;
   if (dirty.has('wallpaperFps')) update.wallpaper_fps = draft.wallpaperFps;
   if (dirty.has('wallpaperResolution')) update.wallpaper_resolution = draft.wallpaperResolution;
-  if (dirty.has('wallpaperSeed')) update.wallpaper_seed = draft.wallpaperSeed;
   if (dirty.has('wallpaperFollowsMouse')) {
     update.wallpaper_shader_follows_mouse_cursor = draft.wallpaperFollowsMouse;
   }
@@ -475,7 +469,6 @@ export function ConfigPage({ config, send }: Props) {
       wallpaper_speed: draft.wallpaperSpeed,
       wallpaper_fps: draft.wallpaperFps,
       wallpaper_resolution: draft.wallpaperResolution,
-      wallpaper_seed: draft.wallpaperSeed,
       wallpaper_shader_follows_mouse_cursor: draft.wallpaperFollowsMouse,
       wallpaper_shader_follows_keyboard_input: draft.wallpaperFollowsKeyboard,
       wallpaper_shader_params: draft.wallpaperShaderParams,
@@ -791,7 +784,6 @@ export function ConfigPage({ config, send }: Props) {
                         {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
                         {range('wallpaperFps', 'Wallpaper frame rate', 10, 60, 1)}
                         {range('wallpaperResolution', 'Wallpaper resolution', 0.1, 1, 0.05)}
-                        {text('wallpaperSeed', 'Wallpaper seed')}
                         {toggle(
                           'wallpaperFollowsMouse',
                           'Follow mouse cursor',
@@ -810,7 +802,6 @@ export function ConfigPage({ config, send }: Props) {
                         <ShaderParameterFields
                           shaderId={draft.wallpaperShader}
                           params={draft.wallpaperShaderParams}
-                          seed={draft.wallpaperSeed}
                           onChange={(params) => update('wallpaperShaderParams', params)}
                         />
                       )}

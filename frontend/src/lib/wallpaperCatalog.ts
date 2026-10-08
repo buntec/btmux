@@ -91,17 +91,11 @@ export function parameterValue(param: WallpaperParameter, value: ShaderValue | u
 export function wallpaperUniformValues(
   shader: WallpaperShader,
   params: WallpaperShaderParams,
-  seed: string,
   speed: number,
 ): Record<string, ShaderValue> {
-  let hash = 2166136261;
-  for (const character of seed) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
   return Object.fromEntries(
     shader.params.map((param) => {
       let value = parameterValue(param, params[shader.id]?.[param.key]);
-      if (param.name === 'seed' && params[shader.id]?.[param.key] === undefined) {
-        value = (hash >>> 0) % ((param.max ?? 100) + 1);
-      }
       if (/speed$/i.test(param.name) && typeof value === 'number') value *= speed;
       return [param.name, value];
     }),

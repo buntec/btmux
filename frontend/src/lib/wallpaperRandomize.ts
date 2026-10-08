@@ -33,11 +33,10 @@ const VISIBLE_NUMBERS = new Set([
 export function randomizeWallpaperParams(
   shader: WallpaperShader,
   params: WallpaperShaderParams,
-  seed: string,
   random: () => number = Math.random,
 ): WallpaperShaderParams {
   const sample = (min: number, max: number) => min + random() * (max - min);
-  const current = wallpaperUniformValues(shader, params, seed, 1);
+  const current = wallpaperUniformValues(shader, params, 1);
   const hue = sample(0, 360);
   const hueSpread = sample(30, 130);
   const saturation = sample(0.55, 0.85);

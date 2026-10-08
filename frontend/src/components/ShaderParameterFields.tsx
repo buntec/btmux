@@ -64,17 +64,15 @@ function ParameterText({
 export function ShaderParameterFields({
   shaderId,
   params,
-  seed,
   onChange,
 }: {
   shaderId: string;
   params: WallpaperShaderParams;
-  seed: string;
   onChange: (params: WallpaperShaderParams) => void;
 }) {
   const shader = findWallpaperShader(shaderId);
   if (!shader) return null;
-  const values = wallpaperUniformValues(shader, params, seed, 1);
+  const values = wallpaperUniformValues(shader, params, 1);
   const set = (key: string, value: ShaderValue) =>
     onChange({
       ...params,
@@ -177,7 +175,7 @@ export function ShaderParameterFields({
         return <ParameterText key={paramKey} param={param} value={value} onChange={(value) => set(param.key, value)} />;
       })}
       <HStack>
-        <Button label="Randomize parameters" onClick={() => onChange(randomizeWallpaperParams(shader, params, seed))} />
+        <Button label="Randomize parameters" onClick={() => onChange(randomizeWallpaperParams(shader, params))} />
       </HStack>
     </VStack>
   );

@@ -137,7 +137,7 @@ try {
       const { randomizeWallpaperParams } = await import('/src/lib/wallpaperRandomize.ts' as string);
       const unavailable: string[] = [];
       for (const shader of WALLPAPER_SHADERS) {
-        for (const params of [{}, randomizeWallpaperParams(shader, {}, 'test')]) {
+        for (const params of [{}, randomizeWallpaperParams(shader, {})]) {
           const canvas = document.createElement('canvas');
           canvas.style.cssText = 'position:fixed;width:120px;height:80px;opacity:0;pointer-events:none';
           document.body.append(canvas);
@@ -146,7 +146,6 @@ try {
             canvas,
             {
               params,
-              seed: 'test',
               speed: 1,
               fps: 10,
               resolution: 0.4,
@@ -257,6 +256,19 @@ try {
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await dialog.getByRole('tab', { name: 'Wallpaper', exact: true }).click();
+  assert.equal(await dialog.getByRole('textbox', { name: 'Wallpaper seed', exact: true }).count(), 0);
+  await dialog.getByRole('button', { name: 'Reset shader parameters', exact: true }).click();
+  await page.waitForFunction(
+    () => !(window as any).shaderStore.getState().configPreview.wallpaper_shader_params.aurora,
+  );
+  const defaultSeed = await page.evaluate(async () => {
+    const { findWallpaperShader } = await import('/src/lib/wallpaperCatalog.ts' as string);
+    return findWallpaperShader('aurora')!.params.find((param) => param.name === 'seed')!.default;
+  });
+  assert.equal(
+    Number(await dialog.getByRole('slider', { name: 'Seed', exact: true }).getAttribute('aria-valuenow')),
+    defaultSeed,
+  );
   await dialog.getByRole('textbox', { name: 'Color A', exact: true }).fill('#abcdef');
   const randomize = dialog.getByRole('button', { name: 'Randomize parameters', exact: true });
   assert(
@@ -320,16 +332,13 @@ try {
     );
   }
   const preview = await page.evaluate(() => (window as any).shaderStore.getState().configPreview);
-  assert.equal(
-    preview.wallpaper_seed,
-    await page.evaluate(() => (window as any).shaderStore.getState().config.wallpaper_seed),
-  );
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await dialog.getByRole('button', { name: 'Copy TOML', exact: true }).click();
   const toml = await page.evaluate(() => navigator.clipboard.readText());
   const exported = Bun.TOML.parse(toml) as any;
   assert.deepEqual(exported['wallpaper-shader-params'], preview.wallpaper_shader_params);
   assert(!('shader' in exported));
+  assert(!('wallpaper-seed' in exported));
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await page.waitForFunction((params) => {
     const actual = (window as any).shaderStore.getState().config.wallpaper_shader_params;

@@ -32,7 +32,6 @@ test('native parameter overrides are isolated by generator and use kebab-case', 
       aurora: { 'color-a': '#123456', 'curtain-count': 2, seed: 12, speed: 3 },
       swirl: { speed: 9 },
     },
-    'example',
     0.5,
   );
   expect(values.colorA).toBe('#123456');
@@ -55,7 +54,6 @@ test('invalid config values fall back safely and numeric ranges are enforced', (
         notAParameter: 123,
       },
     },
-    'seed',
     1,
   );
   expect(values.colorSpace).toBe('linear');
@@ -68,9 +66,13 @@ test('invalid config values fall back safely and numeric ranges are enforced', (
   expect(parameterValue(stops, [false])).toEqual(stops.default);
 });
 
-test('seed is deterministic and an explicit native seed takes precedence', () => {
-  expect(wallpaperUniformValues(aurora, {}, 'same', 1)).toEqual(wallpaperUniformValues(aurora, {}, 'same', 1));
-  expect(wallpaperUniformValues(aurora, { aurora: { seed: 0 } }, 'same', 1).seed).toBe(0);
+test('native seeds use generator defaults unless explicitly overridden', () => {
+  for (const shader of WALLPAPER_SHADERS) {
+    const seed = shader.params.find((param) => param.name === 'seed');
+    if (!seed) continue;
+    expect(wallpaperUniformValues(shader, {}, 1).seed).toBe(seed.default);
+    expect(wallpaperUniformValues(shader, { [shader.id]: { seed: 0 } }, 1).seed).toBe(0);
+  }
 });
 
 test('Settings TOML preserves strings, vectors, booleans, and color-stop arrays', () => {

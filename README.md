@@ -105,9 +105,9 @@ Each generator has its own parameter table. Names use kebab-case, matching the
 Settings TOML export; colors, numbers, booleans, positions, and gradient stop arrays
 are supported. The global wallpaper speed multiplies native speed parameters,
 or scales simulation time for interactive effects.
-The wallpaper seed supplies a numeric seed only when a generator's own `seed`
-parameter is unset. Cursor-following moves `center` or `position` on generators
-that expose those parameters and supplies input to interactive effects.
+Each shader uses its native parameter defaults, including its numeric `seed` when
+provided. Cursor-following moves `center` or `position` on generators that expose
+those parameters and supplies input to interactive effects.
 
 Randomize parameters, below the selected shader's controls, generates a complete
 parameter set including native seeds. Colors share a coordinated palette, gradient

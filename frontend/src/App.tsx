@@ -28,7 +28,6 @@ import {
   getWallpaperFollowsMouse,
   getWallpaperOpacity,
   getWallpaperSaturate,
-  getWallpaperSeed,
   getWallpaperShader,
   getWallpaperFps,
   getWallpaperResolution,
@@ -155,7 +154,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const wallpaperSpeed = getWallpaperSpeed(effectiveConfig);
   const wallpaperFps = getWallpaperFps(effectiveConfig);
   const wallpaperResolution = getWallpaperResolution(effectiveConfig);
-  const wallpaperSeed = getWallpaperSeed(effectiveConfig);
   const wallpaperFollowsMouse = getWallpaperFollowsMouse(effectiveConfig);
   const wallpaperFollowsKeyboard = getWallpaperFollowsKeyboard(effectiveConfig);
 
@@ -182,7 +180,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           // the wallpaper for GPU time. Keep it stopped until that foreground
           // work has completed and the newly-visible terminals have painted.
           paused={modalOverlayActive || sessionTransitionActive}
-          seed={wallpaperSeed}
           followsMouseCursor={wallpaperFollowsMouse}
           followsKeyboardInput={wallpaperFollowsKeyboard}
         />

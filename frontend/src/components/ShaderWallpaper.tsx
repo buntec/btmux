@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useStore } from '../state/store';
 import { findWallpaperShader, type WallpaperShaderParams } from '../lib/wallpaperCatalog';
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
 import type { WallpaperRenderer, WallpaperRuntimeOptions } from '../lib/wallpaperRenderer';
@@ -23,6 +24,11 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
   const rendererRef = useRef<WallpaperRenderer | null>(null);
   const latest = useRef(props);
   latest.current = props;
+  const showToast = useStore((s) => s.showToast);
+
+  useEffect(() => {
+    if (!findWallpaperShader(props.shaderId)) showToast(`Unknown wallpaper shader "${props.shaderId}"`, 'attention');
+  }, [props.shaderId, showToast]);
   const runtime = (): WallpaperRuntimeOptions => ({
     ...latest.current,
     paused: !!latest.current.paused || latest.current.opacity === 0,

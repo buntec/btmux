@@ -26,12 +26,23 @@ brew install --cask buntec/btmux/btmux   # desktop app
 The desktop app is not notarized; the cask clears its quarantine attribute so
 macOS does not block it. Both are updated with each release.
 
-After `brew upgrade`, run `btmux restart` so the background service (see
-`btmux install`) picks up the new binary; this ends running pane processes. A
-service installed from Homebrew points at the version-independent
-`<prefix>/opt/btmux/bin/btmux`, so it survives upgrades. If you installed it
-with an older btmux, re-run `btmux install` once. Update the desktop app with
-`brew upgrade --cask btmux`; its About dialog shows both versions.
+To upgrade, update the tap first, then restart the background service (see
+`btmux install`) so it runs the new binary:
+
+```sh
+brew update
+brew upgrade buntec/btmux/btmux            # server/CLI
+brew upgrade --cask buntec/btmux/btmux     # desktop app
+btmux restart                              # ends running pane processes
+```
+
+Skipping `brew update` can leave a stale tap that doesn't list the new release.
+Without the restart the service keeps the old version, and the desktop app shows
+a version-mismatch warning (**About btmux** lists both versions). A service
+installed from Homebrew points at the version-independent
+`<prefix>/opt/btmux/bin/btmux`, so it survives upgrades; if you installed it
+with an older btmux, re-run `btmux install` once. Quit the desktop app before
+upgrading the cask.
 
 ## Access tokens and reverse proxies
 

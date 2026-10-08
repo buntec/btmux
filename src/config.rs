@@ -20,6 +20,7 @@ pub const DEFAULT_REPEAT_TIME: u32 = 0;
 pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
 pub const DEFAULT_SHOW_NAV_HEADER: bool = true;
+pub const DEFAULT_CHECK_FOR_UPDATES: bool = true;
 pub const DEFAULT_WALLPAPER_OPACITY: f32 = 0.10;
 pub const DEFAULT_DESKTOP_BACKGROUND_OPACITY: f32 = 0.95;
 pub const DEFAULT_WALLPAPER_BLUR: f32 = 0.0;
@@ -289,6 +290,9 @@ pub struct FileConfig {
     /// Show the sidebar's app icon and name. Defaults to true.
     #[serde(rename = "show-nav-header")]
     pub show_nav_header: bool,
+    /// Periodically check GitHub for a newer release and show a toast. Never installs.
+    #[serde(rename = "check-for-updates")]
+    pub check_for_updates: bool,
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
     /// Name of a procedural WebGPU background displayed behind the app.
@@ -395,6 +399,7 @@ impl Default for FileConfig {
             animations: DEFAULT_ANIMATIONS,
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
             show_nav_header: DEFAULT_SHOW_NAV_HEADER,
+            check_for_updates: DEFAULT_CHECK_FOR_UPDATES,
             wallpaper: None,
             wallpaper_shader: None,
             wallpaper_shader_params: BTreeMap::new(),
@@ -1199,6 +1204,10 @@ pub fn generate_config_toml() -> String {
 
 # Show the app icon and name at the top of the sidebar.
 # show-nav-header = {DEFAULT_SHOW_NAV_HEADER}
+
+# Periodically check GitHub for a newer release and show a toast when one is
+# available. btmux never updates itself; upgrade with your usual package manager.
+# check-for-updates = {DEFAULT_CHECK_FOR_UPDATES}
 
 # Background wallpaper image displayed behind all terminal panes.
 # No image or shader is enabled by default; the following are examples.
@@ -2092,8 +2101,16 @@ palette:
     }
 
     #[test]
+    fn check_for_updates_defaults_on_and_can_be_disabled() {
+        assert!(FileConfig::default().check_for_updates);
+        let file: FileConfig = toml::from_str("check-for-updates = false").unwrap();
+        assert!(!file.check_for_updates);
+    }
+
+    #[test]
     fn generated_config_keeps_wallpapers_disabled() {
         let example = generate_config_toml();
+        assert!(example.contains("# check-for-updates = true"));
         assert!(example.contains("# show-nav-header = true"));
         let file: FileConfig = toml::from_str(&example).unwrap();
         let resolved = resolve_binds(&file);

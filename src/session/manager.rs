@@ -349,6 +349,10 @@ impl SessionManager {
         &self.config
     }
 
+    pub fn check_for_updates(&self) -> bool {
+        self.file_config.check_for_updates
+    }
+
     /// Install a freshly-read config file. Session-only overrides are **dropped**:
     /// the file is the source of truth, so a reload is the point where whatever
     /// was tried out from the command palette goes away.

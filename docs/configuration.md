@@ -34,6 +34,10 @@ The sidebar shows its app icon and name by default. Set `show-nav-header = false
 to hide that header and move the navigation items up. The same option is available
 in the editor's General tab as **Show sidebar header**.
 
+btmux checks GitHub for newer releases about once a day and shows a toast when
+one is available. It never downloads or installs anything; upgrade with whatever
+method you installed with. Set `check-for-updates = false` to turn the check off.
+
 The `colors` option accepts:
 
 - the name of a bundled scheme: `btmux-default-dark` (the default),

@@ -17,6 +17,7 @@ mod pty;
 mod server;
 mod service;
 mod session;
+mod update_check;
 mod ws;
 
 use std::sync::Arc;
@@ -258,6 +259,7 @@ async fn main() {
     spawn_pane_exit_handler(exit_rx, state.clone());
     spawn_agent_reaper(state.clone(), agent_manifest_dir());
     spawn_meta_change_handler(meta_rx, state.clone());
+    update_check::spawn(state.clone());
 
     // Persist the session tree to disk on every state change (debounced).
     if let Some(path) = &state_file {

@@ -28,7 +28,7 @@ procedural wallpapers, and steady-state, session-switch, and pane-switch WebGL
 effects.
 
 Wallpapers are disabled by default. Set `wallpaper` to an image URL or path,
-or `wallpaper-shader` to a shader ID to enable one.
+or `wallpaper-shader` to a shader ID to enable one (see [Shader wallpapers](shaders.md)).
 
 The sidebar shows its app icon and name by default. Set `show-nav-header = false`
 to hide that header and move the navigation items up. The same option is available

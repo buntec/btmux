@@ -109,6 +109,12 @@ The wallpaper seed supplies a numeric seed only when a generator's own `seed`
 parameter is unset. Cursor-following moves `center` or `position` on generators
 that expose those parameters and supplies input to interactive effects.
 
+Randomize parameters, below the selected shader's controls, generates a complete
+parameter set including native seeds. Colors share a coordinated palette, gradient
+stops stay ordered, and numeric values stay within sensible native ranges. It
+previews immediately and changes only the selected shader's parameters; Apply and
+the TOML export work as with manual edits.
+
 Interactive wallpapers include `chroma-flow`, `cursor-trail`, `ink-flow`, and
 `boids`, with their native parameters available in Settings. The flow and trail
 effects respond to mouse or terminal-cursor movement; Boids animates an autonomous

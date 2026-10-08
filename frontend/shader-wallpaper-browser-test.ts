@@ -126,7 +126,7 @@ try {
     });
     await page.waitForFunction(() => !(window as any).shaderStore.getState().config.animations);
     await page.waitForTimeout(250);
-    assert.notEqual(await capture(), initial, 'native parameter changes must change rendered pixels');
+    assert((await capture()) !== initial, 'native parameter changes must change rendered pixels');
     const frozen = await capture();
     await page.waitForTimeout(250);
     assert((await capture()) === frozen, 'disabled animations must preserve the last frame');
@@ -134,38 +134,41 @@ try {
     const generators = await page.evaluate(async () => {
       const { WALLPAPER_SHADERS } = await import('/src/lib/wallpaperCatalog.ts' as string);
       const { loadWallpaperRenderer } = await import('/src/lib/wallpaperRenderer.ts' as string);
+      const { randomizeWallpaperParams } = await import('/src/lib/wallpaperRandomize.ts' as string);
       const unavailable: string[] = [];
       for (const shader of WALLPAPER_SHADERS) {
-        const canvas = document.createElement('canvas');
-        canvas.style.cssText = 'position:fixed;width:120px;height:80px;opacity:0;pointer-events:none';
-        document.body.append(canvas);
-        const create = await loadWallpaperRenderer(shader.id);
-        const renderer = create!(
-          canvas,
-          {
-            params: {},
-            seed: 'test',
-            speed: 1,
-            fps: 10,
-            resolution: 0.4,
-            animated: false,
-            paused: false,
-            followsMouseCursor: true,
-            followsKeyboardInput: false,
-          },
-          () => unavailable.push(shader.id),
-        );
-        try {
-          await renderer.initialize();
-        } finally {
-          renderer.dispose();
-          canvas.remove();
+        for (const params of [{}, randomizeWallpaperParams(shader, {}, 'test')]) {
+          const canvas = document.createElement('canvas');
+          canvas.style.cssText = 'position:fixed;width:120px;height:80px;opacity:0;pointer-events:none';
+          document.body.append(canvas);
+          const create = await loadWallpaperRenderer(shader.id);
+          const renderer = create!(
+            canvas,
+            {
+              params,
+              seed: 'test',
+              speed: 1,
+              fps: 10,
+              resolution: 0.4,
+              animated: false,
+              paused: false,
+              followsMouseCursor: true,
+              followsKeyboardInput: false,
+            },
+            () => unavailable.push(shader.id),
+          );
+          try {
+            await renderer.initialize();
+          } finally {
+            renderer.dispose();
+            canvas.remove();
+          }
         }
       }
       return unavailable;
     });
     assert.deepEqual(generators, [], 'all native generators must initialize');
-    console.log('PASS all 22 native generators initialize');
+    console.log('PASS all 22 native generators initialize with default and randomized parameters');
     const interactive = ['chroma-flow', 'cursor-trail', 'ink-flow', 'boids'];
     const configure = async (update: Record<string, unknown>) => {
       await send({ type: 'update_config', update });
@@ -208,11 +211,11 @@ try {
       const idle = await capture();
       await move();
       if (id !== 'boids') assert((await capture()) === idle, `${id} must ignore disabled pointer input`);
-      else assert.notEqual(await capture(), idle, 'Boids must animate without pointer input');
+      else assert((await capture()) !== idle, 'Boids must animate without pointer input');
       await configure({ wallpaper_shader_follows_mouse_cursor: true });
       const before = await capture();
       await move();
-      assert.notEqual(await capture(), before, `${id} must respond to pointer movement`);
+      assert((await capture()) !== before, `${id} must respond to pointer movement`);
       await configure({ animations: false });
       const frozen = await capture();
       await move();
@@ -228,7 +231,7 @@ try {
       });
       const keyboard = await capture();
       await move(true);
-      assert.notEqual(await capture(), keyboard, `${id} must respond to terminal cursor movement`);
+      assert((await capture()) !== keyboard, `${id} must respond to terminal cursor movement`);
       await sameTerminal();
       console.log(`PASS ${id} pointer input, terminal cursor, animation pause, and zero speed`);
     }
@@ -242,20 +245,106 @@ try {
       () => document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderState === 'ready',
     );
   } else console.log('SKIP WebGPU pixel checks: the test browser has no usable adapter');
+  await send({
+    type: 'update_config',
+    update: {
+      wallpaper_shader_params: { aurora: { seed: 17 }, 'chroma-flow': { radius: 2 } },
+    },
+  });
+  await page.waitForFunction(
+    () => (window as any).shaderStore.getState().config.wallpaper_shader_params.aurora.seed === 17,
+  );
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await dialog.getByRole('tab', { name: 'Wallpaper', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Color A', exact: true }).fill('#abcdef');
+  const randomize = dialog.getByRole('button', { name: 'Randomize parameters', exact: true });
+  assert(
+    await dialog.getByRole('slider', { name: 'Seed', exact: true }).evaluate((seed) => {
+      const button = [...seed.closest('[role="tabpanel"]')!.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Randomize parameters',
+      );
+      return !!button && !!(seed.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }),
+    'Randomize must follow the shader parameter controls',
+  );
+  await randomize.click();
+  await page.waitForFunction(
+    () => (window as any).shaderStore.getState().configPreview.wallpaper_shader_params.aurora.seed !== 17,
+  );
+  assert.notEqual(await dialog.getByRole('textbox', { name: 'Color A', exact: true }).inputValue(), '#abcdef');
+  assert.equal(
+    await page.evaluate(() => (window as any).shaderStore.getState().config.wallpaper_shader_params.aurora.seed),
+    17,
+    'Randomize must stay in the local preview until Apply',
+  );
+  assert.deepEqual(
+    await page.evaluate(
+      () => (window as any).shaderStore.getState().configPreview.wallpaper_shader_params['chroma-flow'],
+    ),
+    { radius: 2 },
+  );
+  const select = async (label: string, id: string) => {
+    await dialog.getByRole('combobox', { name: 'Procedural shader', exact: true }).click();
+    await page.getByRole('option', { name: label, exact: true }).click();
+    await page.waitForFunction(
+      (id) => (window as any).shaderStore.getState().configPreview.wallpaper_shader === id,
+      id,
+    );
+    if (available)
+      await page.waitForFunction((id) => {
+        const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]');
+        return canvas?.dataset.shaderId === id && canvas.dataset.shaderState === 'ready';
+      }, id);
+  };
+  await select('Chroma Flow', 'chroma-flow');
+  await randomize.click();
+  const chroma = await page.evaluate(
+    () => (window as any).shaderStore.getState().configPreview.wallpaper_shader_params['chroma-flow'],
+  );
+  assert.equal(Object.keys(chroma).length, 8);
+  assert.notEqual(chroma.radius, 2);
+  assert.notEqual(chroma['base-color'], '#0066ff');
+  await select('Grid', 'grid');
+  const beforeGrid = available ? await canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL()) : null;
+  await randomize.click();
+  await page.waitForFunction(
+    () =>
+      Object.keys((window as any).shaderStore.getState().configPreview.wallpaper_shader_params.grid ?? {}).length === 8,
+  );
+  if (available) {
+    await page.waitForTimeout(200);
+    assert(
+      (await canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())) !== beforeGrid,
+      'static shaders must redraw after randomization',
+    );
+  }
+  const preview = await page.evaluate(() => (window as any).shaderStore.getState().configPreview);
+  assert.equal(
+    preview.wallpaper_seed,
+    await page.evaluate(() => (window as any).shaderStore.getState().config.wallpaper_seed),
+  );
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await dialog.getByRole('button', { name: 'Copy TOML', exact: true }).click();
   const toml = await page.evaluate(() => navigator.clipboard.readText());
   const exported = Bun.TOML.parse(toml) as any;
-  assert.equal(exported['wallpaper-shader-params'].aurora['color-a'], '#abcdef');
+  assert.deepEqual(exported['wallpaper-shader-params'], preview.wallpaper_shader_params);
   assert(!('shader' in exported));
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
-  await page.waitForFunction(
-    () => (window as any).shaderStore.getState().config.wallpaper_shader_params.aurora['color-a'] === '#abcdef',
-  );
+  await page.waitForFunction((params) => {
+    const actual = (window as any).shaderStore.getState().config.wallpaper_shader_params;
+    return (
+      Object.keys(actual).length === Object.keys(params).length &&
+      Object.entries(params).every(
+        ([id, values]) =>
+          actual[id] &&
+          Object.keys(actual[id]).length === Object.keys(values as object).length &&
+          Object.entries(values as object).every(
+            ([key, value]) => JSON.stringify(actual[id][key]) === JSON.stringify(value),
+          ),
+      )
+    );
+  }, preview.wallpaper_shader_params);
   await sameTerminal();
   assert.equal(await page.locator('iframe[src*="radiant"], iframe[src*="shaders"]').count(), 0);
   assert(
@@ -263,7 +352,9 @@ try {
     'shaders must not download assets or send telemetry',
   );
   assert.deepEqual(errors, []);
-  console.log('PASS shader Settings, TOML export, server overrides, and terminal/socket lifetime');
+  console.log(
+    'PASS Randomize placement, seed overrides, seedless and static shaders, previews, TOML export, and terminal/socket lifetime',
+  );
   const fallback = await browser.newContext();
   await fallback.addInitScript(() =>
     Object.defineProperty(navigator, 'gpu', { get: () => undefined, configurable: true }),

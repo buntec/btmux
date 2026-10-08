@@ -113,61 +113,6 @@ type Draft = {
 type DraftKey = keyof Draft;
 type ConfigUpdate = Extract<ClientMessage, { type: 'update_config' }>['update'];
 
-const SEED_ADJECTIVES = [
-  'ancient',
-  'brisk',
-  'cosmic',
-  'electric',
-  'fuzzy',
-  'luminous',
-  'mellow',
-  'neon',
-  'quiet',
-  'velvet',
-  'wandering',
-  'wobbly',
-];
-
-const SEED_NOUNS = [
-  'badger',
-  'circuit',
-  'comet',
-  'fjord',
-  'lantern',
-  'mushroom',
-  'nebula',
-  'orbit',
-  'pancake',
-  'sprocket',
-  'teapot',
-  'volcano',
-];
-
-const SEED_ENDINGS = [
-  'cascade',
-  'disco',
-  'dream',
-  'engine',
-  'glitch',
-  'monsoon',
-  'parade',
-  'signal',
-  'soup',
-  'storm',
-  'tango',
-  'whisper',
-];
-
-function randomItem(words: string[]): string {
-  const value = new Uint32Array(1);
-  crypto.getRandomValues(value);
-  return words[value[0] % words.length];
-}
-
-function generateWallpaperSeed(): string {
-  return [randomItem(SEED_ADJECTIVES), randomItem(SEED_NOUNS), randomItem(SEED_ENDINGS)].join('-');
-}
-
 function initialDraft(config: ClientConfig): Draft {
   return {
     prefix: config.prefix,
@@ -846,10 +791,7 @@ export function ConfigPage({ config, send }: Props) {
                         {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
                         {range('wallpaperFps', 'Wallpaper frame rate', 10, 60, 1)}
                         {range('wallpaperResolution', 'Wallpaper resolution', 0.1, 1, 0.05)}
-                        <HStack gap={2} align="end">
-                          {text('wallpaperSeed', 'Wallpaper seed')}
-                          <Button label="Randomize" onClick={() => update('wallpaperSeed', generateWallpaperSeed())} />
-                        </HStack>
+                        {text('wallpaperSeed', 'Wallpaper seed')}
                         {toggle(
                           'wallpaperFollowsMouse',
                           'Follow mouse cursor',

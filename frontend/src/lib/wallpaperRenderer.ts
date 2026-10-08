@@ -94,7 +94,13 @@ export async function loadWallpaperRenderer(id: string) {
       definition,
     );
 
+    const paint = async (waitForGpu = false) => {
+      // Core activates a recompiled pipeline after its first frame.
+      await renderer.renderSyntheticFrame(0, { waitForGpu: false });
+      if (!disposed) await renderer.renderSyntheticFrame(0, { waitForGpu });
+    };
     const update = (next: WallpaperRuntimeOptions) => {
+      let changed = next.resolution !== current.resolution;
       current = next;
       if (disposed || !renderer.isInitialized()) return;
       renderer.setResolutionScale(next.resolution);
@@ -103,15 +109,21 @@ export async function loadWallpaperRenderer(id: string) {
         if (JSON.stringify(lastValues[name]) === JSON.stringify(value)) continue;
         renderer.updateUniformValue('wallpaper', name, value);
         lastValues[name] = value;
+        changed = true;
       }
       if ((source.animatedTime || source.usesPointer) && running()) renderer.startAnimation();
-      else renderer.stopAnimation();
+      else {
+        renderer.stopAnimation();
+        // Parameter edits still paint when the animation loop is stopped.
+        if (changed) void paint().catch(onUnavailable);
+      }
     };
     const resize = () => {
       if (disposed || !renderer.isInitialized()) return;
       const rect = canvas.getBoundingClientRect();
       renderer.resize(rect.width, rect.height);
       renderer.setResolutionScale(current.resolution);
+      void paint().catch(onUnavailable);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
@@ -120,8 +132,10 @@ export async function loadWallpaperRenderer(id: string) {
     return {
       async initialize() {
         await renderer.initialize({ canvas, observeElement: false, colorSpace: 'srgb', toneMapping: 'linear' });
-        if (!disposed) update(current);
-        else renderer.cleanup();
+        if (!disposed) {
+          update(current);
+          await paint(true);
+        } else renderer.cleanup();
       },
       update,
       pointer(clientX: number, clientY: number) {

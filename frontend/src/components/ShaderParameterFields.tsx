@@ -9,6 +9,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import type { ShaderValue } from '../generated/protocol';
+import { randomizeWallpaperParams } from '../lib/wallpaperRandomize';
 import {
   findWallpaperShader,
   parameterValue,
@@ -175,6 +176,9 @@ export function ShaderParameterFields({
         }
         return <ParameterText key={paramKey} param={param} value={value} onChange={(value) => set(param.key, value)} />;
       })}
+      <HStack>
+        <Button label="Randomize parameters" onClick={() => onChange(randomizeWallpaperParams(shader, params, seed))} />
+      </HStack>
     </VStack>
   );
 }

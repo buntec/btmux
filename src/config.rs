@@ -328,9 +328,6 @@ pub struct FileConfig {
     /// resolution. Defaults to 0.40.
     #[serde(rename = "wallpaper-resolution")]
     pub wallpaper_resolution: Option<f32>,
-    /// Accepted for older configs; native shader seeds now supply the default.
-    #[serde(rename = "wallpaper-seed", skip_serializing)]
-    pub retired_wallpaper_seed: Option<String>,
     /// Let procedural wallpapers react to pointer movement over the app.
     /// Defaults to true.
     #[serde(rename = "wallpaper-shader-follows-mouse-cursor")]
@@ -411,7 +408,6 @@ impl Default for FileConfig {
             wallpaper_speed: Some(DEFAULT_WALLPAPER_SPEED),
             wallpaper_fps: Some(DEFAULT_WALLPAPER_FPS),
             wallpaper_resolution: Some(DEFAULT_WALLPAPER_RESOLUTION),
-            retired_wallpaper_seed: None,
             wallpaper_shader_follows_mouse_cursor: DEFAULT_WALLPAPER_FOLLOWS_MOUSE,
             wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
             retired_shader: None,
@@ -2261,7 +2257,6 @@ palette:
         let file: FileConfig = toml::from_str(
             r##"
 wallpaper-shader = "aurora"
-wallpaper-seed = "legacy"
 shader = "vignette"
 [wallpaper-shader-params.aurora]
 color-a = "#123456"
@@ -2290,10 +2285,6 @@ stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 
         );
         assert!(wire.get("shader").is_none());
         assert!(wire.get("wallpaper_seed").is_none());
-        assert!(!generate_config_toml().contains("wallpaper-seed"));
-        let mut clean = file.clone();
-        clean.retired_wallpaper_seed = None;
-        assert_eq!(wire, serde_json::to_value(resolve_binds(&clean)).unwrap());
         let mut overrides = ConfigUpdate::default();
         let update: ConfigUpdate = serde_json::from_value(serde_json::json!({
             "wallpaper_shader_params": { "aurora": { "speed": 4.0 } }

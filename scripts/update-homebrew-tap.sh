@@ -73,6 +73,15 @@ class Btmux < Formula
     bin.install Dir["btmux-*"].first => "btmux"
   end
 
+  def caveats
+    <<~EOS
+      A running background service keeps the old version until restarted:
+        btmux restart
+      If you installed it with an older btmux, re-run \`btmux install\` once so
+      it follows future upgrades.
+    EOS
+  end
+
   test do
     assert_match "Browser-based tmux", shell_output("#{bin}/btmux --help")
   end

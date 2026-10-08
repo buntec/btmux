@@ -457,7 +457,58 @@ fn render_plist(
 /// Resolve the running binary to an absolute path, following symlinks.
 fn current_exe() -> std::io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
-    Ok(std::fs::canonicalize(&exe).unwrap_or(exe))
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    Ok(stable_homebrew_path(&exe).unwrap_or(exe))
+}
+
+/// Map `<prefix>/Cellar/<formula>/<version>/bin/<exe>` to the version-independent
+/// `<prefix>/opt/<formula>/bin/<exe>`, so a `brew upgrade` doesn't strand the
+/// service on a deleted Cellar path. Only returned if it resolves to `exe`.
+fn stable_homebrew_path(exe: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = exe.components().collect();
+    let i = parts.iter().position(|c| c.as_os_str() == "Cellar")?;
+    // Cellar, formula, version, "bin", exe
+    if parts.len() != i + 5 || parts[i + 3].as_os_str() != "bin" {
+        return None;
+    }
+    let mut stable: PathBuf = parts[..i].iter().collect();
+    stable.push("opt");
+    stable.push(parts[i + 1]);
+    stable.push("bin");
+    stable.push(parts[i + 4]);
+    (std::fs::canonicalize(&stable).ok()? == exe).then_some(stable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stable_homebrew_path_maps_cellar_to_opt() {
+        let dir = std::env::temp_dir().join(format!("btmux-brew-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bin = dir.join("Cellar/btmux/1.2.3/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("btmux"), "").unwrap();
+        std::fs::create_dir_all(dir.join("opt")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("Cellar/btmux/1.2.3"), dir.join("opt/btmux")).unwrap();
+
+        let exe = std::fs::canonicalize(bin.join("btmux")).unwrap();
+        let canon_dir = std::fs::canonicalize(&dir).unwrap();
+        assert_eq!(
+            stable_homebrew_path(&exe),
+            Some(canon_dir.join("opt/btmux/bin/btmux"))
+        );
+        // Not a Cellar path, or no opt link: unchanged.
+        assert_eq!(
+            stable_homebrew_path(Path::new("/usr/local/bin/btmux")),
+            None
+        );
+        std::fs::remove_file(dir.join("opt/btmux")).unwrap();
+        assert_eq!(stable_homebrew_path(&exe), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// `~/Library/LaunchAgents/com.btmux.server.plist`.

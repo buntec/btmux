@@ -6,7 +6,7 @@ import { Button } from '@astryxdesign/core/Button';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, FolderOpen, GitBranch } from 'lucide-react';
+import { Activity, FolderOpen, GitBranch, Zap, ZapOff } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -45,6 +45,8 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     if (mode === 'files') void openFileBrowserFiles(pane.id, pane.cwd ?? null);
     else state().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
   };
+  const animations = getAnimations(config);
+  const hasShader = config?.wallpaper_shader != null;
   return (
     <HStack gap={2} paddingInline={2} vAlign="center" className="min-w-0" role="toolbar" aria-label="Terminal controls">
       <Button label={session.name} variant="ghost" size="sm" onClick={() => state().setSwitcherOpen(true)} />
@@ -104,6 +106,16 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       <HStack gap={1} className="hidden lg:flex">
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>
+      {hasShader && (
+        <IconButton
+          label={animations ? 'Pause shader effects' : 'Resume shader effects'}
+          tooltip={animations ? 'Pause shader effects (saves battery)' : 'Resume shader effects'}
+          variant="ghost"
+          size="sm"
+          icon={animations ? <Zap /> : <ZapOff />}
+          onClick={() => send({ type: 'update_config', update: { animations: !animations } })}
+        />
+      )}
       <IconButton
         label="File browser"
         tooltip="File browser"

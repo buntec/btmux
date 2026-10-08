@@ -333,6 +333,12 @@ fn notify(window: WebviewWindow, id: String, title: String, body: String) {
     });
 }
 
+// The desktop app's own version, which may differ from the connected server's.
+#[tauri::command]
+fn desktop_info() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 fn unused_loopback_port() -> std::io::Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
@@ -345,7 +351,8 @@ pub fn run() {
             discover_servers,
             connect_server,
             start_server,
-            notify
+            notify,
+            desktop_info
         ])
         .on_menu_event(|app, event| {
             if event.id() == SWITCH_SERVER

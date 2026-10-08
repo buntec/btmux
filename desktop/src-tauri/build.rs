@@ -5,6 +5,7 @@ fn main() {
             "connect_server",
             "start_server",
             "notify",
+            "desktop_info",
         ]),
     ))
     .expect("build desktop permissions")

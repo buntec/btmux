@@ -3,11 +3,14 @@ import type { ServerInfo } from '../generated/protocol';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Text } from '@astryxdesign/core/Text';
+import { useDesktopVersion } from '../hooks/useDesktopVersion';
+import { desktopVersionMismatch } from '../lib/desktopApp';
 import { Layout, LayoutContent, VStack } from '@astryxdesign/core/Layout';
 
 export function InfoDialog({ onClose }: { onClose: () => void }) {
   const [info, setInfo] = useState<ServerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const desktopVersion = useDesktopVersion();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -26,6 +29,7 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
   const rows: [string, string | null][] = info
     ? [
         ['Version', info.version],
+        ...(desktopVersion ? [['Desktop app version', desktopVersion] as [string, string]] : []),
         ['Profile', info.profile ?? 'default'],
         ['Config file', info.config_file],
         ['State file', info.state_file],
@@ -43,11 +47,7 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
     <Dialog isOpen onOpenChange={changeOpen} maxHeight="85dvh" width={640}>
       <Layout
         header={
-          <DialogHeader
-            title="About btmux"
-            subtitle="Server version and runtime configuration."
-            onOpenChange={changeOpen}
-          />
+          <DialogHeader title="About btmux" subtitle="Version and runtime configuration." onOpenChange={changeOpen} />
         }
         content={
           <LayoutContent padding={4}>
@@ -57,6 +57,12 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
               <Text role="status">Loading server information…</Text>
             ) : (
               <VStack gap={4}>
+                {desktopVersionMismatch(desktopVersion, info.version) && (
+                  <Banner
+                    status="warning"
+                    title={`Desktop app ${desktopVersion} is connected to server ${info.version}. Update both to the same version.`}
+                  />
+                )}
                 {rows.map(([label, value]) => (
                   <VStack key={label} gap={1}>
                     <Text color="secondary">{label}</Text>

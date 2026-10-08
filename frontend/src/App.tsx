@@ -37,6 +37,8 @@ import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
 import { useModalBackdrop } from './hooks/useModalBackdrop';
 import { pageBackground } from './lib/desktopTransparency';
+import { desktopVersionMismatch } from './lib/desktopApp';
+import { useDesktopVersion } from './hooks/useDesktopVersion';
 
 /**
  * Keep decorative GPU work stopped while a route change mounts a session's
@@ -246,6 +248,16 @@ export function App() {
   const settingsOpen = useStore((s) => s.settingsOpen);
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
   useFontLoader();
+  const desktopVersion = useDesktopVersion();
+  const serverVersion = config?.version;
+  useEffect(() => {
+    if (!desktopVersionMismatch(desktopVersion, serverVersion)) return;
+    useStore
+      .getState()
+      .showToast(`Desktop app ${desktopVersion} is connected to server ${serverVersion}.`, 'attention', {
+        body: 'Versions differ; some features may not work. Update both to the same version.',
+      });
+  }, [desktopVersion, serverVersion]);
 
   useEffect(() => {
     const family = getTerminalFontFamily(effectiveConfig);

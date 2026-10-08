@@ -336,9 +336,6 @@ pub struct FileConfig {
     /// Defaults to false.
     #[serde(rename = "wallpaper-shader-follows-keyboard-input")]
     pub wallpaper_shader_follows_keyboard_input: bool,
-    /// Accepted for older configs; terminal effects have been retired.
-    #[serde(rename = "shader", skip_serializing)]
-    pub retired_shader: Option<String>,
     /// Blur radius in pixels behind modals. 0 = no blur. Defaults to 2.0.
     #[serde(rename = "backdrop-blur")]
     pub backdrop_blur: Option<f32>,
@@ -410,7 +407,6 @@ impl Default for FileConfig {
             wallpaper_resolution: Some(DEFAULT_WALLPAPER_RESOLUTION),
             wallpaper_shader_follows_mouse_cursor: DEFAULT_WALLPAPER_FOLLOWS_MOUSE,
             wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
-            retired_shader: None,
             backdrop_blur: None,
             backdrop_dim: None,
             pane_switch_border: Some(DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string()),
@@ -901,8 +897,8 @@ pub fn colors_dir() -> Option<PathBuf> {
 }
 
 /// Whether `colors` denotes a local file rather than a scheme name from the
-/// colors directory. Relative names remain scheme names for backwards
-/// compatibility; explicit local paths are absolute or start with `~/`.
+/// colors directory. Relative names are scheme names; explicit
+/// local paths are absolute or start with `~/`.
 fn is_color_scheme_path(value: &str) -> bool {
     std::path::Path::new(value).is_absolute() || value.starts_with("~/")
 }
@@ -2257,7 +2253,6 @@ palette:
         let file: FileConfig = toml::from_str(
             r##"
 wallpaper-shader = "aurora"
-shader = "vignette"
 [wallpaper-shader-params.aurora]
 color-a = "#123456"
 curtain-count = 3
@@ -2283,7 +2278,6 @@ stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 
             wire["wallpaper_shader_params"]["strands"]["pin-edges"],
             true
         );
-        assert!(wire.get("shader").is_none());
         assert!(wire.get("wallpaper_seed").is_none());
         let mut overrides = ConfigUpdate::default();
         let update: ConfigUpdate = serde_json::from_value(serde_json::json!({

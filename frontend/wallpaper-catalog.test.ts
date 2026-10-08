@@ -9,7 +9,7 @@ import {
 
 const aurora = findWallpaperShader('aurora')!;
 
-test('catalog contains native generators and rejects retired wallpaper IDs', () => {
+test('catalog contains native generators and rejects unknown IDs', () => {
   expect(WALLPAPER_SHADERS.length).toBe(22);
   expect(aurora.component).toBe('Aurora');
   for (const [id, component] of [
@@ -20,8 +20,6 @@ test('catalog contains native generators and rejects retired wallpaper IDs', () 
   ]) {
     expect(findWallpaperShader(id)?.component).toBe(component);
   }
-  expect(findWallpaperShader('radiant:aurora-curtain')).toBeNull();
-  expect(findWallpaperShader('btmux:hexagonal-truchet')).toBeNull();
   expect(findWallpaperShader('missing')).toBeNull();
 });
 

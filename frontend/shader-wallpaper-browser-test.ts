@@ -337,7 +337,6 @@ try {
   const toml = await page.evaluate(() => navigator.clipboard.readText());
   const exported = Bun.TOML.parse(toml) as any;
   assert.deepEqual(exported['wallpaper-shader-params'], preview.wallpaper_shader_params);
-  assert(!('shader' in exported));
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await page.waitForFunction((params) => {
     const actual = (window as any).shaderStore.getState().config.wallpaper_shader_params;

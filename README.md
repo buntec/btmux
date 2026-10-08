@@ -128,9 +128,5 @@ changes preserve terminal instances and pane sockets. No hosted presets or
 runtime shader downloads are used, and shader telemetry is disabled by using the
 core renderer without a telemetry collector.
 
-The old Radiant and custom wallpaper IDs are retired; select one of the new
-generators instead. Terminal post-processing is also retired: old `shader = ...`
-config entries are accepted and ignored.
-
 After updating the pinned `shaders` dependency, run `just sync-shaders` to refresh
 its parameter metadata and lazy loaders.

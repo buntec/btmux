@@ -18,10 +18,10 @@ export function sessionGradient(id: string, palette: Theme) {
   const accents = [palette.red, palette.yellow, palette.green, palette.cyan, palette.blue, palette.magenta];
   const first = hash % accents.length;
   const second = (first + 1 + (Math.floor(hash / accents.length) % (accents.length - 1))) % accents.length;
-  const foreground = readableColor(palette.background, mix(accents[first], accents[second], 0.5), 7);
+  const foreground = readableColor(palette.background, mix(accents[first], accents[second], 0.5), 4.5);
   return {
-    start: readableColor(accents[first], foreground, 7),
-    end: readableColor(accents[second], foreground, 7),
+    start: readableColor(accents[first], foreground, 4.5),
+    end: readableColor(accents[second], foreground, 4.5),
     foreground,
     direction: Math.floor(hash / (accents.length * (accents.length - 1))) % 4,
   };

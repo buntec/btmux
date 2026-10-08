@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
+# Usage: update-nix-package.sh [version]  (default: latest GitHub release)
 set -euo pipefail
 
 package_files=(nix/package.nix nix/desktop-package.nix)
 release_api="https://api.github.com/repos/buntec/btmux/releases/latest"
 
-echo "looking up the latest GitHub release"
-version="$({
-  curl --fail --location --silent --show-error \
-    --header 'Accept: application/vnd.github+json' "$release_api"
-} | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')"
+version="${1:-}"
+version="${version#v}"
+
+if [[ -z "$version" ]]; then
+  echo "looking up the latest GitHub release"
+  version="$({
+    curl --fail --location --silent --show-error \
+      --header 'Accept: application/vnd.github+json' "$release_api"
+  } | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')"
+fi
 
 if [[ -z "$version" ]]; then
   echo "error: could not determine the latest GitHub release" >&2

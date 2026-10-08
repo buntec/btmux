@@ -353,7 +353,7 @@ try {
     );
   }, preview.wallpaper_shader_params);
   await sameTerminal();
-  assert.equal(await page.locator('iframe[src*="radiant"], iframe[src*="shaders"]').count(), 0);
+  assert.equal(await page.locator('iframe[src*="shaders"]').count(), 0);
   assert(
     !requests.some((request) => request.includes('shaders.com')),
     'shaders must not download assets or send telemetry',

@@ -7,7 +7,8 @@ import { Text } from '@astryxdesign/core/Text';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Icon } from '@astryxdesign/core/Icon';
-import { Bot } from 'lucide-react';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { Bot, RotateCcw } from 'lucide-react';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import type { AgentStatus } from '../state/types';
@@ -200,6 +201,10 @@ export function AgentGrid({ send }: Props) {
     setOpen(false);
   };
 
+  const reset = (entry: AgentPaneEntry | undefined) => {
+    if (entry) send({ type: 'reset_agent', pane_id: entry.paneId });
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     e.stopPropagation();
     const n = entries.length;
@@ -230,6 +235,11 @@ export function AgentGrid({ send }: Props) {
       if (li < 0 || !target) return;
       const pos = lines[li].indexOf(clampedIdx);
       setSelectedIdx(target[Math.min(pos, target.length - 1)]);
+      return;
+    }
+    if (e.key === 'x') {
+      e.preventDefault();
+      reset(entries[clampedIdx]);
       return;
     }
     if (e.key >= '1' && e.key <= '9') {
@@ -303,8 +313,19 @@ export function AgentGrid({ send }: Props) {
                                 <Text color="secondary">{entry.sessionName}</Text> <Text>{entry.windowName}</Text>{' '}
                                 <Text color="secondary">{paneLabel}</Text>
                               </Text>
-                              <HStack className="shrink-0">
+                              <HStack gap={1} vAlign="center" className="shrink-0">
                                 <AgentStatusBadge status={entry.agentStatus} />
+                                <IconButton
+                                  label="Reset agent state"
+                                  icon={<RotateCcw />}
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    reset(entry);
+                                  }}
+                                />
                               </HStack>
                             </HStack>
                             <VStack
@@ -352,6 +373,7 @@ const HINTS: [string[], string][] = [
   [['up', 'down', 'left', 'right'], 'move'],
   [['1', '9'], 'jump to cell'],
   [['enter'], 'switch'],
+  [['x'], 'reset agent state'],
   [['esc'], 'close'],
 ];
 

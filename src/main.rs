@@ -623,6 +623,7 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
                     };
                     changed |= mgr.reap_stale_agents(now, alive);
                     changed |= mgr.update_detected_agents(&detected, alive);
+                    changed |= mgr.end_agents_at_prompt(now, Duration::from_secs(3));
                 }
             }
             let mut mgr = state.write().await;

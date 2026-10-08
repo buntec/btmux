@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
@@ -217,6 +217,43 @@ impl SessionManager {
             }
         }
         changed
+    }
+
+    /// Ends hook-only agents once their pane is back at the shell prompt:
+    /// nothing else runs in the foreground, and the agent's reported PID may
+    /// belong to a server that never exits (Codex).
+    pub fn end_agents_at_prompt(&mut self, now: Instant, grace: Duration) -> bool {
+        let mut changed = false;
+        let panes = self
+            .sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes);
+        for pane in panes {
+            let Some(agent) = self.agents.get_mut(&pane.id) else {
+                continue;
+            };
+            if !agent.is_unobserved_for(now, grace) {
+                continue;
+            }
+            let Some(shell) = pane.pty.shell_pid() else {
+                continue;
+            };
+            let group = unsafe { libc::getpgid(shell as libc::pid_t) };
+            if group > 0 && pane.pty.foreground_pgrp() == Some(group) {
+                agent.end(now);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Forgets all agent state for the pane; a still-running agent reappears
+    /// on the next process scan or hook.
+    pub fn reset_agent(&mut self, pane_id: Uuid) -> bool {
+        let removed = self.agents.remove(&pane_id).is_some();
+        self.sync_screen_tracking();
+        removed
     }
 
     /// Live screens are parsed only for panes with a detected agent.
@@ -1456,5 +1493,45 @@ mod agent_tests {
         assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
         mgr.set_agent_status(pane_id, AgentStatus::default());
         assert!(mgr.running_agent_panes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn hook_only_agent_ends_at_shell_prompt_and_reset_forgets_it() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        mgr.find_pane_mut(pane_id)
+            .unwrap()
+            .pty
+            .ensure_spawned(80, 24)
+            .unwrap();
+        let now = Instant::now();
+        // A long-lived process (here, this one) stands in for Codex's server.
+        let mut start = report(AgentEvent::SessionStart, "first");
+        start.process = Some(AgentProcess {
+            pid: std::process::id(),
+            start_time: 1,
+        });
+        mgr.apply_agent_report(pane_id, start, now);
+        assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
+        let grace = Duration::from_secs(3);
+        assert!(!mgr.end_agents_at_prompt(now, grace));
+        assert!(mgr.end_agents_at_prompt(now + grace, grace));
+        assert!(mgr.running_agent_panes().is_empty());
+
+        mgr.apply_agent_report(pane_id, report(AgentEvent::SessionStart, "second"), now);
+        assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
+        assert!(mgr.reset_agent(pane_id));
+        assert!(mgr.running_agent_panes().is_empty());
+        assert!(!mgr.reset_agent(pane_id));
     }
 }

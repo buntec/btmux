@@ -268,6 +268,9 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         ClientMessage::AcknowledgePane { pane_id } => {
             mgr.acknowledge_pane(pane_id);
         }
+        ClientMessage::ResetAgent { pane_id } => {
+            mgr.reset_agent(pane_id);
+        }
         ClientMessage::CyclePane { session_id, delta } => mgr.cycle_pane(session_id, delta),
         ClientMessage::SwapPane { session_id, delta } => mgr.swap_pane(session_id, delta),
         ClientMessage::NextLayout { session_id } => mgr.next_layout(session_id),
@@ -366,7 +369,9 @@ fn validate_command(
         CapturePane { pane_id, .. } if mgr.find_pane(*pane_id).is_none() => {
             return Err("Pane no longer exists".into())
         }
-        AcknowledgePane { pane_id } if mgr.find_pane(*pane_id).is_none() => {
+        AcknowledgePane { pane_id } | ResetAgent { pane_id }
+            if mgr.find_pane(*pane_id).is_none() =>
+        {
             return Err("Pane no longer exists".into())
         }
         SwitchWindow { index, .. }
@@ -742,6 +747,10 @@ pub(crate) enum ClientMessage {
     },
     /// The user viewed this pane: clears its unread notification and a finished agent.
     AcknowledgePane {
+        pane_id: Uuid,
+    },
+    /// Forgets the pane's agent state; a still-running agent is re-detected.
+    ResetAgent {
         pane_id: Uuid,
     },
     /// This client's window gained focus, so it now shows OS notifications.

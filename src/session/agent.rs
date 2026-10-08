@@ -477,6 +477,16 @@ impl AgentLifecycle {
         self.observed.is_some() && !self.ended
     }
 
+    /// Active only through hook reports, quiet for `grace`. Its reported PID
+    /// may be a long-lived server that outlives the agent, so liveness alone
+    /// cannot end it.
+    pub fn is_unobserved_for(&self, now: Instant, grace: Duration) -> bool {
+        self.is_active()
+            && self.observed.is_none()
+            && self.authority != Authority::Explicit
+            && now.duration_since(self.last_seen) >= grace
+    }
+
     pub fn is_stale(&self, now: Instant, process_alive: impl Fn(AgentProcess) -> bool) -> bool {
         if self.ended {
             return now.duration_since(self.last_seen) >= UNVERIFIED_AGENT_TTL;

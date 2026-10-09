@@ -921,6 +921,13 @@ fn git_commit_sync(root: &Path, subject: &str, body: &str) -> Result<(), String>
         Err(error) if error.code() == ErrorCode::UnbornBranch => None,
         Err(error) => return Err(format!("Failed to read HEAD: {}", error)),
     };
+    let unchanged = match &parent {
+        Some(parent) => parent.tree_id() == tree_id,
+        None => index.is_empty(),
+    };
+    if unchanged {
+        return Err("Nothing staged".to_string());
+    }
     let parents = parent.iter().collect::<Vec<_>>();
     let message = if body.trim().is_empty() {
         subject.to_string()
@@ -1117,6 +1124,38 @@ mod tests {
         let commit = repo.head().unwrap().peel_to_commit().unwrap();
         assert_eq!(commit.message().unwrap(), "subject\n\nbody\nline");
         assert!(git_status_sync(&root, false).unwrap().staged.is_empty());
+
+        assert_eq!(
+            git_commit_sync(&root, "empty", "").unwrap_err(),
+            "Nothing staged"
+        );
+        assert_eq!(
+            repo.head().unwrap().peel_to_commit().unwrap().id(),
+            commit.id()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn first_commit_requires_staged_files() {
+        let root = std::env::temp_dir().join(format!("btmux-git-unborn-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("file.txt"), "one\n").unwrap();
+        let repo = Repository::init(&root).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "btmux").unwrap();
+        config.set_str("user.email", "btmux@example.com").unwrap();
+
+        assert_eq!(
+            git_commit_sync(&root, "empty", "").unwrap_err(),
+            "Nothing staged"
+        );
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        git_commit_sync(&root, "initial", "").unwrap();
+        assert!(repo.head().is_ok());
 
         fs::remove_dir_all(root).unwrap();
     }

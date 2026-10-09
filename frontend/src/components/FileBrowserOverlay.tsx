@@ -1007,7 +1007,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             break;
           case 'c':
             e.preventDefault();
-            if (gitStatus?.is_repo) setCommitModalOpen(true);
+            if (gitStatus?.staged.length) setCommitModalOpen(true);
+            else if (gitStatus?.is_repo) useStore.getState().showToast('Nothing staged', 'info');
             break;
           case 'G':
             e.preventDefault();

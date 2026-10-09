@@ -6,6 +6,7 @@ mod config;
 #[allow(dead_code)]
 mod discovery;
 mod file_git;
+mod file_git_ops;
 mod file_search;
 mod fs_ops;
 mod git;

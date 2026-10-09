@@ -64,7 +64,7 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
    `?mirror=1` creates a read-only attachment for window-grid thumbnails. Mirrors receive output and ordered size frames but never resize or write to the PTY.
 
-3. **`/ws/files`** (`src/ws/files.rs`) — correlated JSON request/response messages for the file browser. It supports directory/file metadata, tree and content search, rich previews, Git status/diff/stage/unstage/discard, rename, copy, move, trash, and delete. `prefix + f` opens file mode; `prefix + g` opens Git mode. Keep filesystem access behind the authenticated route and preserve path validation in `fs_ops.rs`.
+3. **`/ws/files`** (`src/ws/files.rs`) — correlated JSON request/response messages for the file browser. It supports directory/file metadata, tree and content search, rich previews, Git status/diff/stage/unstage/discard, rename, copy, move, trash, and delete. `prefix + f` opens file mode; `prefix + g` opens Git mode. Git mode's magit-style popups (`b` branch, `f` fetch, `F` pull, `P` push, `z` stash) send `git_refs`/`git_run`; `file_git_ops.rs` maps a structured op to `git` CLI arguments (so credentials and hooks apply) and rejects option-like values. Keep filesystem access behind the authenticated route and preserve path validation in `fs_ops.rs`.
 
 4. **`/ws/sysstat`** (`src/ws/sysstat.rs`) — emits one JSON frame per second with per-core CPU, memory, and aggregate network rates for the StatusBar. The frontend reconnects this auxiliary socket independently.
 

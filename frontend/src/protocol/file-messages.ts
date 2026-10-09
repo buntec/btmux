@@ -140,3 +140,44 @@ let _id = 0;
 export function nextId(): string {
   return String(++_id);
 }
+
+export interface GitBranchInfo {
+  name: string;
+  is_head: boolean;
+  upstream: string | null;
+}
+
+export interface GitStashInfo {
+  index: number;
+  message: string;
+}
+
+export interface GitRefsResult {
+  branch: string | null;
+  upstream: string | null;
+  local_branches: GitBranchInfo[];
+  remote_branches: string[];
+  remotes: string[];
+  stashes: GitStashInfo[];
+}
+
+export type GitOp =
+  | { kind: 'checkout'; target: string }
+  | { kind: 'create_branch'; name: string; checkout: boolean }
+  | { kind: 'rename_branch'; from: string; to: string }
+  | { kind: 'delete_branch'; name: string }
+  | { kind: 'fetch'; remote?: string; all?: boolean; prune?: boolean; tags?: boolean }
+  | { kind: 'pull'; remote?: string; branch?: string; rebase?: boolean; ff_only?: boolean }
+  | {
+      kind: 'push';
+      remote?: string;
+      refspec?: string;
+      set_upstream?: boolean;
+      force_with_lease?: boolean;
+      no_verify?: boolean;
+      dry_run?: boolean;
+      tags?: boolean;
+    }
+  | { kind: 'stash_push'; message?: string; staged?: boolean; include_untracked?: boolean; all?: boolean }
+  | { kind: 'stash_apply'; index: number; pop: boolean }
+  | { kind: 'stash_drop'; index: number };

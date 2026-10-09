@@ -17,6 +17,7 @@ import { filterGitLog } from '@/lib/gitGraph';
 import { GitHistory } from './files/GitHistory';
 import { GitCommitDiffPreview } from './files/GitCommitDiffPreview';
 import { GitCommitModal } from './files/GitCommitModal';
+import { GitPopup, type GitPopupKind } from './files/GitPopup';
 import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
@@ -30,6 +31,8 @@ import type {
   GitStatusResult,
   GitLogResult,
   GitCommitDiffResult,
+  GitOp,
+  GitRefsResult,
   FileDiff,
   TreeNode,
   FileSearchResult,
@@ -126,6 +129,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   );
   const [pendingDiscard, setPendingDiscard] = useState<{ path: string; untracked: boolean } | null>(null);
   const [commitModalOpen, setCommitModalOpen] = useState(false);
+  const [gitPopup, setGitPopup] = useState<GitPopupKind | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -138,6 +142,20 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       window.requestAnimationFrame(() => rootRef.current?.focus());
     }
   }, []);
+
+  const closeGitPopup = useCallback(() => setGitPopup(null), []);
+
+  // Refocus after the popup's dialog has unmounted; focusing earlier hits the
+  // still-modal dialog's inert backdrop and focus falls to <body>.
+  const gitPopupOpened = useRef(false);
+  useEffect(() => {
+    if (gitPopup) {
+      gitPopupOpened.current = true;
+    } else if (gitPopupOpened.current) {
+      gitPopupOpened.current = false;
+      rootRef.current?.focus();
+    }
+  }, [gitPopup]);
 
   const handleCreateModalOpenChange = useCallback((open: boolean) => {
     setCreateModalOpen(open);
@@ -325,26 +343,48 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, currentPath, store],
   );
 
+  // Apply the status returned by a history-changing operation and reload the log.
+  const applyGitChange = useCallback(
+    async (status: GitStatusResult) => {
+      store.getState().setGitStatus(status);
+      store.getState().setGitDiff(null);
+      store.getState().setGitCommitDiff(null);
+      try {
+        const logResp = await fileSend('git_log', { path: currentPath, max_count: 200 });
+        store.getState().setGitLog(logResp.payload as unknown as GitLogResult);
+      } catch (e) {
+        console.error('git_log refresh failed:', e);
+      }
+    },
+    [fileSend, currentPath, store],
+  );
+
   const gitCommit = useCallback(
     async (subject: string, body: string) => {
       try {
         const resp = await fileSend('git_commit', { subject, body, cwd: currentPath });
-        const payload = resp.payload as { status: GitStatusResult };
-        store.getState().setGitStatus(payload.status);
-        store.getState().setGitDiff(null);
-        store.getState().setGitCommitDiff(null);
-        try {
-          const logResp = await fileSend('git_log', { path: currentPath, max_count: 200 });
-          store.getState().setGitLog(logResp.payload as unknown as GitLogResult);
-        } catch (e) {
-          console.error('git_log failed after commit:', e);
-        }
+        await applyGitChange((resp.payload as { status: GitStatusResult }).status);
       } catch (e) {
         console.error('git_commit failed:', e);
         throw e;
       }
     },
-    [fileSend, currentPath, store],
+    [fileSend, currentPath, applyGitChange],
+  );
+
+  const gitLoadRefs = useCallback(async () => {
+    const resp = await fileSend('git_refs', { cwd: currentPath });
+    return resp.payload as unknown as GitRefsResult;
+  }, [fileSend, currentPath]);
+
+  const gitRun = useCallback(
+    async (op: GitOp) => {
+      const resp = await fileSend('git_run', { cwd: currentPath, op });
+      const payload = resp.payload as { status: GitStatusResult; output: string };
+      await applyGitChange(payload.status);
+      return payload.output;
+    },
+    [fileSend, currentPath, applyGitChange],
   );
 
   const trashFile = useCallback(
@@ -620,7 +660,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Keyboard handler — only active while this overlay (or a child) has focus.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (commitModalOpen || createModalOpen || !rootRef.current?.contains(document.activeElement)) return;
+      if (commitModalOpen || createModalOpen || gitPopup || !rootRef.current?.contains(document.activeElement)) return;
 
       // Rename input eats its own keys — let it handle Escape/Enter only
       if (pendingRename && document.activeElement === renameInputRef.current) {
@@ -712,6 +752,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
           }
 
+          if (gitStatus?.is_repo && !e.ctrlKey && !e.metaKey && !e.altKey && GIT_POPUP_KEYS[e.key]) {
+            e.preventDefault();
+            setGitPopup(GIT_POPUP_KEYS[e.key]!);
+            return;
+          }
+
           if (e.ctrlKey && e.key === 'd') {
             e.preventDefault();
             scrollFilePreview(1);
@@ -790,6 +836,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             return;
           }
           if (!e.ctrlKey) return;
+        }
+
+        if (gitStatus?.is_repo && !e.ctrlKey && !e.metaKey && !e.altKey && GIT_POPUP_KEYS[e.key]) {
+          e.preventDefault();
+          setGitPopup(GIT_POPUP_KEYS[e.key]!);
+          return;
         }
 
         if (e.ctrlKey && e.key === 'd') {
@@ -1233,6 +1285,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     pendingDiscard,
     pendingDelete,
     commitModalOpen,
+    gitPopup,
     createModalOpen,
     pendingRename,
     renameValue,
@@ -1419,9 +1472,20 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
       <CreateEntryModal open={createModalOpen} onOpenChange={handleCreateModalOpenChange} onCreate={createEntry} />
       <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
+      <GitPopup kind={gitPopup} onClose={closeGitPopup} loadRefs={gitLoadRefs} run={gitRun} />
     </VStack>
   );
 }
+
+const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
+  b: 'branch',
+  f: 'fetch',
+  F: 'pull',
+  P: 'push',
+  z: 'stash',
+};
+
+const GIT_POPUP_HINT: Hint = { keys: ['b', 'f', 'F', 'P', 'z'], label: 'branch/fetch/pull/push/stash' };
 
 const GIT_EXIT_HINTS: Hint[] = [{ keys: ['esc', 'q'], label: 'exit git' }];
 
@@ -1430,6 +1494,7 @@ const GIT_LOG_HINTS: Hint[] = [
   { keys: ['g', 'G'], label: 'top/bottom' },
   { keys: ['/'], label: 'filter' },
   { keys: ['s'], label: 'status' },
+  GIT_POPUP_HINT,
   { keys: ['esc', 'q'], label: 'exit git' },
 ];
 
@@ -1444,6 +1509,7 @@ const GIT_STATUS_HINTS: Hint[] = [
 
 const GIT_STATUS_TAIL_HINTS: Hint[] = [
   { keys: ['c'], label: 'commit' },
+  GIT_POPUP_HINT,
   { keys: ['/'], label: 'filter' },
   { keys: ['o'], label: 'log' },
   { keys: ['esc', 'q'], label: 'exit git' },

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::file_git;
+use crate::file_git_ops;
 use crate::file_search::{self, FileIndex};
 use crate::fs_ops;
 
@@ -421,6 +422,54 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                     id,
                     msg_type: "git_commit_result".to_string(),
                     payload: serde_json::json!({ "status": status }),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
+        "git_refs" => {
+            let cwd = request
+                .payload
+                .get("cwd")
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+            let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+
+            match file_git_ops::git_refs(&git_root).await {
+                Ok(result) => ServerMessage {
+                    id,
+                    msg_type: "git_refs_result".to_string(),
+                    payload: serde_json::to_value(result).unwrap(),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
+        "git_run" => {
+            let cwd = request
+                .payload
+                .get("cwd")
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+            let op = match request
+                .payload
+                .get("op")
+                .cloned()
+                .map(serde_json::from_value::<file_git_ops::GitOp>)
+            {
+                Some(Ok(op)) => op,
+                Some(Err(e)) => return error_response(id, &format!("Invalid git op: {}", e)),
+                None => return error_response(id, "Missing git op"),
+            };
+            let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+
+            let output = match file_git_ops::git_run(&status_root, op).await {
+                Ok(output) => output,
+                Err(e) => return error_response(id, &e),
+            };
+            match file_git::git_status(&status_root, true).await {
+                Ok(status) => ServerMessage {
+                    id,
+                    msg_type: "git_run_result".to_string(),
+                    payload: serde_json::json!({ "status": status, "output": output }),
                 },
                 Err(e) => error_response(id, &e),
             }

@@ -1351,7 +1351,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           aria-orientation="vertical"
           aria-label="Resize sidebar"
           onMouseDown={onDividerMouseDown}
-          className="w-1 flex-none cursor-col-resize border-r border-border hover:bg-accent-bg active:bg-accent-bg"
+          className="w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg"
         />
         <VStack className="file-preview-scroll file-preview-content min-h-0 min-w-0 flex-1">
           {isGitMode && gitView === 'log' ? <GitCommitDiffPreview /> : <FilePreview fileSend={fileSend} />}

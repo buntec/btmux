@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Plus, Pencil, Trash2, GitBranch, FileQuestion, ChevronRight, ChevronDown } from 'lucide-react';
+import { Plus, Pencil, Trash2, ArrowRight, FileQuestion, ChevronRight, ChevronDown } from 'lucide-react';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
@@ -139,7 +139,7 @@ function statusIcon(status: FileStatus) {
     case 'deleted':
       return <Trash2 className="size-3 text-red-vivid shrink-0" />;
     case 'renamed':
-      return <GitBranch className="size-3 text-purple-vivid shrink-0" />;
+      return <ArrowRight className="size-3 text-purple-vivid shrink-0" />;
     case 'typechange':
       return <FileQuestion className="size-3 text-yellow-vivid shrink-0" />;
   }

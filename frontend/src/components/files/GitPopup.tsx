@@ -2,14 +2,14 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Heading } from '@astryxdesign/core/Heading';
-import { Layout, LayoutContent, HStack, Section, VStack } from '@astryxdesign/core/Layout';
+import { Layout, LayoutContent, LayoutFooter, HStack, Section, VStack } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Spinner } from '@astryxdesign/core/Spinner';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { cn } from '@/lib/utils';
 import { useStore } from '@/state/store';
-import { KeyCap } from '../KeyHint';
+import { KeyCap, KeyHint, type Hint } from '../KeyHint';
 import type { GitOp, GitRefsResult } from '@/protocol/file-messages';
 
 export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash';
@@ -412,6 +412,21 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
     if (!running) onClose();
   };
 
+  const hints: Hint[] = running
+    ? []
+    : prompt
+      ? [
+          ...(options.length
+            ? [
+                { keys: ['up', 'down'], label: 'select' },
+                { keys: ['tab'], label: 'complete' },
+              ]
+            : []),
+          { keys: ['enter'], label: 'run' },
+          { keys: ['esc'], label: 'close' },
+        ]
+      : [{ keys: ['esc', 'q'], label: 'close' }];
+
   const execute = async (op: GitOp) => {
     setPrompt(null);
     setError(null);
@@ -646,6 +661,17 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
               )}
             </VStack>
           </LayoutContent>
+        }
+        footer={
+          hints.length > 0 ? (
+            <LayoutFooter hasDivider>
+              <HStack gap={4} wrap="wrap">
+                {hints.map((hint) => (
+                  <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} />
+                ))}
+              </HStack>
+            </LayoutFooter>
+          ) : undefined
         }
       />
     </Dialog>

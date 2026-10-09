@@ -1092,7 +1092,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           store.getState().setFilterQuery(filterQuery + e.key);
           return;
         }
-        if (e.ctrlKey && (e.key === 'n' || e.key === 'p')) {
+        const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n');
+        if (down || e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) {
           e.preventDefault();
           const vis = entries.filter((entry) => {
             if (!showDotFiles && entry.name.startsWith('.')) return false;
@@ -1100,7 +1101,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             if (filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
             return true;
           });
-          const next = e.key === 'n' ? Math.min(focusedIndex + 1, vis.length - 1) : Math.max(focusedIndex - 1, 0);
+          const next = down ? Math.min(focusedIndex + 1, vis.length - 1) : Math.max(focusedIndex - 1, 0);
           store.getState().setFocusedIndex(next);
           return;
         }
@@ -1365,7 +1366,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const selectionCount = selectedPaths.size;
 
-  const hints: Hint[] = isGitMode
+  const allHints: Hint[] = isGitMode
     ? gitStatus && !gitStatus.is_repo
       ? GIT_EXIT_HINTS
       : isFilterActive
@@ -1398,14 +1399,18 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           { keys: ['tab'], label: searchMode === 'files' ? 'content search' : 'file search' },
           { keys: ['esc'], label: 'exit search' },
         ]
-      : [
-          { keys: ['j', 'k'], label: 'navigate' },
-          { keys: ['space'], label: 'select' },
-          { keys: ['ctrl+n', 'ctrl+p'], label: focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate' },
-          ...BROWSE_HINTS.slice(0, -1),
-          { keys: ['w'], label: wrapLines ? 'wrap: on' : 'wrap: off' },
-          ...BROWSE_HINTS.slice(-1),
-        ];
+      : isFilterActive
+        ? BROWSE_FILTER_HINTS
+        : [
+            { keys: ['j', 'k'], label: 'navigate' },
+            { keys: ['space'], label: 'select' },
+            { keys: ['ctrl+n', 'ctrl+p'], label: focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate' },
+            ...BROWSE_HINTS.slice(0, -1),
+            { keys: ['w'], label: wrapLines ? 'wrap: on' : 'wrap: off' },
+            ...BROWSE_HINTS.slice(-1),
+          ];
+  // Popup keys only work once status confirms a repository.
+  const hints = gitStatus?.is_repo ? allHints : allHints.filter((hint) => hint !== GIT_POPUP_HINT);
 
   return (
     <VStack
@@ -1580,7 +1585,16 @@ const GIT_STATUS_TAIL_HINTS: Hint[] = [
   { keys: ['esc', 'q'], label: 'exit git' },
 ];
 
+const BROWSE_FILTER_HINTS: Hint[] = [
+  { keys: ['up', 'down'], label: 'navigate' },
+  { keys: ['enter'], label: 'open' },
+  { keys: ['ctrl+enter'], label: 'insert path' },
+  { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll' },
+  { keys: ['esc'], label: 'close filter' },
+];
+
 const BROWSE_HINTS: Hint[] = [
+  { keys: ['g', 'G'], label: 'top/bottom' },
   { keys: ['y'], label: 'copy' },
   { keys: ['x'], label: 'cut' },
   { keys: ['p'], label: 'paste' },
@@ -1588,8 +1602,9 @@ const BROWSE_HINTS: Hint[] = [
   { keys: ['r'], label: 'rename' },
   { keys: ['enter'], label: 'open' },
   { keys: ['ctrl+enter'], label: 'insert path' },
-  { keys: ['l'], label: 'preview' },
+  { keys: ['l'], label: 'into' },
   { keys: ['h'], label: 'up' },
+  { keys: ['~'], label: 'home' },
   { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll' },
   { keys: ['/'], label: 'filter' },
   { keys: ['f', 's'], label: 'search' },
@@ -1597,5 +1612,5 @@ const BROWSE_HINTS: Hint[] = [
   { keys: ['i'], label: 'gitignored' },
   { keys: ['d'], label: 'trash' },
   { keys: ['D'], label: 'delete' },
-  { keys: ['q'], label: 'close' },
+  { keys: ['esc', 'q'], label: 'close' },
 ];

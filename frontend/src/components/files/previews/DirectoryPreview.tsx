@@ -49,7 +49,11 @@ export function DirectoryPreview({ tree, path, fileSend }: DirectoryPreviewProps
     <div className="flex flex-1 min-h-0">
       <ScrollableArea label="Directory" axis="both" data-preview-viewport className="min-w-0 flex-1 overflow-auto">
         <div className="p-4">
-          <TreeNodeRow node={tree} depth={0} />
+          {tree.children?.length ? (
+            tree.children.map((child) => <TreeNodeRow key={child.name} node={child} depth={0} />)
+          ) : (
+            <span className="text-secondary">Empty directory</span>
+          )}
         </div>
       </ScrollableArea>
       {(gitStatusLoading || gitStatus) && <GitStatusPreview status={gitStatus} loading={gitStatusLoading} />}

@@ -98,6 +98,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const showDotFiles = useFileStore((s) => s.showDotFiles);
   const showIgnored = useFileStore((s) => s.showIgnored);
+  const wrapLines = useFileStore((s) => s.wrapLines);
   const isGitMode = useFileStore((s) => s.isGitMode);
   const gitView = useFileStore((s) => s.gitView);
   const treeDepth = useFileStore((s) => s.treeDepth);
@@ -1124,6 +1125,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           store.getState().setShowIgnored(!showIgnored);
           break;
+        case 'w':
+          e.preventDefault();
+          store.getState().setWrapLines(!store.getState().wrapLines);
+          break;
         case 'g':
           e.preventDefault();
           store.getState().setFocusedIndex(0);
@@ -1290,7 +1295,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           { keys: ['j', 'k'], label: 'navigate' },
           { keys: ['space'], label: 'select' },
           { keys: ['ctrl+n', 'ctrl+p'], label: focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate' },
-          ...BROWSE_HINTS,
+          ...BROWSE_HINTS.slice(0, -1),
+          { keys: ['w'], label: wrapLines ? 'wrap: on' : 'wrap: off' },
+          ...BROWSE_HINTS.slice(-1),
         ];
 
   return (

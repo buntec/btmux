@@ -131,6 +131,7 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   const directoryTree = useFileStore((s) => s.directoryTree);
   const selectedDirectory = useFileStore((s) => s.selectedDirectory);
   const searchMode = useFileStore((s) => s.searchMode);
+  const wrapLines = useFileStore((s) => s.wrapLines);
 
   if (isGitMode) {
     if (gitDiff) return <DiffPreview />;
@@ -200,7 +201,18 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   }
 
   return (
-    <ScrollableArea label="File preview" axis="both" data-preview-viewport className="flex-1 overflow-auto">
+    <ScrollableArea
+      label="File preview"
+      axis={
+        previewType === 'markdown' && searchMode !== 'content'
+          ? 'block'
+          : wrapLines && (previewType === 'code' || searchMode === 'content')
+            ? 'block'
+            : 'both'
+      }
+      data-preview-viewport
+      className="flex-1 overflow-auto"
+    >
       <div className="p-4">
         {searchMode === 'content' ? (
           <CodePreview />

@@ -30,6 +30,7 @@ interface FileStore {
   isFilterActive: boolean;
   showDotFiles: boolean;
   showIgnored: boolean;
+  wrapLines: boolean;
 
   // Multi-select
   selectedPaths: Set<string>;
@@ -70,6 +71,7 @@ interface FileStore {
   setIsFilterActive: (active: boolean) => void;
   setShowDotFiles: (show: boolean) => void;
   setShowIgnored: (show: boolean) => void;
+  setWrapLines: (wrap: boolean) => void;
   toggleSelectedPath: (path: string) => void;
   clearSelection: () => void;
   setYankRegister: (register: YankRegister | null) => void;
@@ -101,6 +103,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   isFilterActive: false,
   showDotFiles: false,
   showIgnored: false,
+  wrapLines: false,
   selectedPaths: new Set(),
   yankRegister: null,
   pendingRename: null,
@@ -135,6 +138,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   setIsFilterActive: (active) => set({ isFilterActive: active, filterQuery: active ? get().filterQuery : '' }),
   setShowDotFiles: (show) => set({ showDotFiles: show }),
   setShowIgnored: (show) => set({ showIgnored: show }),
+  setWrapLines: (wrap) => set({ wrapLines: wrap }),
   toggleSelectedPath: (path) => {
     const s = new Set(get().selectedPaths);
     if (s.has(path)) s.delete(path);

@@ -106,6 +106,7 @@ export function CodePreview() {
   const searchMode = useFileStore((s) => s.searchMode);
   const contentSearchResults = useFileStore((s) => s.contentSearchResults);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
+  const wrapLines = useFileStore((s) => s.wrapLines);
   const theme = useStore((s) => s.config?.theme ?? null);
 
   if (!fileContent) return null;
@@ -169,13 +170,16 @@ export function CodePreview() {
             margin: 0,
             borderRadius: '0.5rem',
             fontSize: '1em',
+            ...(wrapLines && { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }),
           }}
+          codeTagProps={wrapLines ? { style: { whiteSpace: 'pre-wrap' } } : undefined}
           lineProps={(lineNumber) => {
             const isTarget = targetLine != null && lineNumber === targetLine;
             return {
               'data-line': lineNumber,
               style: {
                 display: 'block',
+                ...(wrapLines && { whiteSpace: 'pre-wrap' }),
                 ...(isTarget && {
                   backgroundColor: 'rgba(255,220,0,0.15)',
                   boxShadow: 'inset 2px 0 0 rgba(255,220,0,0.7)',
@@ -188,7 +192,10 @@ export function CodePreview() {
           {text}
         </SyntaxHighlighter>
       ) : (
-        <pre className="rounded-lg p-4 overflow-x-auto" style={{ background: bg, color: fg }}>
+        <pre
+          className={`rounded-lg p-4 ${wrapLines ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'overflow-x-auto'}`}
+          style={{ background: bg, color: fg }}
+        >
           <code>{text}</code>
         </pre>
       )}

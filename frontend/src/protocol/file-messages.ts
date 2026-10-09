@@ -180,4 +180,6 @@ export type GitOp =
     }
   | { kind: 'stash_push'; message?: string; staged?: boolean; include_untracked?: boolean; all?: boolean }
   | { kind: 'stash_apply'; index: number; pop: boolean }
-  | { kind: 'stash_drop'; index: number };
+  | { kind: 'stash_drop'; index: number }
+  | { kind: 'stage_all' }
+  | { kind: 'unstage_all' };

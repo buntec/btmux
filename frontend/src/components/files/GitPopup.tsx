@@ -350,6 +350,10 @@ function describeOp(op: GitOp): string {
       return `${op.pop ? 'Popping' : 'Applying'} stash@{${op.index}}`;
     case 'stash_drop':
       return `Dropping stash@{${op.index}}`;
+    case 'stage_all':
+      return 'Staging all changes';
+    case 'unstage_all':
+      return 'Unstaging all changes';
   }
 }
 

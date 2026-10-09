@@ -98,6 +98,9 @@ pub enum GitOp {
     StashDrop {
         index: usize,
     },
+    /// Stages all changes to tracked files, like magit's `S`.
+    StageAll,
+    UnstageAll,
 }
 
 pub async fn git_refs(root: &Path) -> Result<GitRefsResult, String> {
@@ -309,6 +312,8 @@ fn op_args(repo: &Repository, op: GitOp) -> Result<Vec<String>, String> {
         GitOp::StashDrop { index } => {
             push(&["stash", "drop", &format!("stash@{{{}}}", index)]);
         }
+        GitOp::StageAll => push(&["add", "-u"]),
+        GitOp::UnstageAll => push(&["reset", "-q"]),
     }
     Ok(args)
 }
@@ -541,6 +546,26 @@ mod tests {
         .unwrap();
         assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "two\n");
         assert!(git_refs(&root).await.unwrap().stashes.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn stage_all_skips_untracked_and_unstage_all_clears_index() {
+        let (root, _repo) = init_repo("btmux-git-ops-stage-all");
+        fs::write(root.join("file.txt"), "two\n").unwrap();
+        fs::write(root.join("new.txt"), "new\n").unwrap();
+
+        git_run(&root, GitOp::StageAll).await.unwrap();
+        let status = crate::file_git::git_status(&root, false).await.unwrap();
+        assert_eq!(status.staged.len(), 1);
+        assert!(status.unstaged.is_empty());
+        assert_eq!(status.untracked, ["new.txt"]);
+
+        git_run(&root, GitOp::UnstageAll).await.unwrap();
+        let status = crate::file_git::git_status(&root, false).await.unwrap();
+        assert!(status.staged.is_empty());
+        assert_eq!(status.unstaged.len(), 1);
 
         fs::remove_dir_all(root).unwrap();
     }

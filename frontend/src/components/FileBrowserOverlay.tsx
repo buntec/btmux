@@ -329,6 +329,21 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, currentPath, store],
   );
 
+  const gitStageAll = useCallback(
+    async (stage: boolean) => {
+      try {
+        const resp = await fileSend('git_run', {
+          cwd: currentPath,
+          op: { kind: stage ? 'stage_all' : 'unstage_all' } satisfies GitOp,
+        });
+        store.getState().setGitStatus((resp.payload as { status: GitStatusResult }).status);
+      } catch (e) {
+        console.error(`${stage ? 'stage' : 'unstage'} all failed:`, e);
+      }
+    },
+    [fileSend, currentPath, store],
+  );
+
   const gitDiscard = useCallback(
     async (path: string, untracked: boolean) => {
       try {
@@ -927,6 +942,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             break;
           }
+          case 'S':
+            e.preventDefault();
+            if (gitStatus?.unstaged.length) gitStageAll(true);
+            break;
+          case 'U':
+            e.preventDefault();
+            if (gitStatus?.staged.length) gitStageAll(false);
+            break;
           case 'x': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
@@ -1278,6 +1301,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     closeLogFilter,
     gitStage,
     gitUnstage,
+    gitStageAll,
     gitDiscard,
     gitCommit,
     trashFile,
@@ -1503,7 +1527,9 @@ const GIT_STATUS_HINTS: Hint[] = [
   { keys: ['tab'], label: 'expand' },
   { keys: ['h', 'l'], label: 'fold/unfold' },
   { keys: ['s'], label: 'stage' },
+  { keys: ['S'], label: 'stage all' },
   { keys: ['u'], label: 'unstage' },
+  { keys: ['U'], label: 'unstage all' },
   { keys: ['x'], label: 'discard' },
 ];
 

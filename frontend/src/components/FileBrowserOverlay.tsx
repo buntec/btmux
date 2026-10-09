@@ -17,6 +17,7 @@ import { filterGitLog } from '@/lib/gitGraph';
 import { GitHistory } from './files/GitHistory';
 import { GitCommitDiffPreview } from './files/GitCommitDiffPreview';
 import { GitCommitModal } from './files/GitCommitModal';
+import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
 import { KeyHint, type Hint } from './KeyHint';
@@ -124,6 +125,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   );
   const [pendingDiscard, setPendingDiscard] = useState<{ path: string; untracked: boolean } | null>(null);
   const [commitModalOpen, setCommitModalOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -131,6 +133,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const handleCommitModalOpenChange = useCallback((open: boolean) => {
     setCommitModalOpen(open);
+    if (!open) {
+      window.requestAnimationFrame(() => rootRef.current?.focus());
+    }
+  }, []);
+
+  const handleCreateModalOpenChange = useCallback((open: boolean) => {
+    setCreateModalOpen(open);
     if (!open) {
       window.requestAnimationFrame(() => rootRef.current?.focus());
     }
@@ -385,6 +394,16 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     await navigate(dest);
   }, [fileSend, navigate, store]);
 
+  const createEntry = useCallback(
+    async (name: string) => {
+      await fileSend('create_entry', { root: currentPath, name });
+      // Focus the top-level entry that was created
+      const top = name.split('/').find((part) => part !== '');
+      await navigate(currentPath, top);
+    },
+    [fileSend, currentPath, navigate],
+  );
+
   const commitRename = useCallback(
     async (newName: string) => {
       const { pendingRename } = store.getState();
@@ -600,7 +619,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Keyboard handler — only active while this overlay (or a child) has focus.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (commitModalOpen || !rootRef.current?.contains(document.activeElement)) return;
+      if (commitModalOpen || createModalOpen || !rootRef.current?.contains(document.activeElement)) return;
 
       // Rename input eats its own keys — let it handle Escape/Enter only
       if (pendingRename && document.activeElement === renameInputRef.current) {
@@ -1121,6 +1140,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           onClose();
           break;
+        case 'a':
+          e.preventDefault();
+          setCreateModalOpen(true);
+          break;
         case 'r': {
           // Rename focused entry
           e.preventDefault();
@@ -1205,6 +1228,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     pendingDiscard,
     pendingDelete,
     commitModalOpen,
+    createModalOpen,
     pendingRename,
     renameValue,
     commitRename,
@@ -1386,6 +1410,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         )}
       </HStack>
 
+      <CreateEntryModal open={createModalOpen} onOpenChange={handleCreateModalOpenChange} onCreate={createEntry} />
       <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
     </VStack>
   );
@@ -1421,6 +1446,7 @@ const BROWSE_HINTS: Hint[] = [
   { keys: ['y'], label: 'copy' },
   { keys: ['x'], label: 'cut' },
   { keys: ['p'], label: 'paste' },
+  { keys: ['a'], label: 'add' },
   { keys: ['r'], label: 'rename' },
   { keys: ['enter'], label: 'open' },
   { keys: ['ctrl+enter'], label: 'insert path' },

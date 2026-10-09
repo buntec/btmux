@@ -302,6 +302,42 @@ pub async fn rename_file(from: &str, to: &str) -> Result<(), String> {
         .map_err(|e| format!("Cannot rename: {}", e))
 }
 
+/// Creates a file, or a directory if `name` ends in '/', under `dir`. Missing
+/// parents are created; existing entries are never overwritten.
+pub async fn create_entry(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let is_dir = name.ends_with('/');
+    let rel = Path::new(name.trim_end_matches('/'));
+    if rel.as_os_str().is_empty()
+        || name.contains('\0')
+        || !rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("Invalid name".to_string());
+    }
+    let target = dir.join(rel);
+    if tokio::fs::symlink_metadata(&target).await.is_ok() {
+        return Err(format!("{} already exists", rel.display()));
+    }
+    if is_dir {
+        tokio::fs::create_dir_all(&target).await
+    } else {
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("Cannot create: {}", e))?;
+        }
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+            .await
+            .map(drop)
+    }
+    .map_err(|e| format!("Cannot create: {}", e))?;
+    Ok(target)
+}
+
 #[async_recursion::async_recursion]
 async fn copy_entry(src: std::path::PathBuf, dst: std::path::PathBuf) -> Result<(), String> {
     let meta = tokio::fs::symlink_metadata(&src)
@@ -460,4 +496,44 @@ fn time_to_string(time: SystemTime) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let secs = duration.as_secs();
     Ok(format!("{}", secs))
+}
+
+#[cfg(test)]
+mod create_entry_tests {
+    use super::*;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let p = std::env::temp_dir().join(format!("btmux-fs-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn creates_nested_files_and_dirs() {
+        let dir = TempDir::new();
+        create_entry(&dir.0, "a/b/c.txt").await.unwrap();
+        assert!(dir.0.join("a/b/c.txt").is_file());
+        create_entry(&dir.0, "x/y/z/").await.unwrap();
+        assert!(dir.0.join("x/y/z").is_dir());
+    }
+
+    #[tokio::test]
+    async fn rejects_existing_and_escaping_names() {
+        let dir = TempDir::new();
+        create_entry(&dir.0, "f").await.unwrap();
+        assert!(create_entry(&dir.0, "f").await.is_err());
+        for bad in ["", "/", "../x", "a/../../x", "/etc/x"] {
+            assert!(create_entry(&dir.0, bad).await.is_err(), "{bad}");
+        }
+    }
 }

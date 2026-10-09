@@ -446,6 +446,26 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => error_response(id, &e),
             }
         }
+        "create_entry" => {
+            let name = request
+                .payload
+                .get("name")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+            let dir = match fs_ops::validate_path(&root, ".") {
+                Ok(d) => d,
+                Err(e) => return error_response(id, &e),
+            };
+
+            match fs_ops::create_entry(&dir, name).await {
+                Ok(path) => ServerMessage {
+                    id,
+                    msg_type: "create_entry_result".to_string(),
+                    payload: serde_json::json!({ "path": path }),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
         "copy_entries" => {
             let paths: Vec<String> = request
                 .payload

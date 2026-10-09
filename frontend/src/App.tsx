@@ -230,7 +230,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         }
         footer={
           activeSessionId ? (
-            <LayoutFooter padding={0} hasDivider>
+            <LayoutFooter padding={0} hasDivider className="backdrop-blur-2xl">
               <StatusBar sessionId={activeSessionId ?? ''} send={send} />
             </LayoutFooter>
           ) : undefined

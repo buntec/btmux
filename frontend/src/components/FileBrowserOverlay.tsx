@@ -1410,7 +1410,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             ...BROWSE_HINTS.slice(-1),
           ];
   // Popup keys only work once status confirms a repository.
-  const hints = gitStatus?.is_repo ? allHints : allHints.filter((hint) => hint !== GIT_POPUP_HINT);
+  const hints = gitStatus?.is_repo ? allHints : allHints.filter((hint) => !GIT_POPUP_HINTS.includes(hint));
 
   return (
     <VStack
@@ -1544,7 +1544,7 @@ const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
   z: 'stash',
 };
 
-const GIT_POPUP_HINT: Hint = { keys: ['b', 'f', 'F', 'P', 'z'], label: 'branch/fetch/pull/push/stash' };
+const GIT_POPUP_HINTS: Hint[] = Object.entries(GIT_POPUP_KEYS).map(([key, kind]) => ({ keys: [key], label: kind }));
 
 const GIT_EXIT_HINTS: Hint[] = [{ keys: ['esc', 'q'], label: 'exit git' }];
 
@@ -1559,7 +1559,7 @@ const GIT_LOG_HINTS: Hint[] = [
   { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll diff' },
   { keys: ['/'], label: 'filter' },
   { keys: ['s'], label: 'status' },
-  GIT_POPUP_HINT,
+  ...GIT_POPUP_HINTS,
   { keys: ['esc', 'q'], label: 'exit git' },
 ];
 
@@ -1579,7 +1579,7 @@ const GIT_STATUS_HINTS: Hint[] = [
 
 const GIT_STATUS_TAIL_HINTS: Hint[] = [
   { keys: ['c'], label: 'commit' },
-  GIT_POPUP_HINT,
+  ...GIT_POPUP_HINTS,
   { keys: ['/'], label: 'filter' },
   { keys: ['o'], label: 'log' },
   { keys: ['esc', 'q'], label: 'exit git' },

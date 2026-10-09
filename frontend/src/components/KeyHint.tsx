@@ -45,8 +45,16 @@ function parseKeys(keys: string): { modifiers: string[]; key: string } {
 export function KeyCap({ keys }: { keys: string }) {
   const { modifiers, key } = parseKeys(keys);
   const named = KEY_NAMES[key] ?? key;
-  // Kbd has no glyph for Space and would shout it as SPACE.
-  const literal = named.toLowerCase() === 'space' ? 'Space' : named.length === 1 ? named : null;
+  // Kbd has no glyph for Space and would shout it as SPACE; its Tab glyph (⇥)
+  // reads as a right arrow.
+  const literal =
+    named.toLowerCase() === 'space'
+      ? 'Space'
+      : named.toLowerCase() === 'tab'
+        ? 'Tab'
+        : named.length === 1
+          ? named
+          : null;
   const final =
     literal === null ? (
       <Kbd keys={named} />

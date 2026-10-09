@@ -292,6 +292,23 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     if (focused) st.setGitLogFocusedIndex(Math.max(commits.indexOf(focused), 0));
   }, [store]);
 
+  // Close the status filter, keeping the focused entry (or its folded section) selected.
+  const closeStatusFilter = useCallback(() => {
+    const st = store.getState();
+    const status = st.gitStatus;
+    const focused = status
+      ? visibleGitItems(status, st.gitExpandedSections, true, st.filterQuery)[st.gitFocusedIndex]
+      : undefined;
+    st.setIsFilterActive(false);
+    if (!status || !focused) return;
+    const items = computeGitItems(status, st.gitExpandedSections);
+    const exact = items.findIndex(
+      (item) => item.kind === focused.kind && item.section === focused.section && item.path === focused.path,
+    );
+    const header = items.findIndex((item) => item.kind === 'section-header' && item.section === focused.section);
+    st.setGitFocusedIndex(Math.max(exact !== -1 ? exact : header, 0));
+  }, [store]);
+
   const exitGitMode = useCallback(() => {
     store.getState().setIsGitMode(false);
     store.getState().setGitView('status');
@@ -705,6 +722,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           exitSearch();
         } else if (isFilterActive) {
           if (isGitMode && gitView === 'log') closeLogFilter();
+          else if (isGitMode) closeStatusFilter();
           else store.getState().setIsFilterActive(false);
         } else if (isGitMode) {
           exitGitMode();
@@ -837,20 +855,22 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         if (isFilterActive) {
           if (e.key === 'Enter') {
             e.preventDefault();
-            store.getState().setIsFilterActive(false);
+            closeStatusFilter();
             return;
           }
           if (e.key === 'Backspace') {
             e.preventDefault();
             store.getState().setFilterQuery(filterQuery.slice(0, -1));
+            store.getState().setGitFocusedIndex(0);
             return;
           }
           if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
             e.preventDefault();
             store.getState().setFilterQuery(filterQuery + e.key);
+            store.getState().setGitFocusedIndex(0);
             return;
           }
-          if (!e.ctrlKey) return;
+          if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
         }
 
         if (gitStatus?.is_repo && !e.ctrlKey && !e.metaKey && !e.altKey && GIT_POPUP_KEYS[e.key]) {
@@ -899,11 +919,16 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             break;
           }
-          case 'h': {
+          case 'h':
+          case 'ArrowLeft': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
-            if (item?.kind === 'section-header' && gitExpandedSections.has(item.section)) {
+            if (item && gitExpandedSections.has(item.section)) {
               store.getState().toggleGitSection(item.section);
+              if (item.kind === 'file') {
+                const header = items.findIndex((i) => i.kind === 'section-header' && i.section === item.section);
+                store.getState().setGitFocusedIndex(Math.max(header, 0));
+              }
             }
             break;
           }
@@ -912,7 +937,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             store.getState().setGitView('log');
             store.getState().setGitDiff(null);
             break;
-          case 'l': {
+          case 'l':
+          case 'ArrowRight': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
             if (item?.kind === 'section-header' && !gitExpandedSections.has(item.section)) {
@@ -1299,6 +1325,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     onClose,
     exitGitMode,
     closeLogFilter,
+    closeStatusFilter,
     gitStage,
     gitUnstage,
     gitStageAll,
@@ -1340,26 +1367,28 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const hints: Hint[] = isGitMode
     ? gitStatus && !gitStatus.is_repo
       ? GIT_EXIT_HINTS
-      : gitView === 'log'
-        ? GIT_LOG_HINTS
-        : [
-            ...GIT_STATUS_HINTS,
-            {
-              keys: ['w'],
-              label: (
-                <Text
-                  type="code"
-                  size="sm"
-                  color={ignoreAllSpace ? 'inherit' : 'disabled'}
-                  className={cn(ignoreAllSpace && 'text-cyan-vivid')}
-                  style={{ fontVariantLigatures: 'none' }}
-                >
-                  -w/--ignore-all-space
-                </Text>
-              ),
-            },
-            ...GIT_STATUS_TAIL_HINTS,
-          ]
+      : isFilterActive
+        ? GIT_FILTER_HINTS
+        : gitView === 'log'
+          ? GIT_LOG_HINTS
+          : [
+              ...GIT_STATUS_HINTS,
+              {
+                keys: ['w'],
+                label: (
+                  <Text
+                    type="code"
+                    size="sm"
+                    color={ignoreAllSpace ? 'inherit' : 'disabled'}
+                    className={cn(ignoreAllSpace && 'text-cyan-vivid')}
+                    style={{ fontVariantLigatures: 'none' }}
+                  >
+                    -w/--ignore-all-space
+                  </Text>
+                ),
+              },
+              ...GIT_STATUS_TAIL_HINTS,
+            ]
     : searchMode !== 'off'
       ? [
           { keys: ['up', 'down'], label: 'navigate' },
@@ -1513,9 +1542,15 @@ const GIT_POPUP_HINT: Hint = { keys: ['b', 'f', 'F', 'P', 'z'], label: 'branch/f
 
 const GIT_EXIT_HINTS: Hint[] = [{ keys: ['esc', 'q'], label: 'exit git' }];
 
+const GIT_FILTER_HINTS: Hint[] = [
+  { keys: ['up', 'down'], label: 'navigate' },
+  { keys: ['enter', 'esc'], label: 'close filter' },
+];
+
 const GIT_LOG_HINTS: Hint[] = [
   { keys: ['j', 'k'], label: 'navigate commits' },
   { keys: ['g', 'G'], label: 'top/bottom' },
+  { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll diff' },
   { keys: ['/'], label: 'filter' },
   { keys: ['s'], label: 'status' },
   GIT_POPUP_HINT,
@@ -1524,8 +1559,11 @@ const GIT_LOG_HINTS: Hint[] = [
 
 const GIT_STATUS_HINTS: Hint[] = [
   { keys: ['j', 'k'], label: 'navigate' },
-  { keys: ['tab'], label: 'expand' },
+  { keys: ['g', 'G'], label: 'top/bottom' },
+  { keys: ['tab'], label: 'toggle section' },
   { keys: ['h', 'l'], label: 'fold/unfold' },
+  { keys: ['enter'], label: 'open' },
+  { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll diff' },
   { keys: ['s'], label: 'stage' },
   { keys: ['S'], label: 'stage all' },
   { keys: ['u'], label: 'unstage' },

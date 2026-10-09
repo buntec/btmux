@@ -637,6 +637,9 @@ impl SessionManager {
                 window.prev_pane = Some(prev);
                 window.active_pane = idx;
             }
+            if window.zoomed_pane != Some(pane_id) {
+                window.zoomed_pane = None;
+            }
         }
     }
 
@@ -1260,6 +1263,53 @@ fn resolve_index(current: usize, len: usize, index: i32) -> usize {
 #[cfg(test)]
 mod pane_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn selecting_a_pane_reveals_it_without_toggling_its_own_zoom() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session_id = mgr.create_session(None).await;
+        let first = mgr.sessions[0].windows[0].panes[0].id;
+        mgr.split_pane(session_id, first, "v".to_string()).await;
+        let second = mgr.sessions[0].windows[0].panes[1].id;
+        mgr.select_pane(session_id, first);
+        mgr.zoom_pane(session_id, first);
+
+        mgr.select_pane(session_id, first);
+        mgr.select_pane(session_id, Uuid::new_v4());
+        let window = &mgr.sessions[0].windows[0];
+        assert_eq!(window.active_pane, 0);
+        assert_eq!(window.zoomed_pane, Some(first));
+
+        mgr.select_pane(session_id, second);
+        let window = &mgr.sessions[0].windows[0];
+        assert_eq!(window.active_pane, 1);
+        assert_eq!(window.prev_pane, Some(0));
+        assert_eq!(window.zoomed_pane, None);
+
+        mgr.select_pane(session_id, second);
+        assert_eq!(mgr.sessions[0].windows[0].prev_pane, Some(0));
+
+        // The active pane can also be hidden behind a different zoomed pane.
+        mgr.zoom_pane(session_id, first);
+        mgr.select_pane(session_id, second);
+        let window = &mgr.sessions[0].windows[0];
+        assert_eq!(window.active_pane, 1);
+        assert_eq!(window.prev_pane, Some(0));
+        assert_eq!(window.zoomed_pane, None);
+
+        mgr.zoom_pane(session_id, second);
+        mgr.select_pane(session_id, second);
+        assert_eq!(mgr.sessions[0].windows[0].zoomed_pane, Some(second));
+    }
 
     #[tokio::test]
     async fn zoomed_navigation_follows_the_full_layout_and_unzooms() {

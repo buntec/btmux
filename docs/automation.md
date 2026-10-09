@@ -40,7 +40,12 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" http://127.0.0.1:8004/api/pane
 curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/open-file-browser \
   -H 'Content-Type: application/json' \
   -d '{"path":"/home/user/project","mode":"files"}'
+
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/focus
 ```
+
+`focus` switches every connected browser tab to the pane's window and session
+(204, or 404 for an unknown pane).
 
 `open-file-browser`'s `mode` is `"files"` (default), `"git"`, or `"process"`,
 matching the `prefix + f` / `prefix + g` / `prefix + t` overlay. It switches
@@ -69,6 +74,7 @@ shows an error and leaves that program's input untouched.
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification            |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
+| `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session          |
 | `GET/POST/DELETE /api/panes/<pane-id>/agent-status`                 | Explain, set, or clear semantic agent status                       |
 
 ## MCP server

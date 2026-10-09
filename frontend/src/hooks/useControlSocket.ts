@@ -116,6 +116,8 @@ export function useControlSocket() {
               });
             }
           }
+        } else if (msg.type === 'focus_pane') {
+          useStore.getState().navigateToPane(msg.pane_id);
         } else if (msg.type === 'open_file_browser') {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setFileBrowserOpen(true, msg.path, msg.pane_id, msg.mode, msg.focus_file);

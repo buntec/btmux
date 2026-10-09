@@ -851,6 +851,9 @@ pub enum ServerMessage {
         mode: FileBrowserMode,
         focus_file: Option<String>,
     },
+    FocusPane {
+        pane_id: Uuid,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]

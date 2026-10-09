@@ -81,6 +81,10 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_open_file_browser),
         )
         .route(
+            "/api/panes/{pane_id}/focus",
+            axum::routing::post(api_focus_pane),
+        )
+        .route(
             "/api/panes/{pane_id}/editor-file",
             axum::routing::get(api_pane_editor_file),
         )
@@ -535,6 +539,19 @@ async fn api_open_file_browser(
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// Switch every connected browser tab to the pane's window and session.
+async fn api_focus_pane(State(state): State<AppState>, Path(pane_id): Path<Uuid>) -> Response {
+    let mgr = state.read().await;
+    if mgr.find_pane(pane_id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let msg = ws::control::ServerMessage::FocusPane { pane_id };
+    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
 async fn api_pane_notify_clear(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -772,6 +789,43 @@ mod pane_notification_tests {
             assert_eq!(diagnostics["process"]["pid"], 42);
             assert!(diagnostics["detection"].is_null());
         }
+    }
+
+    #[tokio::test]
+    async fn focus_pane_broadcasts_and_rejects_unknown_panes() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let mut events = manager.events().subscribe();
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        let post = |id: Uuid| {
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/panes/{id}/focus"))
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        let response = app.clone().oneshot(post(Uuid::new_v4())).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(events.try_recv().is_err());
+
+        let response = app.oneshot(post(pane)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let event: serde_json::Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
+        assert_eq!(event["type"], "focus_pane");
+        assert_eq!(event["pane_id"], pane.to_string());
     }
 
     #[tokio::test]

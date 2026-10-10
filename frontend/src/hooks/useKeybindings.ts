@@ -15,7 +15,7 @@ import {
   FONT_WEIGHT_STEP,
 } from '../state/configDefaults';
 
-import { parsePrefix, prefixBytes, type ParsedKey } from '../lib/prefixKey';
+import { parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey } from '../lib/prefixKey';
 import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { sendToNvim } from '../components/NvimSurface';
@@ -32,9 +32,10 @@ function matchesPrefix(e: KeyboardEvent, p: ParsedKey): boolean {
 }
 
 function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
+  const keys = prefixNvimKeys(p);
+  if (keys && useStore.getState().nvimOpen && sendToNvim(keys)) return;
   const paneId = useStore.getState().getActivePaneId(sessionId);
   const text = prefixBytes(p);
-  if (text && useStore.getState().nvimOpen && sendToNvim(text)) return;
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
 }
 

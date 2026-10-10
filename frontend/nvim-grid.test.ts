@@ -335,3 +335,33 @@ test("floats report 'winblend' from their cells' highlight", () => {
   ]);
   expect(frames.map((f) => f.blend)).toEqual([0]);
 });
+
+test('flush presents only the layers that changed', () => {
+  const { grid, canvas } = makeGrid(20, 10);
+  grid.redraw([
+    ['grid_resize', [2, 10, 4]],
+    ['win_pos', [2, win, 0, 0, 10, 4]],
+    ['grid_resize', [3, 10, 4]],
+    ['win_pos', [3, win, 5, 0, 10, 4]],
+    ['mode_info_set', [true, [{ cursor_shape: 'block' }, { cursor_shape: 'vertical' }]]],
+    ['grid_cursor_goto', [2, 0, 0]],
+    ['flush', []],
+  ]);
+  const layers = (grid as unknown as { layers: Map<number, { canvas: FakeCanvas }> }).layers;
+  const canvases = [canvas, layers.get(2)!.canvas, layers.get(3)!.canvas];
+  const presented = () => {
+    const out = canvases.map((c) => draws(c).length > 0);
+    for (const c of canvases) c.calls = [];
+    return out;
+  };
+  presented();
+  grid.redraw([['grid_line', [2, 1, 0, [['x', 0, 3]], false]], ['flush', []]]);
+  expect(presented()).toEqual([false, true, false]);
+  // The cursor leaves grid 2 and appears in grid 3.
+  grid.redraw([['grid_cursor_goto', [3, 0, 0]], ['flush', []]]);
+  expect(presented()).toEqual([false, true, true]);
+  grid.redraw([['mode_change', ['insert', 1]], ['flush', []]]);
+  expect(presented()).toEqual([false, false, true]);
+  grid.redraw([['flush', []]]);
+  expect(presented()).toEqual([false, false, false]);
+});

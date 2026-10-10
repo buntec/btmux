@@ -24,3 +24,11 @@ export function prefixBytes(p: ParsedKey): string | null {
   }
   return p.alt ? `\x1b${text}` : text;
 }
+
+/** Neovim key notation for the prefix chord (`<C-a>`, `<M-b>`), for `nvim_input`. */
+export function prefixNvimKeys(p: ParsedKey): string | null {
+  if ([...p.key].length !== 1) return null;
+  const key = p.key === '<' ? 'lt' : p.key;
+  const mods = (p.ctrl ? 'C-' : '') + (p.alt ? 'M-' : '');
+  return mods || key === 'lt' ? `<${mods}${key}>` : key;
+}

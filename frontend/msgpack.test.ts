@@ -67,6 +67,22 @@ test('decodes messages fed one byte at a time', () => {
   expect(out).toEqual(messages);
 });
 
+test('decodes large messages across many frames, keeping earlier binary data intact', () => {
+  const stream = new MsgpackStream();
+  stream.push(encode('x'.repeat(100)));
+  const [first] = stream.push(encode(new Uint8Array([1, 2, 3])));
+  // Reuses the buffer in place.
+  expect(Array.from(stream.push(encode(new Uint8Array([7, 7, 7])))[0] as Uint8Array)).toEqual([7, 7, 7]);
+  const big = [2, 'redraw', [['grid_line', ...Array.from({ length: 2000 }, (_, r) => [2, r, 0, [['x', 1, 80]]])]]];
+  const bytes = new Uint8Array([...encode(big), ...encode(new Uint8Array(70_000).fill(9)), ...encode('tail')]);
+  const out: unknown[] = [];
+  for (let o = 0; o < bytes.length; o += 4096) out.push(...stream.push(bytes.subarray(o, o + 4096)));
+  expect(out[0]).toEqual(big);
+  expect((out[1] as Uint8Array).every((x) => x === 9)).toBe(true);
+  expect(out[2]).toBe('tail');
+  expect(Array.from(first as Uint8Array)).toEqual([1, 2, 3]);
+});
+
 test('decodes Neovim ext types (buffer/window handles) and 64-bit ints', () => {
   // fixext1 type 0 (Buffer) with payload 0x05; uint64 2^32; int64 -2^32.
   const bytes = new Uint8Array([

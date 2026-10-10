@@ -90,6 +90,8 @@ class Layer {
   text: string[] = [];
   hlIds: Uint32Array = new Uint32Array(0);
   dirty = new Set<number>();
+  /** Needs presenting even without dirty rows (a scroll ended an animation). */
+  private stale = false;
   kind: 'root' | 'window' | 'float';
   /** Screen cell (grid 1) of the grid's top-left cell. */
   row = 0;
@@ -182,6 +184,7 @@ class Layer {
   }
 
   scroll(top: number, bot: number, left: number, right: number, rows: number) {
+    this.stale = true;
     this.beginScrollAnim(top, bot, left, right, rows);
     const copy = (dst: number, src: number) => {
       for (let c = left; c < right; c++) {
@@ -254,8 +257,10 @@ class Layer {
     this.redrawAll();
   }
 
-  /** Repaint dirty rows and present the frame. */
-  flush() {
+  /** Repaint dirty rows and present the frame, unless nothing on it changed. */
+  flush(cursorChanged: boolean) {
+    if (!this.dirty.size && !this.anims.size && !this.stale && !cursorChanged) return;
+    this.stale = false;
     if (this.kind === 'root') {
       // Clear the margin outside the grid before repainting opaque defaults.
       const ctx = this.gctx;
@@ -521,6 +526,9 @@ export class NvimGrid {
   onFloats: ((floats: FloatFrame[]) => void) | null = null;
   /** Hide the grid cursor, e.g. while an external cmdline owns it. */
   cursorHidden = false;
+  // The cursor as of the last flush.
+  private cursorKey = '';
+  private cursorGrid = 1;
   /** Scroll animation length in ms; 0 scrolls instantly. */
   smoothScroll = 0;
 
@@ -862,6 +870,12 @@ export class NvimGrid {
   }
 
   private flush() {
+    // Repaint the cursor's previous and current layers when anything about it changes.
+    const cursorKey = JSON.stringify([this.cursor, this.modeInfo(), this.cursorSuppressed]);
+    const cursorChanged = cursorKey !== this.cursorKey;
+    const cursorGrids = [this.cursorGrid, this.cursor.grid];
+    this.cursorKey = cursorKey;
+    this.cursorGrid = this.cursor.grid;
     const floats = [...this.layers.values()]
       .filter((l) => l.kind === 'float' && l.visible)
       .sort((a, b) => a.compindex - b.compindex);
@@ -871,7 +885,7 @@ export class NvimGrid {
         const i = order.get(layer);
         layer.layout(i === undefined ? WINDOW_Z : Math.min(FLOAT_Z_MAX, FLOAT_Z + 2 * i + 1));
       }
-      layer.flush();
+      layer.flush(cursorChanged && cursorGrids.includes(layer.id));
     }
     this.publishFloats(floats);
   }

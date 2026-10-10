@@ -113,33 +113,123 @@ class Incomplete extends Error {}
 
 /** Incremental decoder: feed arbitrary chunks, get back complete messages. */
 export class MsgpackStream {
-  private buf: Uint8Array = new Uint8Array(0);
+  // Buffered bytes are buf[start, len). Headers before `scan` are known to be
+  // complete, and the message starting at `start` still needs `pending` items,
+  // so each byte is scanned once and each message decoded once.
+  private buf = new Uint8Array(0);
+  private len = 0;
+  private start = 0;
+  private scan = 0;
+  private pending = 1;
 
   push(chunk: Uint8Array): unknown[] {
-    if (this.buf.length === 0) {
-      this.buf = chunk;
-    } else {
-      const merged = new Uint8Array(this.buf.length + chunk.length);
-      merged.set(this.buf);
-      merged.set(chunk, this.buf.length);
-      this.buf = merged;
-    }
+    this.append(chunk);
     const messages: unknown[] = [];
-    let start = 0;
-    while (start < this.buf.length) {
-      const reader = new Reader(this.buf, start);
-      try {
-        messages.push(reader.read());
-      } catch (e) {
-        if (e instanceof Incomplete) break;
-        throw e;
-      }
-      start = reader.pos;
+    while (this.complete()) {
+      messages.push(new Reader(this.buf.subarray(0, this.scan), this.start).read());
+      this.start = this.scan;
+      this.pending = 1;
     }
-    this.buf = this.buf.subarray(start);
+    if (this.start === this.len) this.start = this.scan = this.len = 0;
     return messages;
   }
+
+  private append(chunk: Uint8Array) {
+    if (this.len + chunk.length > this.buf.length) {
+      const used = this.len - this.start;
+      const buf =
+        used + chunk.length > this.buf.length
+          ? new Uint8Array(Math.max(2 * this.buf.length, used + chunk.length))
+          : this.buf;
+      buf.set(this.buf.subarray(this.start, this.len));
+      this.buf = buf;
+      this.len = used;
+      this.scan -= this.start;
+      this.start = 0;
+    }
+    this.buf.set(chunk, this.len);
+    this.len += chunk.length;
+  }
+
+  /** Scan item headers; true once the current message is complete. */
+  private complete(): boolean {
+    while (this.pending > 0) {
+      const item = itemSize(this.buf, this.scan, this.len);
+      if (!item) return false;
+      this.scan += item[0];
+      this.pending += item[1] - 1;
+    }
+    return true;
+  }
 }
+
+/** Header plus payload length and child item count of the item at `p`, or null if incomplete. */
+function itemSize(b: Uint8Array, p: number, end: number): [number, number] | null {
+  if (p >= end) return null;
+  const t = b[p];
+  const len = (n: number) => {
+    let v = 0;
+    for (let i = 1; i <= n; i++) v = v * 256 + b[p + i];
+    return v;
+  };
+  let head = 1;
+  let body = 0;
+  let items = 0;
+  if (t < 0x80 || t >= 0xe0) {
+    // fixint
+  } else if (t < 0x90) items = 2 * (t & 0x0f);
+  else if (t < 0xa0) items = t & 0x0f;
+  else if (t < 0xc0) body = t & 0x1f;
+  else {
+    const fixed = FIXED_SIZES[t - 0xc0];
+    if (fixed === undefined) throw new Error(`msgpack: bad type byte 0x${t.toString(16)}`);
+    head = fixed;
+    if (head > 1 && p + head > end) return null;
+    switch (t) {
+      case 0xc4:
+      case 0xd9:
+        body = len(1);
+        break;
+      case 0xc5:
+      case 0xda:
+        body = len(2);
+        break;
+      case 0xc6:
+      case 0xdb:
+        body = len(4);
+        break;
+      case 0xc7:
+        body = len(1);
+        break;
+      case 0xc8:
+        body = len(2);
+        break;
+      case 0xc9:
+        body = len(4);
+        break;
+      case 0xdc:
+        items = len(2);
+        break;
+      case 0xdd:
+        items = len(4);
+        break;
+      case 0xde:
+        items = 2 * len(2);
+        break;
+      case 0xdf:
+        items = 2 * len(4);
+        break;
+    }
+  }
+  return p + head + body > end ? null : [head + body, items];
+}
+
+/** Header size (with fixed-size payloads) for type bytes 0xc0–0xdf; undefined = invalid. */
+// prettier-ignore
+const FIXED_SIZES: (number | undefined)[] = [
+  1, undefined, 1, 1, 2, 3, 5, 3, 4, 6, 5, 9, 2, 3, 5, 9, // c0–cf
+  2, 3, 5, 9, 3, 4, 6, 10, 18, 2, 3, 5, 3, 5, 3, 5, // d0–df
+];
 
 class Reader {
   private view: DataView;
@@ -176,6 +266,10 @@ class Reader {
     this.pos += n;
     return v;
   }
+  /** A copy: the stream reuses its buffer. */
+  private bin(n: number) {
+    return this.raw(n).slice();
+  }
   private str(n: number) {
     return textDecoder.decode(this.raw(n));
   }
@@ -194,7 +288,7 @@ class Reader {
   }
   private ext(n: number): MsgpackExt {
     const type = (this.u8() << 24) >> 24;
-    return { type, data: this.raw(n) };
+    return { type, data: this.bin(n) };
   }
 
   read(): unknown {
@@ -212,11 +306,11 @@ class Reader {
       case 0xc3:
         return true;
       case 0xc4:
-        return this.raw(this.u8());
+        return this.bin(this.u8());
       case 0xc5:
-        return this.raw(this.u16());
+        return this.bin(this.u16());
       case 0xc6:
-        return this.raw(this.u32());
+        return this.bin(this.u32());
       case 0xc7:
         return this.ext(this.u8());
       case 0xc8:

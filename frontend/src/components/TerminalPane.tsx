@@ -505,7 +505,9 @@ export function TerminalPane({
 
   // LaTeX detection (lib/latexDetect.ts). Declared after the mount effect so
   // termRef is populated when the scan effect runs.
-  const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, visible);
+  // Panes under the built-in Neovim keep their geometry but needn't render.
+  const rendering = visible && !nvimOpen;
+  const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, rendering);
   latexPokeRef.current = latexPoke;
   const latexOpen = useStore((s) => s.latexPanes.has(paneId));
   const searchOpen = useStore((s) => s.searchPaneId === paneId);
@@ -531,13 +533,13 @@ export function TerminalPane({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    if (visible) {
+    if (rendering) {
       term.resume();
       fitRef.current?.();
     } else {
       term.suspend();
     }
-  }, [visible, termOptions]);
+  }, [rendering, termOptions]);
 
   const allowTransparency = terminalTransparency(config);
   useEffect(() => {

@@ -161,7 +161,7 @@ layer draws dirty rows to an offscreen canvas, and each flush composes it onto
 the visible canvas with in-flight
 `grid_scroll` animations (a snapshot of the region plus an eased pixel offset;
 `[terminal] smooth-scroll-duration`, off with `animations = false`) and then
-the cursor. Unset `Normal` colors fall back to the btmux theme, as in a TUI,
+the cursor; layers with no dirty rows, scrolls, or cursor change are skipped. Unset `Normal` colors fall back to the btmux theme, as in a TUI,
 and 'background' is set from the theme's luminance. 'guifont' (Neovide format,
 `lib/nvimFont.ts`) and 'linespace' override the btmux terminal font. Keys go
 through `lib/nvimKeys.ts` to `nvim_input`: F-keys and Cmd (`<D-…>`) reach

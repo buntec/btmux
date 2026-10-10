@@ -45,7 +45,7 @@ return vim.trim(title)`;
 
 let activeInput: ((keys: string) => void) | null = null;
 
-/** Send raw keys to the open Neovim surface. Returns false when none is open. */
+/** Send keys (`nvim_input` notation) to the open Neovim surface. Returns false when none is open. */
 export function sendToNvim(keys: string): boolean {
   if (!activeInput) return false;
   activeInput(keys);

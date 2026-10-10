@@ -32,6 +32,8 @@ export function nvimKey(e: KeyboardEvent): string | null {
   if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return null;
 
   let key = e.key;
+  // AltGr produces text, even when the browser also reports Ctrl and Alt.
+  if (e.getModifierState?.('AltGraph') && [...key].length === 1 && !e.metaKey) return escapeNvimText(key);
   // Cmd (`<D-…>`, as in Neovide) for anything the browser doesn't need.
   if (e.metaKey) {
     const physical = e.code.match(/^(?:Key([A-Z])|Digit(\d))$/);

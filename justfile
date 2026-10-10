@@ -242,3 +242,7 @@ protocol:
 # Browser regressions against an isolated dev stack (requires BTMUX_AUTH_TOKEN)
 test-browser:
     cd frontend && bun reliability-test.ts && bun astryx-browser-test.ts && bun shader-wallpaper-browser-test.ts
+
+# Built-in Neovim regressions against an isolated dev stack (requires Neovim 0.12+).
+test-nvim-browser:
+    cd frontend && bun nvim-browser-test.ts

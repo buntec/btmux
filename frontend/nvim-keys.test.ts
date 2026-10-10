@@ -2,7 +2,12 @@
 import { expect, test } from 'bun:test';
 import { escapeNvimText, nvimKey } from './src/lib/nvimKeys';
 
-type Init = Partial<Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey' | 'isComposing'>>;
+type Init = Partial<
+  Pick<
+    KeyboardEvent,
+    'key' | 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey' | 'isComposing' | 'getModifierState'
+  >
+>;
 
 const key = (init: Init) =>
   nvimKey({
@@ -48,6 +53,15 @@ test('macOS Option uses the physical key, not the composed character', () => {
   expect(key({ key: 'å', code: 'KeyA', altKey: true })).toBe('<M-a>');
   expect(key({ key: 'Å', code: 'KeyA', altKey: true, shiftKey: true })).toBe('<M-A>');
   expect(key({ key: '¡', code: 'Digit1', altKey: true })).toBe('<M-1>');
+});
+
+test('AltGr preserves international keyboard text instead of sending Ctrl+Alt shortcuts', () => {
+  const altGr = { ctrlKey: true, altKey: true, getModifierState: (name: string) => name === 'AltGraph' };
+  expect(key({ ...altGr, key: '@', code: 'KeyQ' })).toBe('@');
+  expect(key({ ...altGr, key: '{', code: 'Digit7' })).toBe('{');
+  expect(key({ ...altGr, key: '€', code: 'KeyE' })).toBe('€');
+  expect(key({ ...altGr, key: '<', code: 'IntlBackslash' })).toBe('<lt>');
+  expect(key({ key: 'q', code: 'KeyQ', ctrlKey: true, altKey: true })).toBe('<C-M-q>');
 });
 
 test('Cmd sends <D-…>, except shortcuts the browser or app keeps', () => {

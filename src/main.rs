@@ -361,6 +361,7 @@ async fn main() {
             tokio::time::sleep(drain_timeout).await;
         } => tracing::warn!("timed out waiting for connections to close"),
     }
+    ws::nvim::shutdown().await;
     if let Some(path) = state_file {
         let snapshots = state.read().await.all_snapshots();
         if let Err(error) = persistence::save(&path, &snapshots) {

@@ -384,10 +384,27 @@ function GridPopupmenu({
   const anchor = grid.cellRect(menu.row, menu.col);
   const placeAbove = menuAbove(menu, grid);
   const info = menu.items[menu.selected]?.info;
+  const popupRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const popup = popupRef.current!;
+    const surface = popup.offsetParent as HTMLElement | null;
+    if (!surface) return;
+    const position = () => {
+      popup.style.left = `${Math.max(0, Math.min(anchor.left, surface.clientWidth - popup.offsetWidth))}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(popup);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [anchor.left]);
   return (
     <HStack
+      ref={popupRef}
       gap={1}
       vAlign={placeAbove ? 'end' : 'start'}
+      width="max-content"
+      maxWidth="100%"
       className="absolute z-40"
       onMouseDown={(e) => e.preventDefault()}
       style={
@@ -396,7 +413,7 @@ function GridPopupmenu({
           : { left: anchor.left, top: anchor.top + anchor.height }
       }
     >
-      <Card padding={0.5} elevation="med" maxWidth="60ch" className="shrink-0">
+      <Card padding={0.5} elevation="med" maxWidth="60ch" className="min-w-0 overflow-hidden">
         <MenuList menu={menu} kindIcons={kindIcons} onSelect={onSelect} />
       </Card>
       {info && <InfoCard info={info} />}

@@ -2,7 +2,7 @@
 //! each socket is a separate msgpack-RPC connection that attaches its own UI.
 
 use std::os::unix::fs::DirBuilderExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use axum::{
@@ -19,16 +19,43 @@ use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-static SERVER: LazyLock<Mutex<Option<Child>>> = LazyLock::new(|| Mutex::new(None));
+static SERVER: LazyLock<Mutex<Option<NvimServer>>> = LazyLock::new(|| Mutex::new(None));
+
+struct NvimServer {
+    child: Child,
+    directory: PrivateDir,
+}
+
+struct PrivateDir(PathBuf);
+
+impl PrivateDir {
+    fn new() -> Result<Self, String> {
+        Self::create(std::env::temp_dir().join(format!("btmux-{}", uuid::Uuid::new_v4().simple())))
+    }
+
+    fn create(path: PathBuf) -> Result<Self, String> {
+        // Atomic creation rejects existing directories and symlinks.
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&path)
+            .map_err(|e| format!("create {}: {e}", path.display()))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for PrivateDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 /// The btmux Neovim plugin (UI support for completion docs, signature help, …).
 #[derive(Embed)]
 #[folder = "extras/nvim"]
 struct Plugin;
 
-/// Write the embedded plugin under `dir`, replacing any previous copy.
-fn install_plugin(dir: &std::path::Path) -> Result<(), String> {
-    let _ = std::fs::remove_dir_all(dir);
+/// Write the embedded plugin under `dir`.
+fn install_plugin(dir: &Path) -> Result<(), String> {
     for name in Plugin::iter() {
         let file = Plugin::get(&name).expect("embedded file");
         let path = dir.join(name.as_ref());
@@ -39,29 +66,17 @@ fn install_plugin(dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-fn socket_path() -> PathBuf {
-    std::env::temp_dir()
-        .join(format!("btmux-nvim-{}", std::process::id()))
-        .join("nvim.sock")
-}
-
 /// Spawn the shared Neovim if it isn't running, then connect to it.
-async fn connect() -> Result<UnixStream, String> {
-    let path = socket_path();
+async fn connect() -> Result<(UnixStream, PathBuf), String> {
     let mut server = SERVER.lock().await;
     let running = match server.as_mut() {
-        Some(child) => matches!(child.try_wait(), Ok(None)),
+        Some(server) => matches!(server.child.try_wait(), Ok(None)),
         None => false,
     };
     if !running {
-        let dir = path.parent().unwrap();
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .map_err(|e| format!("create {}: {e}", dir.display()))?;
-        let _ = std::fs::remove_file(&path);
-        let plugin = dir.join("plugin");
+        let directory = PrivateDir::new()?;
+        let path = directory.0.join("nvim.sock");
+        let plugin = directory.0.join("plugin");
         install_plugin(&plugin)?;
         // A JSON string is a valid Lua string literal for any path.
         let plugin = serde_json::to_string(&plugin.to_string_lossy()).unwrap();
@@ -88,14 +103,15 @@ async fn connect() -> Result<UnixStream, String> {
                 while matches!(stdout.read(&mut buf).await, Ok(n) if n > 0) {}
             });
         }
-        *server = Some(child);
+        *server = Some(NvimServer { child, directory });
     }
+    let path = server.as_ref().unwrap().directory.0.join("nvim.sock");
     drop(server);
 
     let mut last_error = String::new();
     for _ in 0..50 {
         match UnixStream::connect(&path).await {
-            Ok(stream) => return Ok(stream),
+            Ok(stream) => return Ok((stream, path)),
             Err(e) => last_error = e.to_string(),
         }
         tokio::time::sleep(std::time::Duration::from_millis(40)).await;
@@ -105,11 +121,17 @@ async fn connect() -> Result<UnixStream, String> {
 
 /// Open `path` in the shared Neovim, starting it if needed.
 pub async fn open(path: &str, line: Option<u32>) -> Result<(), String> {
-    drop(connect().await?);
-    let addr = socket_path();
+    let (stream, addr) = connect().await?;
+    drop(stream);
     super::control::remote_open_in_editor(&addr.to_string_lossy(), path, line)
         .await
         .map_err(|()| "Neovim did not open the file".into())
+}
+
+pub async fn shutdown() {
+    if let Some(mut server) = SERVER.lock().await.take() {
+        let _ = server.child.kill().await;
+    }
 }
 
 pub async fn handle(ws: WebSocketUpgrade) -> impl IntoResponse {
@@ -120,7 +142,7 @@ pub async fn handle(ws: WebSocketUpgrade) -> impl IntoResponse {
 async fn handle_socket(socket: WebSocket) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let stream = match connect().await {
-        Ok(stream) => stream,
+        Ok((stream, _)) => stream,
         Err(error) => {
             tracing::warn!(%error, "nvim UI unavailable");
             let _ = ws_tx.send(Message::Text(error.into())).await;
@@ -176,13 +198,41 @@ async fn handle_socket(socket: WebSocket) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
 
     #[test]
     fn plugin_installs_with_entry_points() {
-        let dir = std::env::temp_dir().join(format!("btmux-plugin-test-{}", std::process::id()));
-        install_plugin(&dir).unwrap();
-        assert!(dir.join("plugin/btmux.lua").is_file());
-        assert!(dir.join("lua/btmux/init.lua").is_file());
-        std::fs::remove_dir_all(&dir).unwrap();
+        let dir = PrivateDir::new().unwrap();
+        install_plugin(&dir.0).unwrap();
+        assert!(dir.0.join("plugin/btmux.lua").is_file());
+        assert!(dir.0.join("lua/btmux/init.lua").is_file());
+    }
+
+    #[test]
+    fn runtime_directory_is_private_and_removed_on_drop() {
+        let dir = PrivateDir::new().unwrap();
+        let path = dir.0.clone();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        std::fs::write(path.join("test"), "private").unwrap();
+        drop(dir);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn runtime_directory_rejects_existing_directories_and_symlinks() {
+        let dir = PrivateDir::new().unwrap();
+        let existing = dir.0.join("existing");
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o777)).unwrap();
+        std::fs::write(existing.join("sentinel"), "untouched").unwrap();
+        assert!(PrivateDir::create(existing.clone()).is_err());
+        let link = dir.0.join("link");
+        symlink(&existing, &link).unwrap();
+        assert!(PrivateDir::create(link).is_err());
+        assert_eq!(
+            std::fs::read_to_string(existing.join("sentinel")).unwrap(),
+            "untouched"
+        );
     }
 }

@@ -141,6 +141,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     activeInput = sendKeys;
 
     const refit = () => {
+      if (!container.clientWidth || !container.clientHeight) return;
       grid.resizeCanvas(container.clientWidth, container.clientHeight);
       const [cols, rows] = grid.fit(container.clientWidth, container.clientHeight);
       if (attached && (cols !== gridSize[0] || rows !== gridSize[1])) {

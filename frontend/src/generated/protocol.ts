@@ -71,6 +71,9 @@ export type FontEntry = { family: string, weight_min: number, weight_max: number
 export type Theme = { foreground: string, background: string, cursor: string, cursorAccent: string, selectionBackground: string, black: string, red: string, green: string, yellow: string, blue: string, magenta: string, cyan: string, white: string, brightBlack: string, brightRed: string, brightGreen: string, brightYellow: string, brightBlue: string, brightMagenta: string, brightCyan: string, brightWhite: string, };
 
 // prettier-ignore
+export type BaseTheme = { base00: string, base01: string, base02: string, base03: string, base04: string, base05: string, base06: string, base07: string, base08: string, base09: string, base0A: string, base0B: string, base0C: string, base0D: string, base0E: string, base0F: string, base10: string | null, base11: string | null, base12: string | null, base13: string | null, base14: string | null, base15: string | null, base16: string | null, base17: string | null, };
+
+// prettier-ignore
 export type TerminalOptions = { renderer: "canvas" | "webgl" | null, cursorBlink: boolean | null, cursorStyle: "block" | "underline" | "bar" | null, scrollback: number | null, fontSize: number | null, fontFamily: string | null, fontWeight: number | null, allowTransparency: boolean | null, convertEol: boolean | null, disableStdin: boolean | null, smoothScrollDuration: number | null,
 /**
  * Wheel/trackpad scroll-speed multiplier for scrollback (1.0 = ghostty-web
@@ -108,6 +111,10 @@ commands: Array<Command>, terminal: TerminalOptions,
  * Resolved `ITheme`; the bundled default when no palette is configured.
  */
 theme: Theme,
+/**
+ * Original Base16/24 slots for the built-in Neovim colorscheme.
+ */
+color_palette: BaseTheme,
 /**
  * The bundled default theme, for previewing an unset `colors`.
  */

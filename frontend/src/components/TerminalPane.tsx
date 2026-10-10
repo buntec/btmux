@@ -670,6 +670,8 @@ export function TerminalPane({
         // pool). display:none detaches them from layout so they don't paint or
         // intercept clicks; the suspend() effect stops their render loop.
         display: visible ? 'flex' : 'none',
+        // Preserve terminal geometry and sockets beneath the transparent editor.
+        opacity: nvimOpen ? 0 : undefined,
         flexDirection: 'column',
         position: 'absolute',
         top: `${rect.top}%`,

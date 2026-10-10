@@ -1,0 +1,1 @@
+require("btmux.theme").load()

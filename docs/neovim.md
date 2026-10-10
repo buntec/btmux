@@ -62,6 +62,17 @@ require("btmux").setup({
 
 ## Fonts, scrolling, and keys
 
+The built-in editor uses btmux's selected Base16/24 palette through the bundled
+`btmux` colorscheme. It applies when the GUI opens and follows live theme changes,
+including session-only color overrides. Your regular Neovim config still loads;
+the GUI applies its colorscheme afterward. `ColorScheme` autocmds can customize
+its highlights.
+
+The default background follows `[terminal] allow-transparency`, which defaults
+to enabled with a wallpaper or shader. Explicit highlight backgrounds (selection,
+search, floats, and cursor line) remain visible. The panes underneath stay mounted
+and are hidden while the editor is open.
+
 The view uses the terminal font. Neovim's `guifont` and `linespace` override it,
 for example `:set guifont=JetBrains\ Mono:h14`. Scrolling animates for
 `[terminal] smooth-scroll-duration` (default 120 ms) unless `animations = false`.

@@ -504,8 +504,9 @@ impl Default for TerminalOptions {
 /// base10–base17 for dedicated bright/extra-background colors. Which system is
 /// in use is auto-detected by the presence of base10–base17 (see `to_theme`).
 /// Each value is a CSS color string (e.g. "#1e1e2e").
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct BaseTheme {
     pub base00: String,
     pub base01: String,
@@ -782,6 +783,8 @@ pub struct ClientConfig {
     pub terminal: TerminalOptions,
     /// Resolved `ITheme`; the bundled default when no palette is configured.
     pub theme: Theme,
+    /// Original Base16/24 slots for the built-in Neovim colorscheme.
+    pub color_palette: BaseTheme,
     /// The bundled default theme, for previewing an unset `colors`.
     pub default_theme: Theme,
     pub vi_mode: bool,
@@ -1479,24 +1482,27 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 
     // Inline [theme] takes priority; fall back to a resolved remote palette, a
     // local palette path, or a named scheme from the colors directory.
-    let selected_color_theme = file
+    let selected_palette = file
         .theme
         .is_none()
         .then_some(file.colors.as_deref())
         .flatten()
         .and_then(|colors| {
             if is_color_scheme_url(colors) {
-                file.resolved_colors.as_ref().map(BaseTheme::to_theme)
+                file.resolved_colors.clone()
             } else {
-                load_color_scheme(colors).map(|bt| bt.to_theme())
+                load_color_scheme(colors)
             }
         });
-    let theme = file
+    let color_palette = file
         .theme
-        .as_ref()
-        .map(BaseTheme::to_theme)
-        .or_else(|| selected_color_theme.clone())
-        .unwrap_or_else(default_theme);
+        .clone()
+        .or_else(|| selected_palette.clone())
+        .unwrap_or_else(|| {
+            bundled_color_scheme(DEFAULT_COLOR_SCHEME).expect("bundled default color scheme parses")
+        });
+    let theme = color_palette.to_theme();
+    let selected_color_theme = selected_palette.map(|palette| palette.to_theme());
 
     let (wallpaper_url, wallpaper_path) = match &file.wallpaper {
         Some(raw) if raw.starts_with('/') => (
@@ -1546,6 +1552,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         commands: default_commands(),
         terminal: file.terminal.clone(),
         theme,
+        color_palette,
         default_theme: default_theme(),
         vi_mode: file.vi_mode,
         repeat_time: file.repeat_time,
@@ -1995,6 +2002,34 @@ palette:
         assert_eq!(resolved.theme.background, "#14110b");
         // base24 bright slot, not the base16 accent.
         assert_eq!(resolved.theme.bright_red, "#ffacb3");
+        assert_eq!(resolved.color_palette.to_theme(), resolved.theme);
+    }
+
+    #[test]
+    fn nvim_palette_preserves_inline_and_override_slots() {
+        let palette = parse_color_scheme(BASE24_YAML).unwrap();
+        let file = FileConfig {
+            theme: Some(palette.clone()),
+            colors: Some("btmux-default-light".into()),
+            ..FileConfig::default()
+        };
+        let resolved = resolve_binds(&file);
+        assert_eq!(resolved.color_palette, palette);
+        let serialized = serde_json::to_value(&resolved.color_palette).unwrap();
+        assert_eq!(serialized["base0F"], "#ff00ff");
+        assert_eq!(serialized["base11"], "#111111");
+        let overridden = resolve_with_overrides(
+            &file,
+            &ConfigUpdate {
+                colors: Some("btmux-default-light".into()),
+                ..ConfigUpdate::default()
+            },
+        );
+        assert_eq!(
+            overridden.color_palette,
+            bundled_color_scheme("btmux-default-light").unwrap()
+        );
+        assert_eq!(overridden.color_palette.to_theme(), overridden.theme);
     }
 
     #[test]
@@ -2032,6 +2067,10 @@ palette:
         assert!(is_color_scheme_url(url));
         assert_eq!(resolved.active_color_scheme.as_deref(), Some(url));
         assert_eq!(resolved.theme.background, "#000000");
+        assert_eq!(
+            resolved.color_palette,
+            file.resolved_colors.clone().unwrap()
+        );
         assert!(resolved.color_schemes.iter().any(|scheme| scheme == url));
         assert!(resolved.color_scheme_themes.contains_key(url));
     }

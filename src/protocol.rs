@@ -32,6 +32,7 @@ fn generated_protocol_is_current() {
         Command::decl(&config),
         FontEntry::decl(&config),
         Theme::decl(&config),
+        BaseTheme::decl(&config),
         TerminalOptions::decl(&config),
         ShaderValue::decl(&config),
         ClientConfig::decl(&config),

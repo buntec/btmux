@@ -29,6 +29,7 @@ export interface GridFont {
   /** Fallback colors until Neovim sends `default_colors_set`. */
   foreground: string;
   background: string;
+  transparent?: boolean;
 }
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
@@ -93,8 +94,8 @@ export class NvimGrid {
     private canvas: HTMLCanvasElement,
     font: GridFont,
   ) {
-    this.ctx = canvas.getContext('2d', { alpha: false })!;
-    this.gctx = this.gridCanvas.getContext('2d', { alpha: false })!;
+    this.ctx = canvas.getContext('2d')!;
+    this.gctx = this.gridCanvas.getContext('2d')!;
     this.font = font;
     this.fg = font.foreground;
     this.bg = font.background;
@@ -320,23 +321,28 @@ export class NvimGrid {
     return `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${this.font.size * this.dpr}px ${this.font.family}`;
   }
 
-  private colors(hlId: number): { fg: string; bg: string; sp: string; attr: HlAttr } {
+  private colors(hlId: number): { fg: string; bg: string; sp: string; attr: HlAttr; transparent: boolean } {
     const attr = this.hl.get(hlId) ?? {};
     let fg = attr.foreground !== undefined ? hex(attr.foreground) : this.fg;
     let bg = attr.background !== undefined ? hex(attr.background) : this.bg;
     if (attr.reverse) [fg, bg] = [bg, fg];
     const sp = attr.special !== undefined ? hex(attr.special) : this.sp;
-    return { fg, bg, sp, attr };
+    const transparent = !!this.font.transparent && !this.normal.bg && attr.background === undefined && !attr.reverse;
+    return { fg, bg, sp, attr, transparent };
   }
 
   private flush() {
     const ctx = this.gctx;
-    // Fill the margin outside the grid.
+    // Clear the margin outside the grid before repainting opaque defaults.
     ctx.fillStyle = this.bg;
     const gridW = Math.round(this.cols * this.cellWidth);
     const gridH = this.rows * this.cellHeight;
-    ctx.fillRect(gridW, 0, this.canvas.width - gridW, this.canvas.height);
-    ctx.fillRect(0, gridH, this.canvas.width, this.canvas.height - gridH);
+    ctx.clearRect(gridW, 0, this.canvas.width - gridW, this.canvas.height);
+    ctx.clearRect(0, gridH, this.canvas.width, this.canvas.height - gridH);
+    if (!this.colors(0).transparent) {
+      ctx.fillRect(gridW, 0, this.canvas.width - gridW, this.canvas.height);
+      ctx.fillRect(0, gridH, this.canvas.width, this.canvas.height - gridH);
+    }
     for (const row of this.dirty) if (row < this.rows) this.drawRow(row);
     this.dirty.clear();
     this.scrolledThisBatch.clear();
@@ -394,6 +400,7 @@ export class NvimGrid {
 
   private compose(now: number, withCursor: boolean) {
     const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.drawImage(this.gridCanvas, 0, 0);
     let cursorOffset = 0;
     for (const [key, anim] of this.anims) {
@@ -411,9 +418,15 @@ export class NvimGrid {
       ctx.beginPath();
       ctx.rect(x0, y0, width, height);
       ctx.clip();
-      ctx.fillStyle = this.bg;
-      ctx.fillRect(x0, y0, width, height);
+      ctx.clearRect(x0, y0, width, height);
+      // Keep old pixels only in the departing strip; transparent new cells
+      // must not reveal the previous frame's text beneath them.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0, d > 0 ? y0 : y0 + height + d, width, Math.abs(d));
+      ctx.clip();
       ctx.drawImage(anim.snapshot, x0, y0 + d - anim.from);
+      ctx.restore();
       ctx.drawImage(this.gridCanvas, x0, y0, width, height, x0, y0 + d, width, height);
       ctx.restore();
       const { cursorRow: r, cursorCol: c } = this;
@@ -429,17 +442,20 @@ export class NvimGrid {
     // Clip so glyphs that overflow their cell can't leave residue in neighboring rows.
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, y, this.canvas.width, this.cellHeight);
+    const gridW = Math.round(this.cols * this.cellWidth);
+    ctx.rect(0, y, gridW, this.cellHeight);
     ctx.clip();
+    ctx.clearRect(0, y, gridW, this.cellHeight);
     // Backgrounds, in runs of equal highlight.
     let start = 0;
     while (start < this.cols) {
       const id = this.hlIds[base + start];
       let end = start + 1;
       while (end < this.cols && this.hlIds[base + end] === id) end++;
-      ctx.fillStyle = this.colors(id).bg;
+      const colors = this.colors(id);
+      ctx.fillStyle = colors.bg;
       const x0 = Math.round(start * this.cellWidth);
-      ctx.fillRect(x0, y, Math.round(end * this.cellWidth) - x0, this.cellHeight);
+      if (!colors.transparent) ctx.fillRect(x0, y, Math.round(end * this.cellWidth) - x0, this.cellHeight);
       start = end;
     }
     // Glyphs and decorations, per cell to keep grid alignment.

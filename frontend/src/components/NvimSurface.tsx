@@ -9,7 +9,7 @@ import { ClientConfig } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { getAnimations, getTerminalFontFamily, getTerminalFontSize } from '../state/configDefaults';
-import { buildFontFamily } from './TerminalPane';
+import { buildFontFamily, terminalTransparency } from './TerminalPane';
 import { encode, MsgpackStream } from '../lib/msgpack';
 import { NvimGrid } from '../lib/nvimGrid';
 import { escapeNvimText, nvimKey } from '../lib/nvimKeys';
@@ -28,14 +28,6 @@ const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.ho
 const BUTTONS = ['left', 'middle', 'right'];
 /** Scroll animation length when `smooth-scroll-duration` is unset. */
 const SMOOTH_SCROLL_MS = 120;
-
-/** Whether a `#rrggbb` color is light, for Neovim's 'background'. */
-function isLight(color: string): boolean {
-  const m = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
-  if (!m) return false;
-  const [r, g, b] = m.slice(1).map((x) => parseInt(x, 16));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 128;
-}
 
 let activeInput: ((keys: string) => void) | null = null;
 
@@ -73,9 +65,14 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
   );
   const size = guifont.size ?? getTerminalFontSize(config);
   const theme = config?.theme ?? STARTUP_THEME;
-  const font = { family, size, linespace, foreground: theme.foreground, background: theme.background };
+  const transparent = terminalTransparency(config);
+  const font = { family, size, linespace, foreground: theme.foreground, background: theme.background, transparent };
   const fontRef = useRef(font);
   fontRef.current = font;
+  const paletteRef = useRef(config?.color_palette);
+  paletteRef.current = config?.color_palette;
+  const paletteKey = JSON.stringify(config?.color_palette);
+  const applyThemeRef = useRef<() => void>(() => {});
   const smoothScroll = getAnimations(config) ? (config?.terminal.smoothScrollDuration ?? SMOOTH_SCROLL_MS) : 0;
   const smoothScrollRef = useRef(smoothScroll);
   smoothScrollRef.current = smoothScroll;
@@ -127,6 +124,15 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       ws.send(encode([0, msgid, method, params]));
     };
     const sendKeys = (keys: string) => notify('nvim_input', [keys]);
+    const applyTheme = () => {
+      if (paletteRef.current) {
+        request('nvim_exec_lua', [
+          "require('btmux.theme').apply(...)",
+          [paletteRef.current, !!fontRef.current.transparent],
+        ]);
+      }
+    };
+    applyThemeRef.current = applyTheme;
     selectRef.current = (index) => notify('nvim_select_popupmenu_item', [index, true, false, {}]);
     dismissPanelRef.current = () => {
       model.dismissPanel();
@@ -154,9 +160,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     ws.onopen = () => {
       grid.resizeCanvas(container.clientWidth, container.clientHeight);
       gridSize = grid.fit(container.clientWidth, container.clientHeight);
-      // A TUI learns this from the terminal; tell Neovim what the theme is.
-      const background = isLight(fontRef.current.background) ? 'light' : 'dark';
-      request('nvim_set_option_value', ['background', background, {}]);
+      applyTheme();
       request('nvim_ui_attach', [
         gridSize[0],
         gridSize[1],
@@ -324,6 +328,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     input.focus();
 
     return () => {
+      applyThemeRef.current = () => {};
       if (activeInput === sendKeys) activeInput = null;
       ro.disconnect();
       ws.onclose = null;
@@ -340,6 +345,10 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, [generation]);
+
+  useEffect(() => {
+    applyThemeRef.current();
+  }, [paletteKey, transparent]);
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.smoothScroll = smoothScroll;
@@ -367,12 +376,18 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     return () => {
       cancelled = true;
     };
-  }, [family, size, linespace, theme.foreground, theme.background, generation]);
+  }, [family, size, linespace, theme.foreground, theme.background, transparent, generation]);
 
   return (
     <div
       ref={containerRef}
-      style={{ position: 'absolute', inset: 0, zIndex: 30, overflow: 'hidden', background: theme.background }}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 30,
+        overflow: 'hidden',
+        background: transparent ? 'transparent' : theme.background,
+      }}
       onMouseDown={() => inputRef.current?.focus()}
     >
       <canvas ref={canvasRef} style={{ display: 'block' }} />

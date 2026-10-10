@@ -139,6 +139,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     const ws = new WebSocket(WS_URL);
     ws.binaryType = 'arraybuffer';
     let attached = false;
+    let disconnected = false;
     let error: string | null = null;
     let gridSize = [0, 0];
 
@@ -256,7 +257,8 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
         useStore.getState().setNvimOpen(false);
         return;
       }
-      setStatus({ kind: 'disconnected', error });
+      disconnected = true;
+      setStatus({ kind: 'disconnected', error: error ?? (e.reason || null) });
     };
 
     const ro = new ResizeObserver(refit);
@@ -264,7 +266,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (!attached) {
-        if (e.key === 'Enter') {
+        if (disconnected && e.key === 'Enter') {
           e.preventDefault();
           setGeneration((g) => g + 1);
         }

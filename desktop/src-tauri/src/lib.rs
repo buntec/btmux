@@ -344,6 +344,13 @@ fn unused_loopback_port() -> std::io::Result<u16> {
 }
 
 pub fn run() {
+    // WKWebView otherwise shows the accent popup instead of repeating held keys.
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{NSUserDefaults, ns_string};
+        NSUserDefaults::standardUserDefaults()
+            .setBool_forKey(false, ns_string!("ApplePressAndHoldEnabled"));
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(Server::default())

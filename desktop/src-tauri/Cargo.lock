@@ -328,6 +328,7 @@ version = "0.0.130"
 dependencies = [
  "libc",
  "notify-rust",
+ "objc2-foundation",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

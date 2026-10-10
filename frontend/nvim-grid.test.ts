@@ -10,10 +10,18 @@ interface FakeCanvas {
   style: Record<string, string>;
   calls: Call[];
   getContext: () => unknown;
+  remove: () => void;
 }
 
 function fakeCanvas(): FakeCanvas {
-  const canvas: FakeCanvas = { width: 300, height: 150, style: {}, calls: [], getContext: () => ctx };
+  const canvas: FakeCanvas = {
+    width: 300,
+    height: 150,
+    style: {},
+    calls: [],
+    getContext: () => ctx,
+    remove: () => {},
+  };
   const state: Record<string | symbol, unknown> = {
     canvas,
     // 10×20 device-pixel cells.
@@ -225,4 +233,105 @@ test('scrolls taller than the region, or with animation off, are instant', () =>
   canvas.calls = [];
   grid.redraw([['grid_scroll', [1, 0, 3, 0, 4, 1, 0]], ['flush', []]]);
   expect(draws(canvas).length).toBe(1);
+});
+
+const win = { type: 1, data: new Uint8Array([3]) };
+
+test('window grids are placed on the screen grid', () => {
+  const { grid } = makeGrid(20, 10);
+  grid.redraw([
+    ['grid_resize', [2, 10, 5]],
+    ['win_pos', [2, win, 1, 4, 10, 5]],
+    ['grid_line', [2, 0, 0, [['x', 0, 3]], false]],
+    ['grid_cursor_goto', [2, 1, 2]],
+    ['flush', []],
+  ]);
+  expect(grid.cell(0, 2, 2).text).toBe('x');
+  expect(rowText(grid, 1)).toBe(' '.repeat(20)); // grid 1 is untouched
+  expect(grid.screenCell(2, 1, 2)).toEqual([2, 6]);
+  expect(grid.cursorRect()).toEqual(grid.cellRect(2, 6));
+});
+
+test('floats publish frames with the border cropped, and track focus and visibility', () => {
+  const { grid } = makeGrid(20, 10);
+  const published: unknown[][] = [];
+  grid.onFloats = (frames) => published.push(frames.map(({ win: _, ...f }) => f));
+  grid.redraw([
+    ['grid_resize', [3, 12, 4]],
+    ['win_viewport_margins', [3, win, 1, 1, 1, 1]],
+    ['win_float_pos', [3, win, 'NW', 2, 0, 0, true, 50, 1, 2, 5]],
+    ['flush', []],
+  ]);
+  const frame = { grid: 3, left: 60, top: 60, width: 100, height: 40, order: 0, border: true, focused: false, blend: 0 };
+  expect(published).toEqual([[frame]]);
+  grid.redraw([['flush', []]]);
+  expect(published.length).toBe(1); // unchanged
+  grid.redraw([
+    ['grid_cursor_goto', [3, 1, 1]],
+    ['flush', []],
+  ]);
+  expect(published[1]).toEqual([{ ...frame, focused: true }]);
+  // Grid cells include the border, so the cursor's screen cell does too.
+  expect(grid.cursorRect()).toEqual(grid.cellRect(3, 6));
+  grid.redraw([
+    ['win_hide', [3]],
+    ['flush', []],
+  ]);
+  expect(published[2]).toEqual([]);
+  grid.redraw([
+    ['grid_destroy', [3]],
+    ['flush', []],
+  ]);
+  expect(grid.screenCell(3, 1, 1)).toEqual([1, 1]);
+});
+
+test('floats stack by compindex', () => {
+  const { grid } = makeGrid(20, 10);
+  let frames: { grid: number; order: number }[] = [];
+  grid.onFloats = (f) => (frames = f);
+  grid.redraw([
+    ['grid_resize', [3, 4, 2]],
+    ['grid_resize', [4, 4, 2]],
+    ['win_float_pos', [3, win, 'NW', 1, 0, 0, true, 50, 7, 0, 0]],
+    ['win_float_pos', [4, win, 'NW', 1, 0, 0, true, 50, 2, 0, 0]],
+    ['flush', []],
+  ]);
+  expect(frames.map((f) => [f.grid, f.order])).toEqual([
+    [4, 0],
+    [3, 1],
+  ]);
+});
+
+test('float cells with the NormalFloat background are transparent', () => {
+  const { grid } = makeGrid();
+  grid.redraw([
+    ['hl_attr_define', [5, { background: 0x123456 }], [6, { foreground: 0xff0000, background: 0x123456 }]],
+    ['hl_attr_define', [7, { background: 0x654321 }], [8, { background: 0x123456, reverse: true }]],
+    ['hl_group_set', ['NormalFloat', 5]],
+  ]);
+  expect([0, 5, 6, 7, 8].map((id) => grid.colors(id, true).transparent)).toEqual([true, true, true, false, false]);
+  expect(grid.colors(5, false).transparent).toBe(false);
+});
+
+test("floats report 'winblend' from their cells' highlight", () => {
+  const { grid } = makeGrid(20, 10);
+  let frames: { blend: number }[] = [];
+  grid.onFloats = (f) => (frames = f);
+  grid.redraw([
+    ['hl_attr_define', [5, { background: 0x202020 }], [9, { background: 0x202020, blend: 30 }]],
+    ['hl_group_set', ['NormalFloat', 5]],
+    ['grid_resize', [3, 6, 3]],
+    ['win_viewport_margins', [3, win, 1, 1, 1, 1]],
+    ['grid_line', [3, 1, 1, [['h', 9], ['i'], [' ', 9, 2]], false]],
+    ['win_float_pos', [3, win, 'NW', 1, 0, 0, true, 50, 1, 0, 0]],
+    ['flush', []],
+  ]);
+  expect(frames.map((f) => f.blend)).toEqual([30]);
+  // The blended NormalFloat background is left to the frame.
+  expect(grid.colors(9, true).transparent).toBe(true);
+  grid.redraw([
+    ['grid_line', [3, 1, 1, [['h', 5], ['i'], [' ', 5, 2]], false]],
+    ['flush', []],
+  ]);
+  expect(frames.map((f) => f.blend)).toEqual([0]);
 });

@@ -10,8 +10,8 @@ import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { getAnimations, getTerminalFontFamily, getTerminalFontSize } from '../state/configDefaults';
 import { buildFontFamily, terminalTransparency } from './TerminalPane';
-import { encode, MsgpackStream } from '../lib/msgpack';
-import { NvimGrid } from '../lib/nvimGrid';
+import { encode, MsgpackStream, type MsgpackExt } from '../lib/msgpack';
+import { NvimGrid, type FloatFrame } from '../lib/nvimGrid';
 import { escapeNvimText, nvimKey } from '../lib/nvimKeys';
 import { cssFamily, parseGuifont, type GuiFont } from '../lib/nvimFont';
 import { KeyHint } from './KeyHint';
@@ -22,12 +22,26 @@ import {
   type SignatureHelp,
   type WidgetState,
 } from '../lib/nvimWidgets';
-import { NvimWidgets } from './NvimWidgets';
+import { NvimFloatFrames, NvimWidgets } from './NvimWidgets';
 
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/nvim`;
 const BUTTONS = ['left', 'middle', 'right'];
 /** Scroll animation length when `smooth-scroll-duration` is unset. */
 const SMOOTH_SCROLL_MS = 120;
+
+/** Neovim's integer handle for a window (a msgpack ext). */
+const windowId = (win: unknown): number | null => {
+  const data = (win as MsgpackExt | null)?.data;
+  return data ? (new MsgpackStream().push(data)[0] as number) : null;
+};
+
+/** A float's border title, as plain text. */
+const TITLE_LUA = `local ok, config = pcall(vim.api.nvim_win_get_config, ...)
+local title = ok and config.title or ""
+if type(title) == "table" then
+  title = table.concat(vim.tbl_map(function(chunk) return chunk[1] end, title))
+end
+return vim.trim(title)`;
 
 let activeInput: ((keys: string) => void) | null = null;
 
@@ -42,6 +56,7 @@ export function sendToNvim(keys: string): boolean {
 export function NvimSurface({ config }: { config: ClientConfig | null }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const layersRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const gridRef = useRef<NvimGrid | null>(null);
   const refitRef = useRef<() => void>(() => {});
@@ -51,8 +66,11 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
   // 'guifont' and 'linespace' from Neovim override the btmux terminal font.
   const [guifont, setGuifont] = useState<GuiFont>({ families: [], size: null });
   const [linespace, setLinespace] = useState(0);
+  const [pumblend, setPumblend] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [widgets, setWidgets] = useState<WidgetState | null>(null);
+  const [floats, setFloats] = useState<FloatFrame[]>([]);
+  const [titles, setTitles] = useState<Record<number, string>>({});
   const modalOpen = useStore(
     (s) => !!s.overlay || s.settingsOpen || s.fileBrowserOpen || s.switcherOpen || s.windowGridOpen || s.agentGridOpen,
   );
@@ -81,7 +99,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     const container = containerRef.current!;
     const canvas = canvasRef.current!;
     const input = inputRef.current!;
-    const grid = new NvimGrid(canvas, fontRef.current);
+    const grid = new NvimGrid(canvas, fontRef.current, layersRef.current);
     grid.smoothScroll = smoothScrollRef.current;
     gridRef.current = grid;
     const model = new WidgetModel();
@@ -90,6 +108,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       if (model.apply(name, args)) grid.cursorHidden = model.cmdlineActive;
       else if (name === 'option_set' && args[0] === 'guifont') setGuifont(parseGuifont(String(args[1])));
       else if (name === 'option_set' && args[0] === 'linespace') setLinespace(Number(args[1]) || 0);
+      else if (name === 'option_set' && args[0] === 'pumblend') setPumblend(Number(args[1]) || 0);
     };
     // Keep the input on the cursor so IME candidates and composition appear there.
     const placeInput = () => {
@@ -103,6 +122,17 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     grid.onFlush = () => {
       if (model.changed) setWidgets(model.snapshot());
       placeInput();
+    };
+    // Bordered floats show their title in the frame that replaces the border.
+    grid.onFloats = (frames) => {
+      setFloats(frames);
+      for (const frame of frames) {
+        const id = windowId(frame.win);
+        if (!frame.border || id === null) continue;
+        request('nvim_exec_lua', [TITLE_LUA, [id]], (title) =>
+          setTitles((t) => (t[frame.grid] === title ? t : { ...t, [frame.grid]: String(title) })),
+        );
+      }
     };
     setStatus({ kind: 'connecting' });
     const stream = new MsgpackStream();
@@ -164,7 +194,13 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       request('nvim_ui_attach', [
         gridSize[0],
         gridSize[1],
-        { ext_linegrid: true, rgb: true, ext_cmdline: true, ext_popupmenu: true, ext_messages: true },
+        {
+          ext_multigrid: true,
+          rgb: true,
+          ext_cmdline: true,
+          ext_popupmenu: true,
+          ext_messages: true,
+        },
       ]);
       // Kind icons from the btmux plugin (empty without mini.icons or the plugin).
       request(
@@ -266,37 +302,40 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       notify('nvim_paste', [text, true, -1]);
     };
 
-    let pressed: string | null = null;
+    let pressed: { button: string; grid: number } | null = null;
     let lastCell = [-1, -1];
     let wheelX = 0;
     let wheelY = 0;
     const scrollLines = { ver: 3, hor: 6 };
     const mods = (e: MouseEvent) => (e.ctrlKey ? 'C-' : '') + (e.shiftKey ? 'S-' : '') + (e.altKey ? 'A-' : '');
-    const cellOf = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      return grid.cellAt(e.clientX - rect.left, e.clientY - rect.top);
-    };
+    // Mouse events go to the grid under the pointer; drags stay with the grid they started on.
     const onMouseDown = (e: MouseEvent) => {
+      const target = grid.gridAt(e.target);
+      if (target === null) return;
       e.preventDefault();
       input.focus();
-      pressed = BUTTONS[e.button] ?? null;
-      if (!pressed) return;
-      lastCell = cellOf(e);
-      notify('nvim_input_mouse', [pressed, 'press', mods(e), 0, ...lastCell]);
+      const button = BUTTONS[e.button];
+      if (!button) return;
+      pressed = { button, grid: target };
+      lastCell = grid.cellIn(target, e.clientX, e.clientY);
+      notify('nvim_input_mouse', [button, 'press', mods(e), target, ...lastCell]);
     };
     const onMouseMove = (e: MouseEvent) => {
       if (!pressed) return;
-      const cell = cellOf(e);
+      const cell = grid.cellIn(pressed.grid, e.clientX, e.clientY);
       if (cell[0] === lastCell[0] && cell[1] === lastCell[1]) return;
       lastCell = cell;
-      notify('nvim_input_mouse', [pressed, 'drag', mods(e), 0, ...cell]);
+      notify('nvim_input_mouse', [pressed.button, 'drag', mods(e), pressed.grid, ...cell]);
     };
     const onMouseUp = (e: MouseEvent) => {
       if (!pressed) return;
-      notify('nvim_input_mouse', [pressed, 'release', mods(e), 0, ...cellOf(e)]);
+      const cell = grid.cellIn(pressed.grid, e.clientX, e.clientY);
+      notify('nvim_input_mouse', [pressed.button, 'release', mods(e), pressed.grid, ...cell]);
       pressed = null;
     };
     const onWheel = (e: WheelEvent) => {
+      const target = grid.gridAt(e.target);
+      if (target === null) return;
       e.preventDefault();
       const dpr = window.devicePixelRatio || 1;
       const line = grid.cellHeight / dpr;
@@ -305,24 +344,26 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       wheelX += e.deltaX * scale;
       const stepY = line * scrollLines.ver;
       const stepX = (grid.cellWidth / dpr) * scrollLines.hor;
-      const cell = cellOf(e);
+      const cell = grid.cellIn(target, e.clientX, e.clientY);
       for (; Math.abs(wheelY) >= stepY; wheelY -= Math.sign(wheelY) * stepY) {
-        notify('nvim_input_mouse', ['wheel', wheelY > 0 ? 'down' : 'up', mods(e), 0, ...cell]);
+        notify('nvim_input_mouse', ['wheel', wheelY > 0 ? 'down' : 'up', mods(e), target, ...cell]);
       }
       for (; Math.abs(wheelX) >= stepX; wheelX -= Math.sign(wheelX) * stepX) {
-        notify('nvim_input_mouse', ['wheel', wheelX > 0 ? 'right' : 'left', mods(e), 0, ...cell]);
+        notify('nvim_input_mouse', ['wheel', wheelX > 0 ? 'right' : 'left', mods(e), target, ...cell]);
       }
     };
-    const onContextMenu = (e: Event) => e.preventDefault();
+    const onContextMenu = (e: Event) => {
+      if (grid.gridAt(e.target) !== null) e.preventDefault();
+    };
 
     input.addEventListener('keydown', onKeyDown);
     input.addEventListener('input', onInput);
     input.addEventListener('compositionstart', onCompositionStart);
     input.addEventListener('compositionend', onCompositionEnd);
     input.addEventListener('paste', onPaste);
-    canvas.addEventListener('mousedown', onMouseDown);
-    canvas.addEventListener('wheel', onWheel, { passive: false });
-    canvas.addEventListener('contextmenu', onContextMenu);
+    container.addEventListener('mousedown', onMouseDown);
+    container.addEventListener('wheel', onWheel, { passive: false });
+    container.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     input.focus();
@@ -331,6 +372,9 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       applyThemeRef.current = () => {};
       if (activeInput === sendKeys) activeInput = null;
       ro.disconnect();
+      layersRef.current?.replaceChildren();
+      setFloats([]);
+      setTitles({});
       ws.onclose = null;
       ws.close();
       input.removeEventListener('keydown', onKeyDown);
@@ -338,9 +382,9 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       input.removeEventListener('compositionstart', onCompositionStart);
       input.removeEventListener('compositionend', onCompositionEnd);
       input.removeEventListener('paste', onPaste);
-      canvas.removeEventListener('mousedown', onMouseDown);
-      canvas.removeEventListener('wheel', onWheel);
-      canvas.removeEventListener('contextmenu', onContextMenu);
+      container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('wheel', onWheel);
+      container.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
@@ -391,6 +435,9 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       onMouseDown={() => inputRef.current?.focus()}
     >
       <canvas ref={canvasRef} style={{ display: 'block' }} />
+      {/* Window and float canvases; no z-index, so they stack with the frames and widgets. */}
+      <div ref={layersRef} className="pointer-events-none absolute inset-0" />
+      {gridRef.current && <NvimFloatFrames floats={floats} titles={titles} grid={gridRef.current} />}
       {widgets && gridRef.current && (
         <NvimWidgets
           state={widgets}
@@ -398,6 +445,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
           onSelect={(i) => selectRef.current(i)}
           onDismissPanel={() => dismissPanelRef.current()}
           onExpire={() => pruneRef.current()}
+          pumblend={pumblend}
         />
       )}
       <textarea

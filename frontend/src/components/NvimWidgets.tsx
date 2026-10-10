@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,7 +11,7 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { Spinner } from '@astryxdesign/core/Spinner';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import type { NvimGrid } from '../lib/nvimGrid';
+import { floatFrameZ, type FloatFrame, type NvimGrid } from '../lib/nvimGrid';
 import type {
   Chunk,
   Cmdline,
@@ -44,13 +44,15 @@ interface Props {
   onDismissPanel: () => void;
   /** Called when the earliest toast or finished progress card expires. */
   onExpire: () => void;
+  /** 'pumblend', 0–100. */
+  pumblend: number;
 }
 
 /** Gap kept above the bottom row (the statusline, since `ext_messages` sets 'cmdheight' to 0). */
 const STATUSLINE_GAP = 8;
 
 /** Externalized Neovim cmdline and popupmenu, drawn over the grid. */
-export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire }: Props) {
+export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire, pumblend }: Props) {
   const { cmdline, block, popupmenu, signature, messages, progress, panel, showmode, showcmd, kindIcons } = state;
   const cmdlineMenu = popupmenu?.grid === -1 && cmdline ? popupmenu : null;
   const gridMenu = popupmenu && popupmenu.grid !== -1 ? popupmenu : null;
@@ -87,7 +89,9 @@ export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire }:
           {showcmd.length > 0 && <Token size="sm" label={chunkText(showcmd)} />}
         </HStack>
       )}
-      {gridMenu && <GridPopupmenu menu={gridMenu} grid={grid} kindIcons={kindIcons} onSelect={onSelect} />}
+      {gridMenu && (
+        <GridPopupmenu menu={gridMenu} grid={grid} kindIcons={kindIcons} onSelect={onSelect} blend={pumblend} />
+      )}
       {signature && !cmdline && (
         <SignatureCard
           signature={signature}
@@ -106,7 +110,13 @@ export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire }:
         >
           {panel && <PanelCard panel={panel} grid={grid} onDismiss={onDismissPanel} />}
           {cmdlineMenu && (
-            <Card padding={0.5} elevation="med" width="min(100%, 48rem)" className="pointer-events-auto">
+            <Card
+              padding={0.5}
+              elevation="med"
+              width="min(100%, 48rem)"
+              className="pointer-events-auto"
+              style={blendStyle(pumblend)}
+            >
               <MenuList menu={cmdlineMenu} kindIcons={kindIcons} onSelect={onSelect} />
             </Card>
           )}
@@ -269,6 +279,72 @@ function SignatureCard({
   );
 }
 
+/**
+ * A translucent card for 'winblend'/'pumblend' (0–100), blurring what's behind it by
+ * `backdrop-blur`, like dialogs. Text drawn on it stays opaque.
+ */
+function blendStyle(blend: number): CSSProperties | undefined {
+  if (blend <= 0) return undefined;
+  return {
+    backgroundColor: `color-mix(in srgb, var(--color-background-card) ${100 - blend}%, transparent)`,
+    backdropFilter: 'blur(var(--btm-backdrop-blur, 2px))',
+  };
+}
+
+/** Space between a float's content and its frame. */
+const FRAME_PAD = 6;
+/** Height of the title strip, in place of a border's top row. */
+const TITLE_HEIGHT = 22;
+
+/**
+ * Frames behind Neovim's floating windows (hover, diagnostics, plugin windows). The
+ * float's canvas draws on top; its NormalFloat background is transparent so the
+ * card shows through, and Neovim's own border is cropped in favor of the card's.
+ */
+export function NvimFloatFrames({
+  floats,
+  titles,
+  grid,
+}: {
+  floats: FloatFrame[];
+  titles: Record<number, string>;
+  grid: NvimGrid;
+}) {
+  // Floats can touch the edges; keep their frames on screen.
+  const bounds = grid.cellRect(grid.rows, grid.cols);
+  return floats.map((f) => {
+    const title = f.border ? titles[f.grid] : '';
+    const left = Math.max(0, f.left - FRAME_PAD);
+    const top = Math.max(0, f.top - FRAME_PAD - (title ? TITLE_HEIGHT : 0));
+    const right = Math.min(bounds.left, f.left + f.width + FRAME_PAD);
+    const bottom = Math.min(bounds.top, f.top + f.height + FRAME_PAD);
+    return (
+      <Card
+        key={f.grid}
+        padding={0}
+        elevation="med"
+        className={`pointer-events-none absolute ${f.focused ? 'border-accent' : ''}`}
+        style={{
+          left,
+          top,
+          width: right - left,
+          height: bottom - top,
+          zIndex: floatFrameZ(f.order),
+          ...blendStyle(f.blend),
+        }}
+      >
+        {title && (
+          <HStack vAlign="center" className="px-2" style={{ height: TITLE_HEIGHT }}>
+            <Text size="sm" weight="semibold" maxLines={1}>
+              {title}
+            </Text>
+          </HStack>
+        )}
+      </Card>
+    );
+  });
+}
+
 function Markdown({ text }: { text: string }) {
   return (
     <VStack className="prose prose-sm dark:prose-invert max-h-40 max-w-none overflow-y-auto [&_pre]:whitespace-pre-wrap">
@@ -363,25 +439,31 @@ function KindIcon({ icon, color, hidden }: { icon: string; color: string | null;
   );
 }
 
-/** Insert-mode completion menu, anchored at the completed word. */
+/** Screen cell the popupmenu is anchored to. */
+const menuCell = (menu: Popupmenu, grid: NvimGrid) => grid.screenCell(menu.grid, menu.row, menu.col);
+
 /** Whether the completion menu flips above the cursor because there's more room there. */
 function menuAbove(menu: Popupmenu, grid: NvimGrid): boolean {
-  const below = grid.rows - menu.row - 1;
-  return below < Math.min(menu.items.length, MENU_ROWS) && menu.row > below;
+  const [row] = menuCell(menu, grid);
+  const below = grid.rows - row - 1;
+  return below < Math.min(menu.items.length, MENU_ROWS) && row > below;
 }
 
+/** Insert-mode completion menu, anchored at the completed word. */
 function GridPopupmenu({
   menu,
   grid,
   kindIcons,
   onSelect,
+  blend,
 }: {
   menu: Popupmenu;
   grid: NvimGrid;
   kindIcons: KindIcons;
   onSelect: (i: number) => void;
+  blend: number;
 }) {
-  const anchor = grid.cellRect(menu.row, menu.col);
+  const anchor = grid.cellRect(...menuCell(menu, grid));
   const placeAbove = menuAbove(menu, grid);
   const info = menu.items[menu.selected]?.info;
   const popupRef = useRef<HTMLDivElement>(null);
@@ -413,22 +495,23 @@ function GridPopupmenu({
           : { left: anchor.left, top: anchor.top + anchor.height }
       }
     >
-      <Card padding={0.5} elevation="med" maxWidth="60ch" className="min-w-0 overflow-hidden">
+      <Card padding={0.5} elevation="med" maxWidth="60ch" className="min-w-0 overflow-hidden" style={blendStyle(blend)}>
         <MenuList menu={menu} kindIcons={kindIcons} onSelect={onSelect} />
       </Card>
-      {info && <InfoCard info={info} />}
+      {info && <InfoCard info={info} blend={blend} />}
     </HStack>
   );
 }
 
 /** Documentation for the selected completion item (Markdown, as LSP servers send it). */
-function InfoCard({ info }: { info: string }) {
+function InfoCard({ info, blend }: { info: string; blend: number }) {
   return (
     <Card
       padding={2}
       elevation="med"
       maxWidth="60ch"
       className="prose prose-sm dark:prose-invert max-h-80 min-w-0 overflow-y-auto [&_pre]:whitespace-pre-wrap"
+      style={blendStyle(blend)}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{info}</ReactMarkdown>
     </Card>

@@ -2,7 +2,10 @@
 
 `<prefix> + e` opens a Neovim GUI over the current session. btmux draws the
 editor itself and renders the command line, completion menu, messages, progress,
-and LSP signature help as native UI. There is one Neovim per btmux server, so
+and LSP signature help as native UI. Floating windows (LSP hover, diagnostics,
+plugin windows) appear in cards that replace Neovim's border and show its title.
+`winblend` and `pumblend` make those cards and the completion menu translucent,
+blurring what's behind them by `backdrop-blur` while their text stays sharp. There is one Neovim per btmux server, so
 every browser tab and the desktop app share the same editor. `<prefix> + e`
 hides it again; `:q` closes Neovim and the view.
 
@@ -83,5 +86,5 @@ L, M, H, Cmd+digits, and Cmd+V (paste) stay with the browser or desktop app.
 ## Limitations
 
 - Neovim sizes its grid to the smallest view attached to it.
-- Plugin floats (LSP hover, diagnostics) are drawn in the grid, not as btmux UI.
+- Plugins that draw a border as a separate window get a card around each window.
 - `"+` registers use the clipboard of the machine btmux runs on.

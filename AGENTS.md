@@ -138,7 +138,7 @@ active session (`NvimSurface.tsx`). The backend lazily spawns one shared
 `nvim --embed --headless --listen <private socket>` per server; `--embed` ties
 its lifetime to btmux's stdin pipe. It starts with `g:btmux = 1`, which user
 config can check, and the bundled plugin on 'runtimepath'. Each browser tab
-attaches its own UI (`ext_linegrid`, `ext_cmdline`, `ext_popupmenu`,
+attaches its own UI (`ext_multigrid`, `ext_cmdline`, `ext_popupmenu`,
 `ext_messages`, which sets 'cmdheight' to 0 and drops hit-enter prompts).
 Neovim replays its full state on attach, so there is no journal. When Neovim quits
 (`:q`), the backend sends close code 1000 and the surface closes; any other
@@ -146,8 +146,18 @@ close shows a restart prompt. Neovim enables `ext_*` features only if every
 attached UI supports them, sizes the grid to the smallest UI, and defers
 non-fast requests (including `nvim_ui_attach`) while blocked at a prompt.
 
-`lib/nvimGrid.ts` keeps the grid model and draws dirty rows to an offscreen
-canvas. Each frame composes it onto the visible canvas with in-flight
+`lib/nvimGrid.ts` keeps one layer per grid: grid 1 (statuslines, separators)
+on the surface canvas, and a canvas per window or float, positioned from
+`win_pos`/`win_float_pos` in a host div that lets the mouse through to them.
+Mouse events go to the grid under the pointer, with grid-relative cells.
+Floats get an Astryx card frame behind their canvas (`NvimFloatFrames`): the
+border reported by `win_viewport_margins` is cropped, its title is fetched for
+the frame, and cells with the NormalFloat background stay transparent.
+'winblend' arrives as `blend` on each cell's highlight: it sets the frame's
+background alpha (blurred by `--btm-backdrop-blur`) and other cell backgrounds'
+alpha, never the text's; 'pumblend' does the same for the popupmenu cards. Each
+layer draws dirty rows to an offscreen canvas, and each flush composes it onto
+the visible canvas with in-flight
 `grid_scroll` animations (a snapshot of the region plus an eased pixel offset;
 `[terminal] smooth-scroll-duration`, off with `animations = false`) and then
 the cursor. Unset `Normal` colors fall back to the btmux theme, as in a TUI,

@@ -417,13 +417,116 @@ try {
   };
   await assertPopupFits();
   await page.keyboard.press('Control+n');
-  await page.getByText('Documentation beside the completion menu.', { exact: true }).waitFor();
+  const docs = page.getByText('Documentation beside the completion menu.', { exact: true });
+  await docs.waitFor();
   await assertPopupFits();
+  // A translucent card's background alpha and backdrop filter.
+  const cardBlend = (el: Element) => {
+    const style = getComputedStyle(el.closest('.astryx-card')!);
+    // `rgba(r, g, b, a)` or `color(srgb r g b / a)`; no alpha means opaque.
+    const match = style.backgroundColor.match(/^rgba\(.*,\s*([\d.]+)\)$|\/\s*([\d.]+)\s*\)$/);
+    const alpha = match?.[1] ?? match?.[2];
+    return { alpha: alpha === undefined ? 1 : Number(alpha), filter: style.backdropFilter };
+  };
+  const originalPumblend = await rpc('nvim_get_option_value', ['pumblend', {}]);
+  await rpc('nvim_set_option_value', ['pumblend', 30, {}]);
+  await page.waitForTimeout(200);
+  for (const blended of [await item.evaluate(cardBlend), await docs.evaluate(cardBlend)]) {
+    assert(Math.abs(blended.alpha - 0.7) < 0.02 && blended.filter.includes('blur'), JSON.stringify(blended));
+  }
+  await rpc('nvim_set_option_value', ['pumblend', originalPumblend, {}]);
+  console.log("PASS 'pumblend' makes the completion menu and docs translucent and blurred");
   await page.setViewportSize({ width: 640, height: 600 });
   await page.waitForTimeout(300);
   await assertPopupFits();
   console.log('PASS completion and documentation stay within the editor at the right edge and after resizing');
   await page.keyboard.press('Escape');
+
+  // Floats get their own grid, drawn in an Astryx card that replaces Neovim's border.
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await rpc('nvim_set_current_line', ['float probe']);
+  await rpc('nvim_exec_lua', [
+    `local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.tbl_map(tostring, vim.fn.range(1, 40)))
+    _G.btmux_test_float = vim.api.nvim_open_win(buf, false, {
+      relative = "editor", row = 4, col = 10, width = 30, height = 6, border = "rounded", title = " Float title ",
+    })`,
+    [],
+  ]);
+  const title = page.getByText('Float title', { exact: true });
+  await title.waitFor();
+  const floatCanvas = page.locator('canvas[data-grid]').filter({ visible: true }).last();
+  const geometry = await title.evaluate((el) => {
+    const visible = [...document.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].filter(
+      (c) => c.style.display !== 'none',
+    );
+    const float = visible.find((c) => Number(c.style.zIndex) >= 10)!;
+    const window = visible.find((c) => c.style.zIndex === '1')!;
+    const rect = (e: Element) => e.getBoundingClientRect().toJSON() as DOMRect;
+    return { float: rect(float), window: rect(window), card: rect(el.closest('.astryx-card')!) };
+  });
+  const [winWidth, winHeight] = await rpc('nvim_exec_lua', [
+    'return { vim.api.nvim_win_get_width(0), vim.api.nvim_win_get_height(0) + (vim.o.winbar ~= "" and 1 or 0) }',
+    [],
+  ]);
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.5;
+  assert(
+    near(geometry.float.width / 30, geometry.window.width / winWidth) &&
+      near(geometry.float.height / 6, geometry.window.height / winHeight),
+    `float shows its 30×6 content without the border: ${JSON.stringify(geometry)}`,
+  );
+  const { float, card } = geometry;
+  assert(
+    card.left < float.left && card.top < float.top && card.right > float.right && card.bottom > float.bottom,
+    'the card frames the float',
+  );
+  assert.equal((await title.evaluate(cardBlend)).alpha, 1, 'floats are opaque by default');
+  await rpc('nvim_exec_lua', ['vim.wo[_G.btmux_test_float].winblend = 40', []]);
+  await page.waitForTimeout(200);
+  const blended = await title.evaluate(cardBlend);
+  assert(Math.abs(blended.alpha - 0.6) < 0.02 && blended.filter.includes('blur'), JSON.stringify(blended));
+  console.log("PASS 'winblend' makes the float's card translucent and blurred");
+  const topline = () => rpc('nvim_exec_lua', ['return vim.fn.getwininfo(_G.btmux_test_float)[1].topline', []]);
+  await floatCanvas.hover();
+  await page.mouse.wheel(0, 300);
+  await page.waitForTimeout(300);
+  assert((await topline()) > 1, 'the wheel scrolls the float under the pointer');
+  await floatCanvas.click();
+  await page.waitForTimeout(200);
+  assert.equal(
+    await rpc('nvim_exec_lua', ['return vim.api.nvim_get_current_win() == _G.btmux_test_float', []]),
+    true,
+    'clicking a float focuses it',
+  );
+  await page.locator('.astryx-card.border-accent').waitFor();
+  await rpc('nvim_exec_lua', ['vim.cmd.wincmd("p"); vim.api.nvim_win_close(_G.btmux_test_float, true)', []]);
+  await title.waitFor({ state: 'detached' });
+  const floatCount = () =>
+    page.evaluate(
+      () =>
+        [...document.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].filter(
+          (c) => c.style.display !== 'none' && Number(c.style.zIndex) >= 10,
+        ).length,
+    );
+  assert.equal(await floatCount(), 0);
+  await rpc('nvim_exec_lua', [
+    `local ns = vim.api.nvim_create_namespace("btmux_test")
+    vim.diagnostic.set(ns, 0, { { lnum = 0, col = 0, message = "diagnostic probe" } })
+    vim.api.nvim_win_set_cursor(0, { 1, 5 })
+    vim.diagnostic.open_float({ scope = "line" })`,
+    [],
+  ]);
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].some(
+        (c) => c.style.display !== 'none' && Number(c.style.zIndex) >= 10,
+      ),
+  );
+  await page.keyboard.press('0');
+  await page.waitForTimeout(300);
+  assert.equal(await floatCount(), 0, 'the diagnostic float closes when the cursor moves');
+  await rpc('nvim_exec_lua', ['vim.diagnostic.reset(vim.api.nvim_create_namespace("btmux_test"))', []]);
+  console.log('PASS floats render in cropped Astryx frames, scroll and focus with the mouse, and close with Neovim');
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     useStore.getState().setNvimOpen(false);

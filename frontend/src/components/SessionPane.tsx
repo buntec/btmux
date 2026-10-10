@@ -318,7 +318,6 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           width="min(1440px, 94vw)"
           maxHeight="90dvh"
           padding={0}
-          className="bg-body/70 backdrop-blur-xl"
           style={{ height: '90dvh' }}
         >
           {fileBrowserMode === 'process' ? (

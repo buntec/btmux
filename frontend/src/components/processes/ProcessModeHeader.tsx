@@ -6,8 +6,8 @@ import { Token } from '@astryxdesign/core/Token';
 import { Button } from '@astryxdesign/core/Button';
 import { useProcessStore } from '@/state/processStore';
 import { formatBytes } from '@/lib/processFormat';
-import { portKey, PORT_SORT_LABELS } from '@/lib/portRows';
-import { PROCESS_SORT_LABELS } from '@/lib/processTree';
+import { isPortSortDescending, portKey, PORT_SORT_LABELS } from '@/lib/portRows';
+import { isProcessSortDescending, PROCESS_SORT_LABELS } from '@/lib/processTree';
 import { cn } from '@/lib/utils';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '@/lib/connectionState';
 
@@ -20,10 +20,12 @@ export function ProcessModeHeader({
 }) {
   const viewMode = useProcessStore((s) => s.viewMode);
   const portSortMode = useProcessStore((s) => s.portSortMode);
+  const portSortReversed = useProcessStore((s) => s.portSortReversed);
   const setPortSortMode = useProcessStore((s) => s.setPortSortMode);
   const snapshot = useProcessStore((s) => s.snapshot);
   const processCount = useProcessStore((s) => s.processes.length);
   const sortMode = useProcessStore((s) => s.sortMode);
+  const sortReversed = useProcessStore((s) => s.sortReversed);
   const treeMode = useProcessStore((s) => s.treeMode);
   const followFocus = useProcessStore((s) => s.followFocus);
   const filterQuery = useProcessStore((s) => s.filterQuery);
@@ -41,7 +43,11 @@ export function ProcessModeHeader({
       </Text>
       <Token
         size="sm"
-        label={`sort: ${viewMode === 'ports' ? PORT_SORT_LABELS[portSortMode] : PROCESS_SORT_LABELS[sortMode]}`}
+        label={
+          viewMode === 'ports'
+            ? `sort: ${PORT_SORT_LABELS[portSortMode]}${portSortMode === 'listeners' ? '' : isPortSortDescending(portSortMode, portSortReversed) ? ' ▼' : ' ▲'}`
+            : `sort: ${PROCESS_SORT_LABELS[sortMode]} ${isProcessSortDescending(sortMode, sortReversed) ? '▼' : '▲'}`
+        }
       />
       {viewMode === 'ports' && portSortMode !== 'listeners' && (
         <Button

@@ -19,15 +19,19 @@ interface ProcessStore {
   viewMode: 'processes' | 'ports';
   focusedPort: string | null;
   portSortMode: PortSortMode;
+  portSortReversed: boolean;
   expandedPorts: Set<string>;
   togglePortExpanded: (key: string) => void;
   toggleViewMode: () => void;
   setFocusedPort: (key: string | null, pid: number | null) => void;
   setPortSortMode: (mode: PortSortMode) => void;
+  /** Header click: select the column, or flip direction if already active. */
+  sortPortsBy: (mode: PortSortMode) => void;
   cyclePortSortMode: () => void;
   followFocus: boolean;
   collapsedPids: Set<number>;
   sortMode: ProcessSortMode;
+  sortReversed: boolean;
   treeMode: boolean;
   filterQuery: string;
   filterActive: boolean;
@@ -37,6 +41,7 @@ interface ProcessStore {
   toggleFollowFocus: () => void;
   toggleCollapsed: (pid: number) => void;
   setSortMode: (sortMode: ProcessSortMode) => void;
+  sortBy: (sortMode: ProcessSortMode) => void;
   cycleSortMode: () => void;
   toggleTreeMode: () => void;
   setFilterQuery: (query: string) => void;
@@ -52,10 +57,12 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   viewMode: 'processes',
   focusedPort: null,
   portSortMode: 'listeners',
+  portSortReversed: false,
   expandedPorts: new Set(),
   followFocus: false,
   collapsedPids: new Set(),
   sortMode: 'cpu',
+  sortReversed: false,
   treeMode: false,
   filterQuery: '',
   filterActive: false,
@@ -81,10 +88,17 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
       else expandedPorts.add(key);
       return { expandedPorts };
     }),
-  setPortSortMode: (portSortMode) => set({ portSortMode }),
+  setPortSortMode: (portSortMode) => set({ portSortMode, portSortReversed: false }),
+  sortPortsBy: (mode) =>
+    set((state) =>
+      state.portSortMode === mode
+        ? { portSortReversed: !state.portSortReversed }
+        : { portSortMode: mode, portSortReversed: false },
+    ),
   cyclePortSortMode: () =>
     set((state) => ({
       portSortMode: PORT_SORT_MODES[(PORT_SORT_MODES.indexOf(state.portSortMode) + 1) % PORT_SORT_MODES.length],
+      portSortReversed: false,
     })),
   toggleFollowFocus: () => set((state) => ({ followFocus: !state.followFocus })),
   toggleCollapsed: (pid) => {
@@ -93,8 +107,12 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
     else collapsedPids.add(pid);
     set({ collapsedPids });
   },
-  setSortMode: (sortMode) => set({ sortMode }),
-  cycleSortMode: () => set((state) => ({ sortMode: nextProcessSortMode(state.sortMode) })),
+  setSortMode: (sortMode) => set({ sortMode, sortReversed: false }),
+  sortBy: (mode) =>
+    set((state) =>
+      state.sortMode === mode ? { sortReversed: !state.sortReversed } : { sortMode: mode, sortReversed: false },
+    ),
+  cycleSortMode: () => set((state) => ({ sortMode: nextProcessSortMode(state.sortMode), sortReversed: false })),
   toggleTreeMode: () => set((state) => ({ treeMode: !state.treeMode })),
   setFilterQuery: (filterQuery) => set({ filterQuery }),
   setFilterActive: (filterActive) => set({ filterActive, filterQuery: filterActive ? get().filterQuery : '' }),
@@ -112,10 +130,12 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
       viewMode: 'processes',
       focusedPort: null,
       portSortMode: 'listeners',
+      portSortReversed: false,
       expandedPorts: new Set(),
       followFocus: false,
       collapsedPids: new Set(),
       sortMode: 'cpu',
+      sortReversed: false,
       treeMode: false,
       filterQuery: '',
       filterActive: false,

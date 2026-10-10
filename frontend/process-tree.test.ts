@@ -2,12 +2,14 @@ import { expect, test } from 'bun:test';
 import {
   buildProcessRows,
   flattenProcessTree,
+  isProcessSortDescending,
   nextProcessSortMode,
   PROCESS_SORT_MODES,
   resolveFocusedPid,
   type ProcessSortMode,
 } from './src/lib/processTree';
 import type { ProcessInfo } from './src/protocol/process-messages';
+import { useProcessStore } from './src/state/processStore';
 
 const process = (pid: number, parent_pid: number | null, cpu: number): ProcessInfo => ({
   pid,
@@ -110,7 +112,12 @@ test('tree filtering keeps ancestors as context and finds matches in folded subt
 });
 
 test('snapshot updates keep the cursor row unless following', () => {
-  const rows = buildProcessRows([process(1, null, 90), process(2, null, 50), process(3, null, 10)], new Set(), 'cpu', false);
+  const rows = buildProcessRows(
+    [process(1, null, 90), process(2, null, 50), process(3, null, 10)],
+    new Set(),
+    'cpu',
+    false,
+  );
 
   // Focused PID 3 moved away from row 1: stay on the row.
   expect(resolveFocusedPid(rows, 3, 1, true)).toBe(2);
@@ -129,4 +136,31 @@ test('processes with an unknown start time sort last by elapsed', () => {
   ];
 
   expect(buildProcessRows(processes, new Set(), 'elapsed', false).map((row) => row.process.pid)).toEqual([3, 2, 1]);
+});
+
+test('reversed sorting flips each mode and keeps PID as the tie-breaker', () => {
+  const processes = [process(1, null, 10), process(2, null, 90), process(3, null, 90)];
+  const pids = (reversed: boolean) =>
+    buildProcessRows(processes, new Set(), 'cpu', false, '', reversed).map((row) => row.process.pid);
+  expect(pids(false)).toEqual([2, 3, 1]);
+  expect(pids(true)).toEqual([1, 2, 3]);
+  expect(isProcessSortDescending('cpu')).toBe(true);
+  expect(isProcessSortDescending('cpu', true)).toBe(false);
+  expect(isProcessSortDescending('pid', true)).toBe(true);
+});
+
+test('header clicks select a column, then toggle its direction', () => {
+  const store = useProcessStore.getState();
+  store.reset();
+  try {
+    store.sortBy('cpu');
+    expect(useProcessStore.getState().sortReversed).toBe(true);
+    store.sortBy('pid');
+    expect(useProcessStore.getState()).toMatchObject({ sortMode: 'pid', sortReversed: false });
+    store.sortBy('pid');
+    store.cycleSortMode();
+    expect(useProcessStore.getState().sortReversed).toBe(false);
+  } finally {
+    store.reset();
+  }
 });

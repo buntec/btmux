@@ -24,6 +24,7 @@ import { FileSearch } from './files/FileSearch';
 import { KeyHint, type Hint } from './KeyHint';
 import { cn, getParent } from '@/lib/utils';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
+import { DEFAULT_TYPE_SCALE, terminalTypeScale } from '@/lib/astryx-theme';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
 import type {
   FileEntry,
@@ -1417,7 +1418,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       ref={rootRef}
       tabIndex={-1}
       className="h-full min-h-0 overflow-hidden outline-none"
-      style={{ fontSize: `${fontSize}px` }}
+      style={terminalTypeScale(fontSize)}
       onMouseDown={() => {
         if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
         rootRef.current?.focus();
@@ -1529,9 +1530,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         )}
       </HStack>
 
-      <CreateEntryModal open={createModalOpen} onOpenChange={handleCreateModalOpenChange} onCreate={createEntry} />
-      <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
-      <GitPopup kind={gitPopup} onClose={closeGitPopup} loadRefs={gitLoadRefs} run={gitRun} />
+      {/* Modals keep the regular UI scale, not the terminal-sized one. */}
+      <div className="contents" style={DEFAULT_TYPE_SCALE}>
+        <CreateEntryModal open={createModalOpen} onOpenChange={handleCreateModalOpenChange} onCreate={createEntry} />
+        <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
+        <GitPopup kind={gitPopup} onClose={closeGitPopup} loadRefs={gitLoadRefs} run={gitRun} />
+      </div>
     </VStack>
   );
 }

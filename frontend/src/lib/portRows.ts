@@ -1,6 +1,15 @@
 import type { PortInfo, ProcessInfo } from '../protocol/process-messages';
 
-export const PORT_SORT_MODES = ['listeners', 'port', 'protocol', 'address', 'state', 'pid', 'command'] as const;
+export const PORT_SORT_MODES = [
+  'listeners',
+  'port',
+  'protocol',
+  'address',
+  'state',
+  'pid',
+  'command',
+  'connections',
+] as const;
 export type PortSortMode = (typeof PORT_SORT_MODES)[number];
 export const PORT_SORT_LABELS: Record<PortSortMode, string> = {
   listeners: 'listeners first',
@@ -10,7 +19,13 @@ export const PORT_SORT_LABELS: Record<PortSortMode, string> = {
   state: 'state',
   pid: 'PID',
   command: 'process',
+  connections: 'connections',
 };
+
+/** Whether rows are shown high-to-low; `reversed` flips the mode's default. */
+export function isPortSortDescending(mode: PortSortMode, reversed = false): boolean {
+  return (mode === 'connections') !== reversed;
+}
 
 export interface PortRow {
   key: string;
@@ -46,6 +61,7 @@ export function buildPortRows(
   processes: ProcessInfo[],
   sortMode: PortSortMode,
   query = '',
+  reversed = false,
 ): PortRow[] {
   const byPid = new Map(processes.map((process) => [process.pid, process]));
   const groups = new Map<string, PortRow>();
@@ -105,9 +121,11 @@ export function buildPortRows(
           return (a.port.pid ?? Infinity) - (b.port.pid ?? Infinity);
         case 'command':
           return (a.process?.name ?? '').localeCompare(b.process?.name ?? '');
+        case 'connections':
+          return b.connectionCount - a.connectionCount;
       }
     })();
-    return comparison || a.port.local_port - b.port.local_port || a.key.localeCompare(b.key);
+    return (reversed ? -comparison : comparison) || a.port.local_port - b.port.local_port || a.key.localeCompare(b.key);
   });
 }
 

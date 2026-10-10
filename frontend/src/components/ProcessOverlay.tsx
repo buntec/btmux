@@ -8,6 +8,7 @@ import { useSidebarResize } from '@/hooks/useSidebarResize';
 import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
+import { terminalTypeScale } from '@/lib/astryx-theme';
 import { buildPortRows } from '@/lib/portRows';
 import { buildProcessRows } from '@/lib/processTree';
 import { KeyHint } from './KeyHint';
@@ -42,9 +43,11 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const viewMode = useProcessStore((s) => s.viewMode);
   const ports = useProcessStore((s) => s.snapshot?.ports);
   const portSortMode = useProcessStore((s) => s.portSortMode);
+  const portSortReversed = useProcessStore((s) => s.portSortReversed);
   const processes = useProcessStore((s) => s.processes);
   const collapsedPids = useProcessStore((s) => s.collapsedPids);
   const sortMode = useProcessStore((s) => s.sortMode);
+  const sortReversed = useProcessStore((s) => s.sortReversed);
   const treeMode = useProcessStore((s) => s.treeMode);
   const filterQuery = useProcessStore((s) => s.filterQuery);
   const filterActive = useProcessStore((s) => s.filterActive);
@@ -59,12 +62,12 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   });
 
   const rows = useMemo(
-    () => buildProcessRows(processes, collapsedPids, sortMode, treeMode, filterActive ? filterQuery : ''),
-    [processes, collapsedPids, sortMode, treeMode, filterActive, filterQuery],
+    () => buildProcessRows(processes, collapsedPids, sortMode, treeMode, filterActive ? filterQuery : '', sortReversed),
+    [processes, collapsedPids, sortMode, sortReversed, treeMode, filterActive, filterQuery],
   );
   const portRows = useMemo(
-    () => buildPortRows(ports ?? [], processes, portSortMode, filterActive ? filterQuery : ''),
-    [ports, processes, portSortMode, filterActive, filterQuery],
+    () => buildPortRows(ports ?? [], processes, portSortMode, filterActive ? filterQuery : '', portSortReversed),
+    [ports, processes, portSortMode, portSortReversed, filterActive, filterQuery],
   );
   const navigationRows = useMemo(
     () =>
@@ -287,7 +290,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
       ref={rootRef}
       tabIndex={-1}
       className="h-full min-h-0 overflow-hidden outline-none"
-      style={{ fontSize: `${fontSize}px` }}
+      style={terminalTypeScale(fontSize)}
       onMouseDown={() => {
         if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
         rootRef.current?.focus();

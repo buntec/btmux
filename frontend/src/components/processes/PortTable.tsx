@@ -2,12 +2,17 @@ import { Fragment, useLayoutEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
-import { Button } from '@astryxdesign/core/Button';
 import { Text } from '@astryxdesign/core/Text';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from '@astryxdesign/core/Table';
 import { useProcessStore } from '@/state/processStore';
-import { PORT_SORT_LABELS, resolveFocusedPort, type PortRow, type PortSortMode } from '@/lib/portRows';
+import {
+  isPortSortDescending,
+  PORT_SORT_LABELS,
+  resolveFocusedPort,
+  type PortRow,
+  type PortSortMode,
+} from '@/lib/portRows';
 import { cn } from '@/lib/utils';
 import { Placeholder } from '../files/Placeholder';
 
@@ -18,6 +23,7 @@ const COLUMNS: Array<{ label: string; mode: PortSortMode }> = [
   { label: 'STATE', mode: 'state' },
   { label: 'PID', mode: 'pid' },
   { label: 'PROCESS', mode: 'command' },
+  { label: 'CONNECTIONS', mode: 'connections' },
 ];
 
 export function PortTable({ rows }: { rows: PortRow[] }) {
@@ -26,10 +32,11 @@ export function PortTable({ rows }: { rows: PortRow[] }) {
   const focusedPid = useProcessStore((s) => s.focusedPid);
   const followFocus = useProcessStore((s) => s.followFocus);
   const sortMode = useProcessStore((s) => s.portSortMode);
+  const sortReversed = useProcessStore((s) => s.portSortReversed);
   const setFocusedPort = useProcessStore((s) => s.setFocusedPort);
   const expandedPorts = useProcessStore((s) => s.expandedPorts);
   const togglePortExpanded = useProcessStore((s) => s.togglePortExpanded);
-  const setSortMode = useProcessStore((s) => s.setPortSortMode);
+  const sortBy = useProcessStore((s) => s.sortPortsBy);
   const listRef = useRef<HTMLElement>(null);
   const focusIndexRef = useRef(0);
   const portsRef = useRef(snapshot?.ports);
@@ -57,24 +64,23 @@ export function PortTable({ rows }: { rows: PortRow[] }) {
     <VStack ref={listRef} className="min-h-0 flex-1 overflow-hidden">
       <ScrollableArea label="Port list" axis="both" className="min-h-0 flex-1 overflow-auto">
         <Table density="compact" dividers="none">
-          <TableHeader className="sticky top-0 bg-surface">
+          <TableHeader className="sticky top-0 z-10 bg-surface">
             <TableRow>
               {COLUMNS.map(({ label, mode }) => (
-                <TableHeaderCell key={mode}>
-                  <Button
-                    label={`Sort by ${PORT_SORT_LABELS[mode]}`}
-                    variant="ghost"
-                    size="sm"
+                <TableHeaderCell key={mode} className="font-normal">
+                  <button
+                    type="button"
+                    aria-label={`Sort by ${PORT_SORT_LABELS[mode]}`}
                     aria-pressed={sortMode === mode}
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setSortMode(mode)}
+                    onClick={() => sortBy(mode)}
+                    className={cn('cursor-pointer text-left hover:text-primary', sortMode === mode && 'text-primary')}
                   >
                     {label}
-                    {sortMode === mode ? ' ▲' : ''}
-                  </Button>
+                    {sortMode === mode && (isPortSortDescending(mode, sortReversed) ? ' ▼' : ' ▲')}
+                  </button>
                 </TableHeaderCell>
               ))}
-              <TableHeaderCell>CONNECTIONS</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>

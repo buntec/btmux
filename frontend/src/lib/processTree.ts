@@ -23,8 +23,9 @@ export const PROCESS_SORT_LABELS: Record<ProcessSortMode, string> = {
   command: 'command',
 };
 
-export function isProcessSortDescending(mode: ProcessSortMode): boolean {
-  return mode !== 'pid' && mode !== 'user' && mode !== 'command';
+/** Whether rows are shown high-to-low; `reversed` flips the mode's default. */
+export function isProcessSortDescending(mode: ProcessSortMode, reversed = false): boolean {
+  return (mode !== 'pid' && mode !== 'user' && mode !== 'command') !== reversed;
 }
 
 export function nextProcessSortMode(mode: ProcessSortMode): ProcessSortMode {
@@ -48,7 +49,7 @@ function elapsedKey(process: ProcessInfo): number {
   return hasStartTime(process) ? process.run_time : -1;
 }
 
-function compareProcesses(a: ProcessInfo, b: ProcessInfo, sortMode: ProcessSortMode): number {
+function compareProcesses(a: ProcessInfo, b: ProcessInfo, sortMode: ProcessSortMode, reversed = false): number {
   const comparison = (() => {
     switch (sortMode) {
       case 'cpu':
@@ -68,11 +69,11 @@ function compareProcesses(a: ProcessInfo, b: ProcessInfo, sortMode: ProcessSortM
     }
   })();
 
-  return comparison || a.pid - b.pid;
+  return (reversed ? -comparison : comparison) || a.pid - b.pid;
 }
 
-export function sortProcesses(processes: ProcessInfo[], sortMode: ProcessSortMode): ProcessInfo[] {
-  return [...processes].sort((a, b) => compareProcesses(a, b, sortMode));
+export function sortProcesses(processes: ProcessInfo[], sortMode: ProcessSortMode, reversed = false): ProcessInfo[] {
+  return [...processes].sort((a, b) => compareProcesses(a, b, sortMode, reversed));
 }
 
 export function processMatches(process: ProcessInfo, query: string): boolean {
@@ -84,8 +85,17 @@ export function processMatches(process: ProcessInfo, query: string): boolean {
 }
 
 /** Flatten the process list for the default, non-hierarchical view. */
-export function flattenProcessList(processes: ProcessInfo[], sortMode: ProcessSortMode): ProcessTreeRow[] {
-  return sortProcesses(processes, sortMode).map((process) => ({ process, depth: 0, hasChildren: false, match: true }));
+export function flattenProcessList(
+  processes: ProcessInfo[],
+  sortMode: ProcessSortMode,
+  reversed = false,
+): ProcessTreeRow[] {
+  return sortProcesses(processes, sortMode, reversed).map((process) => ({
+    process,
+    depth: 0,
+    hasChildren: false,
+    match: true,
+  }));
 }
 
 /** Flatten the process hierarchy in display order, omitting folded descendants. */
@@ -94,6 +104,7 @@ export function flattenProcessTree(
   collapsedPids: Set<number>,
   sortMode: ProcessSortMode = 'pid',
   matchedPids?: Set<number>,
+  reversed = false,
 ): ProcessTreeRow[] {
   const byPid = new Map(processes.map((process) => [process.pid, process]));
   const children = new Map<number, ProcessInfo[]>();
@@ -110,8 +121,8 @@ export function flattenProcessTree(
     }
   }
 
-  for (const siblings of children.values()) siblings.sort((a, b) => compareProcesses(a, b, sortMode));
-  roots.sort((a, b) => compareProcesses(a, b, sortMode));
+  for (const siblings of children.values()) siblings.sort((a, b) => compareProcesses(a, b, sortMode, reversed));
+  roots.sort((a, b) => compareProcesses(a, b, sortMode, reversed));
 
   const rows: ProcessTreeRow[] = [];
   const visited = new Set<number>();
@@ -136,7 +147,7 @@ export function flattenProcessTree(
   for (const root of roots) visit(root, 0);
   // A malformed or racing parent relationship should not make a process
   // disappear from the viewer.
-  for (const process of [...processes].sort((a, b) => compareProcesses(a, b, sortMode))) visit(process, 0);
+  for (const process of [...processes].sort((a, b) => compareProcesses(a, b, sortMode, reversed))) visit(process, 0);
 
   return rows;
 }
@@ -162,15 +173,18 @@ export function buildProcessRows(
   sortMode: ProcessSortMode,
   treeMode: boolean,
   query = '',
+  reversed = false,
 ): ProcessTreeRow[] {
   if (!query.trim()) {
-    return treeMode ? flattenProcessTree(processes, collapsedPids, sortMode) : flattenProcessList(processes, sortMode);
+    return treeMode
+      ? flattenProcessTree(processes, collapsedPids, sortMode, undefined, reversed)
+      : flattenProcessList(processes, sortMode, reversed);
   }
   const matched = processes.filter((process) => processMatches(process, query));
-  if (!treeMode) return flattenProcessList(matched, sortMode);
+  if (!treeMode) return flattenProcessList(matched, sortMode, reversed);
   // Folding is ignored while filtering so matches inside folded subtrees show.
   const matchedPids = new Set(matched.map((process) => process.pid));
-  return flattenProcessTree(filterWithAncestors(processes, matchedPids), new Set(), sortMode, matchedPids);
+  return flattenProcessTree(filterWithAncestors(processes, matchedPids), new Set(), sortMode, matchedPids, reversed);
 }
 
 /**

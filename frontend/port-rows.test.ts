@@ -1,5 +1,11 @@
 import { expect, test } from 'bun:test';
-import { buildPortRows, portKey, resolveFocusedPort } from './src/lib/portRows';
+import {
+  buildPortRows,
+  isPortSortDescending,
+  portKey,
+  resolveFocusedPort,
+  type PortSortMode,
+} from './src/lib/portRows';
 import type { PortInfo, ProcessInfo } from './src/protocol/process-messages';
 import { useProcessStore } from './src/state/processStore';
 
@@ -169,6 +175,40 @@ test('expanded unknown endpoints survive state changes and disappear independent
     expect([...useProcessStore.getState().expandedPorts]).toEqual([portKey(second)]);
     store.setSnapshot({ ...snapshot, ports: [] });
     expect(useProcessStore.getState().expandedPorts.size).toBe(0);
+  } finally {
+    store.reset();
+  }
+});
+
+test('port sorting supports connections and reversed direction', () => {
+  const sockets = [
+    port(80),
+    port(443),
+    { ...port(443), state: 'ESTABLISHED', remote_address: '127.0.0.1:50001' },
+    { ...port(443), state: 'ESTABLISHED', remote_address: '127.0.0.1:50002' },
+    port(8004),
+    { ...port(8004), state: 'ESTABLISHED', remote_address: '127.0.0.1:50003' },
+  ];
+  const ports = (mode: PortSortMode, reversed = false) =>
+    buildPortRows(sockets, [owner], mode, '', reversed).map((row) => row.port.local_port);
+  expect(ports('connections')).toEqual([443, 8004, 80]);
+  expect(ports('connections', true)).toEqual([80, 8004, 443]);
+  expect(ports('port', true)).toEqual([8004, 443, 80]);
+  expect(isPortSortDescending('connections')).toBe(true);
+  expect(isPortSortDescending('port', true)).toBe(true);
+});
+
+test('port header clicks select a column, then toggle its direction', () => {
+  const store = useProcessStore.getState();
+  store.reset();
+  try {
+    store.sortPortsBy('listeners');
+    expect(useProcessStore.getState().portSortReversed).toBe(true);
+    store.sortPortsBy('port');
+    expect(useProcessStore.getState()).toMatchObject({ portSortMode: 'port', portSortReversed: false });
+    store.sortPortsBy('port');
+    store.setPortSortMode('listeners');
+    expect(useProcessStore.getState().portSortReversed).toBe(false);
   } finally {
     store.reset();
   }

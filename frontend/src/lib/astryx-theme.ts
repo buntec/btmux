@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { defineTheme, type TokenName, type TokenValue } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral';
 import type { Theme } from '../state/types';
@@ -131,3 +132,48 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight:
     },
   });
 }
+
+const TYPE_STEPS = {
+  '2xs': -3,
+  xs: -2,
+  sm: -1,
+  base: 0,
+  lg: 1,
+  xl: 2,
+  '2xl': 3,
+  '3xl': 4,
+  '4xl': 5,
+  '5xl': 6,
+} as const;
+const TEXT_ROLES = {
+  body: 'base',
+  label: 'base',
+  code: 'base',
+  large: 'lg',
+  supporting: 'sm',
+  'heading-1': '2xl',
+  'heading-2': 'xl',
+  'heading-3': 'lg',
+  'heading-4': 'base',
+  'heading-5': 'sm',
+  'heading-6': 'xs',
+} as const;
+
+// Anchors Astryx and Tailwind type tokens to the terminal font size so
+// Table/Text/Token content matches inherited-size rows (theme base is 14px).
+// Derived `--text-*` tokens are resolved where declared, so redeclare them.
+export function terminalTypeScale(fontSize: number): CSSProperties {
+  const style: Record<string, string> = { fontSize: `${fontSize}px` };
+  for (const [name, step] of Object.entries(TYPE_STEPS)) {
+    const size = `${Math.round(fontSize * 1.2 ** step * 100) / 100}px`;
+    style[`--font-size-${name}`] = size;
+    style[`--text-${name}`] = size;
+  }
+  for (const [role, name] of Object.entries(TEXT_ROLES)) {
+    style[`--text-${role}-size`] = `var(--font-size-${name})`;
+  }
+  return style as CSSProperties;
+}
+
+// Astryx's neutral theme anchors its scale at 14px; modals reset to it.
+export const DEFAULT_TYPE_SCALE = terminalTypeScale(14);

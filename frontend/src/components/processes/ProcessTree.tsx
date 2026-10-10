@@ -25,23 +25,25 @@ const SORT_COLUMNS: Array<{ label: string; mode: ProcessSortMode }> = [
 ];
 
 function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortMode; active: boolean }) {
-  const setSortMode = useProcessStore((s) => s.setSortMode);
+  const sortBy = useProcessStore((s) => s.sortBy);
+  const reversed = useProcessStore((s) => s.sortReversed);
+  const descending = isProcessSortDescending(mode, reversed);
   return (
     <button
       type="button"
       title={`Sort by ${PROCESS_SORT_LABELS[mode]}`}
       aria-pressed={active}
       onMouseDown={(e) => e.preventDefault()}
-      onClick={() => setSortMode(mode)}
+      onClick={() => sortBy(mode)}
       className={cn('flex cursor-pointer items-center gap-1 text-left hover:text-primary', active && 'text-primary')}
     >
       {label}
       {active && (
         <span
           aria-label={`sorted by ${PROCESS_SORT_LABELS[mode]}`}
-          title={`sorted ${isProcessSortDescending(mode) ? 'descending' : 'ascending'}`}
+          title={`sorted ${descending ? 'descending' : 'ascending'}`}
         >
-          {isProcessSortDescending(mode) ? '▼' : '▲'}
+          {descending ? '▼' : '▲'}
         </span>
       )}
     </button>

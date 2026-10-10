@@ -148,6 +148,8 @@ pub struct CliArgs {
 pub enum SubCommand {
     /// Print the btmux version and exit.
     Version,
+    /// Open FILE in `$EDITOR` (falling back to `vi`), jumping to LINE.
+    OpenEditor { file: String, line: Option<u32> },
     /// Print shell completions to stdout.
     Completions {
         /// Shell to generate completions for.

@@ -402,19 +402,16 @@ fn validate_command(
     Ok(())
 }
 
-/// Build the shell text that spawns `$EDITOR` on `path` in the pane's own
-/// shell, jumping to `line` when given. Ported from the frontend's previous
-/// `editorCommand` (kept in sync with it if that logic changes) so the
-/// fallback used here and by `OpenFile`'s remote-open failure path stay
-/// identical. `vi`/`vim`/`nvim`/`nano`/`emacs` take `+LINE`; VS Code variants
-/// take `--goto file:LINE`; anything else just gets the bare path.
+/// Build the shell text that runs `btmux open-editor` on `path` in the pane's
+/// own shell (`$BTMUX_BIN` is set at spawn), jumping to `line` when given. The
+/// editor-specific arguments are resolved by that subcommand, which keeps the
+/// typed line short. The leading space keeps it out of history in shells that
+/// honor it.
 fn shell_editor_open_command(path: &str, line: Option<u32>) -> String {
     let quoted = crate::session::manager::shell_single_quote(path);
     match line.filter(|&l| l >= 1) {
-        Some(line) => format!(
-            "sh -c 'editor=$1; file=$2; name=${{editor%% *}}; name=${{name##*/}}; set -- $editor; case \"$name\" in vi|vim|nvim|nano|emacs) \"$@\" +{line} \"$file\";; code|code-insiders|codium) \"$@\" --goto \"$file:{line}\";; *) \"$@\" \"$file\";; esac' btmux-editor-open \"$EDITOR\" {quoted}\n"
-        ),
-        None => format!("$EDITOR {quoted}\n"),
+        Some(line) => format!(" \"$BTMUX_BIN\" open-editor {quoted} {line}\n"),
+        None => format!(" \"$BTMUX_BIN\" open-editor {quoted}\n"),
     }
 }
 

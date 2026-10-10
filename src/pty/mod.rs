@@ -227,6 +227,9 @@ impl PtyHandle {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());
+        if let Ok(exe) = std::env::current_exe() {
+            cmd.env("BTMUX_BIN", exe);
+        }
         if let Some(token) = crate::auth::shell_token() {
             cmd.env("BTMUX_AUTH_TOKEN", token);
         }

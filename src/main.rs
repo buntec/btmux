@@ -5,6 +5,7 @@ mod config;
 // The desktop launcher also compiles this shared module.
 #[allow(dead_code)]
 mod discovery;
+mod editor;
 mod file_git;
 mod file_git_ops;
 mod file_search;
@@ -73,6 +74,10 @@ async fn main() {
             &mut std::io::stdout(),
         );
         return;
+    }
+
+    if let Some(config::SubCommand::OpenEditor { file, line }) = args.command.as_ref() {
+        std::process::exit(editor::run(file, *line));
     }
 
     // Parse config early (before full startup) so we can configure logging from

@@ -190,7 +190,7 @@ such glyphs render outside the grid too. These
 `rpcnotify(0, …)` messages are a private protocol between the plugin and
 `NvimSurface.tsx`: change both together.
 
-`file-editor` (default `neovim`) makes file browser and Git mode opens send
+`file-editor` (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
 `nvim_open`, which opens the file via `--remote-expr` on the shared socket;
 `pane` keeps the older `open_file` path (the pane's foreground Neovim, else
 `$EDITOR` in its shell).

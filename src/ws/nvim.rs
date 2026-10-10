@@ -66,6 +66,31 @@ fn install_plugin(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Oldest Neovim the built-in UI supports.
+const MIN_VERSION: (u32, u32) = (0, 12);
+
+/// Whether `nvim` on `PATH` is new enough for the built-in UI. Checked once.
+pub fn available() -> bool {
+    static AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
+        std::process::Command::new("nvim")
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .and_then(|out| parse_version(&String::from_utf8_lossy(&out.stdout)))
+            .is_some_and(|version| version >= MIN_VERSION)
+    });
+    *AVAILABLE
+}
+
+/// `(major, minor)` from `nvim --version` output (`NVIM v0.12.1`, `NVIM v0.13.0-dev-…`).
+fn parse_version(output: &str) -> Option<(u32, u32)> {
+    let version = output.lines().next()?.strip_prefix("NVIM v")?;
+    let mut parts = version.split(['.', '-']);
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
 /// Spawn the shared Neovim if it isn't running, then connect to it.
 async fn connect() -> Result<(UnixStream, PathBuf), String> {
     let mut server = SERVER.lock().await;
@@ -83,10 +108,21 @@ async fn connect() -> Result<(UnixStream, PathBuf), String> {
         // `--embed` ties Neovim's lifetime to our stdin pipe; `--headless`
         // keeps it from waiting for a UI on stdio. `g:btmux` lets user config
         // adapt (e.g. skip scroll animation plugins); the plugin is on
-        // 'runtimepath' before user config so it can `require("btmux")`.
+        // 'runtimepath' and `package.path` before user config so it can
+        // `require("btmux")`. Plugin managers may reset 'runtimepath'
+        // (lazy.nvim does by default), so `-c` restores it after user config
+        // and loads the plugin if Neovim skipped it.
         let mut child = Command::new("nvim")
             .args(["--embed", "--headless", "--cmd", "let g:btmux = 1", "--cmd"])
-            .arg(format!("lua vim.opt.rtp:prepend({plugin})"))
+            .arg(format!(
+                "lua local p = {plugin}; vim.opt.rtp:prepend(p); \
+                 package.path = p .. '/lua/?.lua;' .. p .. '/lua/?/init.lua;' .. package.path"
+            ))
+            .arg("-c")
+            .arg(format!(
+                "lua local p = {plugin}; if not vim.tbl_contains(vim.opt.rtp:get(), p) then \
+                 vim.opt.rtp:prepend(p); vim.cmd.runtime('plugin/btmux.lua') end"
+            ))
             .arg("--listen")
             .arg(&path)
             .current_dir(dirs::home_dir().unwrap_or_else(|| "/".into()))
@@ -206,6 +242,18 @@ mod tests {
         install_plugin(&dir.0).unwrap();
         assert!(dir.0.join("plugin/btmux.lua").is_file());
         assert!(dir.0.join("lua/btmux/init.lua").is_file());
+    }
+
+    #[test]
+    fn parses_nvim_versions() {
+        assert_eq!(
+            parse_version("NVIM v0.12.5\nBuild type: Release"),
+            Some((0, 12))
+        );
+        assert_eq!(parse_version("NVIM v0.13.0-dev-123+gabc"), Some((0, 13)));
+        assert_eq!(parse_version("NVIM v1.0-dev"), Some((1, 0)));
+        assert_eq!(parse_version("VIM - Vi IMproved 9.1"), None);
+        assert!(parse_version("NVIM v0.11.4").unwrap() < MIN_VERSION);
     }
 
     #[test]

@@ -9,17 +9,20 @@ type Init = Partial<
   >
 >;
 
-const key = (init: Init) =>
-  nvimKey({
-    key: '',
-    code: '',
-    ctrlKey: false,
-    altKey: false,
-    shiftKey: false,
-    metaKey: false,
-    isComposing: false,
-    ...init,
-  } as KeyboardEvent);
+const key = (init: Init, mac = true) =>
+  nvimKey(
+    {
+      key: '',
+      code: '',
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+      isComposing: false,
+      ...init,
+    } as KeyboardEvent,
+    mac,
+  );
 
 test('printable characters pass through, with < escaped', () => {
   expect(key({ key: 'a' })).toBe('a');
@@ -53,6 +56,18 @@ test('macOS Option uses the physical key, not the composed character', () => {
   expect(key({ key: 'å', code: 'KeyA', altKey: true })).toBe('<M-a>');
   expect(key({ key: 'Å', code: 'KeyA', altKey: true, shiftKey: true })).toBe('<M-A>');
   expect(key({ key: '¡', code: 'Digit1', altKey: true })).toBe('<M-1>');
+});
+
+test('macOS Option keeps ASCII text that the layout types with it', () => {
+  expect(key({ key: '@', code: 'KeyL', altKey: true })).toBe('@');
+  expect(key({ key: '[', code: 'Digit5', altKey: true })).toBe('[');
+  expect(key({ key: '\\', code: 'Digit7', altKey: true, shiftKey: true })).toBe('\\');
+  expect(key({ key: '<', code: 'Backquote', altKey: true })).toBe('<lt>');
+  expect(key({ key: 'l', code: 'KeyL', altKey: true })).toBe('<M-l>');
+  expect(key({ key: '@', code: 'KeyL', altKey: true, ctrlKey: true })).toBe('<C-M-l>');
+  // Elsewhere Alt doesn't compose, so the key is a Meta chord.
+  expect(key({ key: '&', code: 'Digit1', altKey: true }, false)).toBe('<M-1>');
+  expect(key({ key: '.', code: 'Period', altKey: true }, false)).toBe('<M-.>');
 });
 
 test('AltGr preserves international keyboard text instead of sending Ctrl+Alt shortcuts', () => {

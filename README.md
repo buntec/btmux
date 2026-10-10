@@ -56,7 +56,8 @@ Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the comm
 
 `<prefix> + e` opens a Neovim GUI drawn by btmux, with its command line,
 completion menu, messages, LSP signature help, and floating windows rendered as native UI. The file
-browser and Git mode open files there by default. It needs Neovim 0.12 or newer;
+browser and Git mode open files there by default. It needs Neovim 0.12 or newer
+(without it, files open in the pane);
 see [Built-in Neovim](docs/neovim.md) for config tips and the bundled plugin.
 
 ## Learn more

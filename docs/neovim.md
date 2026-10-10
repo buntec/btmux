@@ -13,7 +13,8 @@ Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`.
 
 ## Opening files
 
-The file browser and Git mode open files in the built-in Neovim. To open them in
+The file browser and Git mode open files in the built-in Neovim, or in the pane
+when the server can't find Neovim 0.12+ at startup. To always open them in
 the pane instead (its running Neovim, or `$EDITOR` in its shell), set:
 
 ```toml

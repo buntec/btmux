@@ -59,7 +59,8 @@ Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described i
 ## Built-in Neovim
 
 `file-editor` chooses where the file browser and Git mode open files: `"neovim"`
-(default) or `"pane"`. See [Built-in Neovim](neovim.md).
+or `"pane"`. The default is `"neovim"` when Neovim 0.12 or newer is on the server's
+`PATH`, else `"pane"`. See [Built-in Neovim](neovim.md).
 
 ## LaTeX overlay
 

@@ -26,8 +26,10 @@ export function escapeNvimText(text: string): string {
   return text.replace(/</g, '<lt>');
 }
 
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
 /** Key notation for `e`, or null when the browser should handle it (modifiers, IME, app shortcuts). */
-export function nvimKey(e: KeyboardEvent): string | null {
+export function nvimKey(e: KeyboardEvent, mac = IS_MAC): string | null {
   if (e.isComposing || e.key === 'Dead' || e.key === 'Process' || e.key === 'Unidentified') return null;
   if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return null;
 
@@ -40,10 +42,15 @@ export function nvimKey(e: KeyboardEvent): string | null {
     if (physical?.[2] || RESERVED_CMD_KEYS.has((physical?.[1] ?? key).toLowerCase())) return null;
     if (physical?.[1]) key = e.shiftKey ? physical[1] : physical[1].toLowerCase();
   }
-  // macOS Option produces composed characters; use the physical key instead.
+  // macOS Option produces composed characters; use the physical key instead,
+  // unless the layout types ASCII with it (`@`, `[`, `|` on German or French).
   if (e.altKey) {
     const m = e.code.match(/^(?:Key([A-Z])|Digit(\d))$/);
-    if (m) key = m[1] ? (e.shiftKey ? m[1] : m[1].toLowerCase()) : m[2];
+    const physical = m && (m[1] ? (e.shiftKey ? m[1] : m[1].toLowerCase()) : m[2]);
+    if (mac && !e.ctrlKey && !e.metaKey && /^[!-~]$/.test(key) && key.toLowerCase() !== physical?.toLowerCase()) {
+      return escapeNvimText(key);
+    }
+    if (physical) key = physical;
   }
 
   const fkey = /^F\d{1,2}$/.test(key);

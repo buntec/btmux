@@ -221,15 +221,26 @@ pub enum WindowSort {
 }
 
 /// Where the file browser and Git mode open files.
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
+/// Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum FileEditor {
     /// The pane's foreground Neovim, or `$EDITOR` in its shell.
     Pane,
-    /// The built-in Neovim (`prefix + e`) (default).
-    #[default]
+    /// The built-in Neovim (`prefix + e`).
     Neovim,
+}
+
+impl FileEditor {
+    /// The default: Neovim if the built-in one can start, else the pane.
+    fn detect() -> Self {
+        if crate::ws::nvim::available() {
+            Self::Neovim
+        } else {
+            Self::Pane
+        }
+    }
 }
 
 /// Log level configuration. Both fields accept standard tracing directives
@@ -379,8 +390,8 @@ pub struct FileConfig {
     #[serde(rename = "window-sort", default)]
     pub window_sort: WindowSort,
     /// Where the file browser and Git mode open files.
-    #[serde(rename = "file-editor", default)]
-    pub file_editor: FileEditor,
+    #[serde(rename = "file-editor")]
+    pub file_editor: Option<FileEditor>,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -435,7 +446,7 @@ impl Default for FileConfig {
             pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
-            file_editor: FileEditor::default(),
+            file_editor: None,
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -1287,7 +1298,7 @@ pub fn generate_config_toml() -> String {
 
 # Where the file browser and Git mode open files.
 # "pane" = the pane's foreground Neovim, or $EDITOR in its shell,
-# "neovim" = the built-in Neovim (prefix + e) (default).
+# "neovim" = the built-in Neovim (prefix + e) (default if Neovim 0.12+ is on PATH).
 # file-editor = "neovim"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
@@ -1580,7 +1591,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
-        file_editor: file.file_editor.clone(),
+        file_editor: file.file_editor.clone().unwrap_or_else(FileEditor::detect),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
         color_schemes,
@@ -1834,7 +1845,7 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
         file.window_sort = window_sort.clone();
     }
     if let Some(file_editor) = &overrides.file_editor {
-        file.file_editor = file_editor.clone();
+        file.file_editor = Some(file_editor.clone());
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
@@ -2139,7 +2150,7 @@ palette:
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
-        assert_eq!(resolved.file_editor, FileEditor::Neovim);
+        assert_eq!(resolved.file_editor, FileEditor::detect());
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.10);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));

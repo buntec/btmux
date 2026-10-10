@@ -55,6 +55,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'file-browser',
       'git-view',
       'process-view',
+      'neovim',
     ],
   },
   {

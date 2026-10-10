@@ -65,7 +65,7 @@ const FONT_FALLBACK = 'Symbols Nerd Font Mono, Menlo, Monaco, monospace';
 // into that budget; upstream Ghostty defaults to ~1 KB/line (10 MB / 10000).
 const SCROLLBACK_BYTES_PER_LINE = 1000;
 
-function buildFontFamily(configured: string): string {
+export function buildFontFamily(configured: string): string {
   return `${configured}, ${FONT_FALLBACK}`;
 }
 

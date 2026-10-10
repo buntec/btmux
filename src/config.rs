@@ -220,6 +220,18 @@ pub enum WindowSort {
     Alphabetical,
 }
 
+/// Where the file browser and Git mode open files.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum FileEditor {
+    /// The pane's foreground Neovim, or `$EDITOR` in its shell.
+    Pane,
+    /// The built-in Neovim (`prefix + e`) (default).
+    #[default]
+    Neovim,
+}
+
 /// Log level configuration. Both fields accept standard tracing directives
 /// (`error`, `warn`, `info`, `debug`, `trace`) or full `EnvFilter` syntax.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -366,6 +378,9 @@ pub struct FileConfig {
     /// Sort order for the window list (status bar, choose-tree, switcher).
     #[serde(rename = "window-sort", default)]
     pub window_sort: WindowSort,
+    /// Where the file browser and Git mode open files.
+    #[serde(rename = "file-editor", default)]
+    pub file_editor: FileEditor,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -420,6 +435,7 @@ impl Default for FileConfig {
             pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
+            file_editor: FileEditor::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -818,6 +834,8 @@ pub struct ClientConfig {
     pub session_sort: SessionSort,
     /// Sort order for the window list (status bar, choose-tree, switcher).
     pub window_sort: WindowSort,
+    /// Where the file browser and Git mode open files.
+    pub file_editor: FileEditor,
     /// How many recently-viewed windows the window-grid (`prefix + w`) shows.
     pub window_grid_count: u32,
     /// btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
@@ -885,6 +903,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("f", "file-browser"),
     ("g", "git-view"),
     ("t", "process-view"),
+    ("e", "neovim"),
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling
@@ -1263,6 +1282,11 @@ pub fn generate_config_toml() -> String {
 # "alphabetical" = sorted by name (default).
 # window-sort = "alphabetical"
 
+# Where the file browser and Git mode open files.
+# "pane" = the pane's foreground Neovim, or $EDITOR in its shell,
+# "neovim" = the built-in Neovim (prefix + e) (default).
+# file-editor = "neovim"
+
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
 # window-grid-count = {DEFAULT_WINDOW_GRID_COUNT}
@@ -1549,6 +1573,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
+        file_editor: file.file_editor.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
         color_schemes,
@@ -1585,6 +1610,7 @@ pub struct ConfigUpdate {
     pub keys: Option<BTreeMap<String, String>>,
     pub session_sort: Option<SessionSort>,
     pub window_sort: Option<WindowSort>,
+    pub file_editor: Option<FileEditor>,
     pub window_grid_count: Option<u32>,
     pub colors: Option<String>,
     /// Parsed palette for a remote `colors` override. Filled by the WebSocket
@@ -1656,6 +1682,9 @@ impl ConfigUpdate {
         }
         if other.window_sort.is_some() {
             self.window_sort = other.window_sort.clone();
+        }
+        if other.file_editor.is_some() {
+            self.file_editor = other.file_editor.clone();
         }
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
@@ -1796,6 +1825,9 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(window_sort) = &overrides.window_sort {
         file.window_sort = window_sort.clone();
+    }
+    if let Some(file_editor) = &overrides.file_editor {
+        file.file_editor = file_editor.clone();
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
@@ -2068,6 +2100,7 @@ palette:
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
+        assert_eq!(resolved.file_editor, FileEditor::Neovim);
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.10);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
@@ -2148,6 +2181,7 @@ palette:
                 keys: Some(keys),
                 session_sort: Some(SessionSort::Alphabetical),
                 window_sort: Some(WindowSort::Created),
+                file_editor: Some(FileEditor::Pane),
                 window_grid_count: Some(9),
                 renderer: Some("canvas".to_string()),
                 cursor_blink: Some(false),
@@ -2177,6 +2211,7 @@ palette:
         );
         assert_eq!(resolved.session_sort, SessionSort::Alphabetical);
         assert_eq!(resolved.window_sort, WindowSort::Created);
+        assert_eq!(resolved.file_editor, FileEditor::Pane);
         assert_eq!(resolved.window_grid_count, 9);
         assert_eq!(resolved.terminal.renderer.as_deref(), Some("canvas"));
         assert_eq!(resolved.terminal.cursor_blink, Some(false));

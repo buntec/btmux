@@ -25,6 +25,7 @@ fn generated_protocol_is_current() {
         SessionSummary::decl(&config),
         SessionSort::decl(&config),
         WindowSort::decl(&config),
+        FileEditor::decl(&config),
         LogConfig::decl(&config),
         NotificationConfig::decl(&config),
         Bind::decl(&config),

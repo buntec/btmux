@@ -59,6 +59,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/ws/control", get(ws::control::handle))
         .route("/ws/processes", get(ws::processes::handle))
         .route("/ws/sysstat", get(ws::sysstat::handle))
+        .route("/ws/nvim", get(ws::nvim::handle))
         .route("/ws/files", get(ws::files::handle).with_state(files_state))
         .route(
             "/api/sessions",

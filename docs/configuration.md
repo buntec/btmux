@@ -51,6 +51,22 @@ The `colors` option accepts:
 Palettes may be defined at the top level or nested under `palette`. Remote
 palettes are fetched whenever the configuration loads.
 
+Programs in a pane can query the scheme: btmux answers OSC 4/10/11/12 color
+queries and `CSI ? 996 n`, and sends `CSI ? 997 ; 1|2 n` to programs that
+enabled mode 2031 whenever the theme changes. Fish uses this to set
+`fish_terminal_color_theme` and switch light/dark theme variants.
+
+### Fish theme
+
+```sh
+btmux install-fish-theme   # or: btmux generate-fish-theme > btmux.theme
+```
+
+This writes `~/.config/fish/themes/btmux.theme` and `conf.d/btmux.fish` (respecting
+`$XDG_CONFIG_HOME`). The theme uses named ANSI colors following base16 roles, so
+it tracks the btmux scheme, including live changes. The snippet selects it only
+inside btmux panes and overrides universal `fish_color_*` variables there.
+
 ## tmux behaviors
 
 Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described in

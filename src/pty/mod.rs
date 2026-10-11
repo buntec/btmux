@@ -1,3 +1,4 @@
+pub mod colors;
 pub mod replay;
 pub mod screen;
 #[allow(dead_code)]
@@ -9,9 +10,23 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::unix::io::RawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use uuid::Uuid;
+
+/// Server-wide context shared by every PTY.
+#[derive(Clone)]
+pub struct PtyEnv {
+    /// Notifies the session manager that a shell exited so its pane can be removed.
+    pub exit_tx: mpsc::UnboundedSender<Uuid>,
+    /// Notifies the session manager that OSC title/cwd changed.
+    pub meta_tx: mpsc::UnboundedSender<()>,
+    /// Server port, injected as BTMUX_API_URL into the shell environment.
+    pub port: u16,
+    /// Theme colors reported to programs in the PTY.
+    pub palette: colors::SharedPalette,
+}
 
 #[derive(Clone)]
 pub struct InputSender(mpsc::Sender<PtyInput>);
@@ -105,16 +120,17 @@ pub struct PtyHandle {
     /// scrollback line count. Controls how much PTY output is kept for replay
     /// on reconnect; ghostty-web's in-memory scrollback uses the line count directly.
     scrollback_bytes: usize,
+    palette: colors::SharedPalette,
+    /// Mode 2031, set by the program in the PTY.
+    color_reports: Arc<AtomicBool>,
 }
 
 impl PtyHandle {
     pub fn new_with_cwd(
         shell: &str,
         pane_id: Uuid,
-        exit_tx: mpsc::UnboundedSender<Uuid>,
-        meta_tx: mpsc::UnboundedSender<()>,
+        env: &PtyEnv,
         spawn_cwd: Option<std::path::PathBuf>,
-        port: u16,
         scrollback_lines: u32,
     ) -> Self {
         let (input_tx, _) = mpsc::channel::<PtyInput>(32);
@@ -139,14 +155,16 @@ impl PtyHandle {
             shell: shell.to_string(),
             spawn_cwd,
             pane_id,
-            exit_tx,
-            meta_tx,
+            exit_tx: env.exit_tx.clone(),
+            meta_tx: env.meta_tx.clone(),
             pending_cpr_pgrps: Arc::new(Mutex::new(VecDeque::new())),
             master_fd: Arc::new(Mutex::new(None)),
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
-            port,
+            port: env.port,
             scrollback_bytes: scrollback_lines as usize * 1000,
+            palette: env.palette.clone(),
+            color_reports: Arc::default(),
         }
     }
 
@@ -282,18 +300,21 @@ impl PtyHandle {
         let meta_tx = self.meta_tx.clone();
         let pending_cpr_pgrps_reader = self.pending_cpr_pgrps.clone();
         let master_fd_reader = self.master_fd.clone();
+        let mut interceptor = vt_query::VtQueryInterceptor::with_colors(
+            self.palette.clone(),
+            self.color_reports.clone(),
+        );
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut osc_parser = OscParser::new(meta_tx);
-            let mut interceptor = vt_query::VtQueryInterceptor::new();
             'read: loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
                         let result = interceptor.feed(&buf[..n]);
 
-                        for response in &result.responses {
-                            if let Err(error) = response_tx.send(response.to_vec()) {
+                        for response in result.responses {
+                            if let Err(error) = response_tx.send(response) {
                                 tracing::warn!(%pane_id, %error, "PTY response queue exhausted");
                                 break 'read;
                             }
@@ -379,6 +400,13 @@ impl PtyHandle {
         *self.size.lock().unwrap() = (cols, rows);
         *self.spawned.lock().unwrap() = true;
         Ok(())
+    }
+
+    /// Tell a program that enabled mode 2031 that the theme changed.
+    pub fn report_color_scheme(&self, palette: &colors::Palette) {
+        if self.is_spawned() && self.color_reports.load(Ordering::Relaxed) {
+            let _ = self.input_tx.send(palette.scheme_report());
+        }
     }
 
     pub async fn send_shell_command(&self, data: Vec<u8>) -> Result<(), String> {
@@ -697,9 +725,13 @@ impl OscParser {
 mod lifecycle_tests {
     use super::*;
     fn pane(shell: &str) -> PtyHandle {
-        let (exit_tx, _) = mpsc::unbounded_channel();
-        let (meta_tx, _) = mpsc::unbounded_channel();
-        PtyHandle::new_with_cwd(shell, Uuid::new_v4(), exit_tx, meta_tx, None, 8044, 100)
+        let env = PtyEnv {
+            exit_tx: mpsc::unbounded_channel().0,
+            meta_tx: mpsc::unbounded_channel().0,
+            port: 8044,
+            palette: colors::SharedPalette::default(),
+        };
+        PtyHandle::new_with_cwd(shell, Uuid::new_v4(), &env, None, 100)
     }
     #[tokio::test]
     async fn spawn_failures_are_recoverable() {

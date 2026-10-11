@@ -111,6 +111,62 @@ pub async fn list_dir(root: &Path, path: &str) -> Result<(Vec<FileEntry>, String
     Ok((entries, resolved_path))
 }
 
+/// Git's heuristic: a NUL or invalid UTF-8 in the first 8 KiB.
+fn looks_binary(head: &[u8]) -> bool {
+    if head.contains(&0) {
+        return true;
+    }
+    match std::str::from_utf8(head) {
+        Ok(_) => false,
+        // A multi-byte character cut off at the end of the sample is fine.
+        Err(e) => e.error_len().is_some(),
+    }
+}
+
+/// Opens a binary file with the system opener (`open` / `xdg-open`).
+/// Returns false, without opening, for text or unreadable files, which are
+/// left to the editor.
+pub async fn open_if_binary(root: &Path, path: &str) -> Result<bool, String> {
+    use tokio::io::AsyncReadExt;
+
+    let Ok(file_path) = validate_path(root, path) else {
+        return Ok(false);
+    };
+    let Ok(file) = tokio::fs::File::open(&file_path).await else {
+        return Ok(false);
+    };
+    let mut head = Vec::with_capacity(8192);
+    if file.take(8192).read_to_end(&mut head).await.is_err() || !looks_binary(&head) {
+        return Ok(false);
+    }
+
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let mut child = tokio::process::Command::new(opener)
+        .arg(&file_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Cannot run {opener}: {e}"))?;
+    // Report a quick failure (e.g. no handler); a long-running opener is
+    // reaped in the background.
+    match tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await {
+        Ok(Ok(status)) if !status.success() => Err(format!("{opener} failed: {status}")),
+        Ok(Err(e)) => Err(format!("{opener} failed: {e}")),
+        Ok(Ok(_)) => Ok(true),
+        Err(_) => {
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
+            Ok(true)
+        }
+    }
+}
+
 pub async fn read_file(root: &Path, path: &str) -> Result<FileContent, String> {
     let file_path = validate_path(root, path)?;
     let metadata = tokio::fs::metadata(&file_path)
@@ -535,5 +591,20 @@ mod create_entry_tests {
         for bad in ["", "/", "../x", "a/../../x", "/etc/x"] {
             assert!(create_entry(&dir.0, bad).await.is_err(), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_binary;
+
+    #[test]
+    fn detects_binary_files() {
+        assert!(looks_binary(b"\0\0\0 ftypisom"));
+        assert!(looks_binary(b"\xff\xfe\xfd text"));
+        assert!(!looks_binary(b""));
+        assert!(!looks_binary("plain text, caf\u{e9}".as_bytes()));
+        // A character split at the sample boundary.
+        assert!(!looks_binary(&"\u{e9}".as_bytes()[..1]));
     }
 }

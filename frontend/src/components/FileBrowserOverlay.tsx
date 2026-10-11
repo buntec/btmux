@@ -613,7 +613,20 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   }, [store]);
 
   const openPath = useCallback(
-    (path: string, isDir: boolean, line?: number) => {
+    async (path: string, isDir: boolean, line?: number) => {
+      if (!isDir) {
+        // Binary files go to the system opener instead of the editor.
+        try {
+          const resp = await fileSend('open_if_binary', { root: currentPath, path });
+          if ((resp.payload as { opened: boolean }).opened) {
+            onClose();
+            return;
+          }
+        } catch (e) {
+          useStore.getState().showToast(e instanceof Error ? e.message : String(e), 'error');
+          return;
+        }
+      }
       if (isDir) {
         send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text: `cd ${shellQuote(path)}\n` });
       } else if (useStore.getState().config?.file_editor !== 'pane') {
@@ -625,7 +638,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
       onClose();
     },
-    [send, onClose, sessionId, paneId],
+    [send, fileSend, currentPath, onClose, sessionId, paneId],
   );
 
   // Auto-preview focused entry (file, directory, or search result)

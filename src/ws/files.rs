@@ -125,6 +125,22 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => error_response(id, &e),
             }
         }
+        "open_if_binary" => {
+            let path = request
+                .payload
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            match fs_ops::open_if_binary(&root, path).await {
+                Ok(opened) => ServerMessage {
+                    id,
+                    msg_type: "open_if_binary_result".to_string(),
+                    payload: serde_json::json!({ "opened": opened }),
+                },
+                Err(e) => error_response(id, &e),
+            }
+        }
         "get_metadata" => {
             let path = request
                 .payload

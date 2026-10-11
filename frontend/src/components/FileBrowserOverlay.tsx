@@ -1093,7 +1093,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             if (e.ctrlKey) {
               insertPath(fullPath);
             } else if (entry.is_dir) {
-              navigate(fullPath);
+              openPath(fullPath, true);
             } else {
               openPath(fullPath, false);
             }
@@ -1200,7 +1200,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           if (e.ctrlKey) {
             insertPath(focusedFullPath);
           } else if (focusedEntry.is_dir) {
-            navigate(focusedFullPath);
+            openPath(focusedFullPath, true);
           } else {
             openPath(focusedFullPath, false);
           }
@@ -1608,7 +1608,7 @@ const GIT_STATUS_TAIL_HINTS: Hint[] = [
 
 const BROWSE_FILTER_HINTS: Hint[] = [
   { keys: ['up', 'down'], label: 'navigate' },
-  { keys: ['enter'], label: 'open' },
+  { keys: ['enter'], label: 'open/cd' },
   { keys: ['ctrl+enter'], label: 'insert path' },
   { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll' },
   { keys: ['esc'], label: 'close filter' },
@@ -1621,7 +1621,7 @@ const BROWSE_HINTS: Hint[] = [
   { keys: ['p'], label: 'paste' },
   { keys: ['a'], label: 'add' },
   { keys: ['r'], label: 'rename' },
-  { keys: ['enter'], label: 'open' },
+  { keys: ['enter'], label: 'open/cd' },
   { keys: ['ctrl+enter'], label: 'insert path' },
   { keys: ['l'], label: 'into' },
   { keys: ['h'], label: 'up' },

@@ -313,6 +313,19 @@ test('float cells with the NormalFloat background are transparent', () => {
   expect(grid.colors(5, false).transparent).toBe(false);
 });
 
+test('colored cells use cell-background-opacity only over a transparent surface', () => {
+  const { grid } = makeGrid();
+  expect(grid.cellOpacity).toBe(1);
+  grid.setFont({ ...font, transparent: true, cellOpacity: 0.6 });
+  expect(grid.cellOpacity).toBe(0.6);
+  grid.setFont({ ...font, transparent: true, cellOpacity: 2 });
+  expect(grid.cellOpacity).toBe(1);
+  // A Normal background makes the whole surface opaque.
+  grid.setFont({ ...font, transparent: true, cellOpacity: 0.6 });
+  grid.setNormal({ bg: 0x101010 });
+  expect(grid.cellOpacity).toBe(1);
+});
+
 test("floats report 'winblend' from their cells' highlight", () => {
   const { grid } = makeGrid(20, 10);
   let frames: { blend: number }[] = [];

@@ -499,6 +499,9 @@ pub struct TerminalOptions {
     /// default). Higher moves more lines per wheel notch / gesture. Applied by
     /// the patched ghostty-web `handleWheel`; not part of upstream ITerminalOptions.
     pub scroll_sensitivity: Option<f32>,
+    /// Opacity, 0–1, of explicitly colored cell backgrounds (Visual,
+    /// CursorLine, …) when transparency is on. btmux-specific; Neovim only.
+    pub cell_background_opacity: Option<f32>,
 }
 
 impl Default for TerminalOptions {
@@ -516,6 +519,7 @@ impl Default for TerminalOptions {
             disable_stdin: None,
             smooth_scroll_duration: None,
             scroll_sensitivity: Some(DEFAULT_SCROLL_SENSITIVITY),
+            cell_background_opacity: None,
         }
     }
 }
@@ -1334,6 +1338,7 @@ pub fn generate_config_toml() -> String {
 # disable-stdin = false
 # smooth-scroll-duration = 0.0
 # scroll-sensitivity = {DEFAULT_SCROLL_SENSITIVITY:.1}   # wheel/trackpad scroll-speed multiplier (>1 = faster)
+# cell-background-opacity = 1.0   # 0-1, colored cell backgrounds over a transparent background (Neovim)
 
 # Logging configuration. Both levels accept standard tracing directives:
 # "error", "warn", "info", "debug", "trace", or full EnvFilter syntax like
@@ -1656,6 +1661,7 @@ pub struct ConfigUpdate {
     pub disable_stdin: Option<bool>,
     pub smooth_scroll_duration: Option<f32>,
     pub scroll_sensitivity: Option<f32>,
+    pub cell_background_opacity: Option<f32>,
     pub animations: Option<bool>,
     pub console_level: Option<String>,
     pub file_level: Option<String>,
@@ -1755,6 +1761,9 @@ impl ConfigUpdate {
         }
         if other.scroll_sensitivity.is_some() {
             self.scroll_sensitivity = other.scroll_sensitivity;
+        }
+        if other.cell_background_opacity.is_some() {
+            self.cell_background_opacity = other.cell_background_opacity;
         }
         if other.animations.is_some() {
             self.animations = other.animations;
@@ -1902,6 +1911,9 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(scroll_sensitivity) = overrides.scroll_sensitivity {
         file.terminal.scroll_sensitivity = Some(scroll_sensitivity.clamp(0.1, 20.0));
+    }
+    if let Some(opacity) = overrides.cell_background_opacity {
+        file.terminal.cell_background_opacity = Some(opacity.clamp(0.0, 1.0));
     }
     if let Some(animations) = overrides.animations {
         file.animations = animations;
@@ -2251,6 +2263,7 @@ palette:
                 disable_stdin: Some(true),
                 smooth_scroll_duration: Some(0.4),
                 scroll_sensitivity: Some(2.0),
+                cell_background_opacity: Some(1.5),
                 console_level: Some("debug".to_string()),
                 file_level: Some("trace".to_string()),
                 os_notifications: Some(false),
@@ -2281,6 +2294,7 @@ palette:
         assert_eq!(resolved.terminal.disable_stdin, Some(true));
         assert_eq!(resolved.terminal.smooth_scroll_duration, Some(0.4));
         assert_eq!(resolved.terminal.scroll_sensitivity, Some(2.0));
+        assert_eq!(resolved.terminal.cell_background_opacity, Some(1.0));
         assert_eq!(resolved.log.console_level, "debug");
         assert_eq!(resolved.log.file_level, "trace");
         assert_eq!(

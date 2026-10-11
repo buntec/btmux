@@ -103,7 +103,16 @@ export function NvimSurface({
   const size = guifont.size ?? getTerminalFontSize(config);
   const theme = config?.theme ?? STARTUP_THEME;
   const transparent = terminalTransparency(config);
-  const font = { family, size, linespace, foreground: theme.foreground, background: theme.background, transparent };
+  const cellOpacity = config?.terminal.cellBackgroundOpacity ?? 1;
+  const font = {
+    family,
+    size,
+    linespace,
+    foreground: theme.foreground,
+    background: theme.background,
+    transparent,
+    cellOpacity,
+  };
   const fontRef = useRef(font);
   fontRef.current = font;
   const paletteRef = useRef(config?.color_palette);
@@ -466,7 +475,7 @@ export function NvimSurface({
     return () => {
       cancelled = true;
     };
-  }, [family, size, linespace, theme.foreground, theme.background, transparent, generation]);
+  }, [family, size, linespace, theme.foreground, theme.background, transparent, cellOpacity, generation]);
 
   return (
     <div

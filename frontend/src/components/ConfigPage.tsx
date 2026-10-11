@@ -87,6 +87,7 @@ type Draft = {
   disableStdin: boolean;
   smoothScrollDuration: number;
   scrollSensitivity: number;
+  cellBackgroundOpacity: number;
   consoleLevel: string;
   fileLevel: string;
   osNotifications: boolean;
@@ -140,6 +141,7 @@ function initialDraft(config: ClientConfig): Draft {
     disableStdin: config.terminal.disableStdin ?? false,
     smoothScrollDuration: config.terminal.smoothScrollDuration ?? 0,
     scrollSensitivity: config.terminal.scrollSensitivity ?? 5,
+    cellBackgroundOpacity: config.terminal.cellBackgroundOpacity ?? 1,
     consoleLevel: config.log['console-level'],
     fileLevel: config.log['file-level'],
     osNotifications: config.notifications.os,
@@ -213,6 +215,7 @@ const TOML_DEFAULTS = {
   disableStdin: false,
   smoothScrollDuration: 0,
   scrollSensitivity: 5,
+  cellBackgroundOpacity: 1,
   consoleLevel: 'warn',
   fileLevel: 'info',
   osNotifications: true,
@@ -295,6 +298,7 @@ function toToml(draft: Draft): string {
     boolLine('disable-stdin', draft.disableStdin, TOML_DEFAULTS.disableStdin),
     numLine('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 2),
     numLine('scroll-sensitivity', draft.scrollSensitivity, TOML_DEFAULTS.scrollSensitivity, 2),
+    numLine('cell-background-opacity', draft.cellBackgroundOpacity, TOML_DEFAULTS.cellBackgroundOpacity, 2),
   ].filter((line): line is string => line !== null);
 
   const logLines = [
@@ -344,6 +348,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('disableStdin')) update.disable_stdin = draft.disableStdin;
   if (dirty.has('smoothScrollDuration')) update.smooth_scroll_duration = draft.smoothScrollDuration;
   if (dirty.has('scrollSensitivity')) update.scroll_sensitivity = draft.scrollSensitivity;
+  if (dirty.has('cellBackgroundOpacity')) update.cell_background_opacity = draft.cellBackgroundOpacity;
   if (dirty.has('animations')) update.animations = draft.animations;
   if (dirty.has('consoleLevel')) update.console_level = draft.consoleLevel;
   if (dirty.has('fileLevel')) update.file_level = draft.fileLevel;
@@ -464,6 +469,7 @@ export function ConfigPage({ config, send }: Props) {
           ? draft.smoothScrollDuration
           : config.terminal.smoothScrollDuration,
         scrollSensitivity: draft.scrollSensitivity,
+        cellBackgroundOpacity: draft.cellBackgroundOpacity,
       },
       wallpaper: draft.wallpaper || null,
       wallpaper_shader: draft.wallpaperShader || null,
@@ -777,6 +783,7 @@ export function ConfigPage({ config, send }: Props) {
                         {toggle('disableStdin', 'Disable terminal input')}
                         {range('smoothScrollDuration', 'Smooth scroll duration', 0, 2, 0.05)}
                         {range('scrollSensitivity', 'Scroll sensitivity', 0.1, 20, 0.1)}
+                        {range('cellBackgroundOpacity', 'Cell background opacity', 0, 1, 0.05)}
                       </FormLayout>
                     </VStack>
                   )}

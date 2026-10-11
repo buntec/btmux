@@ -32,6 +32,8 @@ export interface GridFont {
   foreground: string;
   background: string;
   transparent?: boolean;
+  /** Opacity of colored cell backgrounds over a transparent surface, 0–1. */
+  cellOpacity?: number;
 }
 
 /** A visible floating window, for the UI to frame. */
@@ -406,7 +408,7 @@ class Layer {
       const colors = this.s.colors(id, float);
       ctx.fillStyle = colors.bg;
       // Blend backgrounds only; text stays opaque, as on a translucent card.
-      ctx.globalAlpha = float ? 1 - (colors.attr.blend ?? 0) / 100 : 1;
+      ctx.globalAlpha = float ? 1 - (colors.attr.blend ?? 0) / 100 : this.s.cellOpacity;
       const x0 = this.x(start);
       if (!colors.transparent) ctx.fillRect(x0, y, this.x(end) - x0, ch);
       start = end;
@@ -867,6 +869,12 @@ export class NvimGrid {
       transparent = !!this.font.transparent && !this.normal.bg && attr.background === undefined && !attr.reverse;
     }
     return { fg, bg, sp, attr, transparent };
+  }
+
+  /** @internal Alpha of colored non-float cell backgrounds. */
+  get cellOpacity(): number {
+    if (!this.font.transparent || this.normal.bg) return 1;
+    return Math.min(1, Math.max(0, this.font.cellOpacity ?? 1));
   }
 
   private flush() {

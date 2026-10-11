@@ -243,7 +243,8 @@ config error, so update `generate_config_toml` and tests when adding fields.
 (`cols`/`rows`/`ghostty`): `renderer`, `cursor-blink`, `cursor-style`, `scrollback`,
 `font-size`, `font-family`, `font-weight`, `allow-transparency`, `convert-eol`,
 `disable-stdin`, `smooth-scroll-duration`, and the btmux-specific
-`scroll-sensitivity`. Keys are **kebab-case in TOML but camelCase on the wire**
+`scroll-sensitivity` and `cell-background-opacity` (the Neovim surface's
+colored cell backgrounds over a transparent background). Keys are **kebab-case in TOML but camelCase on the wire**
 — `TerminalOptions` uses `rename_all(serialize = "camelCase", deserialize = "kebab-case")`
 so the same struct round-trips both ways. Unset fields serialize as `null`;
 `TerminalPane.tsx` omits them so ghostty-web's own default applies.

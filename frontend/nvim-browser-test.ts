@@ -92,6 +92,12 @@ try {
       alpha(w / 2, h / 2) === 255 && alpha(1.5 * w, h / 2) === 255,
       'explicit and reverse backgrounds remain opaque',
     );
+    grid.setFont({ ...font, cellOpacity: 0.5 });
+    check(
+      Math.abs(alpha(w / 2, h / 2) - 128) <= 1 && Math.abs(alpha(1.5 * w, h / 2) - 128) <= 1,
+      'cell-background-opacity blends explicit backgrounds',
+    );
+    grid.setFont(font);
     grid.redraw([
       ['grid_line', [1, 0, 0, [['M', 0, 3]], false]],
       ['flush', []],

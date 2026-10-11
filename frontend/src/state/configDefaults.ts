@@ -41,6 +41,7 @@ export const CONFIG_DEFAULTS = {
     disableStdin: null,
     smoothScrollDuration: null,
     scrollSensitivity: 5,
+    cellBackgroundOpacity: null,
   },
 } as const;
 

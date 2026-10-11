@@ -146,7 +146,8 @@ its lifetime to btmux's stdin pipe. It starts with `g:btmux = 1`, which user
 config can check, and the bundled plugin on 'runtimepath'. Each browser tab
 attaches its own UI (`ext_multigrid`, `ext_cmdline`, `ext_popupmenu`,
 `ext_messages`, which sets 'cmdheight' to 0 and drops hit-enter prompts).
-Neovim replays its full state on attach, so there is no journal. When Neovim exits
+Neovim replays its full state on attach, so there is no journal. Each time the
+surface is shown, it sets Neovim's global cwd to the active pane's. When Neovim exits
 with status 0 (`:q`), the backend sends close code 1000 and the surface closes; a
 crash or any other close shows a restart prompt. If the socket file disappears
 while Neovim runs, the backend has it listen again over the `--embed` channel. Neovim enables `ext_*` features only if every

@@ -217,7 +217,12 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
               <Route path="/s/:sessionName/w/:windowName" element={<SessionView send={send} />} />
             </Routes>
             {(nvimOpen || nvimMounted) && (
-              <NvimSurface config={effectiveConfig} visible={nvimOpen} activeSessionId={activeSessionId} />
+              <NvimSurface
+                config={effectiveConfig}
+                visible={nvimOpen}
+                activeSessionId={activeSessionId}
+                cwd={activeWindow?.panes[activeWindow.active_pane]?.cwd ?? null}
+              />
             )}
             {settingsOpen && config && <ConfigPage config={config} send={send} />}
             {/* Single Overlay. While / redirects, activeSessionId is null, so

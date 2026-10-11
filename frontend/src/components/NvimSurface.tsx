@@ -57,10 +57,13 @@ export function NvimSurface({
   config,
   visible,
   activeSessionId,
+  cwd,
 }: {
   config: ClientConfig | null;
   visible: boolean;
   activeSessionId: string | null;
+  /** The active pane's directory; Neovim changes to it when shown. */
+  cwd: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -71,6 +74,9 @@ export function NvimSurface({
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const exitedRef = useRef(false);
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+  const changeDirRef = useRef<() => void>(() => {});
   const [status, setStatus] = useState<{ kind: 'connecting' } | { kind: 'disconnected'; error: string | null } | null>({
     kind: 'connecting',
   });
@@ -177,6 +183,9 @@ export function NvimSurface({
       }
     };
     applyThemeRef.current = applyTheme;
+    changeDirRef.current = () => {
+      if (cwdRef.current) request('nvim_set_current_dir', [cwdRef.current]);
+    };
     selectRef.current = (index) => notify('nvim_select_popupmenu_item', [index, true, false, {}]);
     dismissPanelRef.current = () => {
       model.dismissPanel();
@@ -205,6 +214,7 @@ export function NvimSurface({
       grid.resizeCanvas(container.clientWidth, container.clientHeight);
       gridSize = grid.fit(container.clientWidth, container.clientHeight);
       applyTheme();
+      if (visibleRef.current) changeDirRef.current();
       request('nvim_ui_attach', [
         gridSize[0],
         gridSize[1],
@@ -411,6 +421,7 @@ export function NvimSurface({
       exitedRef.current = false;
       setGeneration((g) => g + 1);
     }
+    if (visible) changeDirRef.current();
   }, [visible]);
 
   useEffect(() => {

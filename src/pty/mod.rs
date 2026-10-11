@@ -622,6 +622,30 @@ impl Drop for PtyHandle {
     }
 }
 
+/// Decode `%XX` escapes; malformed escapes and non-UTF-8 results stay raw.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
+}
+
 /// Incremental OSC sequence parser. Handles sequences split across read() chunks.
 /// Parses OSC 0/2 (window title) and OSC 7 (working directory URI).
 struct OscParser {
@@ -700,21 +724,23 @@ impl OscParser {
                 // extract the path. The scheme is usually `file://`, but some
                 // shells emit other schemes with the same shape (e.g. zsh on
                 // macOS emits `kitty-shell-cwd://host/path`), so match any
-                // `scheme://` rather than `file://` specifically. A bare path
-                // (no scheme) is taken as-is.
+                // `scheme://` rather than `file://` specifically. Only `file`
+                // URIs are percent-encoded (`kitty-shell-cwd` is raw). A bare
+                // path (no scheme) is taken as-is.
                 let path = if let Some(scheme_end) = payload.find("://") {
                     let rest = &payload[scheme_end + 3..];
                     // Strip optional hostname (everything up to next '/').
-                    if let Some(slash) = rest.find('/') {
-                        &rest[slash..]
+                    let path = rest.find('/').map_or(rest, |slash| &rest[slash..]);
+                    if payload[..scheme_end].eq_ignore_ascii_case("file") {
+                        percent_decode(path)
                     } else {
-                        rest
+                        path.to_string()
                     }
                 } else {
-                    payload
+                    payload.to_string()
                 };
                 if !path.is_empty() {
-                    *cwd.lock().unwrap() = Some(path.to_string());
+                    *cwd.lock().unwrap() = Some(path);
                     true
                 } else {
                     false
@@ -890,5 +916,35 @@ mod lifecycle_tests {
         })
         .await
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod osc_tests {
+    use super::*;
+
+    fn cwd_of(seq: &[u8]) -> Option<String> {
+        let mut parser = OscParser::new(mpsc::unbounded_channel().0);
+        let (title, cwd) = Default::default();
+        parser.feed(seq, &title, &cwd);
+        let cwd = cwd.lock().unwrap().clone();
+        cwd
+    }
+
+    #[test]
+    fn decodes_file_uri_cwd() {
+        assert_eq!(
+            cwd_of(b"\x1b]7;file://host/a%20b/%C3%A9%2\x07").as_deref(),
+            Some("/a b/\u{e9}%2")
+        );
+        assert_eq!(
+            cwd_of(b"\x1b]7;file://host/x%+1\x07").as_deref(),
+            Some("/x%+1")
+        );
+        assert_eq!(
+            cwd_of(b"\x1b]7;kitty-shell-cwd://host/a%20b\x07").as_deref(),
+            Some("/a%20b")
+        );
+        assert_eq!(cwd_of(b"\x1b]7;/a%20b\x07").as_deref(), Some("/a%20b"));
     }
 }

@@ -247,6 +247,7 @@ test-browser:
 test-nvim-browser:
     cd frontend && bun nvim-browser-test.ts
 
-# Bundled Neovim colorscheme regressions (requires Neovim).
+# Bundled Neovim plugin regressions (requires Neovim).
 test-nvim-theme:
     nvim --headless -u NONE -i NONE --cmd "set rtp+=extras/nvim" -l extras/nvim/tests/theme.lua
+    nvim --headless -u NONE -i NONE --cmd "set rtp+=extras/nvim" -l extras/nvim/tests/health.lua

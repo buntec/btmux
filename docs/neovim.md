@@ -60,9 +60,16 @@ require("btmux").setup({
   signature = { keymap = "<C-s>" }, -- LSP signature help; false to disable
   progress = true, -- LSP, :write, and other progress as cards
   kind_icons = true, -- completion kind icons from mini.icons
-  cmd_keys = true, -- <D-c>/<D-x> copy/cut a selection, <D-s> writes
+  cmd_keys = true, -- <D-c>/<D-x> copy/cut a selection, <D-s> writes (unless you map them)
+  check = true, -- warn once at startup about conflicts
 })
 ```
+
+`:checkhealth btmux` lists plugins and settings that conflict with btmux's UI:
+noice.nvim, ui2, a replaced `vim.notify`, fidget.nvim, lsp_signature.nvim or
+blink.cmp signature help, animated scrolling, an empty `'mouse'`, and a missing
+clipboard provider. When it finds any, a toast points to it after the first view
+attaches.
 
 ## Fonts, scrolling, and keys
 

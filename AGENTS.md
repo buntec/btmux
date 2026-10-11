@@ -196,7 +196,9 @@ the one for reads), and completion kind icons from mini.icons
 colorscheme changes). Astryx typography falls back to the bundled Nerd Font so
 such glyphs render outside the grid too. These
 `rpcnotify(0, …)` messages are a private protocol between the plugin and
-`NvimSurface.tsx`: change both together.
+`NvimSurface.tsx`: change both together. `btmux.health` (`:checkhealth btmux`)
+detects plugins and settings that duplicate or break this UI; the plugin
+toasts once after the first `UIEnter` if it finds any.
 
 `file-editor` (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
 `nvim_open`, which opens the file via `--remote-expr` on the shared socket;

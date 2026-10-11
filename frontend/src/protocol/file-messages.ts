@@ -75,6 +75,8 @@ export interface GitStatusResult {
   untracked_stats: Record<string, LineStats>;
   is_repo: boolean;
   is_repo_root: boolean;
+  /** Absolute worktree root; status paths are relative to it. */
+  workdir: string | null;
 }
 
 export type GitLogRefKind = 'branch' | 'remote' | 'tag';

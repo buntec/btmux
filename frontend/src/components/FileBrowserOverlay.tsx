@@ -1011,7 +1011,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             const item = items[gitFocusedIndex];
             if (item?.kind === 'file' && item.path) {
               const line = gitDiff?.path === item.path ? gitDiff.hunks[0]?.new_start : undefined;
-              openPath(item.path, false, line);
+              // Status paths are relative to the worktree root.
+              const workdir = gitStatus?.workdir;
+              openPath(workdir ? `${workdir}/${item.path}` : item.path, false, line);
             }
             break;
           }

@@ -49,6 +49,8 @@ pub struct GitStatusResult {
     pub untracked_stats: HashMap<String, LineStats>,
     pub is_repo: bool,
     pub is_repo_root: bool,
+    /// Absolute worktree root; status paths are relative to it.
+    pub workdir: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -225,6 +227,7 @@ fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusRes
                 untracked_stats: HashMap::new(),
                 is_repo: false,
                 is_repo_root: false,
+                workdir: None,
             });
         }
     };
@@ -337,6 +340,9 @@ fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusRes
         untracked_stats,
         is_repo: true,
         is_repo_root,
+        workdir: repo
+            .workdir()
+            .map(|wd| wd.to_string_lossy().trim_end_matches('/').to_string()),
     })
 }
 

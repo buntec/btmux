@@ -6,6 +6,10 @@
 // sequence *structure* — it doesn't track screen state. Handles sequences
 // split across read() chunk boundaries.
 
+use super::colors::{parse_spec, x11_spec, Overrides, SharedPalette, Slot};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 /// What to do with a recognized sequence.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -13,7 +17,7 @@ pub enum Action {
     Pass,
     /// Strip from both scrollback and broadcast, write a canned response
     /// back to the PTY master.
-    Answer(&'static [u8]),
+    Answer(Vec<u8>),
     /// Strip from scrollback, keep in broadcast (emulator answers — e.g. DSR 6).
     Forward,
     /// Strip from both outputs, no response (swallow unknown queries).
@@ -31,6 +35,7 @@ enum State {
     CsiIntermediate,
     CsiIgnore,
     OscString,
+    OscEscape,
     DcsEntry,
     DcsParam,
     DcsIntermediate,
@@ -46,7 +51,7 @@ pub struct FilterResult {
     /// Bytes to broadcast to live emulators (stateful queries like DSR 6 kept).
     pub broadcast: Vec<u8>,
     /// Responses to write back to the PTY master.
-    pub responses: Vec<&'static [u8]>,
+    pub responses: Vec<Vec<u8>>,
     /// DSR 6 / DECXCPR queries that were forwarded — caller should record the
     /// foreground pgrp for each so stale CPR responses can be filtered.
     pub forwarded_cpr_queries: u32,
@@ -63,16 +68,32 @@ pub struct VtQueryInterceptor {
     /// Raw bytes of the current escape sequence being parsed, so we can emit
     /// them verbatim if the sequence turns out to be passthrough.
     raw_seq: Vec<u8>,
+    /// Theme colors for OSC 4/10/11/12 replies; queries are swallowed without one.
+    palette: SharedPalette,
+    /// Mode 2031: the program wants `CSI ? 997 ; Ps n` on theme changes.
+    color_reports: Arc<AtomicBool>,
+    /// Colors the program set, so replies match what the emulator renders.
+    overrides: Overrides,
+    /// Whether the OSC being dispatched ended with ST rather than BEL.
+    osc_st: bool,
 }
 
 impl VtQueryInterceptor {
     pub fn new() -> Self {
+        Self::with_colors(SharedPalette::default(), Arc::default())
+    }
+
+    pub fn with_colors(palette: SharedPalette, color_reports: Arc<AtomicBool>) -> Self {
         Self {
             state: State::Ground,
             param_buf: Vec::with_capacity(64),
             interm_buf: Vec::with_capacity(4),
             payload_buf: Vec::with_capacity(256),
             raw_seq: Vec::with_capacity(64),
+            palette,
+            color_reports,
+            overrides: Overrides::default(),
+            osc_st: false,
         }
     }
 
@@ -105,7 +126,12 @@ impl VtQueryInterceptor {
         }
 
         // ESC in any non-ground state aborts the current sequence and starts a new one.
-        if byte == 0x1b && self.state != State::Ground && self.state != State::DcsPassthrough {
+        if byte == 0x1b
+            && !matches!(
+                self.state,
+                State::Ground | State::OscString | State::DcsPassthrough
+            )
+        {
             self.emit_raw(result);
             self.enter_ground();
             // Fall through to handle ESC in ground state below.
@@ -120,6 +146,7 @@ impl VtQueryInterceptor {
             State::CsiIntermediate => self.csi_intermediate(byte, result),
             State::CsiIgnore => self.csi_ignore(byte, result),
             State::OscString => self.osc_string(byte, result),
+            State::OscEscape => self.osc_escape(byte, result),
             State::DcsEntry => self.dcs_entry(byte, result),
             State::DcsParam => self.dcs_param(byte, result),
             State::DcsIntermediate => self.dcs_intermediate(byte, result),
@@ -180,6 +207,13 @@ impl VtQueryInterceptor {
                 self.state = State::EscapeIntermediate;
                 self.interm_buf.clear();
                 self.interm_buf.push(byte);
+            }
+            // RIS: the emulator resets its colors and modes.
+            b'c' => {
+                self.color_reports.store(false, Ordering::Relaxed);
+                self.overrides.clear();
+                self.emit_raw(result);
+                self.enter_ground();
             }
             // ESC \ (ST) in ground context — just pass through
             // Final bytes for ESC sequences (not queries, pass through)
@@ -351,22 +385,22 @@ impl VtQueryInterceptor {
         match (prefix, final_byte, interm.as_slice()) {
             // ── DA1: CSI c  or  CSI 0 c ──
             (None, b'c', []) if param_body.is_empty() || param_body == b"0" => {
-                Action::Answer(b"\x1b[?62;22c")
+                Action::Answer(b"\x1b[?62;22c".to_vec())
             }
 
             // ── DA2: CSI > c  or  CSI > 0 c ──
             (Some(b'>'), b'c', []) if param_body.is_empty() || param_body == b"0" => {
-                Action::Answer(b"\x1b[>1;0;0c")
+                Action::Answer(b"\x1b[>1;0;0c".to_vec())
             }
 
             // ── DA3: CSI = c  or  CSI = 0 c ──
             (Some(b'='), b'c', []) if param_body.is_empty() || param_body == b"0" => {
                 // DCS ! | <hex-encoded unit ID> ST — we use all zeros like tmux.
-                Action::Answer(b"\x1bP!|00000000\x1b\\")
+                Action::Answer(b"\x1bP!|00000000\x1b\\".to_vec())
             }
 
             // ── DSR 5 (device status): CSI 5 n → "OK" ──
-            (None, b'n', []) if param_body == b"5" => Action::Answer(b"\x1b[0n"),
+            (None, b'n', []) if param_body == b"5" => Action::Answer(b"\x1b[0n".to_vec()),
 
             // ── DSR 6 (cursor position): CSI 6 n → forward to emulator ──
             (None, b'n', []) if param_body == b"6" => Action::Forward,
@@ -376,18 +410,44 @@ impl VtQueryInterceptor {
 
             // ── XTVERSION: CSI > 0 q ──
             (Some(b'>'), b'q', []) if param_body.is_empty() || param_body == b"0" => {
-                Action::Answer(b"\x1bP>|btmux(0)\x1b\\")
+                Action::Answer(b"\x1bP>|btmux(0)\x1b\\".to_vec())
             }
 
             // ── DECRPM: CSI ? <Ps> $ p (request mode) ──
             // Answer with "mode not recognized" (Ps;0$y) for everything.
             // This is safe — it tells the app "I don't track that mode" rather than
             // hanging forever or letting N emulators answer.
+            (Some(b'?'), b'p', [b'$']) if param_body == b"2031" => {
+                let state = if self.color_reports.load(Ordering::Relaxed) {
+                    1
+                } else {
+                    2
+                };
+                Action::Answer(format!("\x1b[?2031;{state}$y").into_bytes())
+            }
             (Some(b'?'), b'p', [b'$']) => {
                 // For now, swallow. A proper implementation would answer with
                 // the mode status, but that requires tracking mode state.
                 Action::Swallow
             }
+
+            // ── Mode 2031 (color-scheme notifications): CSI ? 2031 h / l ──
+            // Tracked here; reports come from the backend on theme changes.
+            (Some(b'?'), b'h' | b'l', []) if has_param(param_body, b"2031") => {
+                self.color_reports
+                    .store(final_byte == b'h', Ordering::Relaxed);
+                if param_body == b"2031" {
+                    Action::Swallow
+                } else {
+                    Action::Pass
+                }
+            }
+
+            // ── Color-scheme query: CSI ? 996 n ──
+            (Some(b'?'), b'n', []) if param_body == b"996" => match self.palette.get() {
+                Some(palette) => Action::Answer(palette.scheme_report()),
+                None => Action::Swallow,
+            },
 
             // ── DECRQSS: this arrives as DCS, not CSI — handled in DCS dispatch ──
 
@@ -407,22 +467,19 @@ impl VtQueryInterceptor {
         match byte {
             // BEL terminates OSC
             0x07 => {
+                self.osc_st = false;
                 self.dispatch_osc(result);
                 self.enter_ground();
             }
             // C1 ST (0x9C) terminates OSC
             0x9c => {
+                self.osc_st = true;
                 self.dispatch_osc(result);
                 self.enter_ground();
             }
-            // ESC (potential start of ST = ESC \)
+            // ESC: ST (ESC \) or an aborted OSC
             0x1b => {
-                // Peek: we need the next byte to know if it's ST.
-                // Transition to a sub-state — we'll handle it via the
-                // universal ESC handling at the top of process_byte.
-                // But for OSC, ESC is ONLY valid as part of ST (ESC \).
-                // We handle this by noting we got ESC and checking next byte.
-                self.state = State::DcsEscape; // Reuse DCS escape state for ST detection
+                self.state = State::OscEscape;
             }
             _ => {
                 self.payload_buf.push(byte);
@@ -430,68 +487,126 @@ impl VtQueryInterceptor {
         }
     }
 
-    fn dispatch_osc(&mut self, result: &mut FilterResult) {
-        let action = self.classify_osc();
-        match action {
-            Action::Pass => self.emit_raw(result),
-            Action::Answer(response) => {
-                result.responses.push(response);
-            }
-            Action::Swallow => {}
-            Action::Forward => {
-                result.broadcast.extend_from_slice(&self.raw_seq);
-            }
+    fn osc_escape(&mut self, byte: u8, result: &mut FilterResult) {
+        if byte == b'\\' {
+            self.raw_seq.push(byte);
+            self.osc_st = true;
+            self.dispatch_osc(result);
+            self.enter_ground();
+        } else {
+            // ESC aborts the OSC and starts a new sequence.
+            self.raw_seq.pop();
+            self.emit_raw(result);
+            self.enter_ground();
+            self.ground(0x1b, result);
+            self.process_byte(byte, result);
         }
     }
 
-    fn classify_osc(&self) -> Action {
+    fn dispatch_osc(&mut self, result: &mut FilterResult) {
         // OSC payload format: "<code>;<data>"
-        // Query form: the data part is "?" for color queries.
-        let payload = &self.payload_buf;
-
-        // Find the semicolon separator
-        let sep = payload.iter().position(|&b| b == b';');
-        let (code_bytes, data) = match sep {
+        let payload = std::mem::take(&mut self.payload_buf);
+        let (code_bytes, data) = match payload.iter().position(|&b| b == b';') {
             Some(pos) => (&payload[..pos], &payload[pos + 1..]),
             None => (payload.as_slice(), &[] as &[u8]),
         };
-
-        // Parse the OSC code
-        let code_str = std::str::from_utf8(code_bytes).unwrap_or("");
-        let code: u32 = code_str.parse().unwrap_or(u32::MAX);
+        let code: u32 = std::str::from_utf8(code_bytes)
+            .ok()
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(u32::MAX);
 
         match code {
-            // OSC 10 ; ? — query foreground color
-            // OSC 11 ; ? — query background color
-            // OSC 12 ; ? — query cursor color
-            10..=12 if data == b"?" => Action::Swallow,
+            4 | 10..=12 => self.color_osc(code, data, result),
 
-            // OSC 4 ; <index> ; ? — query palette color
-            4 => {
-                if data.ends_with(b"?") {
-                    Action::Swallow
-                } else {
-                    Action::Pass
+            // OSC 104 [; index…] / 110–112 — reset colors
+            104 => {
+                let items = data.split(|&b| b == b';');
+                if items.clone().all(|item| item.is_empty()) {
+                    self.overrides.reset_indexed();
                 }
+                for index in items.filter_map(parse_index) {
+                    self.overrides.set(Slot::Indexed(index), None);
+                }
+                self.emit_raw(result);
+            }
+            110..=112 => {
+                if let Some(slot) = Slot::dynamic(code - 100) {
+                    self.overrides.set(slot, None);
+                }
+                self.emit_raw(result);
             }
 
-            // OSC 52 ; <clipboard> ; ? — query clipboard
-            52 => {
-                // Find second semicolon for the base64/? part
-                if let Some(pos) = data.iter().position(|&b| b == b';') {
-                    if &data[pos + 1..] == b"?" {
-                        Action::Swallow
-                    } else {
-                        Action::Pass
-                    }
-                } else {
-                    Action::Pass
-                }
-            }
+            // OSC 52 ; <clipboard> ; ? — swallow clipboard queries
+            52 if data
+                .iter()
+                .position(|&b| b == b';')
+                .is_some_and(|pos| &data[pos + 1..] == b"?") => {}
 
             // Everything else passes through (OSC 0/2 title, OSC 7 cwd, etc.)
-            _ => Action::Pass,
+            _ => self.emit_raw(result),
         }
+        self.payload_buf = payload;
+    }
+
+    /// OSC 4 ; index ; spec … and OSC 10–12 ; spec …, where each extra
+    /// spec targets the next code, as in xterm. Sets are tracked; queries
+    /// are answered here and the sets are forwarded to the emulator.
+    fn color_osc(&mut self, code: u32, data: &[u8], result: &mut FilterResult) {
+        let items: Vec<&[u8]> = data.split(|&b| b == b';').collect();
+        let requests: Vec<(Option<Slot>, &[u8])> = if code == 4 {
+            items
+                .chunks(2)
+                .map(|pair| {
+                    (
+                        parse_index(pair[0]).map(Slot::Indexed),
+                        pair.get(1).copied().unwrap_or_default(),
+                    )
+                })
+                .collect()
+        } else {
+            (code..)
+                .zip(items)
+                .map(|(c, spec)| (Slot::dynamic(c), spec))
+                .collect()
+        };
+        let queried = requests.iter().any(|(_, spec)| *spec == b"?");
+        let palette = self.palette.get();
+        let mut sets = Vec::new();
+        let mut reply = Vec::new();
+        for (slot, spec) in requests {
+            let Some(slot) = slot else { continue };
+            if spec == b"?" {
+                if let Some(palette) = &palette {
+                    let rgb = self.overrides.get(palette, slot);
+                    self.push_osc(&mut reply, slot, x11_spec(rgb).as_bytes());
+                }
+                continue;
+            }
+            // X11 color names reach the emulator but are not tracked.
+            if let Some(rgb) = parse_spec(spec) {
+                self.overrides.set(slot, Some(rgb));
+            }
+            self.push_osc(&mut sets, slot, spec);
+        }
+        if !queried {
+            self.emit_raw(result);
+            return;
+        }
+        result.scrollback.extend_from_slice(&sets);
+        result.broadcast.extend_from_slice(&sets);
+        if !reply.is_empty() {
+            result.responses.push(reply);
+        }
+    }
+
+    /// Uses the query's terminator, as xterm does.
+    fn push_osc(&self, out: &mut Vec<u8>, slot: Slot, spec: &[u8]) {
+        out.extend_from_slice(b"\x1b]");
+        out.extend_from_slice(slot.osc_prefix().as_bytes());
+        out.push(b';');
+        out.extend_from_slice(spec);
+        let terminator: &[u8] = if self.osc_st { b"\x1b\\" } else { b"\x07" };
+        out.extend_from_slice(terminator);
     }
 
     // ─── DCS ───────────────────────────────────────────────────────────────────
@@ -649,6 +764,14 @@ impl VtQueryInterceptor {
         result.scrollback.extend_from_slice(&self.raw_seq);
         result.broadcast.extend_from_slice(&self.raw_seq);
     }
+}
+
+fn parse_index(index: &[u8]) -> Option<u8> {
+    std::str::from_utf8(index).ok()?.parse().ok()
+}
+
+fn has_param(params: &[u8], param: &[u8]) -> bool {
+    params.split(|&b| b == b';').any(|p| p == param)
 }
 
 #[cfg(test)]
@@ -828,5 +951,175 @@ mod tests {
         let result = interceptor.feed(b"\x1b[1;2\x18hello");
         // The partial CSI is emitted (it's not a query), then "hello" passes
         assert_eq!(&result.scrollback[result.scrollback.len() - 5..], b"hello");
+    }
+
+    fn themed() -> (VtQueryInterceptor, Arc<AtomicBool>) {
+        let palette = SharedPalette::default();
+        palette.set(super::super::colors::Palette::from_theme(
+            &crate::config::default_theme(),
+        ));
+        let reports = Arc::new(AtomicBool::new(false));
+        (
+            VtQueryInterceptor::with_colors(palette, reports.clone()),
+            reports,
+        )
+    }
+
+    #[test]
+    fn answers_background_query_with_matching_terminator() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"a\x1b]11;?\x1b\\b\x1b]11;?\x07");
+        assert_eq!(result.scrollback, b"ab");
+        assert_eq!(result.broadcast, b"ab");
+        assert_eq!(
+            result.responses,
+            vec![
+                b"\x1b]11;rgb:1414/1111/0b0b\x1b\\" as &[u8],
+                b"\x1b]11;rgb:1414/1111/0b0b\x07",
+            ]
+        );
+    }
+
+    #[test]
+    fn answers_chained_and_indexed_color_queries() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]10;?;?\x07\x1b]4;1;?;196;?\x07");
+        let replies: Vec<String> = result
+            .responses
+            .iter()
+            .map(|r| String::from_utf8_lossy(r).into_owned())
+            .collect();
+        assert!(replies[0].starts_with("\x1b]10;rgb:"));
+        assert!(replies[0].contains("\x07\x1b]11;rgb:1414/1111/0b0b\x07"));
+        assert!(replies[1].starts_with("\x1b]4;1;rgb:"));
+        assert!(replies[1].ends_with("\x1b]4;196;rgb:ffff/0000/0000\x07"));
+    }
+
+    #[test]
+    fn color_queries_answer_before_da1_fence() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]11;?\x1b\\\x1b[c");
+        assert_eq!(result.responses.len(), 2);
+        assert!(result.responses[0].starts_with(b"\x1b]11;"));
+        assert_eq!(result.responses[1], b"\x1b[?62;22c");
+    }
+
+    #[test]
+    fn color_sets_pass_through() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]11;#000000\x1b\\\x1b]4;1;#ff0000\x07");
+        assert_eq!(
+            result.broadcast,
+            b"\x1b]11;#000000\x1b\\\x1b]4;1;#ff0000\x07"
+        );
+        assert!(result.responses.is_empty());
+    }
+
+    fn theme() -> super::super::colors::Palette {
+        super::super::colors::Palette::from_theme(&crate::config::default_theme()).unwrap()
+    }
+
+    #[test]
+    fn mixed_osc4_forwards_sets_and_answers_queries() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]4;1;#123456;2;?;1;?\x1b\\");
+        assert_eq!(result.scrollback, b"\x1b]4;1;#123456\x1b\\");
+        assert_eq!(result.broadcast, b"\x1b]4;1;#123456\x1b\\");
+        let expected = format!(
+            "\x1b]4;2;{}\x1b\\\x1b]4;1;rgb:1212/3434/5656\x1b\\",
+            x11_spec(theme().ansi[2])
+        );
+        assert_eq!(result.responses, vec![expected.into_bytes()]);
+    }
+
+    #[test]
+    fn replies_reflect_pane_color_changes() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(
+            b"\x1b]4;1;#123456\x07\x1b]4;1;?\x07\x1b]104;1\x07\x1b]4;1;?\x07\
+              \x1b]11;rgb:0/0/0\x07\x1b]11;?\x07\x1b]111\x07\x1b]11;?\x07",
+        );
+        assert_eq!(
+            result.broadcast,
+            b"\x1b]4;1;#123456\x07\x1b]104;1\x07\x1b]11;rgb:0/0/0\x07\x1b]111\x07"
+        );
+        let theme = theme();
+        assert_eq!(
+            result.responses,
+            vec![
+                b"\x1b]4;1;rgb:1212/3434/5656\x07".to_vec(),
+                format!("\x1b]4;1;{}\x07", x11_spec(theme.ansi[1])).into_bytes(),
+                b"\x1b]11;rgb:0000/0000/0000\x07".to_vec(),
+                format!("\x1b]11;{}\x07", x11_spec(theme.background)).into_bytes(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mixed_dynamic_colors_forward_sets() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]10;?;#ffffff\x07\x1b]11;?\x07");
+        assert_eq!(result.broadcast, b"\x1b]11;#ffffff\x07");
+        assert_eq!(
+            result.responses,
+            vec![
+                format!("\x1b]10;{}\x07", x11_spec(theme().foreground)).into_bytes(),
+                b"\x1b]11;rgb:ffff/ffff/ffff\x07".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn untracked_color_names_still_reach_the_emulator() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]4;1;red;1;?\x07");
+        assert_eq!(result.broadcast, b"\x1b]4;1;red\x07");
+        assert_eq!(
+            result.responses,
+            vec![format!("\x1b]4;1;{}\x07", x11_spec(theme().ansi[1])).into_bytes()]
+        );
+    }
+
+    #[test]
+    fn reset_clears_color_state() {
+        let (mut interceptor, reports) = themed();
+        interceptor.feed(b"\x1b[?2031h\x1b]4;1;#123456\x07");
+        assert!(reports.load(Ordering::Relaxed));
+        let result = interceptor.feed(b"\x1bc\x1b[?2031$p\x1b]4;1;?\x07");
+        assert!(!reports.load(Ordering::Relaxed));
+        assert_eq!(result.broadcast, b"\x1bc");
+        assert_eq!(
+            result.responses,
+            vec![
+                b"\x1b[?2031;2$y".to_vec(),
+                format!("\x1b]4;1;{}\x07", x11_spec(theme().ansi[1])).into_bytes(),
+            ]
+        );
+    }
+
+    #[test]
+    fn esc_aborts_osc() {
+        let mut interceptor = VtQueryInterceptor::new();
+        let result = interceptor.feed(b"\x1b]0;ti\x1b[1mx");
+        assert_eq!(result.broadcast, b"\x1b]0;ti\x1b[1mx");
+    }
+
+    #[test]
+    fn tracks_color_scheme_mode() {
+        let (mut interceptor, reports) = themed();
+        let result = interceptor.feed(b"\x1b[?2031$p\x1b[?2031h\x1b[?2031$p\x1b[?996n");
+        assert!(reports.load(Ordering::Relaxed));
+        assert_eq!(result.broadcast, b"");
+        assert_eq!(
+            result.responses,
+            vec![
+                b"\x1b[?2031;2$y" as &[u8],
+                b"\x1b[?2031;1$y",
+                b"\x1b[?997;1n",
+            ]
+        );
+        let result = interceptor.feed(b"\x1b[?1049;2031l");
+        assert!(!reports.load(Ordering::Relaxed));
+        assert_eq!(result.broadcast, b"\x1b[?1049;2031l");
     }
 }

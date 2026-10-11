@@ -9,6 +9,7 @@ mod editor;
 mod file_git;
 mod file_git_ops;
 mod file_search;
+mod fish_theme;
 mod fs_ops;
 mod git;
 mod mcp;
@@ -157,6 +158,26 @@ async fn main() {
 
     if let Some(config::SubCommand::InstallGeminiCliHooks) = args.command {
         install_agent_hooks(agent_hooks::Target::GeminiCli);
+        return;
+    }
+
+    if let Some(config::SubCommand::GenerateFishTheme) = args.command {
+        print!("{}", fish_theme::theme());
+        return;
+    }
+
+    if let Some(config::SubCommand::InstallFishTheme) = args.command {
+        match fish_theme::install() {
+            Ok(paths) => {
+                for path in paths {
+                    println!("Installed {}", path.display());
+                }
+            }
+            Err(error) => {
+                eprintln!("btmux: {error}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
 

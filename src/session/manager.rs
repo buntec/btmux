@@ -11,7 +11,8 @@ use super::{
 };
 use crate::config::{ClientConfig, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
-use crate::pty::PtyHandle;
+use crate::pty::colors::{Palette, SharedPalette};
+use crate::pty::{PtyEnv, PtyHandle};
 
 pub struct SessionManager {
     pub sessions: Vec<Session>,
@@ -28,9 +29,7 @@ pub struct SessionManager {
     events: broadcast::Sender<String>,
     /// Live agent state is runtime-only and is never included in persistence.
     agents: HashMap<Uuid, AgentLifecycle>,
-    exit_tx: mpsc::UnboundedSender<Uuid>,
-    meta_tx: mpsc::UnboundedSender<()>,
-    port: u16,
+    pty_env: PtyEnv,
     next_client: u32,
     /// The control client the user focused most recently; it alone shows OS notifications.
     alert_client: Option<u32>,
@@ -67,6 +66,13 @@ impl SessionManager {
     ) -> Self {
         let (events, _) = broadcast::channel::<String>(64);
         let config = crate::config::resolve_binds(&file_config);
+        let pty_env = PtyEnv {
+            exit_tx,
+            meta_tx,
+            port,
+            palette: SharedPalette::default(),
+        };
+        pty_env.palette.set(Palette::from_theme(&config.theme));
         Self {
             sessions: Vec::new(),
             shell,
@@ -78,9 +84,7 @@ impl SessionManager {
             agents: HashMap::new(),
             next_client: 0,
             alert_client: None,
-            exit_tx,
-            meta_tx,
-            port,
+            pty_env,
         }
     }
 
@@ -363,6 +367,7 @@ impl SessionManager {
         if self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
         }
+        self.sync_palette();
         &self.config
     }
 
@@ -376,6 +381,7 @@ impl SessionManager {
         if update.shell.is_some() && self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
         }
+        self.sync_palette();
         &self.config
     }
 
@@ -389,7 +395,26 @@ impl SessionManager {
         } else {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
         }
+        self.sync_palette();
         &self.config
+    }
+
+    /// Publish the resolved theme to PTY color queries and notify programs
+    /// that enabled mode 2031.
+    fn sync_palette(&mut self) {
+        let palette = Palette::from_theme(&self.config.theme);
+        if !self.pty_env.palette.set(palette.clone()) {
+            return;
+        }
+        let Some(palette) = palette else { return };
+        for pane in self
+            .sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+        {
+            pane.pty.report_color_scheme(&palette);
+        }
     }
 
     fn scrollback_lines(&self) -> u32 {
@@ -423,10 +448,8 @@ impl SessionManager {
         let pty = PtyHandle::new_with_cwd(
             &self.shell,
             pane_id,
-            self.exit_tx.clone(),
-            self.meta_tx.clone(),
+            &self.pty_env,
             cwd,
-            self.port,
             self.scrollback_lines(),
         );
 
@@ -533,10 +556,8 @@ impl SessionManager {
         let pty = PtyHandle::new_with_cwd(
             &self.shell,
             new_pane_id,
-            self.exit_tx.clone(),
-            self.meta_tx.clone(),
+            &self.pty_env,
             cwd,
-            self.port,
             self.scrollback_lines(),
         );
         let new_pane = Pane::new(new_pane_id, pty);
@@ -747,10 +768,8 @@ impl SessionManager {
         let pty = PtyHandle::new_with_cwd(
             &self.shell,
             pane_id,
-            self.exit_tx.clone(),
-            self.meta_tx.clone(),
+            &self.pty_env,
             cwd,
-            self.port,
             self.scrollback_lines(),
         );
         let pane = Pane::new(pane_id, pty);
@@ -1118,10 +1137,8 @@ impl SessionManager {
                 let pty = PtyHandle::new_with_cwd(
                     shell,
                     p.id,
-                    self.exit_tx.clone(),
-                    self.meta_tx.clone(),
+                    &self.pty_env,
                     cwd,
-                    self.port,
                     self.scrollback_lines(),
                 );
                 Pane::new(p.id, pty)
@@ -1353,6 +1370,33 @@ mod pane_tests {
 
         let window = &mgr.snapshot_by_id(session_id).unwrap().windows[0];
         assert_eq!(window.layout.pane_ids().len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use super::*;
+
+    #[test]
+    fn theme_changes_update_the_pty_palette() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        assert!(mgr.pty_env.palette.get().unwrap().is_dark());
+        mgr.apply_config_override(&ConfigUpdate {
+            colors: Some("btmux-default-light".into()),
+            ..Default::default()
+        });
+        assert!(!mgr.pty_env.palette.get().unwrap().is_dark());
+        mgr.reset_config_overrides();
+        assert!(mgr.pty_env.palette.get().unwrap().is_dark());
     }
 }
 

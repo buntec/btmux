@@ -7,7 +7,7 @@ plugin windows) appear in cards that replace Neovim's border and show its title.
 `winblend` and `pumblend` make those cards and the completion menu translucent,
 blurring what's behind them by `backdrop-blur` while their text stays sharp. There is one Neovim per btmux server, so
 every browser tab and the desktop app share the same editor. `<prefix> + e`
-hides it again; `:q` closes Neovim and the view.
+(or pressing Esc twice quickly) hides it again; `:q` closes Neovim and the view.
 
 Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`.
 

@@ -28,6 +28,8 @@ const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.ho
 const BUTTONS = ['left', 'middle', 'right'];
 /** Scroll animation length when `smooth-scroll-duration` is unset. */
 const SMOOTH_SCROLL_MS = 120;
+/** Max gap between two Esc presses that hide the surface. */
+const DOUBLE_ESC_MS = 300;
 
 /** Neovim's integer handle for a window (a msgpack ext). */
 const windowId = (win: unknown): number | null => {
@@ -288,6 +290,7 @@ export function NvimSurface({
     const ro = new ResizeObserver(refit);
     ro.observe(container);
 
+    let lastEsc = -Infinity;
     const onKeyDown = (e: KeyboardEvent) => {
       if (!attached) {
         if (disconnected && e.key === 'Enter') {
@@ -299,6 +302,15 @@ export function NvimSurface({
       const key = nvimKey(e);
       if (key === null) return;
       e.preventDefault();
+      // A quick second Esc hides the surface; the first one still reaches Neovim.
+      if (key === '<Esc>' && !e.repeat) {
+        if (e.timeStamp - lastEsc < DOUBLE_ESC_MS) {
+          lastEsc = -Infinity;
+          useStore.getState().setNvimOpen(false);
+          return;
+        }
+        lastEsc = e.timeStamp;
+      } else lastEsc = -Infinity;
       // Like a hit-enter prompt: the next normal-mode key dismisses output (and still reaches Neovim).
       if (model.hasPanel && !model.cmdlineActive && key !== ':') {
         model.dismissPanel();

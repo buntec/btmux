@@ -140,7 +140,8 @@ handling must be reviewed with `ws/files.rs`, `fs_ops.rs`, and
 ### Built-in Neovim
 
 `prefix + e` (`neovim` action) toggles a full-surface Neovim GUI over the
-active session (`NvimSurface.tsx`). The backend lazily spawns one shared
+active session (`NvimSurface.tsx`); a second Esc within 300 ms also hides
+it (the first still reaches Neovim). The backend lazily spawns one shared
 `nvim --embed --headless --listen <private socket>` per server; `--embed` ties
 its lifetime to btmux's stdin pipe. It starts with `g:btmux = 1`, which user
 config can check, and the bundled plugin on 'runtimepath'. Each browser tab

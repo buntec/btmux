@@ -74,6 +74,7 @@ type Draft = {
   showNavHeader: boolean;
   sessionSort: ClientConfig['session_sort'];
   windowSort: ClientConfig['window_sort'];
+  fileEditor: ClientConfig['file_editor'];
   windowGridCount: number;
   binds: Record<string, string>;
   keyOverrides: Record<string, string>;
@@ -125,6 +126,7 @@ function initialDraft(config: ClientConfig): Draft {
     showNavHeader: getShowNavHeader(config),
     sessionSort: config.session_sort,
     windowSort: config.window_sort,
+    fileEditor: config.file_editor,
     windowGridCount: config.window_grid_count,
     binds: Object.fromEntries(config.binds.map((bind) => [bind.action, bind.key])),
     keyOverrides: config.keys,
@@ -184,6 +186,7 @@ const TOML_DEFAULTS = {
   showNavHeader: true,
   sessionSort: 'mru',
   windowSort: 'alphabetical',
+  fileEditor: 'neovim',
   windowGridCount: 4,
   wallpaperShader: '',
   wallpaperOpacity: 0.1,
@@ -255,6 +258,7 @@ function toToml(draft: Draft): string {
     boolLine('show-nav-header', draft.showNavHeader, TOML_DEFAULTS.showNavHeader),
     strLine('session-sort', draft.sessionSort, TOML_DEFAULTS.sessionSort),
     strLine('window-sort', draft.windowSort, TOML_DEFAULTS.windowSort),
+    strLine('file-editor', draft.fileEditor, TOML_DEFAULTS.fileEditor),
     intLine('window-grid-count', draft.windowGridCount, TOML_DEFAULTS.windowGridCount),
     optLine('colors', draft.colors),
     optLine('wallpaper', draft.wallpaper),
@@ -324,6 +328,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('showNavHeader')) update.show_nav_header = draft.showNavHeader;
   if (dirty.has('sessionSort')) update.session_sort = draft.sessionSort;
   if (dirty.has('windowSort')) update.window_sort = draft.windowSort;
+  if (dirty.has('fileEditor')) update.file_editor = draft.fileEditor;
   if (dirty.has('windowGridCount')) update.window_grid_count = draft.windowGridCount;
   if (dirty.has('binds')) update.keys = draft.keyOverrides;
   if (dirty.has('colors')) update.colors = draft.colors;
@@ -727,6 +732,10 @@ export function ConfigPage({ config, send }: Props) {
                         {toggle('showNavHeader', 'Show sidebar header', 'Display the app icon and name.')}
                         {choose('sessionSort', 'Session sort', ordering)}
                         {choose('windowSort', 'Window sort', ordering)}
+                        {choose('fileEditor', 'Open files in', [
+                          { value: 'pane', label: 'Pane editor' },
+                          { value: 'neovim', label: 'Built-in Neovim' },
+                        ])}
                         <NumberInput
                           label="Window grid count"
                           value={draft.windowGridCount}

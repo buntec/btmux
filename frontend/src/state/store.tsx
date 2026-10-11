@@ -37,6 +37,8 @@ interface AppStore {
   // with a session→window tree and a live pane preview. Like the window-grid it
   // takes over the keyboard while open (the keybinding hook early-returns).
   switcherOpen: boolean;
+  // Neovim surface (prefix + e)
+  nvimOpen: boolean;
   // File browser overlay (prefix + f / g)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
@@ -94,6 +96,7 @@ interface AppStore {
     initialMode?: FileBrowserMode,
     focusFile?: string | null,
   ) => void;
+  setNvimOpen: (open: boolean) => void;
   setNavigateFn: (fn: ((path: string) => void) | null) => void;
   setControlSendFn: (fn: ((message: ClientMessage) => void) | null) => void;
   // Navigate to the window containing a pane, if it can be located.
@@ -118,6 +121,7 @@ export const useStore = create<AppStore>((set, get) => ({
   agentPanes: new Set(),
   paneNumbersVisible: false,
   switcherOpen: false,
+  nvimOpen: false,
   fileBrowserOpen: false,
   fileBrowserCwd: null,
   fileBrowserInitialMode: 'files',
@@ -167,6 +171,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
+  setNvimOpen: (open) => set({ nvimOpen: open }),
   showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
   toggleLatex: (paneId) =>
     set((s) => {

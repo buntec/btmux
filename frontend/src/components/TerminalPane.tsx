@@ -65,7 +65,7 @@ const FONT_FALLBACK = 'Symbols Nerd Font Mono, Menlo, Monaco, monospace';
 // into that budget; upstream Ghostty defaults to ~1 KB/line (10 MB / 10000).
 const SCROLLBACK_BYTES_PER_LINE = 1000;
 
-function buildFontFamily(configured: string): string {
+export function buildFontFamily(configured: string): string {
   return `${configured}, ${FONT_FALLBACK}`;
 }
 
@@ -152,6 +152,7 @@ export function TerminalPane({
   const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
+  const nvimOpen = useStore((s) => s.nvimOpen);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const settingsOpenRef = useRef(settingsOpen);
   settingsOpenRef.current = settingsOpen;
@@ -175,6 +176,7 @@ export function TerminalPane({
     const term = new Terminal(termOptions);
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+    const focusedBeforeOpen = container.ownerDocument.activeElement;
     term.open(container);
     // ghostty-web's open() auto-focuses (and schedules a deferred setTimeout(0)
     // focus); undo both if another surface owns the keyboard. This also covers a
@@ -188,14 +190,18 @@ export function TerminalPane({
         s.windowGridOpen ||
         s.agentGridOpen ||
         s.switcherOpen ||
+        s.nvimOpen ||
         (s.fileBrowserOpen && s.fileBrowserPaneId === paneId)
       );
     };
     if (shouldBlurOnOpen()) {
-      term.blur();
-      setTimeout(() => {
-        if (shouldBlurOnOpen()) term.blur();
-      }, 0);
+      const restoreFocus = () => {
+        if (!shouldBlurOnOpen()) return;
+        term.blur();
+        if (focusedBeforeOpen instanceof HTMLElement && focusedBeforeOpen.isConnected) focusedBeforeOpen.focus();
+      };
+      restoreFocus();
+      setTimeout(restoreFocus, 0);
     }
 
     // Explicitly load the configured font at the requested weight so the browser
@@ -499,7 +505,9 @@ export function TerminalPane({
 
   // LaTeX detection (lib/latexDetect.ts). Declared after the mount effect so
   // termRef is populated when the scan effect runs.
-  const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, visible);
+  // Panes under the built-in Neovim keep their geometry but needn't render.
+  const rendering = visible && !nvimOpen;
+  const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, rendering);
   latexPokeRef.current = latexPoke;
   const latexOpen = useStore((s) => s.latexPanes.has(paneId));
   const searchOpen = useStore((s) => s.searchPaneId === paneId);
@@ -525,13 +533,13 @@ export function TerminalPane({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    if (visible) {
+    if (rendering) {
       term.resume();
       fitRef.current?.();
     } else {
       term.suspend();
     }
-  }, [visible, termOptions]);
+  }, [rendering, termOptions]);
 
   const allowTransparency = terminalTransparency(config);
   useEffect(() => {
@@ -586,19 +594,22 @@ export function TerminalPane({
   const prevIsActive = useRef(false);
   const prevOverlay = useRef(overlay);
   const prevFileBrowser = useRef(fileBrowserOpen);
+  const prevNvimOpen = useRef(nvimOpen);
   const prevInitialReplayRendered = useRef(false);
   useEffect(() => {
     const wasActive = prevIsActive.current;
     const hadOverlay = prevOverlay.current;
     const hadFileBrowser = prevFileBrowser.current;
+    const hadNvimOpen = prevNvimOpen.current;
     const hadRenderedInitialReplay = prevInitialReplayRendered.current;
     prevIsActive.current = isActive;
     prevOverlay.current = overlay;
     prevFileBrowser.current = fileBrowserOpen;
+    prevNvimOpen.current = nvimOpen;
     prevInitialReplayRendered.current = initialReplayRendered;
 
     const keyboardOwnedElsewhere =
-      settingsOpen || overlay || windowGridOpen || agentGridOpen || switcherOpen || fileBrowserOpen;
+      settingsOpen || overlay || windowGridOpen || agentGridOpen || switcherOpen || fileBrowserOpen || nvimOpen;
 
     if (!isActive || keyboardOwnedElsewhere || !initialReplayRendered) {
       termRef.current?.blur();
@@ -607,7 +618,8 @@ export function TerminalPane({
 
     const becameActive = !wasActive;
     const replayFinished = !hadRenderedInitialReplay;
-    const overlayClosed = (!overlay && !!hadOverlay) || (!fileBrowserOpen && hadFileBrowser);
+    const overlayClosed =
+      (!overlay && !!hadOverlay) || (!fileBrowserOpen && hadFileBrowser) || (!nvimOpen && hadNvimOpen);
     if (becameActive || replayFinished || overlayClosed) {
       termRef.current?.focus();
     }
@@ -619,6 +631,7 @@ export function TerminalPane({
     agentGridOpen,
     switcherOpen,
     fileBrowserOpen,
+    nvimOpen,
     initialReplayRendered,
   ]);
 
@@ -659,6 +672,8 @@ export function TerminalPane({
         // pool). display:none detaches them from layout so they don't paint or
         // intercept clicks; the suspend() effect stops their render loop.
         display: visible ? 'flex' : 'none',
+        // Preserve terminal geometry and sockets beneath the transparent editor.
+        opacity: nvimOpen ? 0 : undefined,
         flexDirection: 'column',
         position: 'absolute',
         top: `${rect.top}%`,

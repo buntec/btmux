@@ -34,6 +34,9 @@ export function terminalColorMode(palette: Theme): 'light' | 'dark' {
   return luminance(palette.background) > luminance(palette.foreground) ? 'light' : 'dark';
 }
 
+/** The bundled Nerd Font covers icons (e.g. from Neovim) the configured font lacks. */
+const FONT_FALLBACKS = 'Symbols Nerd Font Mono, monospace';
+
 export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight: number, animations: boolean) {
   const background = palette.background;
   const surface = mix(background, palette.foreground, 0.05);
@@ -102,9 +105,9 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight:
     name: 'btmux',
     extends: neutralTheme,
     typography: {
-      body: { family: fontFamily, fallbacks: 'monospace' },
-      heading: { family: fontFamily, fallbacks: 'monospace' },
-      code: { family: fontFamily, fallbacks: 'monospace' },
+      body: { family: fontFamily, fallbacks: FONT_FALLBACKS },
+      heading: { family: fontFamily, fallbacks: FONT_FALLBACKS },
+      code: { family: fontFamily, fallbacks: FONT_FALLBACKS },
     },
     ...(animations ? {} : { motion: { fast: 0, medium: 0, ratio: 1 } }),
     tokens,

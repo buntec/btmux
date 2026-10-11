@@ -43,6 +43,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const settingsOpen = useStore((s) => s.settingsOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
+  const nvimOpen = useStore((s) => s.nvimOpen);
   const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
   const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
   const fileBrowserMode = useStore((s) => s.fileBrowserInitialMode);
@@ -125,6 +126,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
       agentGridOpen ||
       switcherOpen ||
       browserOwnsActivePane ||
+      nvimOpen ||
       !focusId ||
       !isActiveSession
     ) {
@@ -147,6 +149,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     switcherOpen,
     fileBrowserOpen,
     fileBrowserPaneId,
+    nvimOpen,
     isActiveSession,
     settingsOpen,
     previewConfig,
@@ -213,7 +216,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const paneNumberById = new Map(
     activeWindow ? paneIdsInOrder(activeWindow.layout).map((id, i) => [id, i] as const) : [],
   );
-  const showPaneNumbers = isActiveSession && paneNumbersVisible && !zoomedPaneId;
+  const showPaneNumbers = isActiveSession && paneNumbersVisible && !zoomedPaneId && !nvimOpen;
 
   // The keep-alive pool: one TerminalPane per pane across *every* window of the
   // session, keyed by paneId so the instance survives window switches (same key
@@ -278,6 +281,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           }),
         )}
       {!zoomedPaneId &&
+        !nvimOpen &&
         dividers.map((divider) => (
           <div
             key={divider.id}

@@ -56,6 +56,12 @@ palettes are fetched whenever the configuration loads.
 Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described in
 [btmux for tmux users](tmux.md).
 
+## Built-in Neovim
+
+`file-editor` chooses where the file browser and Git mode open files: `"neovim"`
+or `"pane"`. The default is `"neovim"` when Neovim 0.12 or newer is on the server's
+`PATH`, else `"pane"`. See [Built-in Neovim](neovim.md).
+
 ## LaTeX overlay
 
 btmux scans the visible part of each pane for LaTeX: `$$…$$`, `\[…\]`,

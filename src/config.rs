@@ -220,6 +220,29 @@ pub enum WindowSort {
     Alphabetical,
 }
 
+/// Where the file browser and Git mode open files.
+/// Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum FileEditor {
+    /// The pane's foreground Neovim, or `$EDITOR` in its shell.
+    Pane,
+    /// The built-in Neovim (`prefix + e`).
+    Neovim,
+}
+
+impl FileEditor {
+    /// The default: Neovim if the built-in one can start, else the pane.
+    fn detect() -> Self {
+        if crate::ws::nvim::available() {
+            Self::Neovim
+        } else {
+            Self::Pane
+        }
+    }
+}
+
 /// Log level configuration. Both fields accept standard tracing directives
 /// (`error`, `warn`, `info`, `debug`, `trace`) or full `EnvFilter` syntax.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -366,6 +389,9 @@ pub struct FileConfig {
     /// Sort order for the window list (status bar, choose-tree, switcher).
     #[serde(rename = "window-sort", default)]
     pub window_sort: WindowSort,
+    /// Where the file browser and Git mode open files.
+    #[serde(rename = "file-editor")]
+    pub file_editor: Option<FileEditor>,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -420,6 +446,7 @@ impl Default for FileConfig {
             pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
+            file_editor: None,
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -488,8 +515,9 @@ impl Default for TerminalOptions {
 /// base10–base17 for dedicated bright/extra-background colors. Which system is
 /// in use is auto-detected by the presence of base10–base17 (see `to_theme`).
 /// Each value is a CSS color string (e.g. "#1e1e2e").
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct BaseTheme {
     pub base00: String,
     pub base01: String,
@@ -766,6 +794,8 @@ pub struct ClientConfig {
     pub terminal: TerminalOptions,
     /// Resolved `ITheme`; the bundled default when no palette is configured.
     pub theme: Theme,
+    /// Original Base16/24 slots for the built-in Neovim colorscheme.
+    pub color_palette: BaseTheme,
     /// The bundled default theme, for previewing an unset `colors`.
     pub default_theme: Theme,
     pub vi_mode: bool,
@@ -818,6 +848,8 @@ pub struct ClientConfig {
     pub session_sort: SessionSort,
     /// Sort order for the window list (status bar, choose-tree, switcher).
     pub window_sort: WindowSort,
+    /// Where the file browser and Git mode open files.
+    pub file_editor: FileEditor,
     /// How many recently-viewed windows the window-grid (`prefix + w`) shows.
     pub window_grid_count: u32,
     /// btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
@@ -885,6 +917,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("f", "file-browser"),
     ("g", "git-view"),
     ("t", "process-view"),
+    ("e", "neovim"),
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling
@@ -1263,6 +1296,11 @@ pub fn generate_config_toml() -> String {
 # "alphabetical" = sorted by name (default).
 # window-sort = "alphabetical"
 
+# Where the file browser and Git mode open files.
+# "pane" = the pane's foreground Neovim, or $EDITOR in its shell,
+# "neovim" = the built-in Neovim (prefix + e) (default if Neovim 0.12+ is on PATH).
+# file-editor = "neovim"
+
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
 # window-grid-count = {DEFAULT_WINDOW_GRID_COUNT}
@@ -1455,24 +1493,27 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
 
     // Inline [theme] takes priority; fall back to a resolved remote palette, a
     // local palette path, or a named scheme from the colors directory.
-    let selected_color_theme = file
+    let selected_palette = file
         .theme
         .is_none()
         .then_some(file.colors.as_deref())
         .flatten()
         .and_then(|colors| {
             if is_color_scheme_url(colors) {
-                file.resolved_colors.as_ref().map(BaseTheme::to_theme)
+                file.resolved_colors.clone()
             } else {
-                load_color_scheme(colors).map(|bt| bt.to_theme())
+                load_color_scheme(colors)
             }
         });
-    let theme = file
+    let color_palette = file
         .theme
-        .as_ref()
-        .map(BaseTheme::to_theme)
-        .or_else(|| selected_color_theme.clone())
-        .unwrap_or_else(default_theme);
+        .clone()
+        .or_else(|| selected_palette.clone())
+        .unwrap_or_else(|| {
+            bundled_color_scheme(DEFAULT_COLOR_SCHEME).expect("bundled default color scheme parses")
+        });
+    let theme = color_palette.to_theme();
+    let selected_color_theme = selected_palette.map(|palette| palette.to_theme());
 
     let (wallpaper_url, wallpaper_path) = match &file.wallpaper {
         Some(raw) if raw.starts_with('/') => (
@@ -1522,6 +1563,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         commands: default_commands(),
         terminal: file.terminal.clone(),
         theme,
+        color_palette,
         default_theme: default_theme(),
         vi_mode: file.vi_mode,
         repeat_time: file.repeat_time,
@@ -1549,6 +1591,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
+        file_editor: file.file_editor.clone().unwrap_or_else(FileEditor::detect),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
         color_schemes,
@@ -1585,6 +1628,7 @@ pub struct ConfigUpdate {
     pub keys: Option<BTreeMap<String, String>>,
     pub session_sort: Option<SessionSort>,
     pub window_sort: Option<WindowSort>,
+    pub file_editor: Option<FileEditor>,
     pub window_grid_count: Option<u32>,
     pub colors: Option<String>,
     /// Parsed palette for a remote `colors` override. Filled by the WebSocket
@@ -1656,6 +1700,9 @@ impl ConfigUpdate {
         }
         if other.window_sort.is_some() {
             self.window_sort = other.window_sort.clone();
+        }
+        if other.file_editor.is_some() {
+            self.file_editor = other.file_editor.clone();
         }
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
@@ -1796,6 +1843,9 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(window_sort) = &overrides.window_sort {
         file.window_sort = window_sort.clone();
+    }
+    if let Some(file_editor) = &overrides.file_editor {
+        file.file_editor = Some(file_editor.clone());
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
@@ -1963,6 +2013,34 @@ palette:
         assert_eq!(resolved.theme.background, "#14110b");
         // base24 bright slot, not the base16 accent.
         assert_eq!(resolved.theme.bright_red, "#ffacb3");
+        assert_eq!(resolved.color_palette.to_theme(), resolved.theme);
+    }
+
+    #[test]
+    fn nvim_palette_preserves_inline_and_override_slots() {
+        let palette = parse_color_scheme(BASE24_YAML).unwrap();
+        let file = FileConfig {
+            theme: Some(palette.clone()),
+            colors: Some("btmux-default-light".into()),
+            ..FileConfig::default()
+        };
+        let resolved = resolve_binds(&file);
+        assert_eq!(resolved.color_palette, palette);
+        let serialized = serde_json::to_value(&resolved.color_palette).unwrap();
+        assert_eq!(serialized["base0F"], "#ff00ff");
+        assert_eq!(serialized["base11"], "#111111");
+        let overridden = resolve_with_overrides(
+            &file,
+            &ConfigUpdate {
+                colors: Some("btmux-default-light".into()),
+                ..ConfigUpdate::default()
+            },
+        );
+        assert_eq!(
+            overridden.color_palette,
+            bundled_color_scheme("btmux-default-light").unwrap()
+        );
+        assert_eq!(overridden.color_palette.to_theme(), overridden.theme);
     }
 
     #[test]
@@ -2000,6 +2078,10 @@ palette:
         assert!(is_color_scheme_url(url));
         assert_eq!(resolved.active_color_scheme.as_deref(), Some(url));
         assert_eq!(resolved.theme.background, "#000000");
+        assert_eq!(
+            resolved.color_palette,
+            file.resolved_colors.clone().unwrap()
+        );
         assert!(resolved.color_schemes.iter().any(|scheme| scheme == url));
         assert!(resolved.color_scheme_themes.contains_key(url));
     }
@@ -2068,6 +2150,7 @@ palette:
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
+        assert_eq!(resolved.file_editor, FileEditor::detect());
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.10);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
@@ -2148,6 +2231,7 @@ palette:
                 keys: Some(keys),
                 session_sort: Some(SessionSort::Alphabetical),
                 window_sort: Some(WindowSort::Created),
+                file_editor: Some(FileEditor::Pane),
                 window_grid_count: Some(9),
                 renderer: Some("canvas".to_string()),
                 cursor_blink: Some(false),
@@ -2177,6 +2261,7 @@ palette:
         );
         assert_eq!(resolved.session_sort, SessionSort::Alphabetical);
         assert_eq!(resolved.window_sort, WindowSort::Created);
+        assert_eq!(resolved.file_editor, FileEditor::Pane);
         assert_eq!(resolved.window_grid_count, 9);
         assert_eq!(resolved.terminal.renderer.as_deref(), Some("canvas"));
         assert_eq!(resolved.terminal.cursor_blink, Some(false));

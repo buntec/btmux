@@ -15,9 +15,10 @@ import {
   FONT_WEIGHT_STEP,
 } from '../state/configDefaults';
 
-import { parsePrefix, prefixBytes, type ParsedKey } from '../lib/prefixKey';
+import { parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey } from '../lib/prefixKey';
 import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
+import { sendToNvim } from '../components/NvimSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
@@ -31,6 +32,8 @@ function matchesPrefix(e: KeyboardEvent, p: ParsedKey): boolean {
 }
 
 function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
+  const keys = prefixNvimKeys(p);
+  if (keys && useStore.getState().nvimOpen && sendToNvim(keys)) return;
   const paneId = useStore.getState().getActivePaneId(sessionId);
   const text = prefixBytes(p);
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
@@ -119,7 +122,9 @@ export function useKeybindings(
 
     const handler = (e: KeyboardEvent) => {
       const isFKey = e.key.startsWith('F') && e.key.length >= 2 && e.key.length <= 3 && !isNaN(Number(e.key.slice(1)));
-      if (e.metaKey || isFKey) {
+      // The built-in Neovim decides itself which of these to keep (see nvimKey).
+      const fromNvim = (e.target as HTMLElement | null)?.dataset?.nvimInput !== undefined;
+      if ((e.metaKey || isFKey) && !fromNvim) {
         e.stopPropagation();
         return;
       }
@@ -507,6 +512,9 @@ export function runAction(
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'git');
       break;
     }
+    case 'neovim':
+      store.setNvimOpen(!store.nvimOpen);
+      break;
     case 'process-view': {
       const win = session?.windows[session.active_window];
       const pane = win?.panes[win.active_pane];

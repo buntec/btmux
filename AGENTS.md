@@ -68,6 +68,8 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
 4. **`/ws/sysstat`** (`src/ws/sysstat.rs`) — emits one JSON frame per second with per-core CPU, memory, and aggregate network rates for the StatusBar. The frontend reconnects this auxiliary socket independently.
 
+5. **`/ws/nvim`** (`src/ws/nvim.rs`) — a byte proxy between the browser and a new connection to the shared built-in Neovim's RPC socket. The browser speaks msgpack-RPC itself; see *Built-in Neovim* below.
+
 REST handlers and MCP tools share the same `SessionManager`; structural mutations must call `broadcast_state` so browser tabs stay synchronized. REST lives under `/api` and includes session/window/pane/layout operations, pane input/output, notifications, and raw local-file serving. MCP is mounted at `/mcp`; tools cover session/window/pane lifecycle, `send_keys`, `read_pane_output`, and `run_command`. `run_command` appends Enter, captures ANSI-stripped output until 400 ms of quiet by default, and has a 15 s default timeout; quiet output does not prove process exit.
 
 ### PTY lifecycle (`src/pty/mod.rs`)
@@ -128,6 +130,71 @@ The file browser has a separate `fileStore` for directory/search/Git selection
 state. It can mutate files, so changes to its WebSocket protocol or path
 handling must be reviewed with `ws/files.rs`, `fs_ops.rs`, and
 `frontend/src/protocol/file-messages.ts` together.
+
+### Built-in Neovim
+
+`prefix + e` (`neovim` action) toggles a full-surface Neovim GUI over the
+active session (`NvimSurface.tsx`). The backend lazily spawns one shared
+`nvim --embed --headless --listen <private socket>` per server; `--embed` ties
+its lifetime to btmux's stdin pipe. It starts with `g:btmux = 1`, which user
+config can check, and the bundled plugin on 'runtimepath'. Each browser tab
+attaches its own UI (`ext_multigrid`, `ext_cmdline`, `ext_popupmenu`,
+`ext_messages`, which sets 'cmdheight' to 0 and drops hit-enter prompts).
+Neovim replays its full state on attach, so there is no journal. When Neovim exits
+with status 0 (`:q`), the backend sends close code 1000 and the surface closes; a
+crash or any other close shows a restart prompt. If the socket file disappears
+while Neovim runs, the backend has it listen again over the `--embed` channel. Neovim enables `ext_*` features only if every
+attached UI supports them, sizes the grid to the smallest UI, and defers
+non-fast requests (including `nvim_ui_attach`) while blocked at a prompt.
+
+`lib/nvimGrid.ts` keeps one layer per grid: grid 1 (statuslines, separators)
+on the surface canvas, and a canvas per window or float, positioned from
+`win_pos`/`win_float_pos` in a host div that lets the mouse through to them.
+Mouse events go to the grid under the pointer, with grid-relative cells.
+Floats get an Astryx card frame behind their canvas (`NvimFloatFrames`): the
+border reported by `win_viewport_margins` is cropped, its title is fetched for
+the frame, and cells with the NormalFloat background stay transparent.
+'winblend' arrives as `blend` on each cell's highlight: it sets the frame's
+background alpha (blurred by `--btm-backdrop-blur`) and other cell backgrounds'
+alpha, never the text's; 'pumblend' does the same for the popupmenu cards. Each
+layer draws dirty rows to an offscreen canvas, and each flush composes it onto
+the visible canvas with in-flight
+`grid_scroll` animations (a snapshot of the region plus an eased pixel offset;
+`[terminal] smooth-scroll-duration`, off with `animations = false`) and then
+the cursor; layers with no dirty rows, scrolls, or cursor change are skipped. Unset `Normal` colors fall back to the btmux theme, as in a TUI,
+and 'background' is set from the theme's luminance. 'guifont' (Neovide format,
+`lib/nvimFont.ts`) and 'linespace' override the btmux terminal font. Keys go
+through `lib/nvimKeys.ts` to `nvim_input`: F-keys and Cmd (`<D-…>`) reach
+Neovim, except Cmd shortcuts the browser or desktop app keeps; the global
+keybinding hook lets them through for the `data-nvim-input` textarea, which
+follows the cursor so IME candidates and compositions appear there. Wheel steps
+follow 'mousescroll'.
+`lib/nvimWidgets.ts` reduces cmdline, popupmenu, and message events and
+publishes them once per `flush`; `NvimWidgets.tsx` renders them as Astryx
+components. Short messages (echo, `vim.notify`, errors) are expiring toasts;
+multi-line output (`:ls`, `:!cmd`, `:messages`, prompts) is a panel the next
+normal-mode key dismisses. Neovim never sends `msg_clear` in normal use, so
+btmux owns dismissal.
+
+The plugin in `extras/nvim` (`require("btmux")`) sets itself up after user
+config unless the config called `setup()` first. It forwards completion docs
+(`btmux_complete_info`, by wrapping the internal `nvim__complete_set`, and
+hides Neovim's own doc float), LSP signature help (`btmux_signature`,
+triggered on `InsertCharPre` because `TextChangedI` waits for typeahead), and
+progress (`btmux_progress`: `LspProgress` becomes a progress-message, and every
+`Progress` event is forwarded with the status and percent `msg_show` lacks;
+Neovim's own file I/O progress shows only its result, since 0.12 never finishes
+the one for reads), and completion kind icons from mini.icons
+(`btmux.kinds.icons()`, requested after attach; `btmux_kind_icons` on
+colorscheme changes). Astryx typography falls back to the bundled Nerd Font so
+such glyphs render outside the grid too. These
+`rpcnotify(0, …)` messages are a private protocol between the plugin and
+`NvimSurface.tsx`: change both together.
+
+`file-editor` (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
+`nvim_open`, which opens the file via `--remote-expr` on the shared socket;
+`pane` keeps the older `open_file` path (the pane's foreground Neovim, else
+`$EDITOR` in its shell).
 
 ### Layout tree — the shared contract
 
@@ -256,6 +323,8 @@ generated protocol if the wire type changes.
 `server.rs` uses `rust_embed` to compile `frontend/dist` into the binary at
 build time. The binary serves the frontend from memory, so it works from any
 working directory — no runtime dependency on the `frontend/dist` folder.
+`ws/nvim.rs` embeds the Neovim plugin (`extras/nvim`) the same way and unpacks
+it beside the Neovim socket each time it starts the built-in Neovim.
 
 ## Access boundary
 

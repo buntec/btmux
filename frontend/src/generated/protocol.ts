@@ -34,6 +34,9 @@ export type SessionSort = "created" | "mru" | "alphabetical";
 export type WindowSort = "created" | "mru" | "alphabetical";
 
 // prettier-ignore
+export type FileEditor = "pane" | "neovim";
+
+// prettier-ignore
 export type LogConfig = {
 /**
  * Log level for stderr output. Defaults to "warn".
@@ -66,6 +69,9 @@ export type FontEntry = { family: string, weight_min: number, weight_max: number
 
 // prettier-ignore
 export type Theme = { foreground: string, background: string, cursor: string, cursorAccent: string, selectionBackground: string, black: string, red: string, green: string, yellow: string, blue: string, magenta: string, cyan: string, white: string, brightBlack: string, brightRed: string, brightGreen: string, brightYellow: string, brightBlue: string, brightMagenta: string, brightCyan: string, brightWhite: string, };
+
+// prettier-ignore
+export type BaseTheme = { base00: string, base01: string, base02: string, base03: string, base04: string, base05: string, base06: string, base07: string, base08: string, base09: string, base0A: string, base0B: string, base0C: string, base0D: string, base0E: string, base0F: string, base10: string | null, base11: string | null, base12: string | null, base13: string | null, base14: string | null, base15: string | null, base16: string | null, base17: string | null, };
 
 // prettier-ignore
 export type TerminalOptions = { renderer: "canvas" | "webgl" | null, cursorBlink: boolean | null, cursorStyle: "block" | "underline" | "bar" | null, scrollback: number | null, fontSize: number | null, fontFamily: string | null, fontWeight: number | null, allowTransparency: boolean | null, convertEol: boolean | null, disableStdin: boolean | null, smoothScrollDuration: number | null,
@@ -105,6 +111,10 @@ commands: Array<Command>, terminal: TerminalOptions,
  * Resolved `ITheme`; the bundled default when no palette is configured.
  */
 theme: Theme,
+/**
+ * Original Base16/24 slots for the built-in Neovim colorscheme.
+ */
+color_palette: BaseTheme,
 /**
  * The bundled default theme, for previewing an unset `colors`.
  */
@@ -190,6 +200,10 @@ session_sort: SessionSort,
  */
 window_sort: WindowSort,
 /**
+ * Where the file browser and Git mode open files.
+ */
+file_editor: FileEditor,
+/**
  * How many recently-viewed windows the window-grid (`prefix + w`) shows.
  */
 window_grid_count: number,
@@ -220,14 +234,14 @@ fonts: Array<FontEntry>, };
 export type ServerInfo = { version: string, profile: string | null, config_file: string | null, state_file: string | null, token_file: string | null, token_source: string, listen_address: string, executable: string | null, };
 
 // prettier-ignore
-export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, show_nav_header?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_shader_params?: { [key in string]: { [key in string]: ShaderValue } }, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
+export type ConfigUpdate = { prefix?: string, shell?: string, vi_mode?: boolean, show_pane_titles?: boolean, show_nav_header?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, file_editor?: FileEditor, window_grid_count?: number, colors?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_shader_params?: { [key in string]: { [key in string]: ShaderValue } }, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
 /**
  * Border-draw style name; `"none"` (or the empty string) disables it.
  */
 pane_switch_border?: string, pane_switch_border_speed?: number, };
 
 // prettier-ignore
-export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_pane", pane_id: string, } | { "type": "reset_agent", pane_id: string, } | { "type": "focus_client" } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
+export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_pane", pane_id: string, } | { "type": "reset_agent", pane_id: string, } | { "type": "focus_client" } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string, line: number | null, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
 export type ServerMessage = { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: ToastLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null,

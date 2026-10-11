@@ -22,6 +22,7 @@ last session, `[` capture scrollback, `/` search, `]` paste, `?` key list, `:` p
 | `m`     | mark pane   | LaTeX overlay                                     |
 | `C`     | (unbound)   | new session (prompts for name)                    |
 | `g` `a` | (unbound)   | git view, agent grid                              |
+| `e`     | (unbound)   | built-in Neovim                                   |
 | `[`     | copy mode   | opens the scrollback in `$EDITOR` inside the pane |
 
 Rebind any of them under `[keys]` in `config.toml`.

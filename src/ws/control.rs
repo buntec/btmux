@@ -160,6 +160,10 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return result;
     }
 
+    if let ClientMessage::NvimOpen { path, line } = &cmd {
+        return crate::ws::nvim::open(path, *line).await;
+    }
+
     if let ClientMessage::OpenFile {
         pane_id,
         path,
@@ -293,6 +297,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
         | ClientMessage::OpenFile { .. }
+        | ClientMessage::NvimOpen { .. }
         | ClientMessage::FocusClient => unreachable!(),
     }
 
@@ -433,7 +438,11 @@ fn vimscript_string(s: &str) -> String {
 /// open `path`, jumping to `line` when given. Shells out to the `nvim` binary
 /// itself as an RPC client (`--remote-expr`) rather than linking an RPC
 /// client crate — the editor doing the listening is already `nvim`.
-async fn remote_open_in_editor(addr: &str, path: &str, line: Option<u32>) -> Result<(), ()> {
+pub(crate) async fn remote_open_in_editor(
+    addr: &str,
+    path: &str,
+    line: Option<u32>,
+) -> Result<(), ()> {
     let expr = editor_open_expr(path, line);
     let status = tokio::time::timeout(
         std::time::Duration::from_secs(2),
@@ -796,6 +805,11 @@ pub(crate) enum ClientMessage {
     /// shell is foreground.
     OpenFile {
         pane_id: Uuid,
+        path: String,
+        line: Option<u32>,
+    },
+    /// Open a file in the built-in Neovim (`/ws/nvim`).
+    NvimOpen {
         path: String,
         line: Option<u32>,
     },

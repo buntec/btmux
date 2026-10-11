@@ -512,6 +512,7 @@ export function ConfigPage({ config, send }: Props) {
     send({ type: 'update_config', update });
     setDirty(new Set());
     toast({ body: 'Settings applied to the current session' });
+    setSettingsOpen(false);
   };
 
   const copy = async () => {

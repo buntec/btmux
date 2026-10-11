@@ -7,6 +7,8 @@ import { HStack } from '@astryxdesign/core/Layout';
 import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { cn } from '@/lib/utils';
+import { useStore } from '../state/store';
+import { getAnimations } from '../state/configDefaults';
 
 /** Collapse a home-directory prefix to `~` so cwds read like the shell prompt. */
 function shortCwd(cwd: string | null | undefined): string | null {
@@ -125,8 +127,16 @@ const AGENT_TOKEN_COLORS: Record<Exclude<AgentState, 'unknown'>, TokenProps['col
 };
 
 export function AgentStatusBadge({ status }: { status?: AgentStatus }) {
+  const animate = useStore((state) => getAnimations(state.config));
   if (!status || status.state === 'unknown') return null;
   const label = `${status.agent ? `${status.agent} ` : ''}${status.state}`;
-  const token = <Token size="sm" color={AGENT_TOKEN_COLORS[status.state]} label={label} />;
+  const token = (
+    <Token
+      size="sm"
+      color={AGENT_TOKEN_COLORS[status.state]}
+      label={label}
+      className={animate && status.state === 'working' ? 'btm-agent-shimmer' : undefined}
+    />
+  );
   return status.message ? <Tooltip content={status.message}>{token}</Tooltip> : token;
 }

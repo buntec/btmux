@@ -296,6 +296,25 @@
   }
 }
 
+/* Working badge (PaneTitleBar.tsx): a highlight sweeps across the label. */
+@media (prefers-reduced-motion: no-preference) {
+  .btm-agent-shimmer > span {
+    --btm-shimmer: color-mix(in oklab, currentColor, light-dark(black, white) 70%);
+    background: linear-gradient(90deg, currentColor 40%, var(--btm-shimmer) 50%, currentColor 60%) 0 0 / 300% 100%;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: btm-agent-shimmer 2s ease-in-out infinite;
+  }
+}
+@keyframes btm-agent-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-agent-animate],
   [data-agent-animate] *,

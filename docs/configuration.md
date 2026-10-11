@@ -65,7 +65,8 @@ btmux install-fish-theme   # or: btmux generate-fish-theme > btmux.theme
 This writes `~/.config/fish/themes/btmux.theme` and `conf.d/btmux.fish` (respecting
 `$XDG_CONFIG_HOME`). The theme uses named ANSI colors following base16 roles, so
 it tracks the btmux scheme, including live changes. The snippet selects it only
-inside btmux panes and overrides universal `fish_color_*` variables there.
+inside btmux panes and overrides universal `fish_color_*` variables there. The
+Home Manager module installs both files when `programs.fish.enable` is set.
 
 ## tmux behaviors
 

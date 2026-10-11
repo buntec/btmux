@@ -97,7 +97,15 @@ in
       description = ''
         The btmux package to install and run. If the selected nixpkgs already
         provides `btmux`, it is used automatically; otherwise set this to a
-        package from an overlay or flake input.
+        package from an overlay or flake input. Set to `null` to manage btmux
+        outside Home Manager; this requires `service.enable = false`.
+      '';
+    };
+
+    enableFishIntegration = lib.hm.shell.mkFishIntegrationOption { inherit config; } // {
+      description = ''
+        Whether to install the btmux fish theme and select it in btmux panes,
+        as `btmux install-fish-theme` does. Requires `programs.fish.enable`.
       '';
     };
 
@@ -221,8 +229,8 @@ in
         message = "programs.btmux.desktop.package must be set on unsupported platforms";
       }
       {
-        assertion = cfg.package != null;
-        message = "programs.btmux.package must be set because this nixpkgs does not provide a btmux package";
+        assertion = !cfg.service.enable || cfg.package != null;
+        message = "programs.btmux.package must be set when programs.btmux.service.enable is true";
       }
       {
         assertion = !cfg.service.enable || isLinux || isDarwin;
@@ -237,9 +245,13 @@ in
       ]
       ++ lib.optionals (cfg.desktop.enable && cfg.desktop.package != null) [ cfg.desktop.package ];
 
-    xdg.configFile."btmux/config.toml" = {
-      source = configFile;
-    };
+    xdg.configFile = lib.mkMerge [
+      { "btmux/config.toml".source = configFile; }
+      (lib.mkIf (cfg.enableFishIntegration && config.programs.fish.enable) {
+        "fish/themes/btmux.theme".source = ../extras/fish/btmux.theme;
+        "fish/conf.d/btmux.fish".source = ../extras/fish/btmux.fish;
+      })
+    ];
 
     systemd.user.services.btmux = lib.mkIf (cfg.service.enable && isLinux) {
       Unit = {

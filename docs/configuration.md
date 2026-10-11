@@ -44,12 +44,20 @@ The `colors` option accepts:
   `btmux-default-light`, `kauz-dark`, or `kauz-light`;
 - the name of a base16/base24 YAML file in `$XDG_CONFIG_HOME/btmux/colors/`
   (falling back to `~/.config/btmux/colors/`), which takes precedence over a
-  bundled scheme of the same name;
+  bundled scheme of the same name. The name is the filename without its
+  `.yaml` or `.yml` extension; files with other extensions are ignored;
 - an absolute or `~/`-relative local YAML path; or
 - an `http://` or `https://` URL to a YAML palette.
 
-Palettes may be defined at the top level or nested under `palette`. Remote
-palettes are fetched whenever the configuration loads.
+Palettes may be defined at the top level or nested under `palette`. They must
+contain `base00`–`base0F`; a file without them is skipped with a warning in the
+server log. A palette is base24 only if it also has all of `base10`–`base17`;
+with any of them missing it is treated as base16. Remote palettes are fetched
+whenever the configuration loads.
+
+Schemes in the colors directory and the bundled schemes appear in the colors
+picker of the command palette. Picking one there is session-only; set `colors`
+in `config.toml` to keep it.
 
 Programs in a pane can query the scheme: btmux answers OSC 4/10/11/12 color
 queries and `CSI ? 996 n`, and sends `CSI ? 997 ; 1|2 n` to programs that

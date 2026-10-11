@@ -24,7 +24,7 @@ export const CONFIG_DEFAULTS = {
   backdropBlur: 2,
   backdropDim: 0.5,
   paneSwitchBorder: 'wipe' as string | null,
-  paneSwitchBorderSpeed: 0.1,
+  paneSwitchBorderSpeed: 0.15,
   sessionSort: 'mru' as const,
   windowSort: 'alphabetical' as const,
   windowGridCount: 4,

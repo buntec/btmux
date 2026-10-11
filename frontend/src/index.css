@@ -95,32 +95,14 @@
   }
 }
 /* ── Pane-switch border-draw effects (see lib/paneSwitchBorder.ts) ──────────
-   One-shot, played on the pane you switch to. Each consumes the custom props
-   TerminalPane sets inline: --btm-border-speed / --btm-border-color /
-   --btm-border-edge. */
-
-/* `trace` — counter-clockwise SVG stroke. The companion <path> is wound
-   counter-clockwise and normalized to pathLength 100, so walking the offset
-   down to 0 "draws" it CCW. */
-@keyframes btm-pane-border-trace {
-  from {
-    stroke-dashoffset: 100;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-/* `sweep` / `wipe` — border-image gradient draws. Registered custom properties
-   so the gradient re-resolves each frame as they animate. */
+   One-shot, played on the pane you switch to. Each is a copy of the focus ring
+   (same box, width, and color) revealed by an animated mask, so drawn segments
+   always match the ring it hands over to. TerminalPane sets --btm-border-speed /
+   --btm-border-color / --btm-border-edge inline; PaneBorderDraw sets
+   --btm-border-v. Registered custom properties so masks re-resolve each frame. */
 @property --btm-bi-angle {
   syntax: '<angle>';
   initial-value: 0deg;
-  inherits: false;
-}
-@property --btm-bi-slice {
-  syntax: '<number>';
-  initial-value: 0;
   inherits: false;
 }
 @property --btm-bi-pct {
@@ -128,14 +110,25 @@
   initial-value: 0%;
   inherits: false;
 }
+@property --btm-bi-p {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: false;
+}
+@keyframes btm-pane-border-trace {
+  from {
+    --btm-bi-p: 0;
+  }
+  to {
+    --btm-bi-p: 1;
+  }
+}
 @keyframes btm-pane-border-sweep {
   from {
     --btm-bi-angle: 0deg;
-    --btm-bi-slice: 0;
   }
   to {
     --btm-bi-angle: 360deg;
-    --btm-bi-slice: 1;
   }
 }
 @keyframes btm-pane-border-wipe {
@@ -147,31 +140,59 @@
   }
 }
 .btm-pane-border {
+  --btm-ring-width: 1.5px;
   position: absolute;
-  inset: 1px;
+  inset: 0;
   pointer-events: none;
   z-index: 2;
-  border: 3px solid transparent;
-  border-image-width: 3px;
-  box-sizing: border-box;
+  border: var(--btm-ring-width) solid var(--btm-border-color);
 }
+/* `trace` — one ring-width strip per edge, grown counter-clockwise from the
+   top-left corner at constant perimeter speed. --btm-border-v is one vertical
+   edge's share of the perimeter. */
+.btm-pane-border--trace {
+  --v: var(--btm-border-v, 0.25);
+  --h: calc(0.5 - var(--v));
+  --w: var(--btm-ring-width);
+  mask-image:
+    linear-gradient(#000 0 0), linear-gradient(#000 0 0), linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-repeat: no-repeat;
+  mask-position:
+    left top,
+    left bottom,
+    right bottom,
+    right top;
+  mask-size:
+    var(--w) calc(clamp(0, var(--btm-bi-p) / var(--v), 1) * 100%),
+    calc(clamp(0, (var(--btm-bi-p) - var(--v)) / var(--h), 1) * 100%) var(--w),
+    var(--w) calc(clamp(0, (var(--btm-bi-p) - var(--v) - var(--h)) / var(--v), 1) * 100%),
+    calc(clamp(0, (var(--btm-bi-p) - 2 * var(--v) - var(--h)) / var(--h), 1) * 100%) var(--w);
+  animation: btm-pane-border-trace var(--btm-border-speed, 0.35s) linear forwards;
+}
+/* `sweep` — a conic mask rotated clockwise, with a bright tail behind the
+   leading edge that fades once the sweep completes. */
 .btm-pane-border--sweep {
-  border-image-source: conic-gradient(
-    from 46deg,
-    var(--btm-border-color) var(--btm-bi-angle),
-    var(--btm-border-edge, #fff) calc(var(--btm-bi-angle) + 0.5deg)
-  );
-  border-image-slice: var(--btm-bi-slice);
-  animation:
-    btm-pane-border-sweep var(--btm-border-speed, 0.35s) linear forwards,
-    btm-fade-out 0.25s linear var(--btm-border-speed, 0.35s) forwards;
+  mask-image: conic-gradient(from 45deg, #000 var(--btm-bi-angle), transparent 0);
+  animation: btm-pane-border-sweep var(--btm-border-speed, 0.35s) linear forwards;
 }
+.btm-pane-border--sweep::after {
+  --btm-bi-angle: inherit;
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--btm-ring-width));
+  border: var(--btm-ring-width) solid var(--btm-border-edge, #fff);
+  mask-image: conic-gradient(
+    from 45deg,
+    transparent calc(var(--btm-bi-angle) - 40deg),
+    #000 var(--btm-bi-angle),
+    transparent 0
+  );
+  animation: btm-fade-out 0.25s linear var(--btm-border-speed, 0.35s) forwards;
+}
+/* `wipe` — a linear mask slid across the ring on the -45° diagonal. */
 .btm-pane-border--wipe {
-  border-image-source: linear-gradient(-45deg, var(--btm-border-color) var(--btm-bi-pct), transparent 0);
-  border-image-slice: 1;
-  animation:
-    btm-pane-border-wipe var(--btm-border-speed, 0.35s) linear forwards,
-    btm-fade-out 0.25s linear var(--btm-border-speed, 0.35s) forwards;
+  mask-image: linear-gradient(-45deg, #000 var(--btm-bi-pct), transparent 0);
+  animation: btm-pane-border-wipe var(--btm-border-speed, 0.35s) linear forwards;
 }
 @keyframes btm-prefix-in {
   from {
@@ -310,10 +331,10 @@
     from, to { box-shadow: none; }
   }
   @keyframes btm-pane-border-trace {
-    from, to { stroke-dashoffset: 0; }
+    from, to { --btm-bi-p: 1; }
   }
   @keyframes btm-pane-border-sweep {
-    from, to { --btm-bi-angle: 360deg; --btm-bi-slice: 1; }
+    from, to { --btm-bi-angle: 360deg; }
   }
   @keyframes btm-pane-border-wipe {
     from, to { --btm-bi-pct: 100%; }

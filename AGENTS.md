@@ -293,7 +293,7 @@ with runtime FPS, resolution, pause, seed, and cursor controls. No terminal post
 `[wallpaper-shader-params.<id>]` and the session-only `wallpaper_shader_params` override.
 GPU failure leaves the theme background visible. Core rendering has no telemetry collector.
 
-`PANE_BORDER_STYLES` in `lib/paneSwitchBorder.ts` is a CSS/SVG one-shot border
+`PANE_BORDER_STYLES` in `lib/paneSwitchBorder.ts` is a CSS-masked one-shot border
 draw on the pane you switch to, controlled by `pane-switch-border` and
 `pane-switch-border-speed`. Unknown border IDs fall back in the frontend, and `animations = false` disables
 both animated shader and border effects.

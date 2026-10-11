@@ -5,37 +5,28 @@
  * an unknown id falls back to the first entry (which matches the backend's
  * default style).
  *
- * - `wipe` — a linear `border-image` gradient slid across the border box on the
- *   -45° diagonal (the default).
- * - `trace` — a counter-clockwise SVG stroke drawn once around the perimeter.
- * - `sweep` — a conic `border-image` gradient rotated clockwise with a bright
- *   leading edge.
+ * Each style is a copy of the focus ring (same box, width, and color) revealed
+ * by an animated mask in `index.css`. The static ring is hidden while it plays,
+ * so the border grows from nothing and hands over without a seam.
+ *
+ * - `wipe` — a linear mask slid across the border box on the -45° diagonal
+ *   (the default).
+ * - `trace` — the ring drawn counter-clockwise from the top-left corner.
+ * - `sweep` — a conic mask rotated clockwise with a bright leading edge.
  */
 export type PaneBorderStyleId = 'trace' | 'sweep' | 'wipe';
 
 export interface PaneBorderStyle {
   id: PaneBorderStyleId;
   label: string;
-  /** 'svg' renders a stroked <path>; 'border-image' renders a <div> + CSS class. */
-  render: 'svg' | 'border-image';
-  /** CSS class applied for the 'border-image' renderer. */
-  className?: string;
+  /** CSS class selecting the reveal mask. */
+  className: string;
 }
 
 export const PANE_BORDER_STYLES: PaneBorderStyle[] = [
-  {
-    id: 'wipe',
-    label: 'Diagonal wipe',
-    render: 'border-image',
-    className: 'btm-pane-border--wipe',
-  },
-  { id: 'trace', label: 'Counter-clockwise trace', render: 'svg' },
-  {
-    id: 'sweep',
-    label: 'Clockwise sweep',
-    render: 'border-image',
-    className: 'btm-pane-border--sweep',
-  },
+  { id: 'wipe', label: 'Diagonal wipe', className: 'btm-pane-border--wipe' },
+  { id: 'trace', label: 'Counter-clockwise trace', className: 'btm-pane-border--trace' },
+  { id: 'sweep', label: 'Clockwise sweep', className: 'btm-pane-border--sweep' },
 ];
 
 export function findPaneBorderStyle(id: string | null | undefined): PaneBorderStyle {

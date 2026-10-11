@@ -187,8 +187,8 @@ backdrop_dim: number,
  */
 pane_switch_border: string | null,
 /**
- * Resolved seconds for the pane-switch border draw (default 0.10, clamped
- * 0.05–3.0).
+ * Resolved seconds for the pane-switch border draw (default 0.15, clamped
+ * 0.05–1.0).
  */
 pane_switch_border_speed: number,
 /**

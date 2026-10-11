@@ -201,7 +201,7 @@ const TOML_DEFAULTS = {
   backdropBlur: 2,
   backdropDim: 0.5,
   paneSwitchBorderStyle: 'wipe',
-  paneSwitchBorderSpeed: 0.1,
+  paneSwitchBorderSpeed: 0.15,
   renderer: 'webgl',
   cursorBlink: true,
   cursorStyle: 'bar',
@@ -822,16 +822,16 @@ export function ConfigPage({ config, send }: Props) {
                       <FormLayout>
                         {range('backdropBlur', 'Modal backdrop blur (px)', 0, 40, 0.5)}
                         {range('backdropDim', 'Modal backdrop dimming', 0, 1, 0.05)}
-                        {choose('paneSwitchBorderStyle', 'Pane switch border', [
+                        {choose('paneSwitchBorderStyle', 'Pane switch border animation', [
                           none,
                           ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
                         ])}
                         {range(
                           'paneSwitchBorderSpeed',
-                          'Pane switch border duration (seconds)',
+                          'Pane switch border animation duration (seconds)',
                           0.05,
-                          3,
-                          0.05,
+                          1,
+                          0.01,
                           paneBorderOff,
                         )}
                       </FormLayout>

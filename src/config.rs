@@ -39,7 +39,7 @@ pub const DEFAULT_BACKDROP_DIM: f32 = 0.5;
 /// falls back there.
 pub const DEFAULT_PANE_SWITCH_BORDER_STYLE: &str = "wipe";
 /// Seconds for the pane-switch border draw to complete. Clamped to 0.05-3.0.
-pub const DEFAULT_PANE_SWITCH_BORDER_SPEED: f32 = 0.10;
+pub const DEFAULT_PANE_SWITCH_BORDER_SPEED: f32 = 0.15;
 pub const DEFAULT_WINDOW_GRID_COUNT: u32 = 4;
 
 pub const DEFAULT_SCROLLBACK_LINES: u32 = 100_000;
@@ -850,8 +850,8 @@ pub struct ClientConfig {
     /// Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
     /// in the file). The frontend also gates this on `animations`.
     pub pane_switch_border: Option<String>,
-    /// Resolved seconds for the pane-switch border draw (default 0.10, clamped
-    /// 0.05–3.0).
+    /// Resolved seconds for the pane-switch border draw (default 0.15, clamped
+    /// 0.05–1.0).
     pub pane_switch_border_speed: f32,
     /// Sort order for the session list.
     pub session_sort: SessionSort,
@@ -1290,7 +1290,7 @@ pub fn generate_config_toml() -> String {
 # pane-switch-border = "{DEFAULT_PANE_SWITCH_BORDER_STYLE}"
 
 # Seconds for the pane-switch border draw to complete (lower = faster).
-# Clamped to 0.05-3.0.
+# Clamped to 0.05-1.0.
 # pane-switch-border-speed = {DEFAULT_PANE_SWITCH_BORDER_SPEED:.2}
 
 # Sort order for the session list.
@@ -1470,7 +1470,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
     let pane_switch_border_speed = file
         .pane_switch_border_speed
         .unwrap_or(DEFAULT_PANE_SWITCH_BORDER_SPEED)
-        .clamp(0.05, 3.0);
+        .clamp(0.05, 1.0);
     // `None` in the file means "unset" → the default style; `"none"`/empty means
     // the user explicitly turned it off → `None` on the wire.
     let pane_switch_border = file
@@ -1965,7 +1965,7 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
         file.pane_switch_border = Some(style.clone());
     }
     if let Some(speed) = overrides.pane_switch_border_speed {
-        file.pane_switch_border_speed = Some(speed.clamp(0.05, 3.0));
+        file.pane_switch_border_speed = Some(speed.clamp(0.05, 1.0));
     }
 
     resolve_binds(&file)
@@ -2161,7 +2161,7 @@ palette:
         assert_eq!(resolved.session_sort, SessionSort::Mru);
         assert_eq!(resolved.file_editor, FileEditor::detect());
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
-        assert_eq!(resolved.pane_switch_border_speed, 0.10);
+        assert_eq!(resolved.pane_switch_border_speed, 0.15);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
     }
 
@@ -2355,7 +2355,7 @@ palette:
         assert_eq!(resolved.backdrop_blur, 12.0);
         assert_eq!(resolved.backdrop_dim, 0.25);
         assert_eq!(resolved.pane_switch_border, None);
-        assert_eq!(resolved.pane_switch_border_speed, 1.2);
+        assert_eq!(resolved.pane_switch_border_speed, 1.0);
 
         assert_eq!(file.wallpaper_shader, None);
         assert_eq!(file.terminal.font_size, Some(18.0));

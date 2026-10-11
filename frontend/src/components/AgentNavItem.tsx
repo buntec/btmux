@@ -1,4 +1,5 @@
-import { useMemo, type SVGProps } from 'react';
+import { useMemo } from 'react';
+import { Bot } from 'lucide-react';
 import { SideNavItem } from '@astryxdesign/core/SideNav';
 import { Icon } from '@astryxdesign/core/Icon';
 import { HStack } from '@astryxdesign/core/Layout';
@@ -10,7 +11,7 @@ import type { AgentState } from '../state/types';
 
 type AgentGroup = 'waiting' | 'working' | 'done' | 'idle';
 
-// Most urgent first; the antenna light shows the first present group.
+// Most urgent first.
 const GROUPS: AgentGroup[] = ['waiting', 'working', 'done', 'idle'];
 const GROUP_OF: Record<AgentState, AgentGroup> = {
   blocked: 'waiting',
@@ -21,28 +22,6 @@ const GROUP_OF: Record<AgentState, AgentGroup> = {
 };
 const DOT_VARIANT = { waiting: 'warning', working: 'accent', done: 'success', idle: 'neutral' } as const;
 const MAX_RAIL_DOTS = 5;
-
-// Lucide's bot with a ball antenna that doubles as a status light.
-function AgentGlyph(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      overflow="visible"
-      {...props}
-    >
-      <path d="M12 8V5" />
-      <circle className="btm-agent-halo" cx="12" cy="3.5" r="1.5" stroke="none" />
-      <circle className="btm-agent-light" cx="12" cy="3.5" r="1.5" />
-      <rect width="16" height="12" x="4" y="8" rx="2" />
-      <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
-    </svg>
-  );
-}
 
 /** Agents nav entry with live per-state agent indicators. */
 export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onClick: () => void }) {
@@ -72,13 +51,7 @@ export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onCli
         <HStack
           className={`relative shrink-0 transition-transform ${collapsed && agents.length > 0 ? '-translate-y-0.5' : ''}`}
         >
-          <Icon
-            icon={AgentGlyph}
-            size="sm"
-            color="secondary"
-            data-agent-state={agents[0]?.group}
-            data-agent-animate={animate}
-          />
+          <Icon icon={Bot} size="sm" color="secondary" />
           {collapsed && agents.length > 0 && (
             <HStack gap={0.5} aria-hidden className="absolute top-full left-1/2 mt-0.5 -translate-x-1/2">
               {agents.slice(0, MAX_RAIL_DOTS).map((agent) => (

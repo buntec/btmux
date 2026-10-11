@@ -214,19 +214,6 @@
 [data-agent-state='idle'] {
   --btm-agent: var(--color-icon-secondary);
 }
-.btm-agent-light {
-  fill: var(--btm-agent, currentColor);
-  stroke: var(--btm-agent, currentColor);
-  transition:
-    fill 300ms ease,
-    stroke 300ms ease;
-}
-.btm-agent-halo {
-  fill: var(--btm-agent, currentColor);
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-}
 .btm-agent-dot {
   position: relative;
   background: var(--btm-agent);
@@ -238,12 +225,6 @@
   border-radius: inherit;
   background: inherit;
   opacity: 0;
-}
-[data-agent-animate][data-agent-state='working'] .btm-agent-light {
-  animation: btm-agent-breathe 2.4s ease-in-out infinite;
-}
-[data-agent-animate][data-agent-state='waiting'] .btm-agent-halo {
-  animation: btm-agent-halo 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 .btm-agent-dot[data-agent-animate] {
   animation: btm-agent-in 320ms cubic-bezier(0.2, 0, 0, 1) both;

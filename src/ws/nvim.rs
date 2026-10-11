@@ -270,6 +270,15 @@ pub async fn open(path: &str, line: Option<u32>) -> Result<(), String> {
         .map_err(|()| "Neovim did not open the file".into())
 }
 
+/// File of the built-in Neovim's current buffer; `None` if it isn't running.
+pub async fn current_file() -> Option<String> {
+    let addr = {
+        let server = SERVER.lock().await;
+        server.as_ref().filter(|server| server.running())?.socket()
+    };
+    super::control::neovim_current_file(&addr.to_string_lossy()).await
+}
+
 pub async fn shutdown() {
     if let Some(NvimServer {
         mut state, kill, ..

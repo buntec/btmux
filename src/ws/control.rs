@@ -469,6 +469,23 @@ pub(crate) async fn remote_open_in_editor(
     }
 }
 
+/// Absolute path of the current buffer's file in the Neovim listening at `addr`.
+pub(crate) async fn neovim_current_file(addr: &str) -> Option<String> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("nvim")
+            .args(["--server", addr, "--remote-expr", "expand('%:p')"])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (output.status.success() && path.starts_with('/')).then_some(path)
+}
+
 /// Absolute path of the file in the current buffer of the pane's foreground
 /// Neovim, if any. Non-file buffers (terminals, scratch) yield `None`.
 pub async fn pane_neovim_file(pane_id: uuid::Uuid, state: &AppState) -> Option<String> {
@@ -481,20 +498,8 @@ pub async fn pane_neovim_file(pane_id: uuid::Uuid, state: &AppState) -> Option<S
             if neovim_server_pid(&addr).await != Some(pid) {
                 continue;
             }
-            let output = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                tokio::process::Command::new("nvim")
-                    .args(["--server", &addr, "--remote-expr", "expand('%:p')"])
-                    .kill_on_drop(true)
-                    .stdin(std::process::Stdio::null())
-                    .output(),
-            )
-            .await;
-            if let Ok(Ok(output)) = output {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                if output.status.success() && path.starts_with('/') {
-                    return Some(path);
-                }
+            if let Some(path) = neovim_current_file(&addr).await {
+                return Some(path);
             }
         }
     }

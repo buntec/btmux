@@ -85,6 +85,7 @@ pub fn create_app(state: AppState) -> Router {
             "/api/panes/{pane_id}/focus",
             axum::routing::post(api_focus_pane),
         )
+        .route("/api/nvim/file", axum::routing::get(api_nvim_file))
         .route(
             "/api/panes/{pane_id}/editor-file",
             axum::routing::get(api_pane_editor_file),
@@ -517,6 +518,11 @@ async fn api_pane_editor_file(
     }
     let path = ws::control::pane_neovim_file(pane_id, &state).await;
     Json(serde_json::json!({ "path": path })).into_response()
+}
+
+/// Current file of the built-in Neovim, or `{"path": null}`.
+async fn api_nvim_file() -> Response {
+    Json(serde_json::json!({ "path": ws::nvim::current_file().await })).into_response()
 }
 
 async fn api_open_file_browser(

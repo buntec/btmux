@@ -24,7 +24,7 @@ let original: number | null = null;
 let originalCompleteopt: string | null = null;
 let rpc: ((method: string, params: unknown[]) => Promise<any>) | null = null;
 try {
-  for (const name of ['nvim-review', 'nvim-switch']) {
+  for (const name of ['nvim-review', 'nvim-switch', 'nvim-evict-1', 'nvim-evict-2', 'nvim-evict-3']) {
     sessions.push(await api('/api/sessions', 'POST', { name: `${name}-${Date.now()}` }));
   }
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
@@ -234,6 +234,48 @@ try {
   );
   console.log('PASS Neovim keeps keyboard focus across session switches');
 
+  await page.evaluate(() => {
+    (window as any).savedNvimInput = document.querySelector('[data-nvim-input]');
+    (window as any).savedNvimSocket = (window as any).nvimSockets.findLast((s: WebSocket) =>
+      s.url.endsWith('/ws/nvim'),
+    );
+  });
+  await page.keyboard.type(":lua _G.btmux_confirm_answer = vim.fn.confirm('Confirmation probe', '&Yes\\n&No', 2)");
+  await page.keyboard.press('Enter');
+  const prompt = page.getByText('Confirmation probe', { exact: false });
+  await prompt.waitFor();
+  await page.keyboard.press('Control+b');
+  await page.keyboard.press('e');
+  await page.waitForFunction(() => !(window as any).nvimStore.getState().nvimOpen);
+  await prompt.waitFor({ state: 'hidden' });
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Terminal input');
+  await page.keyboard.press('Control+b');
+  await page.keyboard.press('e');
+  await prompt.waitFor({ state: 'visible' });
+  // Evict the original session from the four-session pool while the prompt is open.
+  for (const target of [...sessions.slice(2), sessions[0], sessions[1]]) {
+    await page.evaluate(
+      (name) => (window as any).nvimStore.getState().navigateFn(`/s/${encodeURIComponent(name)}`),
+      target.name,
+    );
+    await page.waitForFunction((name) => location.pathname.startsWith(`/s/${encodeURIComponent(name)}`), target.name);
+    await prompt.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.activeElement === (window as any).savedNvimInput);
+  }
+  assert.equal(
+    await page.evaluate(
+      () =>
+        document.querySelector('[data-nvim-input]') === (window as any).savedNvimInput &&
+        (window as any).savedNvimSocket.readyState === WebSocket.OPEN &&
+        (window as any).nvimSockets.filter((s: WebSocket) => s.url.endsWith('/ws/nvim')).length === 1,
+    ),
+    true,
+    'hiding and session eviction preserve the editor attachment',
+  );
+  await page.keyboard.press('y');
+  assert.equal(await rpc('nvim_exec_lua', ['return _G.btmux_confirm_answer', []]), 1);
+  console.log('PASS confirmation prompts and the editor socket survive hiding and session-pool eviction');
+
   const oldPane = await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const { runAction } = await import('/src/hooks/useKeybindings.ts' as string);
@@ -442,6 +484,64 @@ try {
   console.log('PASS completion and documentation stay within the editor at the right edge and after resizing');
   await page.keyboard.press('Escape');
 
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.waitForTimeout(300);
+  await rpc('nvim_buf_set_lines', [scratch, 0, -1, false, Array(100).fill('ab')]);
+  const rows = await rpc('nvim_get_option_value', ['lines', {}]);
+  await rpc('nvim_win_set_cursor', [0, [rows - 12, 1]]);
+  await page.keyboard.press('a');
+  await waitForNvim(async () => (await rpc('nvim_get_mode', [])).mode === 'i');
+  await rpc('nvim_exec_lua', [
+    'vim.fn.complete(...)',
+    [
+      1,
+      Array.from({ length: 30 }, (_, i) => ({
+        word: `vertical_probe_${i}`,
+        info: Array(40).fill('Long completion documentation.').join('\n\n'),
+      })),
+    ],
+  ]);
+  const verticalItem = page.getByText('vertical_probe_0', { exact: true });
+  await verticalItem.waitFor();
+  const assertVerticalPopupFits = async () => {
+    assert.equal(
+      await verticalItem.evaluate((el) => {
+        const popup = el.closest('.astryx-card')!.parentElement!;
+        const surface = popup.offsetParent as HTMLElement;
+        const bounds = popup.getBoundingClientRect();
+        const area = surface.getBoundingClientRect();
+        return (
+          bounds.top >= area.top - 1 &&
+          bounds.bottom <= area.bottom + 1 &&
+          bounds.left >= area.left - 1 &&
+          bounds.right <= area.right + 1
+        );
+      }),
+      true,
+      'completion and documentation fit inside the editor vertically',
+    );
+  };
+  await assertVerticalPopupFits();
+  await rpc('nvim_select_popupmenu_item', [29, true, false, {}]);
+  const selectedItem = page.locator('[aria-current="true"]').filter({ hasText: 'vertical_probe_29' });
+  await selectedItem.waitFor();
+  await page.getByText('Long completion documentation.', { exact: true }).first().waitFor();
+  await assertVerticalPopupFits();
+  await page.setViewportSize({ width: 640, height: 260 });
+  await page.waitForTimeout(300);
+  await assertVerticalPopupFits();
+  assert.equal(
+    await selectedItem.evaluate((el) => {
+      const card = el.closest('.astryx-card')!.getBoundingClientRect();
+      const bounds = el.getBoundingClientRect();
+      return bounds.top >= card.top && bounds.bottom <= card.bottom;
+    }),
+    true,
+    'the selected completion stays visible when the available height shrinks',
+  );
+  await page.keyboard.press('Escape');
+  console.log('PASS tall completion menus and docs flip or scroll within the editor after resizing');
+
   // Floats get their own grid, drawn in an Astryx card that replaces Neovim's border.
   await page.setViewportSize({ width: 1200, height: 800 });
   await rpc('nvim_set_current_line', ['float probe']);
@@ -516,11 +616,10 @@ try {
     vim.diagnostic.open_float({ scope = "line" })`,
     [],
   ]);
-  await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].some(
-        (c) => c.style.display !== 'none' && Number(c.style.zIndex) >= 10,
-      ),
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].some(
+      (c) => c.style.display !== 'none' && Number(c.style.zIndex) >= 10,
+    ),
   );
   await page.keyboard.press('0');
   await page.waitForTimeout(300);
@@ -533,6 +632,15 @@ try {
   });
   await page.waitForTimeout(250);
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Terminal input');
+  await page.evaluate(() => (window as any).nvimStore.getState().setSettingsOpen(true));
+  await page.waitForTimeout(100);
+  await page.evaluate(() => (window as any).nvimStore.getState().setSettingsOpen(false));
+  await page.waitForTimeout(100);
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.getAttribute('aria-label')),
+    'Terminal input',
+    'the hidden editor cannot reclaim focus when settings close',
+  );
   assert.deepEqual(errors, [], 'session switches and resize must not throw');
   console.log('PASS closing Neovim returns focus to the terminal');
 } finally {

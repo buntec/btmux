@@ -4,7 +4,6 @@ import { Dialog } from '@astryxdesign/core/Dialog';
 import { TerminalPane } from './TerminalPane';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
 import { ProcessOverlay } from './ProcessOverlay';
-import { NvimSurface } from './NvimSurface';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
@@ -312,7 +311,6 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
             }
           />
         ))}
-      {nvimOpen && isActiveSession && <NvimSurface config={config} />}
       {fileBrowserOpen && isActiveSession && fileBrowserPaneId && (
         <Dialog
           key="file-browser"

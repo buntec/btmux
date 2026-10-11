@@ -66,8 +66,15 @@ test('macOS Option keeps ASCII text that the layout types with it', () => {
   expect(key({ key: 'l', code: 'KeyL', altKey: true })).toBe('<M-l>');
   expect(key({ key: '@', code: 'KeyL', altKey: true, ctrlKey: true })).toBe('<C-M-l>');
   // Elsewhere Alt doesn't compose, so the key is a Meta chord.
-  expect(key({ key: '&', code: 'Digit1', altKey: true }, false)).toBe('<M-1>');
+  expect(key({ key: '&', code: 'Digit1', altKey: true }, false)).toBe('<M-&>');
   expect(key({ key: '.', code: 'Period', altKey: true }, false)).toBe('<M-.>');
+});
+
+test('Windows and Linux Alt shortcuts preserve the keyboard layout', () => {
+  expect(key({ key: 'z', code: 'KeyY', altKey: true }, false)).toBe('<M-z>');
+  expect(key({ key: 'Z', code: 'KeyY', altKey: true, shiftKey: true }, false)).toBe('<M-Z>');
+  expect(key({ key: ',', code: 'KeyW', altKey: true }, false)).toBe('<M-,>');
+  expect(key({ key: 'z', code: 'KeyY', altKey: true, ctrlKey: true }, false)).toBe('<C-M-z>');
 });
 
 test('AltGr preserves international keyboard text instead of sending Ctrl+Alt shortcuts', () => {

@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -34,9 +42,6 @@ const FIRSTC_LABELS: Record<string, string> = {
   '@': 'Input',
 };
 
-/** Rows shown before the popupmenu scrolls. */
-const MENU_ROWS = 10;
-
 interface Props {
   state: WidgetState;
   grid: NvimGrid;
@@ -56,6 +61,7 @@ export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire, p
   const { cmdline, block, popupmenu, signature, messages, progress, panel, showmode, showcmd, kindIcons } = state;
   const cmdlineMenu = popupmenu?.grid === -1 && cmdline ? popupmenu : null;
   const gridMenu = popupmenu && popupmenu.grid !== -1 ? popupmenu : null;
+  const [menuSide, setMenuSide] = useState<'above' | 'below'>('below');
   // The canvas can extend below the last row, so anchor to the bottom row itself.
   const bottom = `calc(100% - ${grid.cellRect(grid.rows - 1, 0).top - STATUSLINE_GAP}px)`;
 
@@ -90,14 +96,18 @@ export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire, p
         </HStack>
       )}
       {gridMenu && (
-        <GridPopupmenu menu={gridMenu} grid={grid} kindIcons={kindIcons} onSelect={onSelect} blend={pumblend} />
+        <GridPopupmenu
+          menu={gridMenu}
+          grid={grid}
+          kindIcons={kindIcons}
+          onSelect={onSelect}
+          blend={pumblend}
+          side={menuSide}
+          onPlacement={setMenuSide}
+        />
       )}
       {signature && !cmdline && (
-        <SignatureCard
-          signature={signature}
-          grid={grid}
-          menuSide={gridMenu ? (menuAbove(gridMenu, grid) ? 'above' : 'below') : null}
-        />
+        <SignatureCard signature={signature} grid={grid} menuSide={gridMenu ? menuSide : null} />
       )}
       {(cmdline || panel) && (
         // Bottom-left, just above the statusline: output panel, then cmdline completion, then the cmdline.
@@ -442,13 +452,6 @@ function KindIcon({ icon, color, hidden }: { icon: string; color: string | null;
 /** Screen cell the popupmenu is anchored to. */
 const menuCell = (menu: Popupmenu, grid: NvimGrid) => grid.screenCell(menu.grid, menu.row, menu.col);
 
-/** Whether the completion menu flips above the cursor because there's more room there. */
-function menuAbove(menu: Popupmenu, grid: NvimGrid): boolean {
-  const [row] = menuCell(menu, grid);
-  const below = grid.rows - row - 1;
-  return below < Math.min(menu.items.length, MENU_ROWS) && row > below;
-}
-
 /** Insert-mode completion menu, anchored at the completed word. */
 function GridPopupmenu({
   menu,
@@ -456,57 +459,88 @@ function GridPopupmenu({
   kindIcons,
   onSelect,
   blend,
+  side,
+  onPlacement,
 }: {
   menu: Popupmenu;
   grid: NvimGrid;
   kindIcons: KindIcons;
   onSelect: (i: number) => void;
   blend: number;
+  side: 'above' | 'below';
+  onPlacement: (side: 'above' | 'below') => void;
 }) {
   const anchor = grid.cellRect(...menuCell(menu, grid));
-  const placeAbove = menuAbove(menu, grid);
   const info = menu.items[menu.selected]?.info;
   const popupRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const infoRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const popup = popupRef.current!;
     const surface = popup.offsetParent as HTMLElement | null;
     if (!surface) return;
     const position = () => {
+      const cards = [menuRef.current, infoRef.current].filter((card): card is HTMLDivElement => card !== null);
+      // Measure without the previous space limit so growing menus can flip.
+      for (const card of cards) card.style.maxHeight = '';
+      const limits = cards.map((card) => parseFloat(getComputedStyle(card).maxHeight) || Infinity);
+      const top = Math.max(0, Math.min(anchor.top, surface.clientHeight));
+      const bottom = Math.max(0, Math.min(anchor.top + anchor.height, surface.clientHeight));
+      const below = surface.clientHeight - bottom;
+      const above = popup.offsetHeight > below && top > below;
+      const available = above ? top : below;
+      cards.forEach((card, i) => {
+        card.style.maxHeight = `${Math.min(available, limits[i])}px`;
+      });
+      popup.style.top = above ? '' : `${bottom}px`;
+      popup.style.bottom = above ? `${surface.clientHeight - top}px` : '';
       popup.style.left = `${Math.max(0, Math.min(anchor.left, surface.clientWidth - popup.offsetWidth))}px`;
+      onPlacement(above ? 'above' : 'below');
     };
     position();
     const observer = new ResizeObserver(position);
     observer.observe(popup);
     observer.observe(surface);
     return () => observer.disconnect();
-  }, [anchor.left]);
+  }, [anchor.left, anchor.top, anchor.height, menu.items, info, onPlacement]);
   return (
     <HStack
       ref={popupRef}
       gap={1}
-      vAlign={placeAbove ? 'end' : 'start'}
+      vAlign={side === 'above' ? 'end' : 'start'}
       width="max-content"
       maxWidth="100%"
       className="absolute z-40"
       onMouseDown={(e) => e.preventDefault()}
-      style={
-        placeAbove
-          ? { left: anchor.left, bottom: `calc(100% - ${anchor.top}px)` }
-          : { left: anchor.left, top: anchor.top + anchor.height }
-      }
     >
-      <Card padding={0.5} elevation="med" maxWidth="60ch" className="min-w-0 overflow-hidden" style={blendStyle(blend)}>
+      <Card
+        ref={menuRef}
+        padding={0.5}
+        elevation="med"
+        maxWidth="60ch"
+        className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+        style={blendStyle(blend)}
+      >
         <MenuList menu={menu} kindIcons={kindIcons} onSelect={onSelect} />
       </Card>
-      {info && <InfoCard info={info} blend={blend} />}
+      {info && <InfoCard info={info} blend={blend} cardRef={infoRef} />}
     </HStack>
   );
 }
 
 /** Documentation for the selected completion item (Markdown, as LSP servers send it). */
-function InfoCard({ info, blend }: { info: string; blend: number }) {
+function InfoCard({
+  info,
+  blend,
+  cardRef,
+}: {
+  info: string;
+  blend: number;
+  cardRef: RefObject<HTMLDivElement | null>;
+}) {
   return (
     <Card
+      ref={cardRef}
       padding={2}
       elevation="med"
       maxWidth="60ch"
@@ -530,10 +564,22 @@ function MenuList({
   const scrollRef = useRef<HTMLElement>(null);
   const placeholder = menu.items.map((item) => kindIcons[item.kind]?.icon).find(Boolean);
   useLayoutEffect(() => {
-    scrollRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+    const scroll = scrollRef.current!;
+    const revealSelection = () => {
+      const item = scroll.querySelector('[aria-current="true"]');
+      if (!item) return;
+      const bounds = scroll.getBoundingClientRect();
+      const selected = item.getBoundingClientRect();
+      if (selected.top < bounds.top) scroll.scrollTop += selected.top - bounds.top;
+      else if (selected.bottom > bounds.bottom) scroll.scrollTop += selected.bottom - bounds.bottom;
+    };
+    revealSelection();
+    const observer = new ResizeObserver(revealSelection);
+    observer.observe(scroll);
+    return () => observer.disconnect();
   }, [menu.selected, menu.items]);
   return (
-    <VStack ref={scrollRef} className="max-h-80 overflow-y-auto">
+    <VStack ref={scrollRef} className="max-h-80 min-h-0 overflow-y-auto">
       <List density="compact">
         {menu.items.map((item, i) => (
           <ListItem

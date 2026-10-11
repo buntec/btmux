@@ -8,6 +8,7 @@ import { useControlSocket } from './hooks/useControlSocket';
 import { getSessionMruOrder, recordSessionMruVisit } from './state/sessionMru';
 import { SessionView } from './components/SessionView';
 import { SessionPool } from './components/SessionPool';
+import { NvimSurface } from './components/NvimSurface';
 import { StatusBar } from './components/StatusBar';
 import { Overlay } from './components/Overlay';
 import { WindowGrid } from './components/WindowGrid';
@@ -73,6 +74,12 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const config = useStore((s) => s.config);
   const configPreview = useStore((s) => s.configPreview);
   const settingsOpen = useStore((s) => s.settingsOpen);
+  const nvimOpen = useStore((s) => s.nvimOpen);
+  // Keep the editor attachment outside the session pool.
+  const [nvimMounted, setNvimMounted] = useState(nvimOpen);
+  useEffect(() => {
+    if (nvimOpen) setNvimMounted(true);
+  }, [nvimOpen]);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const overlay = useStore((s) => s.overlay);
   const navigate = useNavigate();
@@ -209,6 +216,9 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
               <Route path="/s/:sessionName" element={<SessionView send={send} />} />
               <Route path="/s/:sessionName/w/:windowName" element={<SessionView send={send} />} />
             </Routes>
+            {(nvimOpen || nvimMounted) && (
+              <NvimSurface config={effectiveConfig} visible={nvimOpen} activeSessionId={activeSessionId} />
+            )}
             {settingsOpen && config && <ConfigPage config={config} send={send} />}
             {/* Single Overlay. While / redirects, activeSessionId is null, so
             anchor to the last-visited session. */}

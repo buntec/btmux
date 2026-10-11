@@ -44,10 +44,10 @@ export function nvimKey(e: KeyboardEvent, mac = IS_MAC): string | null {
   }
   // macOS Option produces composed characters; use the physical key instead,
   // unless the layout types ASCII with it (`@`, `[`, `|` on German or French).
-  if (e.altKey) {
+  if (mac && e.altKey) {
     const m = e.code.match(/^(?:Key([A-Z])|Digit(\d))$/);
     const physical = m && (m[1] ? (e.shiftKey ? m[1] : m[1].toLowerCase()) : m[2]);
-    if (mac && !e.ctrlKey && !e.metaKey && /^[!-~]$/.test(key) && key.toLowerCase() !== physical?.toLowerCase()) {
+    if (!e.ctrlKey && !e.metaKey && /^[!-~]$/.test(key) && key.toLowerCase() !== physical?.toLowerCase()) {
       return escapeNvimText(key);
     }
     if (physical) key = physical;

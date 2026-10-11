@@ -47,19 +47,30 @@ let activeInput: ((keys: string) => void) | null = null;
 
 /** Send keys (`nvim_input` notation) to the open Neovim surface. Returns false when none is open. */
 export function sendToNvim(keys: string): boolean {
-  if (!activeInput) return false;
+  if (!useStore.getState().nvimOpen || !activeInput) return false;
   activeInput(keys);
   return true;
 }
 
 /** Full-surface browser UI for the shared headless Neovim. */
-export function NvimSurface({ config }: { config: ClientConfig | null }) {
+export function NvimSurface({
+  config,
+  visible,
+  activeSessionId,
+}: {
+  config: ClientConfig | null;
+  visible: boolean;
+  activeSessionId: string | null;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layersRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const gridRef = useRef<NvimGrid | null>(null);
   const refitRef = useRef<() => void>(() => {});
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const exitedRef = useRef(false);
   const [status, setStatus] = useState<{ kind: 'connecting' } | { kind: 'disconnected'; error: string | null } | null>({
     kind: 'connecting',
   });
@@ -154,7 +165,9 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       if (done) pending.set(msgid, done);
       ws.send(encode([0, msgid, method, params]));
     };
-    const sendKeys = (keys: string) => notify('nvim_input', [keys]);
+    const sendKeys = (keys: string) => {
+      if (visibleRef.current) notify('nvim_input', [keys]);
+    };
     const applyTheme = () => {
       if (paletteRef.current) {
         request('nvim_exec_lua', [
@@ -254,6 +267,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       attached = false;
       // A normal close means Neovim quit (e.g. `:q`); close the surface like a TUI editor.
       if (e.code === 1000) {
+        exitedRef.current = true;
         useStore.getState().setNvimOpen(false);
         return;
       }
@@ -323,7 +337,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
       notify('nvim_input_mouse', [button, 'press', mods(e), target, ...lastCell]);
     };
     const onMouseMove = (e: MouseEvent) => {
-      if (!pressed) return;
+      if (!pressed || !visibleRef.current) return;
       const cell = grid.cellIn(pressed.grid, e.clientX, e.clientY);
       if (cell[0] === lastCell[0] && cell[1] === lastCell[1]) return;
       lastCell = cell;
@@ -368,7 +382,7 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
     container.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-    input.focus();
+    if (visibleRef.current) input.focus();
 
     return () => {
       applyThemeRef.current = () => {};
@@ -393,6 +407,13 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
   }, [generation]);
 
   useEffect(() => {
+    if (visible && exitedRef.current) {
+      exitedRef.current = false;
+      setGeneration((g) => g + 1);
+    }
+  }, [visible]);
+
+  useEffect(() => {
     applyThemeRef.current();
   }, [paletteKey, transparent]);
 
@@ -403,10 +424,10 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
   // Take focus back when a modal closes; closing a dialog restores focus to
   // whatever was focused before it opened, often a terminal pane.
   useEffect(() => {
-    if (modalOpen) return;
+    if (!visible || modalOpen) return;
     const id = window.setTimeout(() => inputRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
-  }, [modalOpen, generation]);
+  }, [visible, modalOpen, generation, activeSessionId]);
 
   // Re-measure once the configured font is loaded or changes.
   useEffect(() => {
@@ -427,11 +448,14 @@ export function NvimSurface({ config }: { config: ClientConfig | null }) {
   return (
     <div
       ref={containerRef}
+      inert={!visible}
+      aria-hidden={!visible}
       style={{
         position: 'absolute',
         inset: 0,
         zIndex: 30,
         overflow: 'hidden',
+        visibility: visible ? undefined : 'hidden',
         background: transparent ? 'transparent' : theme.background,
       }}
       onMouseDown={() => inputRef.current?.focus()}

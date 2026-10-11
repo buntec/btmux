@@ -73,6 +73,9 @@ export function WindowThumbnail({
                 width: '100%',
                 height: '100%',
                 overflow: 'hidden',
+                boxSizing: 'border-box',
+                // Keep content clear of the border and rounded corners.
+                padding: '4px',
                 borderRadius: interactive ? '6px' : undefined,
                 border: `${isActive || isHovered ? 1.5 : 1}px solid ${
                   isHovered ? c.warn : isActive ? c.accent : c.borderDim
@@ -89,7 +92,9 @@ export function WindowThumbnail({
                   : undefined,
               }}
             >
-              {isMounted && <MirrorPane paneId={r.paneId} config={terminalConfig} visible={visible} />}
+              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                {isMounted && <MirrorPane paneId={r.paneId} config={terminalConfig} visible={visible} />}
+              </div>
             </div>
           </div>
         );

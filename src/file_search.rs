@@ -55,31 +55,7 @@ impl FileIndex {
             let nucleo = Nucleo::new(Config::DEFAULT, Arc::new(|| {}), None, 1);
             let injector = nucleo.injector();
 
-            let root_owned = root.to_path_buf();
-            let mut child = Command::new("find")
-                .args([
-                    ".",
-                    "-type",
-                    "f",
-                    "-not",
-                    "-path",
-                    "./.git/*",
-                    "-not",
-                    "-path",
-                    "*/node_modules/*",
-                    "-not",
-                    "-path",
-                    "./target/*",
-                    "-not",
-                    "-path",
-                    "*/dist/*",
-                ])
-                .current_dir(&root_owned)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| format!("Failed to run find: {}", e))?;
+            let mut child = spawn_file_lister(root)?;
 
             let stdout = child.stdout.take().unwrap();
             let reader = BufReader::new(stdout);
@@ -142,6 +118,57 @@ impl FileIndex {
 
         Ok(results)
     }
+}
+
+/// Lists files with `fd` (respecting ignore files), else `find`.
+fn spawn_file_lister(root: &Path) -> Result<tokio::process::Child, String> {
+    // Debian and Ubuntu install fd as `fdfind`.
+    for program in ["fd", "fdfind"] {
+        let mut fd = Command::new(program);
+        fd.args([
+            "--type",
+            "f",
+            "--hidden",
+            "--exclude",
+            ".git",
+            "--color",
+            "never",
+        ]);
+        match spawn_lister(fd, root) {
+            Ok(child) => return Ok(child),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Failed to run fd: {}", error)),
+        }
+    }
+
+    let mut find = Command::new("find");
+    find.args([
+        ".",
+        "-type",
+        "f",
+        "-not",
+        "-path",
+        "./.git/*",
+        "-not",
+        "-path",
+        "*/node_modules/*",
+        "-not",
+        "-path",
+        "./target/*",
+        "-not",
+        "-path",
+        "*/dist/*",
+    ]);
+    spawn_lister(find, root).map_err(|error| format!("Failed to run fd or find: {}", error))
+}
+
+fn spawn_lister(mut command: Command, root: &Path) -> std::io::Result<tokio::process::Child> {
+    command
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
 }
 
 pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult>, String> {
@@ -317,8 +344,31 @@ fn parse_grep_result(line: &str, root: &Path) -> Option<SearchResult> {
 
 #[cfg(test)]
 mod tests {
-    use super::content_search;
+    use super::{content_search, FileIndex};
     use std::fs;
+
+    #[tokio::test]
+    async fn file_search_respects_gitignore_with_fd() {
+        if std::process::Command::new("fd")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("btmux-file-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("build")).unwrap();
+        fs::write(root.join(".gitignore"), "build/\n").unwrap();
+        fs::write(root.join("build/needle.txt"), "").unwrap();
+        fs::write(root.join(".needle.txt"), "").unwrap();
+
+        let results = FileIndex::new().search("needle", &root).await.unwrap();
+
+        let paths: Vec<_> = results.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, [root.join(".needle.txt").to_string_lossy()]);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn content_search_finds_matching_lines() {

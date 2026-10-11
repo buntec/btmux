@@ -34,7 +34,6 @@ import type {
 } from '../lib/nvimWidgets';
 
 const FIRSTC_LABELS: Record<string, string> = {
-  ':': 'Command',
   '/': 'Search',
   '?': 'Search back',
   '=': 'Expression',
@@ -374,8 +373,9 @@ function CmdlineCard({ cmdline, block, grid }: { cmdline: Cmdline; block: Chunk[
           </Text>
         ))}
         <HStack gap={2} vAlign="center">
-          {label && <Token size="sm" color={cmdline.firstc === ':' ? 'default' : 'blue'} label={label} />}
+          {label && <Token size="sm" color="blue" label={label} />}
           <Text type="code" display="block" className="min-w-0 flex-1 overflow-hidden whitespace-pre">
+            {cmdline.firstc === ':' && ':'}
             {cmdline.prompt}
             {' '.repeat(cmdline.indent)}
             <CmdlineText cmdline={cmdline} grid={grid} />

@@ -75,6 +75,110 @@ impl Palette {
     pub fn scheme_report(&self) -> Vec<u8> {
         format!("\x1b[?997;{}n", if self.is_dark() { 1 } else { 2 }).into_bytes()
     }
+
+    fn slot(&self, slot: Slot) -> Rgb {
+        match slot {
+            Slot::Indexed(index) => self.indexed(index),
+            Slot::Foreground => self.foreground,
+            Slot::Background => self.background,
+            Slot::Cursor => self.cursor,
+        }
+    }
+}
+
+/// A color programs can set and query: OSC 4 indexed or OSC 10/11/12.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Indexed(u8),
+    Foreground,
+    Background,
+    Cursor,
+}
+
+impl Slot {
+    pub fn dynamic(code: u32) -> Option<Self> {
+        match code {
+            10 => Some(Self::Foreground),
+            11 => Some(Self::Background),
+            12 => Some(Self::Cursor),
+            _ => None,
+        }
+    }
+
+    /// OSC parameters naming this slot, e.g. `4;1` or `11`.
+    pub fn osc_prefix(self) -> String {
+        match self {
+            Self::Indexed(index) => format!("4;{index}"),
+            Self::Foreground => "10".into(),
+            Self::Background => "11".into(),
+            Self::Cursor => "12".into(),
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Indexed(index) => index as usize,
+            Self::Foreground => 256,
+            Self::Background => 257,
+            Self::Cursor => 258,
+        }
+    }
+}
+
+/// Colors a program set in one pane, layered over the theme.
+pub struct Overrides([Option<Rgb>; 259]);
+
+impl Default for Overrides {
+    fn default() -> Self {
+        Self([None; 259])
+    }
+}
+
+impl Overrides {
+    pub fn get(&self, palette: &Palette, slot: Slot) -> Rgb {
+        self.0[slot.index()].unwrap_or_else(|| palette.slot(slot))
+    }
+
+    pub fn set(&mut self, slot: Slot, rgb: Option<Rgb>) {
+        self.0[slot.index()] = rgb;
+    }
+
+    pub fn reset_indexed(&mut self) {
+        self.0[..256].fill(None);
+    }
+
+    pub fn clear(&mut self) {
+        self.0.fill(None);
+    }
+}
+
+/// An OSC color spec: `#` followed by 1–4 hex digits per channel, or
+/// `rgb:r/g/b`. X11 color names are not supported.
+pub fn parse_spec(spec: &[u8]) -> Option<Rgb> {
+    let spec = std::str::from_utf8(spec).ok()?;
+    let channels: Vec<&str> = if let Some(hex) = spec.strip_prefix('#') {
+        if !hex.is_ascii() || hex.is_empty() || hex.len() % 3 != 0 || hex.len() > 12 {
+            return None;
+        }
+        let n = hex.len() / 3;
+        vec![&hex[..n], &hex[n..2 * n], &hex[2 * n..]]
+    } else {
+        spec.strip_prefix("rgb:")?.split('/').collect()
+    };
+    let [r, g, b] = channels.as_slice() else {
+        return None;
+    };
+    Some([scale(r)?, scale(g)?, scale(b)?])
+}
+
+/// Scale 1–4 hex digits to 8 bits.
+fn scale(hex: &str) -> Option<u8> {
+    if !(1..=4).contains(&hex.len()) {
+        return None;
+    }
+    let value = u32::from_str_radix(hex, 16).ok()?;
+    let max = (1u32 << (4 * hex.len())) - 1;
+    Some((value * 255 / max) as u8)
 }
 
 /// X11 color spec as xterm reports it, e.g. `rgb:1414/1111/0b0b`.
@@ -136,6 +240,20 @@ mod tests {
         assert_eq!(parse_hex("FfF"), Some([255, 255, 255]));
         assert_eq!(parse_hex("red"), None);
         assert_eq!(parse_hex("#12345"), None);
+    }
+
+    #[test]
+    fn parses_osc_specs() {
+        assert_eq!(parse_spec(b"#123456"), Some([0x12, 0x34, 0x56]));
+        assert_eq!(parse_spec(b"#f00"), Some([255, 0, 0]));
+        assert_eq!(parse_spec(b"#fff000000"), Some([255, 0, 0]));
+        assert_eq!(parse_spec(b"#ffff00008000"), Some([255, 0, 127]));
+        assert_eq!(parse_spec(b"rgb:12/34/56"), Some([0x12, 0x34, 0x56]));
+        assert_eq!(parse_spec(b"rgb:f/0/ffff"), Some([255, 0, 255]));
+        assert_eq!(parse_spec(b"rgb:1/2"), None);
+        assert_eq!(parse_spec(b"rgb:12345/0/0"), None);
+        assert_eq!(parse_spec(b"#12345"), None);
+        assert_eq!(parse_spec(b"red"), None);
     }
 
     #[test]

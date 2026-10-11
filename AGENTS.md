@@ -85,8 +85,11 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   signals the foreground group and kills the shell; a waiter reaps the child.
 - **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. `ghostty-web` _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder. The canned bytes mirror `ghostty-web`'s exact DA replies for the pinned build — re-probe if `ghostty-web` is bumped. Don't remove this without a replacement.
   Color queries (OSC 4/10/11/12, `CSI ? 996 n`) are answered the same way from the
-  shared `pty/colors.rs` palette; `SessionManager::sync_palette` sends
-  `CSI ? 997 ; Ps n` to panes that set mode 2031 when the theme changes.
+  shared `pty/colors.rs` palette, overlaid with colors the program set in that
+  pane (OSC 104/110–112 and RIS reset them; mixed set/query OSCs are split);
+  `SessionManager::sync_palette` sends `CSI ? 997 ; Ps n` to panes that set
+  mode 2031 when the theme changes. Replies are queued once per read and dropped
+  if the input queue is full.
 - **Termios** is set manually on the PTY master (`configure_termios`: `IUTF8`, `ECHOK`, `IMAXBEL`) because `portable-pty` opens the PTY with NULL termios; without `IUTF8`, fish misbehaves.
 
 ### Persistence and profiles

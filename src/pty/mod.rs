@@ -288,7 +288,7 @@ impl PtyHandle {
 
         let (input_tx, mut input_rx) = mpsc::channel::<PtyInput>(32);
         let (resize_tx, mut resize_rx) = watch::channel((cols, rows));
-        let response_tx = InputSender(input_tx.clone());
+        let response_tx = input_tx.clone();
 
         // Start the reader after successful spawn; no fallible setup remains.
         let output_tx_clone = self.output_tx.clone();
@@ -313,10 +313,17 @@ impl PtyHandle {
                     Ok(n) => {
                         let result = interceptor.feed(&buf[..n]);
 
-                        for response in result.responses {
-                            if let Err(error) = response_tx.send(response) {
-                                tracing::warn!(%pane_id, %error, "PTY response queue exhausted");
-                                break 'read;
+                        // One queue entry per chunk. A full queue drops the
+                        // replies: blocking here could deadlock against a
+                        // program that is not reading its input.
+                        let responses = result.responses.concat();
+                        if !responses.is_empty() {
+                            match response_tx.try_send(PtyInput::Raw(responses)) {
+                                Ok(()) => {}
+                                Err(mpsc::error::TrySendError::Full(_)) => {
+                                    tracing::warn!(%pane_id, "PTY input queue full; dropped replies");
+                                }
+                                Err(mpsc::error::TrySendError::Closed(_)) => break 'read,
                             }
                         }
                         for _ in 0..result.forwarded_cpr_queries {
@@ -785,6 +792,39 @@ mod lifecycle_tests {
         pane.send_shell_command(b"printf 'SHELL_READY'\r".to_vec())
             .await
             .unwrap();
+    }
+    #[tokio::test]
+    async fn reply_bursts_keep_the_pane_alive() {
+        let (exit_tx, mut exit_rx) = mpsc::unbounded_channel();
+        let env = PtyEnv {
+            exit_tx,
+            meta_tx: mpsc::unbounded_channel().0,
+            port: 8044,
+            palette: colors::SharedPalette::default(),
+        };
+        env.palette
+            .set(colors::Palette::from_theme(&crate::config::default_theme()));
+        let mut pane = PtyHandle::new_with_cwd("/bin/sh", Uuid::new_v4(), &env, None, 100);
+        pane.ensure_spawned(80, 24).unwrap();
+        let (mut rx, _) = pane.subscribe_replay();
+        pane.input_tx
+            .send(
+                b"s=; i=0; while [ $i -lt 256 ]; do s=\"$s\\033]4;$i;?\\007\"; \
+                  i=$((i+1)); done; printf \"$s\"; printf 'BTMUX_''ALIVE\\n'\r"
+                    .to_vec(),
+            )
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut text = String::new();
+            while !text.contains("BTMUX_ALIVE") {
+                if let Output::Data(bytes) = rx.recv().await.unwrap() {
+                    text.push_str(&String::from_utf8_lossy(&bytes));
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(exit_rx.try_recv().is_err());
     }
     #[tokio::test]
     async fn oldest_viewer_owns_size_until_disconnect() {

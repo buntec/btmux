@@ -6,7 +6,7 @@
 // sequence *structure* — it doesn't track screen state. Handles sequences
 // split across read() chunk boundaries.
 
-use super::colors::{x11_spec, SharedPalette};
+use super::colors::{parse_spec, x11_spec, Overrides, SharedPalette, Slot};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -72,6 +72,8 @@ pub struct VtQueryInterceptor {
     palette: SharedPalette,
     /// Mode 2031: the program wants `CSI ? 997 ; Ps n` on theme changes.
     color_reports: Arc<AtomicBool>,
+    /// Colors the program set, so replies match what the emulator renders.
+    overrides: Overrides,
     /// Whether the OSC being dispatched ended with ST rather than BEL.
     osc_st: bool,
 }
@@ -90,6 +92,7 @@ impl VtQueryInterceptor {
             raw_seq: Vec::with_capacity(64),
             palette,
             color_reports,
+            overrides: Overrides::default(),
             osc_st: false,
         }
     }
@@ -204,6 +207,13 @@ impl VtQueryInterceptor {
                 self.state = State::EscapeIntermediate;
                 self.interm_buf.clear();
                 self.interm_buf.push(byte);
+            }
+            // RIS: the emulator resets its colors and modes.
+            b'c' => {
+                self.color_reports.store(false, Ordering::Relaxed);
+                self.overrides.clear();
+                self.emit_raw(result);
+                self.enter_ground();
             }
             // ESC \ (ST) in ground context — just pass through
             // Final bytes for ESC sequences (not queries, pass through)
@@ -494,113 +504,109 @@ impl VtQueryInterceptor {
     }
 
     fn dispatch_osc(&mut self, result: &mut FilterResult) {
-        let action = self.classify_osc();
-        match action {
-            Action::Pass => self.emit_raw(result),
-            Action::Answer(response) => {
-                result.responses.push(response);
-            }
-            Action::Swallow => {}
-            Action::Forward => {
-                result.broadcast.extend_from_slice(&self.raw_seq);
-            }
-        }
-    }
-
-    fn classify_osc(&self) -> Action {
         // OSC payload format: "<code>;<data>"
-        // Query form: the data part is "?" for color queries.
-        let payload = &self.payload_buf;
-
-        // Find the semicolon separator
-        let sep = payload.iter().position(|&b| b == b';');
-        let (code_bytes, data) = match sep {
+        let payload = std::mem::take(&mut self.payload_buf);
+        let (code_bytes, data) = match payload.iter().position(|&b| b == b';') {
             Some(pos) => (&payload[..pos], &payload[pos + 1..]),
             None => (payload.as_slice(), &[] as &[u8]),
         };
-
-        // Parse the OSC code
-        let code_str = std::str::from_utf8(code_bytes).unwrap_or("");
-        let code: u32 = code_str.parse().unwrap_or(u32::MAX);
+        let code: u32 = std::str::from_utf8(code_bytes)
+            .ok()
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(u32::MAX);
 
         match code {
-            // OSC 10/11/12 ; ? — query foreground/background/cursor color.
-            // Each extra "?" queries the next code, as in xterm.
-            10..=12 if data.split(|&b| b == b';').all(|spec| spec == b"?") => {
-                let queries = data.split(|&b| b == b';').count();
-                self.dynamic_color_reply(code, queries)
-            }
+            4 | 10..=12 => self.color_osc(code, data, result),
 
-            // OSC 4 ; <index> ; ? — query palette color
-            4 => self.indexed_color_reply(data),
-
-            // OSC 52 ; <clipboard> ; ? — query clipboard
-            52 => {
-                // Find second semicolon for the base64/? part
-                if let Some(pos) = data.iter().position(|&b| b == b';') {
-                    if &data[pos + 1..] == b"?" {
-                        Action::Swallow
-                    } else {
-                        Action::Pass
-                    }
-                } else {
-                    Action::Pass
+            // OSC 104 [; index…] / 110–112 — reset colors
+            104 => {
+                let items = data.split(|&b| b == b';');
+                if items.clone().all(|item| item.is_empty()) {
+                    self.overrides.reset_indexed();
                 }
+                for index in items.filter_map(parse_index) {
+                    self.overrides.set(Slot::Indexed(index), None);
+                }
+                self.emit_raw(result);
             }
+            110..=112 => {
+                if let Some(slot) = Slot::dynamic(code - 100) {
+                    self.overrides.set(slot, None);
+                }
+                self.emit_raw(result);
+            }
+
+            // OSC 52 ; <clipboard> ; ? — swallow clipboard queries
+            52 if data
+                .iter()
+                .position(|&b| b == b';')
+                .is_some_and(|pos| &data[pos + 1..] == b"?") => {}
 
             // Everything else passes through (OSC 0/2 title, OSC 7 cwd, etc.)
-            _ => Action::Pass,
+            _ => self.emit_raw(result),
         }
+        self.payload_buf = payload;
     }
 
-    fn dynamic_color_reply(&self, code: u32, queries: usize) -> Action {
-        let Some(palette) = self.palette.get() else {
-            return Action::Swallow;
-        };
-        let mut reply = Vec::new();
-        for code in (code..=12).take(queries) {
-            let rgb = match code {
-                10 => palette.foreground,
-                11 => palette.background,
-                _ => palette.cursor,
-            };
-            self.push_osc_reply(&mut reply, &format!("{code};{}", x11_spec(rgb)));
-        }
-        Action::Answer(reply)
-    }
-
-    fn indexed_color_reply(&self, data: &[u8]) -> Action {
+    /// OSC 4 ; index ; spec … and OSC 10–12 ; spec …, where each extra
+    /// spec targets the next code, as in xterm. Sets are tracked; queries
+    /// are answered here and the sets are forwarded to the emulator.
+    fn color_osc(&mut self, code: u32, data: &[u8], result: &mut FilterResult) {
         let items: Vec<&[u8]> = data.split(|&b| b == b';').collect();
-        if !items.chunks(2).any(|pair| pair.get(1) == Some(&&b"?"[..])) {
-            return Action::Pass;
-        }
-        let Some(palette) = self.palette.get() else {
-            return Action::Swallow;
+        let requests: Vec<(Option<Slot>, &[u8])> = if code == 4 {
+            items
+                .chunks(2)
+                .map(|pair| {
+                    (
+                        parse_index(pair[0]).map(Slot::Indexed),
+                        pair.get(1).copied().unwrap_or_default(),
+                    )
+                })
+                .collect()
+        } else {
+            (code..)
+                .zip(items)
+                .map(|(c, spec)| (Slot::dynamic(c), spec))
+                .collect()
         };
+        let queried = requests.iter().any(|(_, spec)| *spec == b"?");
+        let palette = self.palette.get();
+        let mut sets = Vec::new();
         let mut reply = Vec::new();
-        for pair in items.chunks(2) {
-            // Mixed set/query sequences are dropped rather than half-applied.
-            let [index, b"?"] = pair else {
-                return Action::Swallow;
-            };
-            let Some(index) = std::str::from_utf8(index)
-                .ok()
-                .and_then(|index| index.parse::<u8>().ok())
-            else {
-                return Action::Swallow;
-            };
-            let spec = x11_spec(palette.indexed(index));
-            self.push_osc_reply(&mut reply, &format!("4;{index};{spec}"));
+        for (slot, spec) in requests {
+            let Some(slot) = slot else { continue };
+            if spec == b"?" {
+                if let Some(palette) = &palette {
+                    let rgb = self.overrides.get(palette, slot);
+                    self.push_osc(&mut reply, slot, x11_spec(rgb).as_bytes());
+                }
+                continue;
+            }
+            // X11 color names reach the emulator but are not tracked.
+            if let Some(rgb) = parse_spec(spec) {
+                self.overrides.set(slot, Some(rgb));
+            }
+            self.push_osc(&mut sets, slot, spec);
         }
-        Action::Answer(reply)
+        if !queried {
+            self.emit_raw(result);
+            return;
+        }
+        result.scrollback.extend_from_slice(&sets);
+        result.broadcast.extend_from_slice(&sets);
+        if !reply.is_empty() {
+            result.responses.push(reply);
+        }
     }
 
-    /// Replies use the query's terminator, as xterm does.
-    fn push_osc_reply(&self, reply: &mut Vec<u8>, body: &str) {
-        reply.extend_from_slice(b"\x1b]");
-        reply.extend_from_slice(body.as_bytes());
+    /// Uses the query's terminator, as xterm does.
+    fn push_osc(&self, out: &mut Vec<u8>, slot: Slot, spec: &[u8]) {
+        out.extend_from_slice(b"\x1b]");
+        out.extend_from_slice(slot.osc_prefix().as_bytes());
+        out.push(b';');
+        out.extend_from_slice(spec);
         let terminator: &[u8] = if self.osc_st { b"\x1b\\" } else { b"\x07" };
-        reply.extend_from_slice(terminator);
+        out.extend_from_slice(terminator);
     }
 
     // ─── DCS ───────────────────────────────────────────────────────────────────
@@ -758,6 +764,10 @@ impl VtQueryInterceptor {
         result.scrollback.extend_from_slice(&self.raw_seq);
         result.broadcast.extend_from_slice(&self.raw_seq);
     }
+}
+
+fn parse_index(index: &[u8]) -> Option<u8> {
+    std::str::from_utf8(index).ok()?.parse().ok()
 }
 
 fn has_param(params: &[u8], param: &[u8]) -> bool {
@@ -1003,6 +1013,88 @@ mod tests {
             b"\x1b]11;#000000\x1b\\\x1b]4;1;#ff0000\x07"
         );
         assert!(result.responses.is_empty());
+    }
+
+    fn theme() -> super::super::colors::Palette {
+        super::super::colors::Palette::from_theme(&crate::config::default_theme()).unwrap()
+    }
+
+    #[test]
+    fn mixed_osc4_forwards_sets_and_answers_queries() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]4;1;#123456;2;?;1;?\x1b\\");
+        assert_eq!(result.scrollback, b"\x1b]4;1;#123456\x1b\\");
+        assert_eq!(result.broadcast, b"\x1b]4;1;#123456\x1b\\");
+        let expected = format!(
+            "\x1b]4;2;{}\x1b\\\x1b]4;1;rgb:1212/3434/5656\x1b\\",
+            x11_spec(theme().ansi[2])
+        );
+        assert_eq!(result.responses, vec![expected.into_bytes()]);
+    }
+
+    #[test]
+    fn replies_reflect_pane_color_changes() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(
+            b"\x1b]4;1;#123456\x07\x1b]4;1;?\x07\x1b]104;1\x07\x1b]4;1;?\x07\
+              \x1b]11;rgb:0/0/0\x07\x1b]11;?\x07\x1b]111\x07\x1b]11;?\x07",
+        );
+        assert_eq!(
+            result.broadcast,
+            b"\x1b]4;1;#123456\x07\x1b]104;1\x07\x1b]11;rgb:0/0/0\x07\x1b]111\x07"
+        );
+        let theme = theme();
+        assert_eq!(
+            result.responses,
+            vec![
+                b"\x1b]4;1;rgb:1212/3434/5656\x07".to_vec(),
+                format!("\x1b]4;1;{}\x07", x11_spec(theme.ansi[1])).into_bytes(),
+                b"\x1b]11;rgb:0000/0000/0000\x07".to_vec(),
+                format!("\x1b]11;{}\x07", x11_spec(theme.background)).into_bytes(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mixed_dynamic_colors_forward_sets() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]10;?;#ffffff\x07\x1b]11;?\x07");
+        assert_eq!(result.broadcast, b"\x1b]11;#ffffff\x07");
+        assert_eq!(
+            result.responses,
+            vec![
+                format!("\x1b]10;{}\x07", x11_spec(theme().foreground)).into_bytes(),
+                b"\x1b]11;rgb:ffff/ffff/ffff\x07".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn untracked_color_names_still_reach_the_emulator() {
+        let (mut interceptor, _) = themed();
+        let result = interceptor.feed(b"\x1b]4;1;red;1;?\x07");
+        assert_eq!(result.broadcast, b"\x1b]4;1;red\x07");
+        assert_eq!(
+            result.responses,
+            vec![format!("\x1b]4;1;{}\x07", x11_spec(theme().ansi[1])).into_bytes()]
+        );
+    }
+
+    #[test]
+    fn reset_clears_color_state() {
+        let (mut interceptor, reports) = themed();
+        interceptor.feed(b"\x1b[?2031h\x1b]4;1;#123456\x07");
+        assert!(reports.load(Ordering::Relaxed));
+        let result = interceptor.feed(b"\x1bc\x1b[?2031$p\x1b]4;1;?\x07");
+        assert!(!reports.load(Ordering::Relaxed));
+        assert_eq!(result.broadcast, b"\x1bc");
+        assert_eq!(
+            result.responses,
+            vec![
+                b"\x1b[?2031;2$y".to_vec(),
+                format!("\x1b]4;1;{}\x07", x11_spec(theme().ansi[1])).into_bytes(),
+            ]
+        );
     }
 
     #[test]

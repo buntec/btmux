@@ -78,7 +78,7 @@ async fn main() {
     }
 
     if let Some(config::SubCommand::OpenEditor { file, line }) = args.command.as_ref() {
-        std::process::exit(editor::run(file, *line));
+        std::process::exit(editor::run(file.as_deref(), *line).await);
     }
 
     // Parse config early (before full startup) so we can configure logging from

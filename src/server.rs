@@ -85,6 +85,10 @@ pub fn create_app(state: AppState) -> Router {
             "/api/panes/{pane_id}/focus",
             axum::routing::post(api_focus_pane),
         )
+        .route(
+            "/api/panes/{pane_id}/open-editor",
+            axum::routing::post(api_open_editor),
+        )
         .route("/api/nvim/file", axum::routing::get(api_nvim_file))
         .route(
             "/api/panes/{pane_id}/editor-file",
@@ -544,6 +548,46 @@ async fn api_open_file_browser(
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
 
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+struct OpenEditorRequest {
+    path: Option<String>,
+    line: Option<u32>,
+}
+
+/// `btmux open-editor`: with `file-editor = "neovim"`, open `path` (if any) in
+/// the built-in Neovim and show it over the pane's session in every tab.
+/// Replies `{"opened": false}` when the caller should run `$EDITOR` instead.
+async fn api_open_editor(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+    Json(body): Json<OpenEditorRequest>,
+) -> Response {
+    let file_editor = {
+        let mgr = state.read().await;
+        if mgr.find_pane(pane_id).is_none() {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        mgr.config().file_editor.clone()
+    };
+    if file_editor == crate::config::FileEditor::Pane {
+        return Json(serde_json::json!({ "opened": false })).into_response();
+    }
+    if let Some(path) = &body.path {
+        if let Err(error) = ws::nvim::open(path, body.line).await {
+            return (StatusCode::BAD_GATEWAY, error).into_response();
+        }
+    }
+
+    let msg = ws::control::ServerMessage::OpenNvim { pane_id };
+    let _ = state
+        .read()
+        .await
+        .events()
+        .send(serde_json::to_string(&msg).unwrap());
+
+    Json(serde_json::json!({ "opened": true })).into_response()
 }
 
 /// Switch every connected browser tab to the pane's window and session.

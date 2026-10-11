@@ -21,6 +21,10 @@ the pane instead (its running Neovim, or `$EDITOR` in its shell), set:
 file-editor = "pane"
 ```
 
+`btmux open-editor [FILE] [LINE]` follows the same setting from a btmux pane:
+it opens the built-in Neovim (at FILE, if given) over the pane's session, or
+runs `$EDITOR` in the terminal when `file-editor = "pane"` or outside btmux.
+
 ## Your Neovim config
 
 btmux starts Neovim with your normal config and sets `g:btmux`, so you can adapt

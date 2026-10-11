@@ -121,6 +121,9 @@ export function useControlSocket() {
         } else if (msg.type === 'open_file_browser') {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setFileBrowserOpen(true, msg.path, msg.pane_id, msg.mode, msg.focus_file);
+        } else if (msg.type === 'open_nvim') {
+          useStore.getState().navigateToPane(msg.pane_id);
+          useStore.getState().setNvimOpen(true);
         }
       };
 

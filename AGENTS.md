@@ -203,7 +203,10 @@ toasts once after the first `UIEnter` if it finds any.
 `file-editor` (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
 `nvim_open`, which opens the file via `--remote-expr` on the shared socket;
 `pane` keeps the older `open_file` path (the pane's foreground Neovim, else
-`$EDITOR` in its shell).
+`$EDITOR` in its shell). `btmux open-editor [FILE] [LINE]` asks its pane's
+server (`POST /api/panes/{id}/open-editor`): with `neovim` it opens the file
+and broadcasts `open_nvim` to show the surface; otherwise, or outside btmux, it
+execs `$EDITOR`.
 
 ### Layout tree — the shared contract
 

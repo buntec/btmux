@@ -870,6 +870,10 @@ pub enum ServerMessage {
     FocusPane {
         pane_id: Uuid,
     },
+    /// Show the built-in Neovim over the pane's session.
+    OpenNvim {
+        pane_id: Uuid,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]

@@ -148,8 +148,13 @@ pub struct CliArgs {
 pub enum SubCommand {
     /// Print the btmux version and exit.
     Version,
-    /// Open FILE in `$EDITOR` (falling back to `vi`), jumping to LINE.
-    OpenEditor { file: String, line: Option<u32> },
+    /// Open FILE (or just the editor), jumping to LINE. In a btmux pane with
+    /// `file-editor = "neovim"`, this opens the built-in Neovim; otherwise
+    /// `$EDITOR` (falling back to `vi`).
+    OpenEditor {
+        file: Option<String>,
+        line: Option<u32>,
+    },
     /// Print shell completions to stdout.
     Completions {
         /// Shell to generate completions for.

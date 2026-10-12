@@ -6,6 +6,8 @@ import { AuthGate } from './components/AuthGate';
 import { STARTUP_THEME } from './state/startupTheme';
 import { CONFIG_DEFAULTS } from './state/configDefaults';
 import './fonts.css';
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-pixel';
 import './index.css';
 import '@fontsource/jetbrains-mono/100.css';
 import '@fontsource/jetbrains-mono/200.css';

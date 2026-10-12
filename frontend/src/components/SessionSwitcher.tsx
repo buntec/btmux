@@ -447,7 +447,7 @@ export function SessionSwitcher({ send }: Props) {
                 <ListItem
                   key={`s-${row.sessionId}`}
                   ref={isSelected ? selectedRef : null}
-                  label={sess.name}
+                  label={<span className="btm-mono">{sess.name}</span>}
                   isSelected={isSelected}
                   startContent={
                     <HStack gap={2} vAlign="center">
@@ -476,7 +476,7 @@ export function SessionSwitcher({ send }: Props) {
               <ListItem
                 key={`w-${row.windowId}`}
                 ref={isSelected ? selectedRef : null}
-                label={win.name}
+                label={<span className="btm-mono">{win.name}</span>}
                 isSelected={isSelected}
                 className="pl-8"
                 startContent={
@@ -507,7 +507,7 @@ export function SessionSwitcher({ send }: Props) {
   const preview = (
     <VStack ref={previewRef} gap={3}>
       <HStack gap={2} vAlign="center">
-        <Text>
+        <Text className="btm-mono">
           {previewWindowIndex >= 0 ? `${previewWindowIndex}: ` : ''}
           {debouncedPreviewWindow?.name ?? '—'}
         </Text>
@@ -577,7 +577,7 @@ export function SessionSwitcher({ send }: Props) {
                 <>
                   <Text size="sm">
                     Kill {pendingKill.kind}{' '}
-                    <Text size="sm" color="inherit" className="text-yellow-vivid">
+                    <Text size="sm" color="inherit" className="btm-mono text-yellow-vivid">
                       {pendingKill.name}
                     </Text>
                     ?

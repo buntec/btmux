@@ -19,7 +19,6 @@ pub const DEFAULT_VI_MODE: bool = false;
 pub const DEFAULT_REPEAT_TIME: u32 = 0;
 pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
-pub const DEFAULT_SHOW_NAV_HEADER: bool = true;
 pub const DEFAULT_CHECK_FOR_UPDATES: bool = true;
 pub const DEFAULT_WALLPAPER_OPACITY: f32 = 0.10;
 pub const DEFAULT_DESKTOP_BACKGROUND_OPACITY: f32 = 0.95;
@@ -321,9 +320,6 @@ pub struct FileConfig {
     /// each pane. Defaults to false; set to true to show pane metadata.
     #[serde(rename = "show-pane-titles")]
     pub show_pane_titles: bool,
-    /// Show the sidebar's app icon and name. Defaults to true.
-    #[serde(rename = "show-nav-header")]
-    pub show_nav_header: bool,
     /// Periodically check GitHub for a newer release and show a toast. Never installs.
     #[serde(rename = "check-for-updates")]
     pub check_for_updates: bool,
@@ -435,7 +431,6 @@ impl Default for FileConfig {
             repeat_time: DEFAULT_REPEAT_TIME,
             animations: DEFAULT_ANIMATIONS,
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
-            show_nav_header: DEFAULT_SHOW_NAV_HEADER,
             check_for_updates: DEFAULT_CHECK_FOR_UPDATES,
             wallpaper: None,
             wallpaper_shader: None,
@@ -818,8 +813,6 @@ pub struct ClientConfig {
     pub animations: bool,
     /// Whether panes render a per-pane title bar.
     pub show_pane_titles: bool,
-    /// Whether the sidebar renders the app icon and name.
-    pub show_nav_header: bool,
     /// URL of a background image displayed behind all terminal panes, or `null`.
     /// When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
     pub wallpaper: Option<String>,
@@ -1250,9 +1243,6 @@ pub fn generate_config_toml() -> String {
 # tag) above each pane. Disabled by default.
 # show-pane-titles = {DEFAULT_SHOW_PANE_TITLES}
 
-# Show the app icon and name at the top of the sidebar.
-# show-nav-header = {DEFAULT_SHOW_NAV_HEADER}
-
 # Periodically check GitHub for a newer release and show a toast when one is
 # available. btmux never updates itself; upgrade with your usual package manager.
 # check-for-updates = {DEFAULT_CHECK_FOR_UPDATES}
@@ -1333,6 +1323,8 @@ pub fn generate_config_toml() -> String {
 # font-weight = {DEFAULT_FONT_WEIGHT}           # bold = font-weight + 200 (capped at 900)
 #                              # bundled weight ranges: JetBrains Mono 100-800, Fira Code 300-700,
 #                              # Source Code Pro 200-900, Cascadia Code 200-700, Geist Mono 100-900, Departure Mono 400
+#                              # font-family and font-weight also style code-like UI text
+#                              # (paths, names, key hints); other UI text uses Geist Sans.
 # allow-transparency = false
 # convert-eol = false
 # disable-stdin = false
@@ -1583,7 +1575,6 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         repeat_time: file.repeat_time,
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
-        show_nav_header: file.show_nav_header,
         wallpaper: wallpaper_url,
         wallpaper_shader: file.wallpaper_shader.clone(),
         wallpaper_shader_params: file.wallpaper_shader_params.clone(),
@@ -1638,7 +1629,6 @@ pub struct ConfigUpdate {
     pub shell: Option<String>,
     pub vi_mode: Option<bool>,
     pub show_pane_titles: Option<bool>,
-    pub show_nav_header: Option<bool>,
     pub keys: Option<BTreeMap<String, String>>,
     pub session_sort: Option<SessionSort>,
     pub window_sort: Option<WindowSort>,
@@ -1701,9 +1691,6 @@ impl ConfigUpdate {
         }
         if other.show_pane_titles.is_some() {
             self.show_pane_titles = other.show_pane_titles;
-        }
-        if other.show_nav_header.is_some() {
-            self.show_nav_header = other.show_nav_header;
         }
         if let Some(keys) = &other.keys {
             self.keys
@@ -1849,9 +1836,6 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     }
     if let Some(show_pane_titles) = overrides.show_pane_titles {
         file.show_pane_titles = show_pane_titles;
-    }
-    if let Some(show_nav_header) = overrides.show_nav_header {
-        file.show_nav_header = show_nav_header;
     }
     if let Some(keys) = &overrides.keys {
         file.keys.extend(keys.clone());
@@ -2154,7 +2138,6 @@ palette:
         assert_eq!(config.shell, None);
         assert!(config.animations);
         assert!(!resolved.show_pane_titles);
-        assert!(resolved.show_nav_header);
         assert_eq!(resolved.wallpaper, None);
         assert_eq!(resolved.wallpaper_shader, None);
         assert_eq!(resolved.wallpaper_opacity, None);
@@ -2186,27 +2169,6 @@ palette:
     }
 
     #[test]
-    fn nav_header_config_and_overrides_preserve_false() {
-        let file: FileConfig = toml::from_str("show-nav-header = false").unwrap();
-        assert!(!resolve_binds(&file).show_nav_header);
-
-        let mut overrides = ConfigUpdate::default();
-        overrides.merge(&ConfigUpdate {
-            show_nav_header: Some(true),
-            ..ConfigUpdate::default()
-        });
-        overrides.merge(&ConfigUpdate::default());
-        assert!(resolve_with_overrides(&file, &overrides).show_nav_header);
-
-        overrides.merge(&ConfigUpdate {
-            show_nav_header: Some(false),
-            ..ConfigUpdate::default()
-        });
-        assert!(!resolve_with_overrides(&file, &overrides).show_nav_header);
-        assert!(!file.show_nav_header);
-    }
-
-    #[test]
     fn check_for_updates_defaults_on_and_can_be_disabled() {
         assert!(FileConfig::default().check_for_updates);
         let file: FileConfig = toml::from_str("check-for-updates = false").unwrap();
@@ -2217,10 +2179,8 @@ palette:
     fn generated_config_keeps_wallpapers_disabled() {
         let example = generate_config_toml();
         assert!(example.contains("# check-for-updates = true"));
-        assert!(example.contains("# show-nav-header = true"));
         let file: FileConfig = toml::from_str(&example).unwrap();
         let resolved = resolve_binds(&file);
-        assert!(resolved.show_nav_header);
         assert_eq!(resolved.wallpaper, None);
         assert_eq!(resolved.wallpaper_shader, None);
     }
@@ -2248,7 +2208,6 @@ palette:
                 shell: Some("/bin/zsh".to_string()),
                 vi_mode: Some(true),
                 show_pane_titles: Some(true),
-                show_nav_header: Some(false),
                 keys: Some(keys),
                 session_sort: Some(SessionSort::Alphabetical),
                 window_sort: Some(WindowSort::Created),
@@ -2276,7 +2235,6 @@ palette:
         assert_eq!(resolved.shell.as_deref(), Some("/bin/zsh"));
         assert!(resolved.vi_mode);
         assert!(resolved.show_pane_titles);
-        assert!(!resolved.show_nav_header);
         assert_eq!(
             resolved.keys.get("new-window").map(String::as_str),
             Some("N")

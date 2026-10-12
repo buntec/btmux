@@ -94,15 +94,18 @@ try {
     const config = useStore.getState().config;
     const { getTerminalFontFamily } = await import('/src/state/configDefaults.ts' as string);
     const css = getComputedStyle(document.body);
+    const mono = document.querySelector('.btm-mono');
     return {
       background: css.getPropertyValue('--color-background-body').trim(),
       palette: config.theme.background,
       font: css.fontFamily,
+      monoFont: mono ? getComputedStyle(mono).fontFamily : '',
       terminalFont: getTerminalFontFamily(config),
     };
   });
   assert.equal(theme.background, theme.palette);
-  assert(theme.font.includes(theme.terminalFont));
+  assert(theme.font.includes('Geist Variable'));
+  assert(theme.monoFont.includes(theme.terminalFont));
 
   const portListener = createServer();
   const udpSocket = createSocket('udp4');
@@ -191,11 +194,11 @@ try {
     assert.notEqual(nextKey, focusedKey, 'navigation distinguishes sockets owned by one process');
     await page.keyboard.press('Escape');
     await page.keyboard.press('s');
-    await viewer.getByText('sort: port', { exact: true }).waitFor();
+    await viewer.getByText('sort: port ▲', { exact: true }).waitFor();
     await page.keyboard.press('s');
-    await viewer.getByText('sort: protocol', { exact: true }).waitFor();
+    await viewer.getByText('sort: protocol ▲', { exact: true }).waitFor();
     await viewer.getByRole('button', { name: 'Sort by port', exact: true }).click();
-    await viewer.getByText('sort: port', { exact: true }).waitFor();
+    await viewer.getByText('sort: port ▲', { exact: true }).waitFor();
     await viewer.getByRole('button', { name: 'Sort by listeners first', exact: true }).click();
     await viewer.getByText('sort: listeners first', { exact: true }).waitFor();
     await assertListenersFirst();
@@ -520,7 +523,8 @@ try {
   await page.waitForFunction(
     () =>
       document.documentElement.dataset.theme === 'light' &&
-      getComputedStyle(document.body).fontFamily.includes('Fira Code'),
+      getComputedStyle(document.querySelector('.btm-mono')!).fontFamily.includes('Fira Code') &&
+      getComputedStyle(document.body).fontFamily.includes('Geist Variable'),
   );
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);

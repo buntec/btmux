@@ -65,7 +65,7 @@ export function PaneTitleBar({
       gap={2}
       vAlign="center"
       className={cn(
-        'flex-none overflow-hidden border-b px-2 py-1',
+        'btm-mono flex-none overflow-hidden border-b px-2 py-1',
         isActive ? 'border-b-border-strong border-l-2 border-l-accent bg-accent-muted' : 'border-b-border bg-surface',
       )}
     >

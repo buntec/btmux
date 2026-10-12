@@ -48,7 +48,14 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
   const animations = getAnimations(config);
   const hasShader = config?.wallpaper_shader != null;
   return (
-    <HStack gap={2} paddingInline={2} vAlign="center" className="min-w-0" role="toolbar" aria-label="Terminal controls">
+    <HStack
+      gap={2}
+      paddingInline={2}
+      vAlign="center"
+      className="btm-mono min-w-0"
+      role="toolbar"
+      aria-label="Terminal controls"
+    >
       <Button label={session.name} variant="ghost" size="sm" onClick={() => state().setSwitcherOpen(true)} />
       <TabList
         value={activeWindow?.id ?? ''}

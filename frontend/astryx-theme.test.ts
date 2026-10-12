@@ -3,14 +3,13 @@ import { createBtmuxTheme, readableColor, contrastRatio, terminalColorMode } fro
 import { FALLBACK_THEME } from './src/state/startupTheme';
 
 describe('terminal-derived Astryx theme', () => {
-  test('uses the same palette and font for UI, headings, and code', () => {
-    const theme = createBtmuxTheme(FALLBACK_THEME, 'JetBrains Mono', 300, true);
+  test('uses the palette, sans for UI and headings, and the terminal font for code', () => {
+    const theme = createBtmuxTheme(FALLBACK_THEME, 'JetBrains Mono', true);
     expect(theme.tokens['--color-background-body']).toBe(FALLBACK_THEME.background);
     expect(theme.tokens['--color-accent']).toBe(FALLBACK_THEME.blue);
-    expect(theme.tokens['--font-weight-normal']).toBe('300');
-    for (const role of ['body', 'heading', 'code'] as const) {
-      expect(theme.tokens[`--font-family-${role}`]).toContain('JetBrains Mono');
-    }
+    expect(theme.tokens['--font-family-body']).toContain('Geist Variable');
+    expect(theme.tokens['--font-family-heading']).toContain('Geist Variable');
+    expect(theme.tokens['--font-family-code']).toContain('JetBrains Mono');
     expect(theme.localTokens?.['--astryx-theme-neutral-color-status-fill-error']).toBe(FALLBACK_THEME.red);
   });
 
@@ -18,7 +17,7 @@ describe('terminal-derived Astryx theme', () => {
     const palette = { ...FALLBACK_THEME, background: '#ffffff', foreground: '#333333' };
     expect(terminalColorMode(FALLBACK_THEME)).toBe('dark');
     expect(terminalColorMode(palette)).toBe('light');
-    const theme = createBtmuxTheme(palette, 'Fira Code', 400, true);
+    const theme = createBtmuxTheme(palette, 'Fira Code', true);
     const background = theme.tokens['--color-background-popover'] as string;
     for (const token of [
       '--color-text-primary',

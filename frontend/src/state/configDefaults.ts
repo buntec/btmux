@@ -10,7 +10,6 @@ export const CONFIG_DEFAULTS = {
   repeatTime: 0,
   animations: true,
   showPaneTitles: false,
-  showNavHeader: true,
   wallpaperShader: null,
   wallpaperOpacity: 0.1,
   desktopBackgroundOpacity: 0.95,
@@ -69,10 +68,6 @@ export function getAnimations(config: ConfigLike): boolean {
 
 export function getShowPaneTitles(config: ConfigLike): boolean {
   return config?.show_pane_titles ?? CONFIG_DEFAULTS.showPaneTitles;
-}
-
-export function getShowNavHeader(config: ConfigLike): boolean {
-  return config?.show_nav_header ?? CONFIG_DEFAULTS.showNavHeader;
 }
 
 export function getTerminalFontSize(config: ConfigLike): number {

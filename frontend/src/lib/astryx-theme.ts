@@ -36,8 +36,10 @@ export function terminalColorMode(palette: Theme): 'light' | 'dark' {
 
 /** The bundled Nerd Font covers icons (e.g. from Neovim) the configured font lacks. */
 const FONT_FALLBACKS = 'Symbols Nerd Font Mono, monospace';
+const SANS_FALLBACKS = 'system-ui, sans-serif, Symbols Nerd Font Mono';
+const UI_SANS = 'Geist Variable';
 
-export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight: number, animations: boolean) {
+export function createBtmuxTheme(palette: Theme, fontFamily: string, animations: boolean) {
   const background = palette.background;
   const surface = mix(background, palette.foreground, 0.05);
   const popover = mix(background, palette.foreground, 0.08);
@@ -72,7 +74,6 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight:
     '--color-track': mix(background, foreground, 0.3),
     '--color-skeleton': mix(background, foreground, 0.2),
     '--color-shadow': withAlpha(background, 0.4),
-    '--font-weight-normal': String(fontWeight),
   };
   for (const [status, color] of [
     ['success', palette.green],
@@ -105,13 +106,14 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, fontWeight:
     name: 'btmux',
     extends: neutralTheme,
     typography: {
-      body: { family: fontFamily, fallbacks: FONT_FALLBACKS },
-      heading: { family: fontFamily, fallbacks: FONT_FALLBACKS },
+      body: { family: UI_SANS, fallbacks: SANS_FALLBACKS },
+      heading: { family: UI_SANS, fallbacks: SANS_FALLBACKS },
       code: { family: fontFamily, fallbacks: FONT_FALLBACKS },
     },
     ...(animations ? {} : { motion: { fast: 0, medium: 0, ratio: 1 } }),
     tokens,
     components: {
+      kbd: { base: { fontFamily: 'var(--font-family-code)' } },
       // Palette surfaces instead of the inverted foreground slab.
       toast: {
         base: {

@@ -10,7 +10,9 @@
   "dependencies": {
     "@astryxdesign/core": "0.6.5",
     "@astryxdesign/theme-neutral": "0.6.5",
+    "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.2.8",
+    "@fontsource-variable/geist-pixel": "^5.3.1",
     "@fontsource/cascadia-code": "^5.2.3",
     "@fontsource/fira-code": "^5.2.7",
     "@fontsource/jetbrains-mono": "^5.2.8",

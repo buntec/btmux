@@ -14,10 +14,11 @@ import { InfoDialog } from './InfoDialog';
 import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
 import type { Bind, ClientConfig, Command } from '../state/types';
-import { getPrefix } from '../state/configDefaults';
+import { getPrefix, getSmoothScrollDuration } from '../state/configDefaults';
 import { KeyCap } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
+import { smoothScrollBy } from '../lib/smoothScroll';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -143,6 +144,7 @@ export function Overlay({ sessionId, send, config }: Props) {
   const [pickerIndex, setPickerIndex] = useState(0);
   const [applied, setApplied] = useState<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const keysRef = useRef<HTMLDivElement>(null);
   const commands = useMemo(
     () => (overlay?.mode === 'command' ? [...overlay.commands, ...actionCommands(overlay.commands, config)] : []),
     [overlay, config],
@@ -379,7 +381,15 @@ export function Overlay({ sessionId, send, config }: Props) {
       onOpenChange={changeOpen}
       width={960}
       maxHeight="85dvh"
-      onKeyDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        const direction = !event.ctrlKey ? 0 : event.key === 'd' ? 1 : event.key === 'u' ? -1 : 0;
+        const viewport = keysRef.current;
+        if (direction && viewport) {
+          event.preventDefault();
+          smoothScrollBy(viewport, direction * (viewport.clientHeight / 2), getSmoothScrollDuration(config));
+        }
+      }}
     >
       <Layout
         header={
@@ -391,7 +401,7 @@ export function Overlay({ sessionId, send, config }: Props) {
           />
         }
         content={
-          <LayoutContent padding={4}>
+          <LayoutContent ref={keysRef} padding={4}>
             <VStack gap={0}>
               {sections.map((section) => {
                 const binds = sectionBinds(section.actions, overlay.binds);

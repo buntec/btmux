@@ -729,6 +729,12 @@ fn default_commands() -> Vec<Command> {
             description: "Open the btmux configuration view.".to_string(),
             confirm: None,
         },
+        Command {
+            id: "about".to_string(),
+            label: "about btmux".to_string(),
+            description: "Show the version, profile, and file locations.".to_string(),
+            confirm: None,
+        },
     ]
 }
 

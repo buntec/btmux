@@ -227,6 +227,14 @@ record-demo:
     export BTMUX_AUTH_TOKEN="$demo_token"
     (cd frontend && bun run record-demo.ts)
 
+# Record a demo of the installed macOS desktop app (port 8045). Needs
+# Accessibility and Screen Recording permissions for the terminal. Recreates
+# ~/btmux-demo with fresh clones as the playground. Mode: dark or light.
+# delay_scale in (0, 1] shortens all pauses, e.g. 0.5 runs twice as fast.
+# Output: demo.mp4 (dark) or demo-light.mp4 (light) in the repo root, or the given path.
+record-desktop-demo mode="dark" delay_scale="1" output="":
+    scripts/record-desktop-demo.sh --{{mode}} --delay-scale {{delay_scale}} {{output}}
+
 # Kill all dev processes (vite, dev backend, concurrently)
 kill-dev:
     -pkill -f "target/debug/btmux"

@@ -5,7 +5,7 @@ A tmux-style terminal manager for the browser and desktop, powered by
 server, so you can close a tab and reconnect from any browser without losing
 anything. Key bindings follow tmux defaults (`<prefix> + %`, `<prefix> + "`, …).
 
-https://github.com/user-attachments/assets/9180b2ed-43cb-4dbb-bccd-ac5f0cfc4944
+https://github.com/user-attachments/assets/93f11edd-8dbe-4faa-a96c-5f0265c4906a
 
 ## Highlights
 

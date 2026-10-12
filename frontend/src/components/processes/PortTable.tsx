@@ -133,9 +133,6 @@ export function PortTable({ rows }: { rows: PortRow[] }) {
                   <TableRow>
                     <TableCell colSpan={7}>
                       <VStack gap={2} className="border-y border-border bg-surface px-3 py-2">
-                        <Text size="sm" color="secondary">
-                          Remote is the address and port at the other end of a connection.
-                        </Text>
                         <Table
                           density="compact"
                           dividers="none"

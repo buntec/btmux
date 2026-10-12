@@ -267,11 +267,7 @@ export function App() {
   const serverVersion = config?.version;
   useEffect(() => {
     if (!desktopVersionMismatch(desktopVersion, serverVersion)) return;
-    useStore
-      .getState()
-      .showToast(`Desktop app ${desktopVersion} is connected to server ${serverVersion}.`, 'attention', {
-        body: 'Versions differ; some features may not work. Update both to the same version.',
-      });
+    useStore.getState().showToast(`Version mismatch: app ${desktopVersion}, server ${serverVersion}`, 'attention');
   }, [desktopVersion, serverVersion]);
 
   useEffect(() => {

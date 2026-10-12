@@ -56,10 +56,7 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
             ) : (
               <VStack gap={4}>
                 {desktopVersionMismatch(desktopVersion, info.version) && (
-                  <Banner
-                    status="warning"
-                    title={`Desktop app ${desktopVersion} is connected to server ${info.version}. Update both to the same version.`}
-                  />
+                  <Banner status="warning" title={`Version mismatch: app ${desktopVersion}, server ${info.version}`} />
                 )}
                 {rows.map(([label, value]) => (
                   <VStack key={label} gap={1}>

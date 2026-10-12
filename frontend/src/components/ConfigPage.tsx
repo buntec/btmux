@@ -510,7 +510,7 @@ export function ConfigPage({ config, send }: Props) {
     if (Object.keys(update).length === 0) return;
     send({ type: 'update_config', update });
     setDirty(new Set());
-    toast({ body: 'Settings applied to the current session' });
+    toast({ body: 'Applied until restart' });
     setSettingsOpen(false);
   };
 
@@ -663,7 +663,6 @@ export function ConfigPage({ config, send }: Props) {
         header={
           <DialogHeader
             title="Settings"
-            subtitle="Preview changes in the terminal and UI. Apply for this run, or show and copy TOML to save them."
             hasDivider={false}
             onOpenChange={(open) => {
               if (!open) goBack();
@@ -794,20 +793,14 @@ export function ConfigPage({ config, send }: Props) {
                         {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
                         {range('wallpaperFps', 'Wallpaper frame rate', 10, 60, 1)}
                         {range('wallpaperResolution', 'Wallpaper resolution', 0.1, 1, 0.05)}
-                        {toggle(
-                          'wallpaperFollowsMouse',
-                          'Follow mouse cursor',
-                          'Drives interactive effects, or moves the center or position when provided.',
-                        )}
+                        {toggle('wallpaperFollowsMouse', 'Follow mouse cursor')}
                         {toggle(
                           'wallpaperFollowsKeyboard',
                           'Follow keyboard input',
                           'Drives interactive effects from the active terminal cursor.',
                         )}
                       </FormLayout>
-                      <Text color="secondary">
-                        Shader wallpapers require WebGPU. The theme background remains visible when it is unavailable.
-                      </Text>
+                      <Text color="secondary">Requires WebGPU.</Text>
                       {findWallpaperShader(draft.wallpaperShader) && (
                         <ShaderParameterFields
                           shaderId={draft.wallpaperShader}
@@ -826,14 +819,7 @@ export function ConfigPage({ config, send }: Props) {
                           none,
                           ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
                         ])}
-                        {range(
-                          'paneSwitchBorderSpeed',
-                          'Pane switch border animation duration (seconds)',
-                          0.05,
-                          1,
-                          0.01,
-                          paneBorderOff,
-                        )}
+                        {range('paneSwitchBorderSpeed', 'Border duration (s)', 0.05, 1, 0.01, paneBorderOff)}
                       </FormLayout>
                     </VStack>
                   )}
@@ -878,9 +864,7 @@ export function ConfigPage({ config, send }: Props) {
                           />
                         </HStack>
                       ) : osPermission === 'denied' ? (
-                        <Text color="secondary">
-                          The browser blocks notifications for this site. Allow them in its site settings.
-                        </Text>
+                        <Text color="secondary">Blocked; allow in site settings.</Text>
                       ) : osPermission === 'unsupported' ? (
                         <Text color="secondary">This browser does not support notifications.</Text>
                       ) : null}
@@ -889,7 +873,7 @@ export function ConfigPage({ config, send }: Props) {
                   {tab === 'logging' && (
                     <VStack gap={4} id="settings-logging" role="tabpanel" aria-label={TAB_LABELS.logging}>
                       <Text color="secondary">
-                        Use error, warn, info, debug, trace, or a tracing directive. Changes take effect on restart.
+                        Use error, warn, info, debug, trace, or a tracing directive. Applies after restart.
                       </Text>
                       <FormLayout>
                         {text('consoleLevel', 'Console level')}

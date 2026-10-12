@@ -706,9 +706,9 @@ fn default_commands() -> Vec<Command> {
         Command {
             id: "create-sessions-from-git-repos".to_string(),
             label: "create sessions from git repos".to_string(),
-            description: "For each git repo under the active pane's directory, \
-                create a session named after the repo, with one window per worktree."
-                .to_string(),
+            description:
+                "One session per git repo under the current directory with one window per worktree."
+                    .to_string(),
             confirm: None,
         },
         Command {

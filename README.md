@@ -1,20 +1,20 @@
 # btmux
 
-A tmux-style terminal manager for the browser and desktop, powered by
-[ghostty-web](https://github.com/rcarmo/ghostty-web). Sessions live on the
-server, so you can close a tab and reconnect from any browser without losing
-anything. Key bindings follow tmux defaults (`<prefix> + %`, `<prefix> + "`, …).
+A tmux-style terminal manager for the browser and desktop, powered by [ghostty-web](https://github.com/rcarmo/ghostty-web).
 
 https://github.com/user-attachments/assets/93f11edd-8dbe-4faa-a96c-5f0265c4906a
 
 ## Highlights
 
-- Single static binary that bundles all assets
-- Sessions, windows, splits, zoom, and preset layouts
-- Live window thumbnails, file browser, and Git UI
-- Built-in Neovim GUI with a native command line, completion, and messages
-- Base16/24 themes and WebGPU shader wallpapers, all hot-reloaded
-- Notifications for coding agents, plus a REST API and MCP server
+- Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and preset layouts
+- Server-side sessions: (re)connect from any number of frontends
+- Batteries included: file browser, Git mode, process viewer, Neovim GUI
+- Coding agent state tracking and notifications
+- Single self-contained binary
+- Interactive shader wallpapers
+- Support for base16/base24 color schemes
+- Highly configurable
+- REST API and MCP server
 
 ## Install
 
@@ -52,7 +52,7 @@ cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
 
 Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the command palette.
 
-## Built-in Neovim
+## Built-in Neovim GUI
 
 `<prefix> + e` opens a Neovim GUI drawn by btmux, with its command line,
 completion menu, messages, LSP signature help, and floating windows rendered as native UI. The file

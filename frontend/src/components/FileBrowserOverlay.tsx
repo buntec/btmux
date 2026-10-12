@@ -636,7 +636,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       } else if (useStore.getState().config?.file_editor !== 'pane') {
         send({ type: 'nvim_open', path, line: line ?? null });
         // Show the surface before closing so the pane doesn't reclaim focus.
-        useStore.getState().setNvimOpen(true);
+        useStore.getState().setNvimOpen(true, paneId);
       } else {
         send({ type: 'open_file', pane_id: paneId, path, line: line ?? null });
       }

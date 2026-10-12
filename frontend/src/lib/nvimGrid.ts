@@ -426,6 +426,15 @@ class Layer {
       this.drawGlyph(ctx, text, this.x(col), row * ch, fg, attr);
       this.drawDecorations(col, row, fg, sp, attr);
     }
+    // Windows hide grid 1 beneath them, where Neovim leaves stale separators and
+    // statuslines of closed windows; transparent window cells would show them.
+    if (this.kind === 'root') {
+      for (const win of this.s.covered) {
+        if (row < win.row || row >= win.row + win.rows) continue;
+        const x0 = this.x(win.col);
+        ctx.clearRect(x0, y, this.x(win.col + win.cols) - x0, ch);
+      }
+    }
     ctx.restore();
   }
 
@@ -518,6 +527,9 @@ export class NvimGrid {
   // Fields of the Normal group; unset ones fall back to the btmux theme, like a TUI.
   private normal = { fg: false, bg: false, sp: false };
   private floatsKey = '';
+  /** @internal Screen cells of visible windows. */
+  covered: { row: number; col: number; rows: number; cols: number }[] = [];
+  private coveredKey = '';
   /** Called when Neovim's default colors change, to re-query Normal. */
   onDefaultColors: (() => void) | null = null;
   /** Receives events the grid doesn't handle (cmdline, popupmenu, …). */
@@ -888,6 +900,15 @@ export class NvimGrid {
       .filter((l) => l.kind === 'float' && l.visible)
       .sort((a, b) => a.compindex - b.compindex);
     const order = new Map(floats.map((l, i) => [l, i]));
+    const covered = [...this.layers.values()]
+      .filter((l) => l.kind === 'window' && l.visible)
+      .map(({ row, col, rows, cols }) => ({ row, col, rows, cols }));
+    const coveredKey = JSON.stringify(covered);
+    if (coveredKey !== this.coveredKey) {
+      this.covered = covered;
+      this.coveredKey = coveredKey;
+      this.root.redrawAll();
+    }
     for (const layer of this.layers.values()) {
       if (layer.moved) {
         const i = order.get(layer);

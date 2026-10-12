@@ -157,8 +157,28 @@ try {
       if (originalNow) Object.defineProperty(performance, 'now', originalNow);
       else delete (performance as any).now;
     }
+
+    grid.smoothScroll = 0;
+    grid.redraw([
+      ['grid_line', [1, 1, 1, [['│', 1]], false]],
+      ['flush', []],
+    ]);
+    check(alpha(1.5 * w, 1.5 * h) === 255, 'grid 1 separators are drawn');
+    // Neovim leaves a closed split's separator on grid 1, under the grown window.
+    grid.redraw([
+      ['grid_resize', [2, 3, 4]],
+      ['win_pos', [2, null, 0, 0, 3, 4]],
+      ['flush', []],
+    ]);
+    check(alpha(1.5 * w, 1.5 * h) === 0, 'windows hide stale grid 1 cells beneath them');
+    grid.redraw([
+      ['win_close', [2]],
+      ['grid_destroy', [2]],
+      ['flush', []],
+    ]);
+    check(alpha(1.5 * w, 1.5 * h) === 255, 'grid 1 shows again where no window covers it');
   });
-  console.log('PASS canvas transparency, explicit backgrounds, cursor clearing, and scrolling in both directions');
+  console.log('PASS canvas transparency, explicit backgrounds, cursor clearing, scrolling, and grid 1 under windows');
 
   socket = new WebSocket(`${url.replace(/^http/, 'ws')}/ws/nvim`, { headers });
   socket.binaryType = 'arraybuffer';
@@ -203,34 +223,41 @@ try {
   // Keep the test's text out of the user's buffers.
   scratch = bufferId(await rpc('nvim_create_buf', [false, true]));
   await rpc('nvim_set_current_buf', [scratch]);
-  await page.evaluate(async () => {
+  const nvimPaneId: string = await page.evaluate(async (id) => {
     const { useStore } = await import('/src/state/store.tsx' as string);
-    useStore.getState().setNvimOpen(true);
-  });
+    const pane = useStore.getState().getActivePaneId(id);
+    useStore.getState().setNvimOpen(true, pane);
+    return pane;
+  }, sessions[0].id);
   const input = page.getByRole('textbox', { name: 'Neovim input', exact: true });
   await input.waitFor({ state: 'attached' });
   await page.waitForTimeout(500);
   await rpc('nvim_input', ['<Esc>']);
   await rpc('nvim_set_current_line', ['']);
 
-  await page.evaluate(async (name) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    useStore.getState().navigateFn(`/s/${encodeURIComponent(name)}`);
-  }, sessions[1].name);
-  await page.waitForFunction(() => {
-    const state = (window as any).nvimStore.getState();
-    const session = state.allSessions.find((s: any) =>
-      location.pathname.startsWith(`/s/${encodeURIComponent(s.name)}/`),
+  const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label'));
+  const nvimFocused = () => input.evaluate((el) => document.activeElement === el);
+  const showSession = async (name: string) => {
+    await page.evaluate(
+      (name) => (window as any).nvimStore.getState().navigateFn(`/s/${encodeURIComponent(name)}`),
+      name,
     );
-    const pane = session?.windows[session.active_window]?.panes[0];
-    return pane && state.terminals.get(pane.id)?.element?.style.visibility === 'visible';
-  });
-  await page.waitForTimeout(500);
-  assert.equal(
-    await input.evaluate((el) => document.activeElement === el),
-    true,
-    'Neovim owns focus after a fresh session mounts',
-  );
+    await page.waitForFunction((name) => {
+      const state = (window as any).nvimStore.getState();
+      const session = state.allSessions.find((s: any) => s.name === name);
+      const pane = session && state.getActivePaneId(session.id);
+      return (
+        location.pathname.startsWith(`/s/${encodeURIComponent(name)}/`) &&
+        state.terminals.get(pane)?.element?.style.visibility === 'visible'
+      );
+    }, name);
+    await page.waitForTimeout(500);
+  };
+  await showSession(sessions[1].name);
+  assert.equal(await input.isVisible(), false, 'Neovim hides with its pane');
+  assert.equal(await focusedLabel(), 'Terminal input', 'the shown terminal owns focus');
+  await showSession(sessions[0].name);
+  assert.equal(await nvimFocused(), true, 'Neovim regains focus with its pane');
   await page.keyboard.type('iFOCUS_PROBE');
   await page.keyboard.press('Escape');
   assert.equal(
@@ -238,7 +265,92 @@ try {
     'FOCUS_PROBE',
     'typing reaches the editor after a session switch',
   );
-  console.log('PASS Neovim keeps keyboard focus across session switches');
+  console.log('PASS Neovim stays pinned to its pane across session switches');
+
+  const control = (msg: unknown) =>
+    page.evaluate((msg) => (window as any).nvimStore.getState().controlSendFn(msg), msg);
+  const panesBefore: string[] = await page.evaluate(
+    ({ session, pane }) => {
+      const state = (window as any).nvimStore.getState();
+      state.controlSendFn({ type: 'split', session_id: session, pane_id: pane, direction: 'h' });
+      state.controlSendFn({ type: 'select_pane', session_id: session, pane_id: pane });
+      return [...state.terminals.keys()];
+    },
+    { session: sessions[0].id, pane: nvimPaneId },
+  );
+  const otherPaneId: string = await page
+    .waitForFunction(
+      ({ session, pane, before }) => {
+        const state = (window as any).nvimStore.getState();
+        const other = [...state.terminals.keys()].find((id) => !before.includes(id));
+        return (
+          other &&
+          state.getActivePaneId(session) === pane &&
+          state.terminals.get(other).element?.style.visibility === 'visible' &&
+          other
+        );
+      },
+      { session: sessions[0].id, pane: nvimPaneId, before: panesBefore },
+    )
+    .then((handle) => handle.jsonValue() as Promise<string>);
+  await page.waitForTimeout(500);
+  assert.equal(await nvimFocused(), true, 'new terminal replay cannot steal Neovim focus');
+  // The surface covers exactly its pane; the other pane stays visible.
+  const paneGeometry = () =>
+    page.evaluate(
+      ({ pane, other }) => {
+        const box = (id: string) => document.querySelector<HTMLElement>(`[data-pane-id="${id}"]`)!;
+        const surface = document.querySelector('[data-nvim-input]')!.parentElement!.getBoundingClientRect();
+        const covered = box(pane).getBoundingClientRect();
+        const otherBox = box(other);
+        return {
+          matches: ['left', 'top', 'width', 'height'].every(
+            (k) => Math.abs((surface as any)[k] - (covered as any)[k]) < 1,
+          ),
+          area: surface.width * surface.height,
+          otherVisible: otherBox.style.display !== 'none' && getComputedStyle(otherBox).opacity !== '0',
+        };
+      },
+      { pane: nvimPaneId, other: otherPaneId },
+    );
+  const split = await paneGeometry();
+  assert(split.matches && split.otherVisible, JSON.stringify(split));
+  const otherCenter = await page.evaluate((other) => {
+    const rect = (window as any).nvimStore.getState().terminals.get(other).element.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }, otherPaneId);
+  await page.mouse.click(otherCenter.x, otherCenter.y);
+  await page.waitForFunction(
+    ({ session, other }) => (window as any).nvimStore.getState().getActivePaneId(session) === other,
+    { session: sessions[0].id, other: otherPaneId },
+  );
+  await page.waitForTimeout(300);
+  assert.equal(await focusedLabel(), 'Terminal input', 'selecting another pane focuses its terminal');
+  assert.equal(await input.isVisible(), true, 'Neovim stays visible over its pane');
+  const surfaceBox = (await input.evaluate((el) => {
+    const r = el.parentElement!.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })) as { x: number; y: number };
+  await page.mouse.click(surfaceBox.x, surfaceBox.y);
+  await page.waitForFunction(
+    ({ session, pane }) => (window as any).nvimStore.getState().getActivePaneId(session) === pane,
+    { session: sessions[0].id, pane: nvimPaneId },
+  );
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Neovim input');
+  await rpc('nvim_win_set_cursor', [0, [1, 'FOCUS_PROBE'.length - 1]]);
+  await control({ type: 'zoom_pane', session_id: sessions[0].id, pane_id: nvimPaneId });
+  await page.waitForFunction((area) => {
+    const surface = document.querySelector('[data-nvim-input]')!.parentElement!.getBoundingClientRect();
+    return surface.width * surface.height > area * 1.5;
+  }, split.area);
+  const zoomed = await paneGeometry();
+  assert(zoomed.matches, JSON.stringify(zoomed));
+  await control({ type: 'zoom_pane', session_id: sessions[0].id, pane_id: nvimPaneId });
+  await control({ type: 'kill_pane', session_id: sessions[0].id, pane_id: otherPaneId });
+  await page.waitForFunction((other) => !(window as any).nvimStore.getState().terminals.has(other), otherPaneId);
+  await page.waitForTimeout(300);
+  assert.equal(await nvimFocused(), true);
+  console.log('PASS Neovim covers only its pane, yields focus to other panes, and fills the window when zoomed');
 
   await page.evaluate(() => {
     (window as any).savedNvimInput = document.querySelector('[data-nvim-input]');
@@ -254,20 +366,18 @@ try {
   await page.keyboard.press('e');
   await page.waitForFunction(() => !(window as any).nvimStore.getState().nvimOpen);
   await prompt.waitFor({ state: 'hidden' });
-  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Terminal input');
+  assert.equal(await focusedLabel(), 'Terminal input');
   await page.keyboard.press('Control+b');
   await page.keyboard.press('e');
   await prompt.waitFor({ state: 'visible' });
-  // Evict the original session from the four-session pool while the prompt is open.
-  for (const target of [...sessions.slice(2), sessions[0], sessions[1]]) {
-    await page.evaluate(
-      (name) => (window as any).nvimStore.getState().navigateFn(`/s/${encodeURIComponent(name)}`),
-      target.name,
-    );
-    await page.waitForFunction((name) => location.pathname.startsWith(`/s/${encodeURIComponent(name)}`), target.name);
-    await prompt.waitFor({ state: 'visible' });
-    await page.waitForFunction(() => document.activeElement === (window as any).savedNvimInput);
+  // Evict the editor's session from the four-session pool while the prompt is open.
+  for (const target of sessions.slice(1)) {
+    await showSession(target.name);
+    await prompt.waitFor({ state: 'hidden' });
   }
+  await showSession(sessions[0].name);
+  await prompt.waitFor({ state: 'visible' });
+  await page.waitForFunction(() => document.activeElement === (window as any).savedNvimInput);
   assert.equal(
     await page.evaluate(
       () =>
@@ -281,30 +391,6 @@ try {
   await page.keyboard.press('y');
   assert.equal(await rpc('nvim_exec_lua', ['return _G.btmux_confirm_answer', []]), 1);
   console.log('PASS confirmation prompts and the editor socket survive hiding and session-pool eviction');
-
-  const oldPane = await page.evaluate(async () => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    const { runAction } = await import('/src/hooks/useKeybindings.ts' as string);
-    const state = useStore.getState();
-    const session = state.allSessions.find((s: any) =>
-      location.pathname.startsWith(`/s/${encodeURIComponent(s.name)}/`),
-    );
-    runAction('new-window', session.id, state.controlSendFn, () => {});
-    return state.getActivePaneId(session.id);
-  });
-  await page.waitForFunction((oldPane) => {
-    const state = (window as any).nvimStore.getState();
-    const session = state.allSessions.find((s: any) =>
-      location.pathname.startsWith(`/s/${encodeURIComponent(s.name)}/`),
-    );
-    const pane = session && state.getActivePaneId(session.id);
-    return pane !== oldPane && state.terminals.get(pane)?.element?.style.visibility === 'visible';
-  }, oldPane);
-  assert.equal(
-    await input.evaluate((el) => document.activeElement === el),
-    true,
-    'new terminal replay cannot steal Neovim focus',
-  );
 
   const fontSize = await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
@@ -365,11 +451,21 @@ try {
       (s) => s.url.endsWith('/ws/nvim') || s.url.includes(`/ws/pane/${(window as any).nvimPane}`),
     ).length;
   });
+  // Alpha at the editor's center, on the window canvas there (grid 1 is hidden beneath it).
   const editorAlpha = () =>
     input.evaluate((el) => {
-      const canvas = el.parentElement!.querySelector('canvas')!;
-      return canvas.getContext('2d')!.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1)
-        .data[3];
+      const surface = el.parentElement!.getBoundingClientRect();
+      const x = surface.left + surface.width / 2;
+      const y = surface.top + surface.height / 2;
+      const canvas = [...el.parentElement!.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].findLast((c) => {
+        const r = c.getBoundingClientRect();
+        return c.style.display !== 'none' && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+      })!;
+      const r = canvas.getBoundingClientRect();
+      const scale = canvas.width / r.width;
+      return canvas
+        .getContext('2d')!
+        .getImageData(Math.floor((x - r.left) * scale), Math.floor((y - r.top) * scale), 1, 1).data[3];
     });
   for (const colors of ['btmux-default-light', 'btmux-default-dark']) {
     await update({ colors });
@@ -427,7 +523,7 @@ try {
   });
   assert(lifetime.same && lifetime.sockets && lifetime.hidden && lifetime.transparent, JSON.stringify(lifetime));
   console.log(
-    `PASS wallpaper shows through Neovim while panes stay hidden and sockets stay open (shader ${lifetime.shader})`,
+    `PASS wallpaper shows through Neovim while its pane stays hidden and sockets stay open (shader ${lifetime.shader})`,
   );
 
   await page.keyboard.type('a');
@@ -615,10 +711,15 @@ try {
         ).length,
     );
   assert.equal(await floatCount(), 0);
+  // Let CursorMoved fire for this move first; it would close the float.
+  await rpc('nvim_exec_lua', [
+    `vim.api.nvim_create_autocmd("CursorMoved", { once = true, callback = function() end })
+    vim.api.nvim_win_set_cursor(0, { 1, 5 })`,
+    [],
+  ]);
   await rpc('nvim_exec_lua', [
     `local ns = vim.api.nvim_create_namespace("btmux_test")
     vim.diagnostic.set(ns, 0, { { lnum = 0, col = 0, message = "diagnostic probe" } })
-    vim.api.nvim_win_set_cursor(0, { 1, 5 })
     vim.diagnostic.open_float({ scope = "line" })`,
     [],
   ]);
@@ -649,6 +750,40 @@ try {
   );
   assert.deepEqual(errors, [], 'session switches and resize must not throw');
   console.log('PASS closing Neovim returns focus to the terminal');
+
+  // Neovim doesn't resend unchanged window cells to a UI attaching later.
+  await rpc('nvim_command', ['only']);
+  await rpc('nvim_set_current_buf', [scratch]);
+  await rpc('nvim_buf_set_lines', [scratch, 0, -1, false, ['REATTACH_PROBE', '', '']]);
+  // Keep the cursor off the probed row.
+  await rpc('nvim_win_set_cursor', [0, [3, 0]]);
+  await rpc('nvim_command', ['redraw']);
+  const second = await context.newPage();
+  await second.goto(`${url}/s/${encodeURIComponent(sessions[1].name)}`);
+  await second.waitForFunction(() => (window as any).document.querySelector('[data-pane-id]'));
+  await second.evaluate(async (id) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setNvimOpen(true, state.getActivePaneId(id));
+  }, sessions[1].id);
+  await second.waitForTimeout(1000);
+  // Glyph pixels in the window's top row.
+  const probeShown = await second.evaluate(
+    (rows) => {
+      const canvas = [...document.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].find(
+        (c) => c.dataset.grid !== '1' && c.style.display === 'block' && c.width > 0,
+      )!;
+      const row = Math.floor(canvas.height / rows);
+      return canvas
+        .getContext('2d')!
+        .getImageData(0, 0, canvas.width, row)
+        .data.some((v, i) => i % 4 === 3 && v > 0);
+    },
+    await rpc('nvim_win_get_height', [0]),
+  );
+  assert(probeShown, 'the new tab draws text that was already on screen');
+  await second.close();
+  console.log('PASS a newly attached tab shows existing window contents');
 } finally {
   if (rpc && scratch !== null) {
     await rpc('nvim_input', ['<Esc>']).catch(() => {});

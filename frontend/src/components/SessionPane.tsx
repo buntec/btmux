@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Terminal } from 'ghostty-web';
 import { Dialog } from '@astryxdesign/core/Dialog';
 import { TerminalPane } from './TerminalPane';
@@ -43,7 +43,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const settingsOpen = useStore((s) => s.settingsOpen);
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
-  const nvimOpen = useStore((s) => s.nvimOpen);
+  const nvimPaneId = useStore((s) => (s.nvimOpen ? s.nvimPaneId : null));
   const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
   const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
   const fileBrowserMode = useStore((s) => s.fileBrowserInitialMode);
@@ -119,6 +119,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     const focusId = zoomedPaneId ?? activePaneId;
     // Don't steal focus into the terminal while the file browser occupies that pane.
     const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
+    // Neovim takes focus itself when it covers the active pane.
+    const nvimOwnsActivePane = nvimPaneId === focusId;
     if (
       settingsOpen ||
       overlay ||
@@ -126,7 +128,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
       agentGridOpen ||
       switcherOpen ||
       browserOwnsActivePane ||
-      nvimOpen ||
+      nvimOwnsActivePane ||
       !focusId ||
       !isActiveSession
     ) {
@@ -149,7 +151,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     switcherOpen,
     fileBrowserOpen,
     fileBrowserPaneId,
-    nvimOpen,
+    nvimPaneId,
     isActiveSession,
     settingsOpen,
     previewConfig,
@@ -210,13 +212,27 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     ? computeRectsAndDividers(activeWindow.layout, { top: 0, left: 0, width: 100, height: 100 }, ratioOverrides)
     : { rects: [], dividers: [] };
   const rectByPane = new Map(rects.map((r) => [r.paneId, r]));
+  const HIDDEN: LayoutRect = { paneId: '', top: 0, left: 0, width: 100, height: 100 };
 
   // display-panes (prefix + q): map each pane id to its layout-order index, the
   // number shown over it and the digit that selects it (see useKeybindings).
   const paneNumberById = new Map(
     activeWindow ? paneIdsInOrder(activeWindow.layout).map((id, i) => [id, i] as const) : [],
   );
-  const showPaneNumbers = isActiveSession && paneNumbersVisible && !zoomedPaneId && !nvimOpen;
+  const showPaneNumbers = isActiveSession && paneNumbersVisible && !zoomedPaneId;
+
+  // Place the Neovim surface over its pane while this session is shown.
+  const nvimRect =
+    nvimPaneId === null
+      ? null
+      : zoomedPaneId
+        ? zoomedPaneId === nvimPaneId
+          ? { ...HIDDEN, paneId: nvimPaneId }
+          : null
+        : (rectByPane.get(nvimPaneId) ?? null);
+  useLayoutEffect(() => {
+    if (isActiveSession) useStore.getState().setNvimRect(nvimRect);
+  }, [isActiveSession, nvimRect?.paneId, nvimRect?.top, nvimRect?.left, nvimRect?.width, nvimRect?.height]);
 
   // The keep-alive pool: one TerminalPane per pane across *every* window of the
   // session, keyed by paneId so the instance survives window switches (same key
@@ -224,7 +240,6 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   // visible; the rest are display:none + suspend()ed by TerminalPane. Switching
   // windows is then just suspend/resume + reposition — no ghostty-web teardown,
   // no pane-socket reconnect, no scrollback replay.
-  const HIDDEN: LayoutRect = { paneId: '', top: 0, left: 0, width: 100, height: 100 };
 
   // Zoom is rendered by overlaying the zoomed pane at full size on top of the
   // others rather than swapping the tree to a single pane. Keeping every pane
@@ -281,7 +296,6 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           }),
         )}
       {!zoomedPaneId &&
-        !nvimOpen &&
         dividers.map((divider) => (
           <div
             key={divider.id}
@@ -361,7 +375,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
                 alignItems: 'center',
                 justifyContent: 'center',
                 pointerEvents: 'none',
-                zIndex: 20,
+                // Above the Neovim surface.
+                zIndex: 35,
               }}
             >
               <span

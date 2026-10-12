@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { showNotification } from '../lib/notifications';
 import type { Terminal } from 'ghostty-web';
-import { SessionState, SessionSummary, ClientConfig, Overlay } from './types';
+import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
 
@@ -37,8 +37,11 @@ interface AppStore {
   // with a session→window tree and a live pane preview. Like the window-grid it
   // takes over the keyboard while open (the keybinding hook early-returns).
   switcherOpen: boolean;
-  // Neovim surface (prefix + e)
+  // Neovim surface (prefix + e), pinned over nvimPaneId.
   nvimOpen: boolean;
+  nvimPaneId: string | null;
+  // The pinned pane's rect in the shown window, published by the active SessionPane.
+  nvimRect: LayoutRect | null;
   // File browser overlay (prefix + f / g)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
@@ -96,7 +99,9 @@ interface AppStore {
     initialMode?: FileBrowserMode,
     focusFile?: string | null,
   ) => void;
-  setNvimOpen: (open: boolean) => void;
+  // Opening pins the surface to paneId (default: the current pin).
+  setNvimOpen: (open: boolean, paneId?: string | null) => void;
+  setNvimRect: (rect: LayoutRect | null) => void;
   setNavigateFn: (fn: ((path: string) => void) | null) => void;
   setControlSendFn: (fn: ((message: ClientMessage) => void) | null) => void;
   // Navigate to the window containing a pane, if it can be located.
@@ -122,6 +127,8 @@ export const useStore = create<AppStore>((set, get) => ({
   paneNumbersVisible: false,
   switcherOpen: false,
   nvimOpen: false,
+  nvimPaneId: null,
+  nvimRect: null,
   fileBrowserOpen: false,
   fileBrowserCwd: null,
   fileBrowserInitialMode: 'files',
@@ -171,7 +178,22 @@ export const useStore = create<AppStore>((set, get) => ({
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
-  setNvimOpen: (open) => set({ nvimOpen: open }),
+  setNvimOpen: (open, paneId) =>
+    set((s) => ({ nvimOpen: open, nvimPaneId: open && paneId !== undefined ? paneId : s.nvimPaneId })),
+  setNvimRect: (rect) =>
+    set((s) => {
+      const old = s.nvimRect;
+      const same =
+        old === rect ||
+        (old &&
+          rect &&
+          old.paneId === rect.paneId &&
+          old.top === rect.top &&
+          old.left === rect.left &&
+          old.width === rect.width &&
+          old.height === rect.height);
+      return same ? s : { nvimRect: rect };
+    }),
   showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
   toggleLatex: (paneId) =>
     set((s) => {

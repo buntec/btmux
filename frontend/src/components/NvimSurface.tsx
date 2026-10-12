@@ -5,7 +5,7 @@ import { Center } from '@astryxdesign/core/Center';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Spinner } from '@astryxdesign/core/Spinner';
 import { Text } from '@astryxdesign/core/Text';
-import { ClientConfig } from '../state/types';
+import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { getSmoothScrollDuration, getTerminalFontFamily, getTerminalFontSize } from '../state/configDefaults';
@@ -46,26 +46,42 @@ return vim.trim(title)`;
 
 let activeInput: ((keys: string) => void) | null = null;
 
-/** Send keys (`nvim_input` notation) to the open Neovim surface. Returns false when none is open. */
+/** Send keys (`nvim_input` notation) to the focused Neovim surface. Returns false when it isn't focused. */
 export function sendToNvim(keys: string): boolean {
-  if (!useStore.getState().nvimOpen || !activeInput) return false;
+  const focused = document.activeElement instanceof HTMLElement && 'nvimInput' in document.activeElement.dataset;
+  if (!useStore.getState().nvimOpen || !focused || !activeInput) return false;
   activeInput(keys);
   return true;
 }
 
-/** Full-surface browser UI for the shared headless Neovim. */
+/** Browser UI for the shared headless Neovim, pinned over a pane. */
 export function NvimSurface({
   config,
-  visible,
+  open,
+  paneId,
+  rect,
+  focused,
+  zoomed,
+  onActivate,
   activeSessionId,
   cwd,
 }: {
   config: ClientConfig | null;
-  visible: boolean;
+  open: boolean;
+  /** The pane the surface is pinned to. */
+  paneId: string | null;
+  /** The pinned pane's rect, or null while it isn't shown. */
+  rect: LayoutRect | null;
+  /** Whether the pinned pane is the active one. */
+  focused: boolean;
+  zoomed: boolean;
+  /** Select the pinned pane. */
+  onActivate: () => void;
   activeSessionId: string | null;
-  /** The active pane's directory; Neovim changes to it when shown. */
+  /** The pinned pane's directory; Neovim changes to it when opened or moved. */
   cwd: string | null;
 }) {
+  const visible = open && rect !== null;
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layersRef = useRef<HTMLDivElement>(null);
@@ -74,6 +90,10 @@ export function NvimSurface({
   const refitRef = useRef<() => void>(() => {});
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
+  const openRef = useRef(open);
+  openRef.current = open;
   const exitedRef = useRef(false);
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
@@ -166,6 +186,8 @@ export function NvimSurface({
     const ws = new WebSocket(WS_URL);
     ws.binaryType = 'arraybuffer';
     let attached = false;
+    // Redraws of the transient attach below are dropped.
+    let resyncing = true;
     let disconnected = false;
     let error: string | null = null;
     let gridSize = [0, 0];
@@ -224,18 +246,14 @@ export function NvimSurface({
       grid.resizeCanvas(container.clientWidth, container.clientHeight);
       gridSize = grid.fit(container.clientWidth, container.clientHeight);
       applyTheme();
-      if (visibleRef.current) changeDirRef.current();
-      request('nvim_ui_attach', [
-        gridSize[0],
-        gridSize[1],
-        {
-          ext_multigrid: true,
-          rgb: true,
-          ext_cmdline: true,
-          ext_popupmenu: true,
-          ext_messages: true,
-        },
-      ]);
+      if (openRef.current) changeDirRef.current();
+      const ext = { rgb: true, ext_cmdline: true, ext_popupmenu: true, ext_messages: true };
+      // Neovim only sends window grid cells that differ from its own copy, so a
+      // UI attaching to a running Neovim gets no window contents. Attaching once
+      // without multigrid frees those grids, and the real attach gets them in full.
+      request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: false }]);
+      request('nvim_ui_detach', [], () => (resyncing = false));
+      request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: true }]);
       // Kind icons from the btmux plugin (empty without mini.icons or the plugin).
       request(
         'nvim_exec_lua',
@@ -261,8 +279,9 @@ export function NvimSurface({
       }
       for (const msg of stream.push(new Uint8Array(e.data as ArrayBuffer))) {
         const [type, a, b, c] = msg as unknown[];
-        if (type === 2 && a === 'redraw') grid.redraw(b as unknown[]);
-        else if (type === 2 && a === 'nvim_error_event') console.warn('[nvim]', b);
+        if (type === 2 && a === 'redraw') {
+          if (!resyncing) grid.redraw(b as unknown[]);
+        } else if (type === 2 && a === 'nvim_error_event') console.warn('[nvim]', b);
         else if (type === 2 && a === 'btmux_complete_info') {
           const [index, info] = b as [number, string];
           model.setInfo(index, info);
@@ -412,7 +431,7 @@ export function NvimSurface({
     container.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-    if (visibleRef.current) input.focus();
+    if (focusedRef.current) input.focus();
 
     return () => {
       applyThemeRef.current = () => {};
@@ -441,8 +460,11 @@ export function NvimSurface({
       exitedRef.current = false;
       setGeneration((g) => g + 1);
     }
-    if (visible) changeDirRef.current();
   }, [visible]);
+
+  useEffect(() => {
+    if (open) changeDirRef.current();
+  }, [open, paneId]);
 
   useEffect(() => {
     applyThemeRef.current();
@@ -455,10 +477,10 @@ export function NvimSurface({
   // Take focus back when a modal closes; closing a dialog restores focus to
   // whatever was focused before it opened, often a terminal pane.
   useEffect(() => {
-    if (!visible || modalOpen) return;
+    if (!focused || modalOpen) return;
     const id = window.setTimeout(() => inputRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
-  }, [visible, modalOpen, generation, activeSessionId]);
+  }, [focused, modalOpen, generation, activeSessionId]);
 
   // Re-measure once the configured font is loaded or changes.
   useEffect(() => {
@@ -484,13 +506,20 @@ export function NvimSurface({
       aria-hidden={!visible}
       style={{
         position: 'absolute',
-        inset: 0,
+        ...(rect
+          ? { top: `${rect.top}%`, left: `${rect.left}%`, width: `${rect.width}%`, height: `${rect.height}%` }
+          : { inset: 0 }),
+        // Mirrors TerminalPane's border.
+        border: `1px solid ${zoomed ? theme.magenta : focused ? theme.blue : theme.selectionBackground}`,
         zIndex: 30,
         overflow: 'hidden',
         visibility: visible ? undefined : 'hidden',
         background: transparent ? 'transparent' : theme.background,
       }}
-      onMouseDown={() => inputRef.current?.focus()}
+      onMouseDown={() => {
+        if (!focused) onActivate();
+        inputRef.current?.focus();
+      }}
     >
       <canvas ref={canvasRef} style={{ display: 'block' }} />
       {/* Window and float canvases; no z-index, so they stack with the frames and widgets. */}

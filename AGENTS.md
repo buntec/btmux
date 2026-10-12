@@ -151,16 +151,23 @@ handling must be reviewed with `ws/files.rs`, `fs_ops.rs`, and
 
 ### Built-in Neovim
 
-`prefix + e` (`neovim` action) toggles a full-surface Neovim GUI over the
-active session (`NvimSurface.tsx`); a second Esc within 300 ms also hides
-it (the first still reaches Neovim). The backend lazily spawns one shared
+`prefix + e` (`neovim` action) toggles a Neovim GUI over the active pane
+(`NvimSurface.tsx`), or moves it there if it is pinned to another pane; a
+second Esc within 300 ms also hides it (the first still reaches Neovim). The
+surface is pinned to that pane (`nvimPaneId`; the active `SessionPane`
+publishes its rect as `nvimRect`): other panes stay visible and usable,
+zooming the pane makes it fill the window, and it is hidden while the pane's
+window isn't shown. It owns the keyboard only while its pane is active; clicking
+it selects the pane. The backend lazily spawns one shared
 `nvim --embed --headless --listen <private socket>` per server; `--embed` ties
 its lifetime to btmux's stdin pipe. It starts with `g:btmux = 1`, which user
 config can check, and the bundled plugin on 'runtimepath'. Each browser tab
 attaches its own UI (`ext_multigrid`, `ext_cmdline`, `ext_popupmenu`,
 `ext_messages`, which sets 'cmdheight' to 0 and drops hit-enter prompts).
-Neovim replays its full state on attach, so there is no journal. Each time the
-surface is shown, it sets Neovim's global cwd to the active pane's. When Neovim exits
+Neovim replays its state on attach, so there is no journal, except window
+grid cells it already sent to other UIs: each attach first attaches and detaches
+without `ext_multigrid`, which frees those grids so the real attach gets them in full. Each time the
+surface is opened or moved, it sets Neovim's global cwd to its pane's. When Neovim exits
 with status 0 (`:q`), the backend sends close code 1000 and the surface closes; a
 crash or any other close shows a restart prompt. If the socket file disappears
 while Neovim runs, the backend has it listen again over the `--embed` channel. Neovim enables `ext_*` features only if every
@@ -168,7 +175,8 @@ attached UI supports them, sizes the grid to the smallest UI, and defers
 non-fast requests (including `nvim_ui_attach`) while blocked at a prompt.
 
 `lib/nvimGrid.ts` keeps one layer per grid: grid 1 (statuslines, separators)
-on the surface canvas, and a canvas per window or float, positioned from
+on the surface canvas, minus cells under visible windows (Neovim leaves closed
+splits' separators there), and a canvas per window or float, positioned from
 `win_pos`/`win_float_pos` in a host div that lets the mouse through to them.
 Mouse events go to the grid under the pointer, with grid-relative cells.
 Floats get an Astryx card frame behind their canvas (`NvimFloatFrames`): the

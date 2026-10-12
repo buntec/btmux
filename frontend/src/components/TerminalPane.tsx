@@ -153,7 +153,8 @@ export function TerminalPane({
   const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
-  const nvimOpen = useStore((s) => s.nvimOpen);
+  // Whether the Neovim surface is pinned over this pane.
+  const nvimOpen = useStore((s) => s.nvimOpen && s.nvimPaneId === paneId);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const settingsOpenRef = useRef(settingsOpen);
   settingsOpenRef.current = settingsOpen;
@@ -191,7 +192,7 @@ export function TerminalPane({
         s.windowGridOpen ||
         s.agentGridOpen ||
         s.switcherOpen ||
-        s.nvimOpen ||
+        (s.nvimOpen && s.nvimPaneId === paneId) ||
         (s.fileBrowserOpen && s.fileBrowserPaneId === paneId)
       );
     };
@@ -506,7 +507,7 @@ export function TerminalPane({
 
   // LaTeX detection (lib/latexDetect.ts). Declared after the mount effect so
   // termRef is populated when the scan effect runs.
-  // Panes under the built-in Neovim keep their geometry but needn't render.
+  // A pane under the built-in Neovim keeps its geometry but needn't render.
   const rendering = visible && !nvimOpen;
   const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, rendering);
   latexPokeRef.current = latexPoke;
@@ -666,6 +667,7 @@ export function TerminalPane({
   return (
     <div
       ref={outerRef}
+      data-pane-id={paneId}
       onMouseDown={onMouseDown}
       style={{
         // Panes of inactive windows stay mounted but hidden (the keep-alive

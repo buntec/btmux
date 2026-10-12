@@ -1,13 +1,15 @@
 # Built-in Neovim
 
-`<prefix> + e` opens a Neovim GUI over the current session. btmux draws the
+`<prefix> + e` opens a Neovim GUI over the active pane; the other panes stay
+visible, and zooming the pane (`<prefix> + z`) makes Neovim fill the window. btmux draws the
 editor itself and renders the command line, completion menu, messages, progress,
 and LSP signature help as native UI. Floating windows (LSP hover, diagnostics,
 plugin windows) appear in cards that replace Neovim's border and show its title.
 `winblend` and `pumblend` make those cards and the completion menu translucent,
 blurring what's behind them by `backdrop-blur` while their text stays sharp. There is one Neovim per btmux server, so
 every browser tab and the desktop app share the same editor. `<prefix> + e`
-(or pressing Esc twice quickly) hides it again; `:q` closes Neovim and the view.
+(or pressing Esc twice quickly) hides it again, and from another pane moves it
+there; `:q` closes Neovim and the view.
 
 Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`.
 
@@ -22,7 +24,7 @@ file-editor = "pane"
 ```
 
 `btmux open-editor [FILE] [LINE]` follows the same setting from a btmux pane:
-it opens the built-in Neovim (at FILE, if given) over the pane's session, or
+it opens the built-in Neovim (at FILE, if given) over the pane, or
 runs `$EDITOR` in the terminal when `file-editor = "pane"` or outside btmux.
 
 ## Your Neovim config

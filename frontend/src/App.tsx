@@ -75,6 +75,8 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const configPreview = useStore((s) => s.configPreview);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const nvimOpen = useStore((s) => s.nvimOpen);
+  const nvimPaneId = useStore((s) => s.nvimPaneId);
+  const nvimRect = useStore((s) => s.nvimRect);
   // Keep the editor attachment outside the session pool.
   const [nvimMounted, setNvimMounted] = useState(nvimOpen);
   useEffect(() => {
@@ -131,6 +133,19 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const sessionTransitionActive = useSessionTransitionPause(activeSessionId);
   const activeSession = activeSessionId ? allSessions.find((session) => session.id === activeSessionId) : null;
   const activeWindow = activeSession?.windows[activeSession.active_window];
+
+  // Neovim shows over its pane while that pane's window is shown.
+  const nvimPane = allSessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).find((p) => p.id === nvimPaneId);
+  const nvimInActiveWindow = !!activeWindow?.panes.some((p) => p.id === nvimPaneId);
+  const nvimShownRect = nvimInActiveWindow && nvimRect?.paneId === nvimPaneId ? nvimRect : null;
+  const focusPaneId = activeWindow
+    ? (activeWindow.zoomed_pane ?? activeWindow.panes[activeWindow.active_pane]?.id)
+    : null;
+  // Close the surface when its pane is killed.
+  const nvimPaneGone = nvimOpen && !nvimPane;
+  useEffect(() => {
+    if (nvimPaneGone) useStore.getState().setNvimOpen(false);
+  }, [nvimPaneGone]);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
@@ -216,9 +231,17 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
             {(nvimOpen || nvimMounted) && (
               <NvimSurface
                 config={effectiveConfig}
-                visible={nvimOpen}
+                open={nvimOpen}
+                paneId={nvimPaneId}
+                rect={nvimOpen ? nvimShownRect : null}
+                focused={nvimOpen && nvimShownRect !== null && focusPaneId === nvimPaneId}
+                zoomed={activeWindow?.zoomed_pane === nvimPaneId}
+                onActivate={() => {
+                  if (activeSessionId && nvimPaneId)
+                    send({ type: 'select_pane', session_id: activeSessionId, pane_id: nvimPaneId });
+                }}
                 activeSessionId={activeSessionId}
-                cwd={activeWindow?.panes[activeWindow.active_pane]?.cwd ?? null}
+                cwd={nvimPane?.cwd ?? null}
               />
             )}
             {settingsOpen && config && <ConfigPage config={config} send={send} />}

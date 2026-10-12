@@ -512,9 +512,14 @@ export function runAction(
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'git');
       break;
     }
-    case 'neovim':
-      store.setNvimOpen(!store.nvimOpen);
+    case 'neovim': {
+      // Toggle over the active pane, or move the surface there.
+      const win = session?.windows[session.active_window];
+      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      if (store.nvimOpen && store.nvimPaneId === paneId) store.setNvimOpen(false);
+      else if (paneId) store.setNvimOpen(true, paneId);
       break;
+    }
     case 'process-view': {
       const win = session?.windows[session.active_window];
       const pane = win?.panes[win.active_pane];

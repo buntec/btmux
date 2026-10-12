@@ -6,6 +6,7 @@ interface ScrollAnim {
 const anims = new WeakMap<HTMLElement, ScrollAnim>();
 
 const easeOutCubic = (t: number) => 1 - (1 - t) ** 3;
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 /** Scroll `el` by `dy` px with an ease-out over `duration` ms; repeated calls extend the target. */
 export function smoothScrollBy(el: HTMLElement, dy: number, duration: number) {
@@ -27,6 +28,10 @@ export function smoothScrollBy(el: HTMLElement, dy: number, duration: number) {
     if (anims.get(el) === anim) anims.delete(el);
     el.removeEventListener('wheel', stop);
     el.removeEventListener('pointerdown', stop);
+    el.removeEventListener('keydown', onKeyDown);
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!event.defaultPrevented && SCROLL_KEYS.has(event.key)) stop();
   };
   const anim: ScrollAnim = { target, stop };
   const step = (now: number) => {
@@ -37,6 +42,7 @@ export function smoothScrollBy(el: HTMLElement, dy: number, duration: number) {
   };
   el.addEventListener('wheel', stop, { passive: true });
   el.addEventListener('pointerdown', stop);
+  el.addEventListener('keydown', onKeyDown);
   frame = requestAnimationFrame(step);
   anims.set(el, anim);
 }

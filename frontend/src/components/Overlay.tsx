@@ -239,7 +239,7 @@ export function Overlay({ sessionId, send, config }: Props) {
         }}
         renderItem={(item) => (
           <VStack gap={0.5}>
-            <Text>{item.label}</Text>
+            <Text className="btm-mono">{item.label}</Text>
             {item.description && <Text color="secondary">{item.description}</Text>}
           </VStack>
         )}

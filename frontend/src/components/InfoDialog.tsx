@@ -46,9 +46,7 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog isOpen onOpenChange={changeOpen} maxHeight="85dvh" width={640}>
       <Layout
-        header={
-          <DialogHeader title="About btmux" subtitle="Version and runtime configuration." onOpenChange={changeOpen} />
-        }
+        header={<DialogHeader title={<span className="btm-brand">btmux</span>} onOpenChange={changeOpen} />}
         content={
           <LayoutContent padding={4}>
             {error ? (

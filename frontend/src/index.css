@@ -22,6 +22,30 @@
   }
 }
 
+/* Code-like chrome (paths, keys, stats, Neovim) stays on the terminal font and
+   weight; the remaps reach Astryx components that set body font or weight. */
+.btm-mono {
+  --font-family-body: var(--font-family-code);
+  --font-weight-normal: var(--btmux-font-weight);
+  font-family: var(--font-family-code);
+  font-weight: var(--btmux-font-weight);
+  font-variant-numeric: tabular-nums;
+}
+
+/* btmux wordmark: Geist Pixel only shows its grid at large sizes. The
+   variables size SideNavHeading's inner heading. */
+.btm-brand {
+  --text-large-size: 40px;
+  --text-large-leading: 1;
+  --font-weight-semibold: 400;
+  font-family: 'Geist Pixel Variable', var(--font-family-heading);
+  /* Named instance "Grid". */
+  font-variation-settings: 'ELSH' 40;
+  font-size: 40px;
+  font-weight: 400;
+  line-height: 1;
+}
+
 /* Keep file previews on the configured terminal typography. Tailwind's
    preflight gives pre/code the default mono family, which can also change the
    apparent weight when the configured family or weight is lighter. */

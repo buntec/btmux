@@ -7,11 +7,9 @@ import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2 } from 'lucid
 import { useStore } from '../state/store';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
-import { getAnimations, getSessionSort, getShowNavHeader, getWindowSort } from '../state/configDefaults';
-import { AnimatedAppIcon } from './AnimatedAppIcon';
+import { getSessionSort, getWindowSort } from '../state/configDefaults';
 import { SessionNavItem } from './SessionNavItem';
 import { AgentNavItem } from './AgentNavItem';
-import { useTerminalPalette } from './BtmuxTheme';
 import type { ClientMessage } from '../protocol/messages';
 
 let mruVersion = 0;
@@ -20,11 +18,6 @@ for (const event of [SESSION_MRU_EVENT, WINDOW_MRU_EVENT]) window.addEventListen
 export function WorkspaceShell({ children, send }: { children: ReactNode; send: (message: ClientMessage) => void }) {
   const sessions = useStore((state) => state.allSessions);
   const config = useStore((state) => state.config);
-  const configPreview = useStore((state) => state.configPreview);
-  const settingsOpen = useStore((state) => state.settingsOpen);
-  const showNavHeader = getShowNavHeader(settingsOpen ? (configPreview ?? config) : config);
-  const animations = getAnimations(config);
-  const palette = useTerminalPalette();
   const setOverlay = useStore((state) => state.setOverlay);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const setSwitcherOpen = useStore((state) => state.setSwitcherOpen);
@@ -84,20 +77,8 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
               } catch {}
             },
           }}
-          header={
-            showNavHeader ? (
-              <SideNavHeading
-                heading="btmux"
-                icon={
-                  <AnimatedAppIcon
-                    animated={animations}
-                    palette={palette}
-                    className={`-my-2 size-12 shrink-0 saturate-0 rotate-30 ${collapsed ? '' : '-ml-4'}`}
-                  />
-                }
-              />
-            ) : undefined
-          }
+          // Collapsed, the iconless heading renders nothing but SideNav would still pad it.
+          header={collapsed ? undefined : <SideNavHeading heading="btmux" className="btm-brand" />}
           footerIcons={
             <>
               <IconButton
@@ -184,31 +165,34 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
               )
             }
           >
-            {sortSessions(sessions, getSessionSort(config)).map((session) => (
-              <SessionNavItem
-                key={session.id}
-                session={session}
-                collapsed={collapsed}
-                isSelected={session.id === active?.id}
-                onClick={() => {
-                  closeSurfaces();
-                  navigate(`/s/${encodeURIComponent(session.name)}`);
-                }}
-              >
-                {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }) => (
-                  <SideNavItem
-                    key={win.id}
-                    label={`${index} · ${win.name}`}
-                    isSelected={session.id === active?.id && index === session.active_window}
-                    onClick={() => {
-                      closeSurfaces();
-                      send({ type: 'switch_window', session_id: session.id, index });
-                      navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(win.name)}`);
-                    }}
-                  />
-                ))}
-              </SessionNavItem>
-            ))}
+            {/* Session and window names are identifiers. */}
+            <div className="btm-mono contents">
+              {sortSessions(sessions, getSessionSort(config)).map((session) => (
+                <SessionNavItem
+                  key={session.id}
+                  session={session}
+                  collapsed={collapsed}
+                  isSelected={session.id === active?.id}
+                  onClick={() => {
+                    closeSurfaces();
+                    navigate(`/s/${encodeURIComponent(session.name)}`);
+                  }}
+                >
+                  {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }) => (
+                    <SideNavItem
+                      key={win.id}
+                      label={`${index} · ${win.name}`}
+                      isSelected={session.id === active?.id && index === session.active_window}
+                      onClick={() => {
+                        closeSurfaces();
+                        send({ type: 'switch_window', session_id: session.id, index });
+                        navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(win.name)}`);
+                      }}
+                    />
+                  ))}
+                </SessionNavItem>
+              ))}
+            </div>
             {collapsed && <SideNavItem label="New session" icon={Plus} onClick={newSession} />}
           </SideNavSection>
         </SideNav>

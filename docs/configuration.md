@@ -27,12 +27,12 @@ title bars, vi-style navigation, bundled font families and weights, image or
 procedural wallpapers, and steady-state, session-switch, and pane-switch WebGL
 effects.
 
+The `[terminal]` `font-family` and `font-weight` set the terminal, the built-in
+Neovim, and code-like UI text such as paths, session and window names, and key
+hints. Other UI text uses Geist Sans.
+
 Wallpapers are disabled by default. Set `wallpaper` to an image URL or path,
 or `wallpaper-shader` to a shader ID to enable one (see [Shader wallpapers](shaders.md)).
-
-The sidebar shows its app icon and name by default. Set `show-nav-header = false`
-to hide that header and move the navigation items up. The same option is available
-in the editor's General tab as **Show sidebar header**.
 
 btmux checks GitHub for newer releases about once a day and shows a toast when
 one is available. It never downloads or installs anything; upgrade with whatever

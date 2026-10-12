@@ -1436,7 +1436,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     <VStack
       ref={rootRef}
       tabIndex={-1}
-      className="h-full min-h-0 overflow-hidden outline-none"
+      className="btm-mono h-full min-h-0 overflow-hidden outline-none"
       style={terminalTypeScale(fontSize)}
       onMouseDown={() => {
         if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });

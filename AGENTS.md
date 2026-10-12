@@ -116,11 +116,23 @@ owned; only a bundled private server is stopped when the desktop app exits.
 
 Astryx provides the app shell, navigation, forms, dialogs, tabs, and notifications.
 Follow `frontend/AGENTS.md` and inspect component docs with `cd frontend && npx
-astryx component <Name>`. `BtmuxTheme.tsx` derives the Astryx theme from the same
-resolved terminal palette and font family, including settings previews. Keep
-body, heading, and code fonts synchronized; semantic colors and contrast belong
-in `lib/astryx-theme.ts`. Terminal geometry, live mirrors, and file previews retain
-specialized rendering. UI navigation must preserve terminal and socket lifetimes.
+astryx component <Name>`. `BtmuxTheme.tsx` derives the Astryx theme from the
+resolved terminal palette and font family, including settings previews; semantic
+colors and contrast belong in `lib/astryx-theme.ts`.
+
+Fonts: body text and headings use Geist Sans; the Astryx code role (and `Kbd`)
+uses the configured terminal font. Identifiers and code-like chrome go in
+`.btm-mono` (`index.css`), which also remaps `--font-family-body` and
+`--font-weight-normal` so Astryx inputs and menus inside follow the terminal
+font and weight. It covers the status bar, pane titles, file
+browser, process viewer, Neovim surface, command palette labels, and
+session/window names; prose, labels, and descriptions stay sans. Geist Pixel is
+only for the "btmux" wordmark in the sidebar header and About dialog
+(`.btm-brand`: 40px, `ELSH` 40 = the "Grid" instance); smaller, it loses its
+pixel grid.
+
+Terminal geometry, live mirrors, and file previews retain specialized rendering.
+UI navigation must preserve terminal and socket lifetimes.
 
 ### Frontend lifetime and routing
 

@@ -4,7 +4,7 @@ import type { Theme as TerminalTheme } from '../state/types';
 import { ToastLayer } from './ToastLayer';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
-import { getAnimations, getTerminalFontFamily, getTerminalFontWeight } from '../state/configDefaults';
+import { getAnimations, getTerminalFontFamily } from '../state/configDefaults';
 import { createBtmuxTheme, terminalColorMode } from '../lib/astryx-theme';
 
 // Config including the open settings preview.
@@ -24,12 +24,8 @@ export function BtmuxTheme({ children }: { children: ReactNode }) {
   const effective = useEffectiveConfig();
   const palette = useTerminalPalette();
   const family = getTerminalFontFamily(effective);
-  const weight = getTerminalFontWeight(effective);
   const animations = getAnimations(effective);
-  const theme = useMemo(
-    () => createBtmuxTheme(palette, family, weight, animations),
-    [palette, family, weight, animations],
-  );
+  const theme = useMemo(() => createBtmuxTheme(palette, family, animations), [palette, family, animations]);
   return (
     <Theme theme={theme} mode={terminalColorMode(palette)}>
       <ToastLayer>{children}</ToastLayer>

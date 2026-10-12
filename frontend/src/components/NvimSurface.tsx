@@ -480,6 +480,7 @@ export function NvimSurface({
   return (
     <div
       ref={containerRef}
+      className="btm-mono"
       inert={!visible}
       aria-hidden={!visible}
       style={{

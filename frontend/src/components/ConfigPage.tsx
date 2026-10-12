@@ -18,7 +18,6 @@ import {
   getBackdropDim,
   getPaneSwitchBorderSpeed,
   getShowPaneTitles,
-  getShowNavHeader,
   getTerminalFontFamily,
   getTerminalFontSize,
   getTerminalFontWeight,
@@ -71,7 +70,6 @@ type Draft = {
   fontSize: number;
   animations: boolean;
   showPaneTitles: boolean;
-  showNavHeader: boolean;
   sessionSort: ClientConfig['session_sort'];
   windowSort: ClientConfig['window_sort'];
   fileEditor: ClientConfig['file_editor'];
@@ -124,7 +122,6 @@ function initialDraft(config: ClientConfig): Draft {
     fontSize: getTerminalFontSize(config),
     animations: config.animations,
     showPaneTitles: getShowPaneTitles(config),
-    showNavHeader: getShowNavHeader(config),
     sessionSort: config.session_sort,
     windowSort: config.window_sort,
     fileEditor: config.file_editor,
@@ -185,7 +182,6 @@ const TOML_DEFAULTS = {
   viMode: false,
   animations: true,
   showPaneTitles: false,
-  showNavHeader: true,
   sessionSort: 'mru',
   windowSort: 'alphabetical',
   fileEditor: 'neovim',
@@ -258,7 +254,6 @@ function toToml(draft: Draft): string {
     boolLine('vi-mode', draft.viMode, TOML_DEFAULTS.viMode),
     boolLine('animations', draft.animations, TOML_DEFAULTS.animations),
     boolLine('show-pane-titles', draft.showPaneTitles, TOML_DEFAULTS.showPaneTitles),
-    boolLine('show-nav-header', draft.showNavHeader, TOML_DEFAULTS.showNavHeader),
     strLine('session-sort', draft.sessionSort, TOML_DEFAULTS.sessionSort),
     strLine('window-sort', draft.windowSort, TOML_DEFAULTS.windowSort),
     strLine('file-editor', draft.fileEditor, TOML_DEFAULTS.fileEditor),
@@ -329,7 +324,6 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('shell')) update.shell = draft.shell;
   if (dirty.has('viMode')) update.vi_mode = draft.viMode;
   if (dirty.has('showPaneTitles')) update.show_pane_titles = draft.showPaneTitles;
-  if (dirty.has('showNavHeader')) update.show_nav_header = draft.showNavHeader;
   if (dirty.has('sessionSort')) update.session_sort = draft.sessionSort;
   if (dirty.has('windowSort')) update.window_sort = draft.windowSort;
   if (dirty.has('fileEditor')) update.file_editor = draft.fileEditor;
@@ -450,7 +444,6 @@ export function ConfigPage({ config, send }: Props) {
       theme: previewTheme(config, draft, colorSchemeTouched),
       animations: draft.animations,
       show_pane_titles: draft.showPaneTitles,
-      show_nav_header: draft.showNavHeader,
       terminal: {
         ...config.terminal,
         renderer: draft.renderer,
@@ -717,7 +710,8 @@ export function ConfigPage({ config, send }: Props) {
                           }}
                         />
                         <Selector
-                          label="Font family"
+                          label="Terminal font"
+                          description="Also used for paths, names, and key hints in the UI."
                           value={draft.fontFamily}
                           presentation="adaptive"
                           options={config.fonts.map((font) => ({ value: font.family, label: font.family }))}
@@ -736,7 +730,6 @@ export function ConfigPage({ config, send }: Props) {
                           'Show pane titles',
                           'Title bar with command, directory, and size above each pane.',
                         )}
-                        {toggle('showNavHeader', 'Show sidebar header', 'Display the app icon and name.')}
                         {choose('sessionSort', 'Session sort', ordering)}
                         {choose('windowSort', 'Window sort', ordering)}
                         {choose('fileEditor', 'Open files in', [
@@ -759,7 +752,7 @@ export function ConfigPage({ config, send }: Props) {
                     <VStack gap={4} id="settings-terminal" role="tabpanel" aria-label={TAB_LABELS.terminal}>
                       <FormLayout>
                         {range('fontSize', 'Terminal font size', 8, 36)}
-                        {range('fontWeight', 'Font weight', weightMin, weightMax, 100)}
+                        {range('fontWeight', 'Terminal font weight', weightMin, weightMax, 100)}
                         {choose('renderer', 'Renderer', [
                           { value: 'webgl', label: 'WebGL' },
                           { value: 'canvas', label: 'Canvas' },

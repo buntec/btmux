@@ -38,7 +38,7 @@ export const CONFIG_DEFAULTS = {
     allowTransparency: null,
     convertEol: null,
     disableStdin: null,
-    smoothScrollDuration: null,
+    smoothScrollDuration: 120,
     scrollSensitivity: 5,
     cellBackgroundOpacity: null,
   },
@@ -64,6 +64,13 @@ export function getRepeatTime(config: ConfigLike): number {
 
 export function getAnimations(config: ConfigLike): boolean {
   return config?.animations ?? CONFIG_DEFAULTS.animations;
+}
+
+/** Eased scroll length in ms (Neovim surface, file previews); 0 when animations are off. */
+export function getSmoothScrollDuration(config: ConfigLike): number {
+  return getAnimations(config)
+    ? (config?.terminal.smoothScrollDuration ?? CONFIG_DEFAULTS.terminal.smoothScrollDuration)
+    : 0;
 }
 
 export function getShowPaneTitles(config: ConfigLike): boolean {

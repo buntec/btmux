@@ -8,7 +8,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { ClientConfig } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
-import { getAnimations, getTerminalFontFamily, getTerminalFontSize } from '../state/configDefaults';
+import { getSmoothScrollDuration, getTerminalFontFamily, getTerminalFontSize } from '../state/configDefaults';
 import { buildFontFamily, terminalTransparency } from './TerminalPane';
 import { encode, MsgpackStream, type MsgpackExt } from '../lib/msgpack';
 import { NvimGrid, type FloatFrame } from '../lib/nvimGrid';
@@ -27,7 +27,6 @@ import { NvimFloatFrames, NvimWidgets } from './NvimWidgets';
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/nvim`;
 const BUTTONS = ['left', 'middle', 'right'];
 /** Scroll animation length when `smooth-scroll-duration` is unset. */
-const SMOOTH_SCROLL_MS = 120;
 /** Max gap between two Esc presses that hide the surface. */
 const DOUBLE_ESC_MS = 300;
 
@@ -119,7 +118,7 @@ export function NvimSurface({
   paletteRef.current = config?.color_palette;
   const paletteKey = JSON.stringify(config?.color_palette);
   const applyThemeRef = useRef<() => void>(() => {});
-  const smoothScroll = getAnimations(config) ? (config?.terminal.smoothScrollDuration ?? SMOOTH_SCROLL_MS) : 0;
+  const smoothScroll = getSmoothScrollDuration(config);
   const smoothScrollRef = useRef(smoothScroll);
   smoothScrollRef.current = smoothScroll;
 

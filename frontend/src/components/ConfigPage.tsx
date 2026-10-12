@@ -136,7 +136,7 @@ function initialDraft(config: ClientConfig): Draft {
       config.terminal.allowTransparency ?? (config.wallpaper != null || config.wallpaper_shader != null),
     convertEol: config.terminal.convertEol ?? false,
     disableStdin: config.terminal.disableStdin ?? false,
-    smoothScrollDuration: config.terminal.smoothScrollDuration ?? 0,
+    smoothScrollDuration: config.terminal.smoothScrollDuration ?? 120,
     scrollSensitivity: config.terminal.scrollSensitivity ?? 5,
     cellBackgroundOpacity: config.terminal.cellBackgroundOpacity ?? 1,
     consoleLevel: config.log['console-level'],
@@ -209,7 +209,7 @@ const TOML_DEFAULTS = {
   fontWeight: 200,
   convertEol: false,
   disableStdin: false,
-  smoothScrollDuration: 0,
+  smoothScrollDuration: 120,
   scrollSensitivity: 5,
   cellBackgroundOpacity: 1,
   consoleLevel: 'warn',
@@ -291,7 +291,7 @@ function toToml(draft: Draft): string {
     boolLine('allow-transparency', draft.allowTransparency, defaultAllowTransparency),
     boolLine('convert-eol', draft.convertEol, TOML_DEFAULTS.convertEol),
     boolLine('disable-stdin', draft.disableStdin, TOML_DEFAULTS.disableStdin),
-    numLine('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 2),
+    numLine('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 1),
     numLine('scroll-sensitivity', draft.scrollSensitivity, TOML_DEFAULTS.scrollSensitivity, 2),
     numLine('cell-background-opacity', draft.cellBackgroundOpacity, TOML_DEFAULTS.cellBackgroundOpacity, 2),
   ].filter((line): line is string => line !== null);
@@ -774,7 +774,7 @@ export function ConfigPage({ config, send }: Props) {
                         {toggle('allowTransparency', 'Allow transparency')}
                         {toggle('convertEol', 'Convert line endings')}
                         {toggle('disableStdin', 'Disable terminal input')}
-                        {range('smoothScrollDuration', 'Smooth scroll duration', 0, 2, 0.05)}
+                        {range('smoothScrollDuration', 'Smooth scroll duration (ms)', 0, 500, 10)}
                         {range('scrollSensitivity', 'Scroll sensitivity', 0.1, 20, 0.1)}
                         {range('cellBackgroundOpacity', 'Cell background opacity', 0, 1, 0.05)}
                       </FormLayout>

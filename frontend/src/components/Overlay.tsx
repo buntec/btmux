@@ -226,6 +226,10 @@ export function Overlay({ sessionId, send, config }: Props) {
             state.setSettingsOpen(true);
             return;
           }
+          if (id === 'about') {
+            setOverlay({ mode: 'info', title: 'About btmux' });
+            return;
+          }
           if (id === 'toggle-latex') {
             const pane = state.getActivePaneId(sessionId);
             if (pane) state.toggleLatex(pane);

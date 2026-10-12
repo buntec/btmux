@@ -119,8 +119,19 @@ bump level="patch":
     PY
     echo "bumped to $version"
 
+# Fail if the current branch is behind its upstream, so a later pull can't rebase away the tagged commit.
+_check-upstream:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git fetch --quiet
+    behind="$(git rev-list --count HEAD..@{u})"
+    if [ "$behind" -gt 0 ]; then
+        echo "error: $(git rev-parse --abbrev-ref HEAD) is $behind commit(s) behind @{u}; pull first" >&2
+        exit 1
+    fi
+
 # Bump version, commit the version files, and tag the release.
-bump-and-commit level="patch": (bump level)
+bump-and-commit level="patch": _check-upstream (bump level)
     #!/usr/bin/env bash
     set -euo pipefail
     version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"

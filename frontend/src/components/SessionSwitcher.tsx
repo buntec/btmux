@@ -7,7 +7,6 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Text } from '@astryxdesign/core/Text';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Token } from '@astryxdesign/core/Token';
-import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { AspectRatio } from '@astryxdesign/core/AspectRatio';
 import { Icon } from '@astryxdesign/core/Icon';
 import { useMediaQuery } from '@astryxdesign/core/hooks';

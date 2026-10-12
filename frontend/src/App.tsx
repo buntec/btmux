@@ -1,7 +1,7 @@
 import { Spinner } from '@astryxdesign/core/Spinner';
 import { Layout, LayoutContent, LayoutFooter, VStack } from '@astryxdesign/core/Layout';
 import { WorkspaceShell } from './components/WorkspaceShell';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './state/store';
 import { useControlSocket } from './hooks/useControlSocket';
@@ -131,9 +131,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const sessionTransitionActive = useSessionTransitionPause(activeSessionId);
   const activeSession = activeSessionId ? allSessions.find((session) => session.id === activeSessionId) : null;
   const activeWindow = activeSession?.windows[activeSession.active_window];
-  const visiblePaneIds = activeWindow?.zoomed_pane
-    ? [activeWindow.zoomed_pane]
-    : (activeWindow?.panes.map((pane) => pane.id) ?? []);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle

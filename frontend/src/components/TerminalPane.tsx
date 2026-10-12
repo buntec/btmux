@@ -97,7 +97,7 @@ export function buildTerminalOptions(config: ClientConfig | null): ConstructorPa
   opts.allowTransparency = allowTransparency ?? false;
   if (t?.convertEol != null) opts.convertEol = t.convertEol;
   if (t?.disableStdin != null) opts.disableStdin = t.disableStdin;
-  if (t?.smoothScrollDuration != null) opts.smoothScrollDuration = t.smoothScrollDuration;
+  opts.smoothScrollDuration = t?.smoothScrollDuration ?? CONFIG_DEFAULTS.terminal.smoothScrollDuration;
   // Non-upstream option consumed by our ghostty-web patch (see patches/).
   if (t?.scrollSensitivity != null) opts.scrollSensitivity = t.scrollSensitivity;
   if (t?.fontWeight != null) opts.fontWeight = t.fontWeight;

@@ -1328,7 +1328,7 @@ pub fn generate_config_toml() -> String {
 # allow-transparency = false
 # convert-eol = false
 # disable-stdin = false
-# smooth-scroll-duration = 0.0
+# smooth-scroll-duration = 120.0   # ms, also used by Neovim and file previews; 0 = instant
 # scroll-sensitivity = {DEFAULT_SCROLL_SENSITIVITY:.1}   # wheel/trackpad scroll-speed multiplier (>1 = faster)
 # cell-background-opacity = 1.0   # 0-1, colored cell backgrounds over a transparent background (Neovim)
 

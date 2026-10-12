@@ -23,7 +23,8 @@ import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitI
 import { FileSearch } from './files/FileSearch';
 import { KeyHint, type Hint } from './KeyHint';
 import { cn, getParent } from '@/lib/utils';
-import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
+import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
+import { smoothScrollBy } from '@/lib/smoothScroll';
 import { DEFAULT_TYPE_SCALE, terminalTypeScale } from '@/lib/astryx-theme';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
 import type {
@@ -62,7 +63,10 @@ const DEFAULT_SIDEBAR_RATIO = 1 / 3;
 
 function scrollFilePreview(direction: 1 | -1) {
   const viewport = document.querySelector<HTMLElement>('.file-preview-scroll [data-preview-viewport]');
-  if (viewport) viewport.scrollBy({ top: direction * (viewport.clientHeight / 2) });
+  if (viewport) {
+    const duration = getSmoothScrollDuration(useStore.getState().config);
+    smoothScrollBy(viewport, direction * (viewport.clientHeight / 2), duration);
+  }
 }
 
 function shellQuote(value: string): string {

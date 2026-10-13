@@ -67,11 +67,11 @@ export function CreateEntryModal({ open, onOpenChange, onCreate }: CreateEntryMo
               <TextInput
                 ref={inputRef}
                 label="Name"
+                description="Use / for nested paths. End with / for a folder."
                 value={name}
                 onChange={setName}
                 hasAutoFocus
                 isDisabled={creating}
-                placeholder="end with / for a folder"
               />
               {error && <Banner status="error" title={error} />}
             </FormLayout>

@@ -72,6 +72,7 @@ shows an error and leaves that program's input untouched.
 | `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                             |
 | `POST /api/panes/<pane-id>/input`                               | Send text to a pane, spawning its shell if necessary      |
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
+| `POST /api/notify`                                              | Show a notification, not tied to a pane, in every client   |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification            |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
 | `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session          |
@@ -275,5 +276,19 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
 Custom callers may add `title`, `body`, and `level`. A `title` or `body`
 replaces only that part of the event's default text. Titles are capped at 200
 characters and bodies at 1000.
+
+## Notifications
+
+`btmux send-notification` shows a notification in every connected browser:
+
+```sh
+btmux send-notification --level attention --body "All tests passed" "Build done"
+```
+
+`--level` is `info` (default), `success`, `attention`, or `error`. Every
+client shows an in-app toast; OS notifications follow the `[notifications]`
+preferences. Inside a btmux pane it targets that pane's server; elsewhere, the
+running server of `--profile` (or the default profile). It wraps
+`POST /api/notify`, which takes `title`, optional `body`, and `level`.
 
 [Back to the README](../README.md)

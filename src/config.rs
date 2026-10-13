@@ -154,6 +154,17 @@ pub enum SubCommand {
         file: Option<String>,
         line: Option<u32>,
     },
+    /// Show a notification in every connected browser. Inside a btmux pane
+    /// this targets that pane's server; otherwise the `--profile` server.
+    SendNotification {
+        /// Notification title.
+        title: String,
+        /// Optional body text.
+        #[arg(long)]
+        body: Option<String>,
+        #[arg(long, value_enum, default_value_t = NotificationLevel::Info)]
+        level: NotificationLevel,
+    },
     /// Print shell completions to stdout.
     Completions {
         /// Shell to generate completions for.

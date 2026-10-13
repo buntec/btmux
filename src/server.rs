@@ -71,6 +71,7 @@ pub fn create_app(state: AppState) -> Router {
             "/api/sessions/{session_id}/windows",
             axum::routing::post(api_create_window),
         )
+        .route("/api/notify", axum::routing::post(api_notify))
         .route(
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify)
@@ -481,6 +482,31 @@ async fn api_pane_notify(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[derive(Deserialize)]
+struct NotifyRequest {
+    level: Option<ws::control::NotificationLevel>,
+    title: String,
+    body: Option<String>,
+}
+
+/// Show a notification, not tied to a pane, in every client.
+async fn api_notify(State(state): State<AppState>, Json(body): Json<NotifyRequest>) -> Response {
+    let Some(title) = cap_text(Some(body.title), 200) else {
+        return (StatusCode::UNPROCESSABLE_ENTITY, "title is empty").into_response();
+    };
+    let level = body.level.unwrap_or(ws::control::NotificationLevel::Info);
+    tracing::info!(title = %title, "notification");
+    let mgr = state.read().await;
+    let msg = ws::control::ServerMessage::Notification {
+        level,
+        title,
+        body: cap_text(body.body, 1000),
+        os_client: mgr.alert_client(),
+    };
+    let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    StatusCode::NO_CONTENT.into_response()
+}
+
 fn hook_process(headers: &HeaderMap) -> Option<AgentProcess> {
     let pid = headers
         .get("x-btmux-agent-pid")?
@@ -877,6 +903,51 @@ mod pane_notification_tests {
         let event: serde_json::Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
         assert_eq!(event["type"], "focus_pane");
         assert_eq!(event["pane_id"], pane.to_string());
+    }
+
+    #[tokio::test]
+    async fn notify_broadcasts_to_every_client() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let mut events = manager.events().subscribe();
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        let post = |body: serde_json::Value| {
+            Request::post("/api/notify")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+
+        let response = app
+            .clone()
+            .oneshot(post(serde_json::json!({"title": "  "})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(events.try_recv().is_err());
+
+        let response = app
+            .oneshot(post(
+                serde_json::json!({"level": "attention", "title": "Build done", "body": "ok"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let event: serde_json::Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
+        assert_eq!(event["type"], "notification");
+        assert_eq!(event["level"], "attention");
+        assert_eq!(event["title"], "Build done");
+        assert_eq!(event["body"], "ok");
     }
 
     #[tokio::test]

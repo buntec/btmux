@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../state/store';
-import { ClientMessage, ServerMessage } from '../protocol/messages';
+import { ClientMessage, NotificationLevel, ServerMessage } from '../protocol/messages';
 import { windowAttended } from '../lib/windowAttention';
 import { atLeast } from '../lib/notifications';
 
@@ -51,6 +51,34 @@ export function useControlSocket() {
         console.log('[btmux] control socket connected');
       };
 
+      // Show an OS notification if preferences allow and this client is the target.
+      const notifyOs = (
+        msg: { level: NotificationLevel; body: string | null; os_client: number | null },
+        title: string,
+        tag?: string,
+        onClick?: () => void,
+      ) => {
+        const prefs = useStore.getState().config?.notifications;
+        const osWanted = (prefs?.os ?? true) && atLeast(msg.level, prefs?.['os-level'] ?? 'attention');
+        const osTarget = msg.os_client == null || msg.os_client === clientId;
+        // Some webviews (e.g. WKWebView) lack the Notification API.
+        if (
+          osWanted &&
+          osTarget &&
+          !windowAttended() &&
+          typeof Notification !== 'undefined' &&
+          Notification.permission === 'granted'
+        ) {
+          const notification = new Notification(title, { body: msg.body ?? undefined, tag });
+          notification.onclick = () => {
+            window.focus();
+            onClick?.();
+            notification.close();
+          };
+        }
+        if (osWanted) offerOsNotifications(showToast);
+      };
+
       ws.onmessage = (ev) => {
         const msg: ServerMessage = JSON.parse(ev.data);
         if (msg.type === 'client') {
@@ -69,32 +97,13 @@ export function useControlSocket() {
           showToast(msg.message, msg.level);
         } else if (msg.type === 'pane_notification') {
           const away = !windowAttended();
-          const prefs = useStore.getState().config?.notifications;
-          const osWanted = (prefs?.os ?? true) && atLeast(msg.level, prefs?.['os-level'] ?? 'attention');
-          const osTarget = msg.os_client == null || msg.os_client === clientId;
-          // Some webviews (e.g. WKWebView) lack the Notification API.
-          if (
-            osWanted &&
-            osTarget &&
-            away &&
-            typeof Notification !== 'undefined' &&
-            Notification.permission === 'granted'
-          ) {
-            // tag per pane so a burst from one pane coalesces into a single
-            // updating banner instead of stacking N popups (renotify
-            // defaults to false, so updates don't re-alert).
-            const notification = new Notification(msg.title || `Agent: ${msg.event}`, {
-              body: msg.body ?? undefined,
-              tag: `btmux-pane-${msg.pane_id}`,
-            });
-            const paneId = msg.pane_id;
-            notification.onclick = () => {
-              window.focus();
-              useStore.getState().navigateToPane(paneId);
-              notification.close();
-            };
-          }
-          if (osWanted) offerOsNotifications(showToast);
+          const paneId = msg.pane_id;
+          // tag per pane so a burst from one pane coalesces into a single
+          // updating banner instead of stacking N popups (renotify
+          // defaults to false, so updates don't re-alert).
+          notifyOs(msg, msg.title || `Agent: ${msg.event}`, `btmux-pane-${paneId}`, () =>
+            useStore.getState().navigateToPane(paneId),
+          );
           if (msg.level === 'attention' || msg.level === 'error') {
             // Show an in-app toast unless the user is looking at the notified pane.
             const state = useStore.getState();
@@ -116,6 +125,9 @@ export function useControlSocket() {
               });
             }
           }
+        } else if (msg.type === 'notification') {
+          notifyOs(msg, msg.title);
+          showToast(msg.title, msg.level, { body: msg.body ?? undefined });
         } else if (msg.type === 'focus_pane') {
           useStore.getState().navigateToPane(msg.pane_id);
         } else if (msg.type === 'open_file_browser') {

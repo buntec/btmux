@@ -857,6 +857,14 @@ pub enum ServerMessage {
         /// The client that should show an OS notification; `None` lets every client decide.
         os_client: Option<u32>,
     },
+    /// A notification for every client, not tied to a pane.
+    Notification {
+        level: NotificationLevel,
+        title: String,
+        body: Option<String>,
+        /// The client that should show an OS notification; `None` lets every client decide.
+        os_client: Option<u32>,
+    },
     /// Sent first on every control connection: this socket's client id.
     Client {
         id: u32,

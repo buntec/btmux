@@ -17,6 +17,7 @@ mod persistence;
 #[cfg(test)]
 mod protocol;
 mod pty;
+mod send_notification;
 mod server;
 mod service;
 mod session;
@@ -79,6 +80,13 @@ async fn main() {
 
     if let Some(config::SubCommand::OpenEditor { file, line }) = args.command.as_ref() {
         std::process::exit(editor::run(file.as_deref(), *line).await);
+    }
+
+    if let Some(config::SubCommand::SendNotification { title, body, level }) = args.command.as_ref()
+    {
+        let code =
+            send_notification::run(args.profile.as_deref(), *level, title, body.as_deref()).await;
+        std::process::exit(code);
     }
 
     // Parse config early (before full startup) so we can configure logging from

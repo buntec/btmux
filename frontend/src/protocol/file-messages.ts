@@ -147,6 +147,11 @@ export interface GitBranchInfo {
   name: string;
   is_head: boolean;
   upstream: string | null;
+  upstream_gone: boolean;
+  ahead: number;
+  behind: number;
+  commit: string;
+  subject: string;
 }
 
 export interface GitStashInfo {
@@ -158,7 +163,7 @@ export interface GitRefsResult {
   branch: string | null;
   upstream: string | null;
   local_branches: GitBranchInfo[];
-  remote_branches: string[];
+  remote_branches: GitBranchInfo[];
   remotes: string[];
   stashes: GitStashInfo[];
 }
@@ -167,7 +172,7 @@ export type GitOp =
   | { kind: 'checkout'; target: string }
   | { kind: 'create_branch'; name: string; checkout: boolean }
   | { kind: 'rename_branch'; from: string; to: string }
-  | { kind: 'delete_branch'; name: string }
+  | { kind: 'delete_branch'; name: string; force?: boolean }
   | { kind: 'fetch'; remote?: string; all?: boolean; prune?: boolean; tags?: boolean }
   | { kind: 'pull'; remote?: string; branch?: string; rebase?: boolean; ff_only?: boolean }
   | {

@@ -14,6 +14,11 @@ pub struct GitBranchInfo {
     pub name: String,
     pub is_head: bool,
     pub upstream: Option<String>,
+    pub upstream_gone: bool,
+    pub ahead: usize,
+    pub behind: usize,
+    pub commit: String,
+    pub subject: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -27,7 +32,7 @@ pub struct GitRefsResult {
     pub branch: Option<String>,
     pub upstream: Option<String>,
     pub local_branches: Vec<GitBranchInfo>,
-    pub remote_branches: Vec<String>,
+    pub remote_branches: Vec<GitBranchInfo>,
     pub remotes: Vec<String>,
     pub stashes: Vec<GitStashInfo>,
 }
@@ -49,6 +54,8 @@ pub enum GitOp {
     },
     DeleteBranch {
         name: String,
+        #[serde(default)]
+        force: bool,
     },
     Fetch {
         remote: Option<String>,
@@ -212,8 +219,12 @@ fn op_args(repo: &Repository, op: GitOp) -> Result<Vec<String>, String> {
                 &arg(&to, "Branch name")?,
             ]);
         }
-        GitOp::DeleteBranch { name } => {
-            push(&["branch", "-d", &arg(&name, "Branch")?]);
+        GitOp::DeleteBranch { name, force } => {
+            push(&[
+                "branch",
+                if force { "-D" } else { "-d" },
+                &arg(&name, "Branch")?,
+            ]);
         }
         GitOp::Fetch {
             remote,
@@ -318,6 +329,38 @@ fn op_args(repo: &Repository, op: GitOp) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
+fn branch_info(repo: &Repository, branch: &git2::Branch<'_>) -> Option<GitBranchInfo> {
+    let name = branch.name().ok().flatten()?.to_string();
+    let commit = branch.get().peel_to_commit().ok()?;
+    let upstream_ref = branch.upstream().ok();
+    let upstream = branch
+        .get()
+        .name()
+        .and_then(|name| repo.branch_upstream_name(name).ok())
+        .and_then(|name| name.as_str().map(str::to_string))
+        .map(|name| {
+            name.strip_prefix("refs/remotes/")
+                .or_else(|| name.strip_prefix("refs/heads/"))
+                .unwrap_or(&name)
+                .to_string()
+        });
+    let (ahead, behind) = upstream_ref
+        .as_ref()
+        .and_then(|upstream| upstream.get().target())
+        .and_then(|oid| repo.graph_ahead_behind(commit.id(), oid).ok())
+        .unwrap_or_default();
+    Some(GitBranchInfo {
+        name,
+        is_head: branch.is_head(),
+        upstream_gone: upstream.is_some() && upstream_ref.is_none(),
+        upstream,
+        ahead,
+        behind,
+        commit: commit.id().to_string(),
+        subject: commit.summary().unwrap_or_default().to_string(),
+    })
+}
+
 fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
     let mut repo = open_repo(root)?;
     let branch = repo
@@ -332,18 +375,9 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
         .map_err(|e| format!("Failed to list branches: {}", e))?
     {
         let Ok((local, _)) = entry else { continue };
-        let Ok(Some(name)) = local.name() else {
-            continue;
-        };
-        let upstream = local
-            .upstream()
-            .ok()
-            .and_then(|upstream| upstream.name().ok().flatten().map(str::to_string));
-        local_branches.push(GitBranchInfo {
-            name: name.to_string(),
-            is_head: local.is_head(),
-            upstream,
-        });
+        if let Some(info) = branch_info(&repo, &local) {
+            local_branches.push(info);
+        }
     }
     local_branches.sort_by(|a, b| a.name.cmp(&b.name));
     let upstream = local_branches
@@ -361,11 +395,11 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
         if remote.get().symbolic_target().is_some() {
             continue;
         }
-        if let Ok(Some(name)) = remote.name() {
-            remote_branches.push(name.to_string());
+        if let Some(info) = branch_info(&repo, &remote) {
+            remote_branches.push(info);
         }
     }
-    remote_branches.sort();
+    remote_branches.sort_by(|a, b| a.name.cmp(&b.name));
 
     let remotes = repo
         .remotes()
@@ -423,6 +457,7 @@ mod tests {
         let (root, repo) = init_repo("btmux-git-ops-args");
         let op = GitOp::DeleteBranch {
             name: "--force".into(),
+            force: false,
         };
         assert!(op_args(&repo, op).is_err());
         let op = GitOp::Fetch {
@@ -440,6 +475,18 @@ mod tests {
         let (root, repo) = init_repo("btmux-git-ops-build");
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         repo.branch("feature", &head, false).unwrap();
+
+        for force in [false, true] {
+            let args = op_args(
+                &repo,
+                GitOp::DeleteBranch {
+                    name: "feature".into(),
+                    force,
+                },
+            )
+            .unwrap();
+            assert_eq!(args, ["branch", if force { "-D" } else { "-d" }, "feature"]);
+        }
 
         let args = op_args(
             &repo,
@@ -495,6 +542,133 @@ mod tests {
         .unwrap();
         assert_eq!(args, ["stash", "push", "--include-untracked", "-m", "wip"]);
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn refs_include_commit_and_tracking_details() {
+        let (root, repo) = init_repo("btmux-git-refs");
+        let initial = repo.head().unwrap().peel_to_commit().unwrap();
+        let name = repo.head().unwrap().shorthand().unwrap().to_string();
+        repo.remote("origin", "https://example.invalid/repo.git")
+            .unwrap();
+        repo.reference("refs/remotes/origin/main", initial.id(), false, "test")
+            .unwrap();
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            false,
+            "test",
+        )
+        .unwrap();
+        let mut local = repo.find_branch(&name, BranchType::Local).unwrap();
+        local.set_upstream(Some("origin/main")).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        let ahead = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "Local change",
+                &initial.tree().unwrap(),
+                &[&initial],
+            )
+            .unwrap();
+
+        let refs = git_refs(&root).await.unwrap();
+        let branch = &refs.local_branches[0];
+        assert_eq!(branch.name, name);
+        assert!(branch.is_head);
+        assert_eq!(branch.commit, ahead.to_string());
+        assert_eq!(branch.subject, "Local change");
+        assert_eq!(branch.upstream.as_deref(), Some("origin/main"));
+        assert!(!branch.upstream_gone);
+        assert_eq!((branch.ahead, branch.behind), (1, 0));
+        assert_eq!(refs.remote_branches.len(), 1);
+        assert_eq!(refs.remote_branches[0].name, "origin/main");
+        assert_eq!(refs.remote_branches[0].subject, "initial");
+
+        let remote_tip = repo
+            .commit(
+                None,
+                &signature,
+                &signature,
+                "Remote change",
+                &initial.tree().unwrap(),
+                &[&initial],
+            )
+            .unwrap();
+        repo.find_reference("refs/remotes/origin/main")
+            .unwrap()
+            .set_target(remote_tip, "test")
+            .unwrap();
+        let refs = git_refs(&root).await.unwrap();
+        assert_eq!(
+            (refs.local_branches[0].ahead, refs.local_branches[0].behind),
+            (1, 1)
+        );
+
+        repo.find_reference("refs/remotes/origin/main")
+            .unwrap()
+            .delete()
+            .unwrap();
+        let refs = git_refs(&root).await.unwrap();
+        assert_eq!(
+            refs.local_branches[0].upstream.as_deref(),
+            Some("origin/main")
+        );
+        assert!(refs.local_branches[0].upstream_gone);
+        assert!(refs.remote_branches.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn safe_delete_rejects_unmerged_branch_and_force_delete_removes_it() {
+        let (root, repo) = init_repo("btmux-git-delete");
+        let initial = repo.head().unwrap().peel_to_commit().unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        let tip = repo
+            .commit(
+                None,
+                &signature,
+                &signature,
+                "Unmerged",
+                &initial.tree().unwrap(),
+                &[&initial],
+            )
+            .unwrap();
+        repo.branch("unmerged", &repo.find_commit(tip).unwrap(), false)
+            .unwrap();
+        assert!(git_run(
+            &root,
+            GitOp::DeleteBranch {
+                name: "unmerged".into(),
+                force: false
+            }
+        )
+        .await
+        .is_err());
+        assert!(repo.find_branch("unmerged", BranchType::Local).is_ok());
+        git_run(
+            &root,
+            GitOp::DeleteBranch {
+                name: "unmerged".into(),
+                force: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(repo.find_branch("unmerged", BranchType::Local).is_err());
+        let current = repo.head().unwrap().shorthand().unwrap().to_string();
+        assert!(git_run(
+            &root,
+            GitOp::DeleteBranch {
+                name: current,
+                force: true
+            }
+        )
+        .await
+        .is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Layout, LayoutContent, LayoutFooter, HStack, Section, VStack } from '@astryxdesign/core/Layout';
@@ -10,7 +11,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { cn } from '@/lib/utils';
 import { useStore } from '@/state/store';
 import { KeyCap, KeyHint, type Hint } from '../KeyHint';
-import type { GitOp, GitRefsResult } from '@/protocol/file-messages';
+import type { GitBranchInfo, GitOp, GitRefsResult } from '@/protocol/file-messages';
 
 export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash';
 
@@ -49,7 +50,13 @@ interface Action {
   description?: string;
   isDisabled?: boolean;
   /** An op to run immediately, or a prompt that produces one. */
-  next: () => GitOp | Prompt;
+  next: () => GitOp | Prompt | Confirmation;
+}
+
+interface Confirmation {
+  confirm: GitOp;
+  title: string;
+  description: string;
 }
 
 const TITLES: Record<GitPopupKind, string> = {
@@ -105,29 +112,26 @@ function stashOptions(refs: GitRefsResult): PromptOption[] {
   }));
 }
 
-function buildActions(kind: GitPopupKind, refs: GitRefsResult, flags: Set<string>): Action[] {
+function buildActions(
+  kind: GitPopupKind,
+  refs: GitRefsResult,
+  flags: Set<string>,
+  selected?: GitBranchInfo,
+  remoteView = false,
+): Action[] {
   const on = (flag: string) => flags.has(flag);
   const branch = refs.branch;
   const detached = branch === null;
-  const otherLocal = refs.local_branches.filter((b) => !b.is_head);
   const noRemotes = refs.remotes.length === 0;
 
   switch (kind) {
     case 'branch':
       return [
         {
-          key: 'b',
+          key: 'Enter',
           label: 'Checkout',
-          next: () => ({
-            title: 'Checkout',
-            label: 'Branch or revision',
-            options: [
-              ...otherLocal.map((b) => ({ value: b.name, label: b.name, description: b.upstream ?? undefined })),
-              ...refs.remote_branches.map((name) => ({ value: name, label: name })),
-            ],
-            allowCustom: true,
-            submit: (target) => ({ kind: 'checkout', target }),
-          }),
+          isDisabled: !selected || selected.is_head,
+          next: () => ({ kind: 'checkout', target: selected!.name }),
         },
         {
           key: 'c',
@@ -137,6 +141,16 @@ function buildActions(kind: GitPopupKind, refs: GitRefsResult, flags: Set<string
             label: 'Branch name',
             allowCustom: true,
             submit: (name) => ({ kind: 'create_branch', name, checkout: true }),
+          }),
+        },
+        {
+          key: 'b',
+          label: 'Checkout revision',
+          next: () => ({
+            title: 'Checkout branch or revision',
+            label: 'Branch or revision',
+            allowCustom: true,
+            submit: (target) => ({ kind: 'checkout', target }),
           }),
         },
         {
@@ -152,25 +166,29 @@ function buildActions(kind: GitPopupKind, refs: GitRefsResult, flags: Set<string
         {
           key: 'm',
           label: 'Rename',
-          description: branch ?? undefined,
-          isDisabled: detached,
+          isDisabled: remoteView || !selected,
           next: () => ({
-            title: `Rename ${branch}`,
+            title: `Rename ${selected!.name}`,
             label: 'New name',
-            initial: branch ?? '',
+            initial: selected!.name,
             allowCustom: true,
-            submit: (to) => ({ kind: 'rename_branch', from: branch!, to }),
+            submit: (to) => ({ kind: 'rename_branch', from: selected!.name, to }),
           }),
         },
         {
           key: 'x',
           label: 'Delete',
-          isDisabled: otherLocal.length === 0,
+          isDisabled: remoteView || !selected || selected.is_head,
+          next: () => ({ kind: 'delete_branch', name: selected!.name }),
+        },
+        {
+          key: 'X',
+          label: 'Force delete',
+          isDisabled: remoteView || !selected || selected.is_head,
           next: () => ({
-            title: 'Delete branch',
-            label: 'Branch',
-            options: otherLocal.map((b) => ({ value: b.name, label: b.name })),
-            submit: (name) => ({ kind: 'delete_branch', name }),
+            title: `Force delete ${selected!.name}?`,
+            description: 'This deletes the local branch even if its commits have not been merged.',
+            confirm: { kind: 'delete_branch', name: selected!.name, force: true },
           }),
         },
       ];
@@ -220,7 +238,7 @@ function buildActions(kind: GitPopupKind, refs: GitRefsResult, flags: Set<string
           next: () => ({
             title: 'Pull from',
             label: 'Remote branch',
-            options: refs.remote_branches.map((name) => ({ value: name, label: name })),
+            options: refs.remote_branches.map(({ name }) => ({ value: name, label: name })),
             submit: (value) => ({ kind: 'pull', ...splitRemoteBranch(refs, value), ...base }),
           }),
         },
@@ -363,6 +381,16 @@ function filterOptions(options: PromptOption[], query: string): PromptOption[] {
   return options.filter((o) => o.label.toLowerCase().includes(q) || o.description?.toLowerCase().includes(q));
 }
 
+function branchDescription(branch: GitBranchInfo): string {
+  const tracking = [
+    ...(branch.upstream_gone ? ['gone'] : []),
+    ...(branch.ahead ? [`ahead ${branch.ahead}`] : []),
+    ...(branch.behind ? [`behind ${branch.behind}`] : []),
+  ];
+  const upstream = branch.upstream ? `[${branch.upstream}${tracking.length ? `: ${tracking.join(', ')}` : ''}] ` : '';
+  return `${branch.commit.slice(0, 7)} ${upstream}${branch.subject}`;
+}
+
 // Switches persist per popup for the page lifetime, like transient.
 const savedFlags: Partial<Record<GitPopupKind, Set<string>>> = {};
 
@@ -376,6 +404,9 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   const [flags, setFlags] = useState<Set<string>>(() => new Set(savedFlags[kind] ?? []));
   const [dashPending, setDashPending] = useState(false);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [remoteView, setRemoteView] = useState(false);
+  const [branchIndex, setBranchIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [optionIndex, setOptionIndex] = useState(0);
   const [running, setRunning] = useState<string | null>(null);
@@ -388,7 +419,16 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   useEffect(() => {
     let cancelled = false;
     loadRefs().then(
-      (result) => !cancelled && setRefs(result),
+      (result) => {
+        if (cancelled) return;
+        setRefs(result);
+        setBranchIndex(
+          Math.max(
+            0,
+            result.local_branches.findIndex((branch) => branch.is_head),
+          ),
+        );
+      },
       (err) => !cancelled && setError(err instanceof Error ? err.message : 'Failed to read refs'),
     );
     return () => {
@@ -397,43 +437,70 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   }, [loadRefs]);
 
   useEffect(() => {
-    if (prompt) window.requestAnimationFrame(() => inputRef.current?.focus());
+    const frame = window.requestAnimationFrame(() => {
+      if (prompt) inputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [prompt]);
 
+  useLayoutEffect(() => {
+    if (kind === 'branch' && !prompt) contentRef.current?.focus();
+  }, [kind, prompt, confirmation, running]);
+
   useEffect(() => {
-    contentRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
-  }, [optionIndex]);
+    contentRef.current
+      ?.querySelector('[aria-selected="true"], [aria-current="true"]')
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [optionIndex, branchIndex, remoteView, refs, prompt, running]);
 
   const switches = SWITCHES[kind];
-  const actions = refs ? buildActions(kind, refs, flags) : [];
+  const branches = (remoteView ? refs?.remote_branches : refs?.local_branches) ?? [];
+  const selected = branches[Math.min(branchIndex, Math.max(0, branches.length - 1))];
+  const actions = refs ? buildActions(kind, refs, flags, selected, remoteView) : [];
   const options = prompt?.options ? filterOptions(prompt.options, query) : [];
 
   const close = () => {
-    if (!running) onClose();
+    if (running) return;
+    if (kind === 'branch' && (prompt || confirmation)) {
+      setPrompt(null);
+      setConfirmation(null);
+      setError(null);
+    } else onClose();
   };
 
   const hints: Hint[] = running
     ? []
-    : prompt
-      ? [
-          ...(options.length
-            ? [
-                { keys: ['up', 'down'], label: 'select' },
-                { keys: ['tab'], label: 'complete' },
-              ]
-            : []),
-          { keys: ['enter'], label: 'run' },
-          { keys: ['esc'], label: 'close' },
-        ]
-      : [{ keys: ['esc', 'q'], label: 'close' }];
+    : confirmation
+      ? [{ keys: ['esc'], label: 'cancel' }]
+      : prompt
+        ? [
+            ...(options.length
+              ? [
+                  { keys: ['up', 'down'], label: 'select' },
+                  { keys: ['tab'], label: 'complete' },
+                ]
+              : []),
+            { keys: ['enter'], label: 'run' },
+            { keys: ['esc'], label: kind === 'branch' ? 'back' : 'close' },
+          ]
+        : [{ keys: ['esc', 'q'], label: 'close' }];
 
   const execute = async (op: GitOp) => {
     setPrompt(null);
+    setConfirmation(null);
     setError(null);
     setRunning(describeOp(op));
     try {
       const output = await run(op);
-      onClose();
+      if (kind === 'branch' && op.kind !== 'checkout' && !(op.kind === 'create_branch' && op.checkout)) {
+        const nextRefs = await loadRefs();
+        const nextBranches = remoteView ? nextRefs.remote_branches : nextRefs.local_branches;
+        const nextName = op.kind === 'rename_branch' ? op.to : selected?.name;
+        const nextIndex = nextBranches.findIndex((branch) => branch.name === nextName);
+        setRefs(nextRefs);
+        setBranchIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(branchIndex, nextBranches.length - 1)));
+        setRunning(null);
+      } else onClose();
       // git ends with its summary line (e.g. `main -> main`, `Already up to date.`).
       const summary = output.trim().split('\n').pop()?.trim();
       if (summary) {
@@ -448,7 +515,10 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   const choose = (action: Action) => {
     if (action.isDisabled || running) return;
     const next = action.next();
-    if ('kind' in next) {
+    if ('confirm' in next) {
+      setError(null);
+      setConfirmation(next);
+    } else if ('kind' in next) {
       void execute(next);
     } else {
       setError(null);
@@ -499,6 +569,17 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
     event.stopPropagation();
     if (running || event.nativeEvent.isComposing) return;
 
+    if (confirmation) {
+      if (event.key === 'y' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        void execute(confirmation.confirm);
+      } else if (event.key === 'n' || event.key === 'q') {
+        event.preventDefault();
+        close();
+      }
+      return;
+    }
+
     if (prompt) {
       const count = options.length;
       const direction =
@@ -520,7 +601,31 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
       return;
     }
 
-    if (event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (kind === 'branch') {
+      const direction =
+        event.key === 'j' || event.key === 'ArrowDown' ? 1 : event.key === 'k' || event.key === 'ArrowUp' ? -1 : 0;
+      if (direction) {
+        event.preventDefault();
+        if (branches.length) setBranchIndex((branchIndex + direction + branches.length) % branches.length);
+        return;
+      }
+      if (event.key === 'r') {
+        event.preventDefault();
+        toggleBranchView();
+        return;
+      }
+      if (event.key === 'Enter') {
+        // Buttons retain their native Enter behavior.
+        if ((event.target as HTMLElement).closest('button') && !contentRef.current?.contains(event.target as Node))
+          return;
+        event.preventDefault();
+        const action = actions.find((action) => action.key === 'Enter');
+        if (action) choose(action);
+        return;
+      }
+    }
+    if (event.key.length !== 1) return;
     event.preventDefault();
     if (dashPending) {
       setDashPending(false);
@@ -544,29 +649,46 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
     if (action) choose(action);
   };
 
+  const toggleBranchView = () => {
+    setRemoteView(!remoteView);
+    setBranchIndex(remoteView ? Math.max(0, refs?.local_branches.findIndex((branch) => branch.is_head) ?? 0) : 0);
+    setError(null);
+  };
+
   return (
     <Dialog
       isOpen
       onOpenChange={(open) => !open && close()}
-      width={520}
+      width={kind === 'branch' ? 760 : 520}
       onMouseDown={(event) => event.stopPropagation()}
       onKeyDown={onKeyDown}
     >
       <Layout
         header={
           <DialogHeader
-            title={prompt?.title ?? TITLES[kind]}
+            title={
+              confirmation?.title ??
+              prompt?.title ??
+              (kind === 'branch' ? `${remoteView ? 'Remote' : 'Local'} branches` : TITLES[kind])
+            }
             subtitle={refs ? (refs.branch ?? 'detached HEAD') : undefined}
             hasDivider
             onOpenChange={(open) => !open && close()}
           />
         }
         content={
-          <LayoutContent ref={contentRef} padding={4}>
+          <LayoutContent
+            ref={contentRef}
+            padding={4}
+            tabIndex={kind === 'branch' ? -1 : undefined}
+            className={kind === 'branch' ? 'outline-none' : undefined}
+          >
             <VStack gap={3}>
               {error && <Banner status="error" title={error} />}
               {running ? (
                 <Spinner label={`${running}…`} />
+              ) : confirmation ? (
+                <Text>{confirmation.description}</Text>
               ) : prompt ? (
                 <VStack gap={2}>
                   <TextInput
@@ -600,6 +722,36 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
                 </VStack>
               ) : !refs ? (
                 !error && <Spinner label="Reading refs…" />
+              ) : kind === 'branch' && !branches.length ? (
+                <Text color="secondary">No {remoteView ? 'remote' : 'local'} branches</Text>
+              ) : kind === 'branch' ? (
+                <List
+                  density="compact"
+                  className="btm-mono"
+                  aria-label={remoteView ? 'Remote branches' : 'Local branches'}
+                >
+                  {branches.map((branch) => (
+                    <ListItem
+                      key={branch.name}
+                      label={branch.name}
+                      description={branchDescription(branch)}
+                      startContent={
+                        <Text type="code" color={branch.is_head ? 'accent' : 'secondary'}>
+                          {branch.is_head ? '*' : '·'}
+                        </Text>
+                      }
+                      endContent={
+                        branch.is_head ? (
+                          <Text size="sm" color="secondary">
+                            current
+                          </Text>
+                        ) : undefined
+                      }
+                      isSelected={branch.name === selected?.name}
+                      onClick={() => setBranchIndex(branches.indexOf(branch))}
+                    />
+                  ))}
+                </List>
               ) : (
                 <VStack gap={2}>
                   {switches.length > 0 && (
@@ -663,7 +815,34 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
           </LayoutContent>
         }
         footer={
-          hints.length > 0 ? (
+          !running && confirmation ? (
+            <LayoutFooter hasDivider>
+              <HStack gap={3} hAlign="end">
+                <Button label="Cancel" onClick={close}>
+                  <KeyHint keys={['esc']} label="cancel" />
+                </Button>
+                <Button label="Force delete" variant="destructive" onClick={() => void execute(confirmation.confirm)}>
+                  <KeyHint keys={['y']} label="Force delete" />
+                </Button>
+              </HStack>
+            </LayoutFooter>
+          ) : !running && !prompt && kind === 'branch' ? (
+            <LayoutFooter hasDivider>
+              <HStack gap={4} vAlign="center" wrap="wrap" className="gap-y-1">
+                {actions.map((action) => (
+                  <HStack key={action.key} className={cn('flex-none', action.isDisabled && 'opacity-50')}>
+                    <KeyHint
+                      keys={[action.key === 'Enter' ? 'enter' : action.key]}
+                      label={action.label.toLowerCase()}
+                    />
+                  </HStack>
+                ))}
+                <KeyHint keys={['r']} label={remoteView ? 'local' : 'remote'} />
+                <KeyHint keys={['j', 'k', 'down', 'up']} label="select" />
+                <KeyHint keys={['esc', 'q']} label="close" />
+              </HStack>
+            </LayoutFooter>
+          ) : hints.length > 0 ? (
             <LayoutFooter hasDivider>
               <HStack gap={4} wrap="wrap">
                 {hints.map((hint) => (

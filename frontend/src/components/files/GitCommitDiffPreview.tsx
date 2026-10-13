@@ -33,7 +33,7 @@ export function GitCommitDiffPreview() {
   }
 
   return (
-    <ScrollableArea label="Commit diff" axis="both" data-preview-viewport className="h-full overflow-auto">
+    <ScrollableArea label="Commit diff" axis="block" data-preview-viewport className="h-full overflow-auto">
       <div className="px-3 py-3 leading-5">
         <VStack gap={1} className="mb-3 border-b border-border pb-3">
           <Text type="large" weight="medium">
@@ -71,7 +71,7 @@ export function GitCommitDiffPreview() {
             ) : (
               file.hunks.map((hunk, hunkIndex) => (
                 <div key={hunkIndex} className="mb-4 last:mb-0">
-                  <div className="mb-1 text-purple-vivid">{hunk.header}</div>
+                  <div className="mb-1 text-purple-vivid [overflow-wrap:anywhere]">{hunk.header}</div>
                   {hunk.lines.map((line, lineIndex) => {
                     const added = line.origin === '+';
                     const removed = line.origin === '-';
@@ -79,11 +79,13 @@ export function GitCommitDiffPreview() {
                     const textClass = added ? 'text-green-vivid' : removed ? 'text-red-vivid' : '';
 
                     return (
-                      <div key={lineIndex} className={`${bgClass} ${textClass} whitespace-pre-wrap break-all px-2`}>
-                        <span className="inline-block w-4 select-none text-secondary opacity-60">
+                      <div key={lineIndex} className={`${bgClass} ${textClass} flex px-2`}>
+                        <span className="w-4 shrink-0 select-none text-secondary opacity-60">
                           {line.origin === ' ' ? ' ' : line.origin}
                         </span>
-                        {line.content}
+                        <span className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                          {line.content}
+                        </span>
                       </div>
                     );
                   })}

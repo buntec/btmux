@@ -163,20 +163,8 @@ impl VtQueryInterceptor {
             self.state = State::Escape;
             self.raw_seq.clear();
             self.raw_seq.push(byte);
-        } else if byte == 0x9b {
-            // C1 CSI (8-bit)
-            self.state = State::CsiEntry;
-            self.raw_seq.clear();
-            self.raw_seq.push(byte);
-            self.param_buf.clear();
-            self.interm_buf.clear();
-        } else if byte == 0x9d {
-            // C1 OSC (8-bit)
-            self.state = State::OscString;
-            self.raw_seq.clear();
-            self.raw_seq.push(byte);
-            self.payload_buf.clear();
         } else {
+            // 8-bit C1 controls are UTF-8 continuation bytes here, as in the emulator.
             result.scrollback.push(byte);
             result.broadcast.push(byte);
         }
@@ -468,12 +456,6 @@ impl VtQueryInterceptor {
             // BEL terminates OSC
             0x07 => {
                 self.osc_st = false;
-                self.dispatch_osc(result);
-                self.enter_ground();
-            }
-            // C1 ST (0x9C) terminates OSC
-            0x9c => {
-                self.osc_st = true;
                 self.dispatch_osc(result);
                 self.enter_ground();
             }
@@ -1121,5 +1103,17 @@ mod tests {
         let result = interceptor.feed(b"\x1b[?1049;2031l");
         assert!(!reports.load(Ordering::Relaxed));
         assert_eq!(result.broadcast, b"\x1b[?1049;2031l");
+    }
+
+    #[test]
+    fn utf8_continuation_bytes_are_not_c1() {
+        // These contain 0x9d (C1 OSC) and 0x9b (C1 CSI).
+        for text in ["he said ”hi”\r\nline2\r\n", "╚══╝\r\n$ ", "┛c ┛n"] {
+            let mut interceptor = VtQueryInterceptor::new();
+            let result = interceptor.feed(text.as_bytes());
+            assert_eq!(result.broadcast, text.as_bytes());
+            assert_eq!(result.scrollback, text.as_bytes());
+            assert!(result.responses.is_empty());
+        }
     }
 }

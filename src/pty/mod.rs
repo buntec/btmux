@@ -671,8 +671,8 @@ impl OscParser {
     ) {
         for &b in data {
             if self.in_osc {
-                // BEL (0x07) or ST (0x9c / ESC \) terminates the sequence.
-                if b == 0x07 || b == 0x9c {
+                // BEL (0x07) or ST (ESC \) terminates the sequence.
+                if b == 0x07 {
                     self.dispatch(title, cwd);
                     self.buf.clear();
                     self.in_osc = false;
@@ -685,10 +685,6 @@ impl OscParser {
                 } else if self.buf.len() < 8192 {
                     self.buf.push(b);
                 }
-            } else if b == 0x9d {
-                // C1 OSC
-                self.in_osc = true;
-                self.buf.clear();
             } else if b == 0x1b {
                 // Could be ESC ] — we peek on next byte via a small state trick:
                 // store ESC in buf and treat the next byte as the start.
@@ -946,5 +942,15 @@ mod osc_tests {
             Some("/a%20b")
         );
         assert_eq!(cwd_of(b"\x1b]7;/a%20b\x07").as_deref(), Some("/a%20b"));
+    }
+
+    #[test]
+    fn utf8_continuation_bytes_are_not_c1() {
+        // U+0F4C ends in 0x9d (C1 OSC); "Ü" contains 0x9c (C1 ST).
+        assert_eq!(cwd_of("\u{f4c}7;/x\x07".as_bytes()), None);
+        assert_eq!(
+            cwd_of("\x1b]7;/Übersicht\x07".as_bytes()).as_deref(),
+            Some("/Übersicht")
+        );
     }
 }

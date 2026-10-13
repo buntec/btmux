@@ -71,7 +71,7 @@ export function CreateEntryModal({ open, onOpenChange, onCreate }: CreateEntryMo
                 onChange={setName}
                 hasAutoFocus
                 isDisabled={creating}
-                placeholder="foo/bar/baz.txt, or end with / for a folder"
+                placeholder="end with / for a folder"
               />
               {error && <Banner status="error" title={error} />}
             </FormLayout>

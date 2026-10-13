@@ -91,7 +91,6 @@ export function GitCommitModal({ open, onOpenChange, onCommit }: GitCommitModalP
                 hasAutoFocus
                 isRequired
                 isDisabled={committing}
-                placeholder="Short summary of the change"
                 status={
                   subjectInvalid
                     ? { type: 'error', message: 'Subject is required.' }
@@ -109,7 +108,6 @@ export function GitCommitModal({ open, onOpenChange, onCommit }: GitCommitModalP
                 onChange={setBody}
                 rows={8}
                 isDisabled={committing}
-                placeholder="Explain the change in more detail (optional)"
                 status={
                   longLines.length
                     ? { type: 'warning', message: `${longLines.length} body lines exceed 72 columns.` }

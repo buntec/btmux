@@ -63,6 +63,7 @@ try {
   await page.keyboard.press('o');
   const preview = page.getByRole('group', { name: 'Commit diff', exact: true });
   const summary = preview.getByRole('region', { name: 'Commit change summary', exact: true });
+  const backToTop = page.getByRole('button', { name: 'Back to top', exact: true });
   await summary.getByRole('status').filter({ hasText: '0 files changed' }).waitFor();
   await page.keyboard.press('j');
   await summary.getByRole('list', { name: 'Changed files', exact: true }).waitFor();
@@ -74,7 +75,7 @@ try {
   assert(await changedFile('image.bin').getByText('Binary', { exact: true }).isVisible());
   assert.equal(await summary.getByRole('listitem').count(), 3);
   assert.equal(await summary.getByRole('status').innerText(), '3 files changed, 4 insertions(+), 1 deletion(−)');
-  assert.equal(await summary.locator('button, a').count(), 0, 'summary rows are display-only');
+  assert.equal(await backToTop.count(), 0, 'back to top is hidden at the top');
   const firstPatch = preview.locator('section').first();
   assert((await summary.boundingBox())!.y < (await firstPatch.boundingBox())!.y, 'summary precedes the full diff');
   await preview.getByText('new', { exact: true }).waitFor();
@@ -88,12 +89,68 @@ try {
   );
   console.log('PASS per-file counts, binary files, EOF markers, totals and full patch');
 
+  await page.setViewportSize({ width: 1440, height: 480 });
+  const originalUrl = page.url();
+  const history = page.getByRole('group', { name: 'Commit history', exact: true });
+  const historyScrollTop = await history.evaluate((element) => element.scrollTop);
+  for (const name of ['added.txt', 'image.bin', 'README']) {
+    await preview.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await changedFile(name).getByText(name, { exact: true }).click();
+    assert(await preview.evaluate((element) => element.scrollTop > 0), 'the RHS pane scrolls to the diff');
+    const target = await preview
+      .locator('section')
+      .filter({ has: page.getByText(name, { exact: true }) })
+      .boundingBox();
+    const viewport = await preview.boundingBox();
+    assert(target && viewport && target.y >= viewport.y - 1 && target.y < viewport.y + viewport.height);
+    assert.equal(await history.evaluate((element) => element.scrollTop), historyScrollTop);
+    assert.equal(page.url(), originalUrl, 'jumping does not change the session URL');
+    await backToTop.waitFor();
+    const button = await backToTop.boundingBox();
+    assert(button && viewport);
+    assert(Math.abs(button.x + button.width / 2 - (viewport.x + viewport.width / 2)) < 1, 'button is centered');
+    assert(
+      button.y >= viewport.y && button.y + button.height < viewport.y + viewport.height / 2,
+      'button is at the top',
+    );
+    await backToTop.click();
+    await backToTop.waitFor({ state: 'hidden' });
+    assert.equal(await preview.evaluate((element) => element.scrollTop), 0);
+    assert.equal(await history.evaluate((element) => element.scrollTop), historyScrollTop);
+  }
+  await preview.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await changedFile('added.txt').getByRole('button').press('Enter');
+  assert(await preview.evaluate((element) => element.scrollTop > 0));
+  assert(
+    await preview.evaluate((element) => document.activeElement?.contains(element)),
+    'focus stays with the file browser',
+  );
+  await backToTop.press('Enter');
+  await backToTop.waitFor({ state: 'hidden' });
+  assert.equal(await preview.evaluate((element) => element.scrollTop), 0);
+  await preview.hover();
+  await page.mouse.wheel(0, 200);
+  await backToTop.waitFor();
+  await preview.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await backToTop.waitFor({ state: 'hidden' });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  console.log('PASS summary jumps and back-to-top visibility, mouse, keyboard and manual scrolling');
+
   await page.keyboard.press('j');
   await summary.getByRole('status').filter({ hasText: '1 file changed, 1 insertion(+), 0 deletions(−)' }).waitFor();
   assert.equal(await summary.getByRole('listitem').count(), 1);
   assert(await summary.getByText('README', { exact: true }).isVisible());
   assert(await summary.getByText('+1', { exact: true }).isVisible());
   assert(await summary.getByText('−0', { exact: true }).isVisible());
+  assert.equal(await backToTop.count(), 0, 'back to top resets on commit changes');
+  await changedFile('README').getByRole('button').press('Enter');
+  assert(await preview.evaluate((element) => document.activeElement?.contains(element)));
   await page.keyboard.press('k');
   await summary.getByRole('status').filter({ hasText: '3 files changed' }).waitFor();
   await page.keyboard.press('/');

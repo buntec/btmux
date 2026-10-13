@@ -1,4 +1,4 @@
-/** Run against an isolated dev stack with Neovim 0.12+: BTMUX_AUTH_TOKEN=... just test-nvim-browser */
+/** Requires Neovim 0.12+. Run with `just test-nvim-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { encode, MsgpackStream, type MsgpackExt } from './src/lib/msgpack';

@@ -1,4 +1,4 @@
-/** Run against an isolated dev stack with BTMUX_AUTH_TOKEN. */
+/** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 

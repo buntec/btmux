@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
+// Dev backend runs on 8044 (see `dev_port` in the justfile) so it doesn't
+// clash with a production/service instance on the default 8004. The browser
+// test harness overrides it.
+const backend = `http://localhost:${process.env.BTMUX_BACKEND_PORT ?? 8044}`;
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -22,19 +27,17 @@ export default defineConfig({
     // fail instead of silently moving to a port it would reject.
     strictPort: true,
     proxy: {
-      // Dev backend runs on 8044 (see `dev_port` in the justfile) so it doesn't
-      // clash with a production/service instance on the default 8004.
       '/ws': {
-        target: 'http://localhost:8044',
+        target: backend,
         ws: true,
         changeOrigin: true,
       },
       '/wallpaper': {
-        target: 'http://localhost:8044',
+        target: backend,
         changeOrigin: true,
       },
       '/api': {
-        target: 'http://localhost:8044',
+        target: backend,
         changeOrigin: true,
       },
     },

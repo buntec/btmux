@@ -27,9 +27,14 @@ The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 wire types; the tests reject stale generated types. `just check` and `just lint`
 remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
-reconnect/replay, config updates, correlated command errors, and multiple viewers
-against an isolated dev stack, followed by Astryx interaction and theme checks
-(`BTMUX_AUTH_TOKEN=... just test-browser`).
+reconnect/replay, config updates, correlated command errors, and multiple viewers,
+followed by Astryx interaction, theme, and shader wallpaper checks
+(`just test-nvim-browser` covers the Neovim surface). `frontend/browser-test-stack.ts`
+gives each file a fresh stack (debug backend and Vite on free ports, a random token,
+`/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
+repo state don't affect it; failures keep the stack logs. Async page predicates must
+use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
+returned Promise as truthy and doesn't wait.
 `just test-frontend` runs the frontend unit tests (`bun test`, the LaTeX detector and theme mapping). `just record-demo` drives the production UI with Playwright.
 
 The CLI also accepts `--host`, `--port`, `--profile`, `--shell`, `--public-url`,

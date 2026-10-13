@@ -1,8 +1,11 @@
-/** Run against an isolated dev stack: BTMUX_AUTH_TOKEN=... bun astryx-browser-test.ts */
+/** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { fileURLToPath } from 'node:url';
+import { waitForAsync } from './browser-test-utils';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { createSocket } from 'node:dgram';
 import { FALLBACK_THEME } from './src/state/startupTheme';
@@ -10,6 +13,19 @@ import { FALLBACK_THEME } from './src/state/startupTheme';
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
 const token = process.env.BTMUX_AUTH_TOKEN;
 assert(token, 'BTMUX_AUTH_TOKEN is required');
+// A throwaway repo with a staged change, independent of the user's Git config.
+const repo = mkdtempSync(path.join(tmpdir(), 'btmux-git-'));
+const git = (...args: string[]) =>
+  execFileSync('git', ['-c', 'user.name=btmux', '-c', 'user.email=btmux@example.invalid', ...args], {
+    cwd: repo,
+    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+  });
+git('init', '--initial-branch=main');
+writeFileSync(path.join(repo, 'README'), 'one\n');
+git('add', 'README');
+git('commit', '-m', 'Initial');
+writeFileSync(path.join(repo, 'README'), 'two\n');
+git('add', 'README');
 const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 const response = await fetch(`${url}/api/sessions`, {
   method: 'POST',
@@ -79,13 +95,17 @@ try {
   await page.waitForFunction(() => !document.querySelector('#access-token'));
   await page.goto(`${url}/s/${encodeURIComponent(session.name)}`);
   await page.locator('.astryx-side-nav').waitFor();
-  await page.waitForFunction(async (id) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    const term = useStore.getState().terminals.get(id);
-    if (!term || !useStore.getState().config) return false;
-    (window as any).astryxTestTerminal = term;
-    return true;
-  }, pane);
+  await waitForAsync(
+    page,
+    async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const term = useStore.getState().terminals.get(id);
+      if (!term || !useStore.getState().config) return false;
+      (window as any).astryxTestTerminal = term;
+      return true;
+    },
+    pane,
+  );
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
@@ -128,7 +148,8 @@ try {
     await viewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
     await page.keyboard.press('p');
     await viewer.getByText('Ports', { exact: true }).waitFor();
-    await page.waitForFunction(
+    await waitForAsync(
+      page,
       async ({ tcpPort, udpPort, pid }) => {
         const { useProcessStore } = await import('/src/state/processStore.ts' as string);
         const ports = useProcessStore.getState().snapshot?.ports ?? [];
@@ -152,12 +173,17 @@ try {
     };
     await viewer.locator('tr[data-port-focused]').first().waitFor();
     await assertListenersFirst();
+    // The filter also matches substrings of other processes' ports, PIDs, and commands.
+    const ownPortRow = (port: number) =>
+      viewer.locator('tr[data-port-focused]').filter({
+        has: page.getByRole('button', { name: new RegExp(`connections for port ${port}, PID ${process.pid}$`) }),
+      });
     await page.keyboard.press('/');
     await page.keyboard.type(String(tcpPort));
-    const tcpRow = viewer.locator('tr[data-port-focused]').filter({ hasText: 'LISTEN' });
-    await tcpRow.first().click();
-    assert((await tcpRow.first().innerText()).includes(String(process.pid)));
+    const tcpRow = ownPortRow(tcpPort);
+    await tcpRow.click();
     assert.equal(await tcpRow.count(), 1, 'listener and connections share one port/PID row');
+    assert.equal(await tcpRow.locator('td').nth(3).innerText(), 'LISTEN');
     const details = viewer.getByRole('table', { name: `Connections for port ${tcpPort}, PID ${process.pid}` });
     assert.equal(await details.count(), 0, 'connection details are collapsed initially');
     await viewer
@@ -204,14 +230,14 @@ try {
     await assertListenersFirst();
     await page.keyboard.press('/');
     await page.keyboard.type(String(udpPort));
-    await viewer.locator('tr[data-port-focused]').filter({ hasText: 'UDP' }).first().click();
+    await ownPortRow(udpPort).click();
     await page.keyboard.press('Escape');
     await page.keyboard.press('x');
     await viewer.getByText('Terminate', { exact: false }).waitFor();
     await page.keyboard.press('Escape');
     await page.keyboard.press('p');
     await viewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
-    await page.waitForFunction(async () => {
+    await waitForAsync(page, async () => {
       const { useProcessStore } = await import('/src/state/processStore.ts' as string);
       return useProcessStore.getState().snapshot?.ports === null;
     });
@@ -221,17 +247,21 @@ try {
     const otherPage = await context.newPage();
     try {
       await otherPage.goto(`${url}/s/${encodeURIComponent(session.name)}`);
-      await otherPage.waitForFunction(async (pane) => {
-        const { useStore } = await import('/src/state/store.tsx' as string);
-        return useStore.getState().terminals.has(pane);
-      }, pane);
+      await waitForAsync(
+        otherPage,
+        async (pane) => {
+          const { useStore } = await import('/src/state/store.tsx' as string);
+          return useStore.getState().terminals.has(pane);
+        },
+        pane,
+      );
       await otherPage.evaluate(async (pane) => {
         const { useStore } = await import('/src/state/store.tsx' as string);
         useStore.getState().setFileBrowserOpen(true, null, pane, 'process');
       }, pane);
       const otherViewer = otherPage.getByRole('dialog', { name: 'Processes', exact: true });
       await otherViewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
-      await otherPage.waitForFunction(async () => {
+      await waitForAsync(otherPage, async () => {
         const { useProcessStore } = await import('/src/state/processStore.ts' as string);
         return useProcessStore.getState().snapshot?.ports === null;
       });
@@ -239,7 +269,7 @@ try {
         const sockets = (window as any).processTestSockets;
         sockets.at(-1).close();
       });
-      await page.waitForFunction(async () => {
+      await waitForAsync(page, async () => {
         const { useProcessStore } = await import('/src/state/processStore.ts' as string);
         const sockets = (window as any).processTestSockets;
         return sockets.length >= 2 && sockets.at(-1).readyState === 1 && useProcessStore.getState().snapshot?.ports;
@@ -253,7 +283,7 @@ try {
       await otherViewer.locator('tr[data-port-focused]').first().waitFor();
       await otherPage.keyboard.press('p');
       await otherViewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
-      await otherPage.waitForFunction(async () => {
+      await waitForAsync(otherPage, async () => {
         const { useProcessStore } = await import('/src/state/processStore.ts' as string);
         return useProcessStore.getState().snapshot?.ports === null;
       });
@@ -261,11 +291,15 @@ try {
         const { useProcessStore } = await import('/src/state/processStore.ts' as string);
         return useProcessStore.getState().snapshot;
       });
-      await page.waitForFunction(async (previous) => {
-        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
-        const current = useProcessStore.getState().snapshot;
-        return current?.ports && JSON.stringify(current) !== JSON.stringify(previous);
-      }, sample);
+      await waitForAsync(
+        page,
+        async (previous) => {
+          const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+          const current = useProcessStore.getState().snapshot;
+          return current?.ports && JSON.stringify(current) !== JSON.stringify(previous);
+        },
+        sample,
+      );
       console.log('PASS process socket reconnect restores ports and viewers toggle independently');
     } finally {
       await otherPage.close();
@@ -323,10 +357,14 @@ try {
   });
   try {
     await unavailablePage.goto(`${url}/s/${encodeURIComponent(session.name)}`);
-    await unavailablePage.waitForFunction(async (pane) => {
-      const { useStore } = await import('/src/state/store.tsx' as string);
-      return useStore.getState().terminals.has(pane);
-    }, pane);
+    await waitForAsync(
+      unavailablePage,
+      async (pane) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        return useStore.getState().terminals.has(pane);
+      },
+      pane,
+    );
     await unavailablePage.evaluate(async (pane) => {
       const { useStore } = await import('/src/state/store.tsx' as string);
       useStore.getState().setFileBrowserOpen(true, null, pane, 'process');
@@ -474,14 +512,9 @@ try {
       const { useStore } = await import('/src/state/store.tsx' as string);
       useStore.getState().setFileBrowserOpen(true, path, id, 'git');
     },
-    { id: pane, path: fileURLToPath(new URL('..', import.meta.url)) },
+    { id: pane, path: repo },
   );
-  const branch =
-    execFileSync('git', ['branch', '--show-current'], {
-      cwd: fileURLToPath(new URL('..', import.meta.url)),
-      encoding: 'utf8',
-    }).trim() || 'detached';
-  await page.getByText(branch, { exact: true }).first().waitFor();
+  await page.getByText('main', { exact: true }).first().waitFor();
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     useStore.getState().showToast('Toast in Git browser', 'error');
@@ -545,6 +578,7 @@ try {
   );
 } finally {
   await browser.close();
+  rmSync(repo, { recursive: true, force: true });
   const removed = await fetch(`${url}/api/sessions/${session.id}`, { method: 'DELETE', headers });
   assert(removed.ok);
 }

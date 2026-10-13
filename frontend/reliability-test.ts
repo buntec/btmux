@@ -1,6 +1,7 @@
-/** Run against an isolated dev stack: BTMUX_AUTH_TOKEN=... bun reliability-test.ts */
+/** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { waitForAsync } from './browser-test-utils';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
 const token = process.env.BTMUX_AUTH_TOKEN;
@@ -52,11 +53,15 @@ try {
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('#access-token'));
   await page.goto(`${url}/s/${encodeURIComponent(session.name)}`);
-  await page.waitForFunction(async (id) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    const term = useStore.getState().terminals.get(id);
-    return term && (window as any).testMessages.some((m: any) => m.type === 'ready' && m.pane_id === id);
-  }, pane);
+  await waitForAsync(
+    page,
+    async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const term = useStore.getState().terminals.get(id);
+      return term && (window as any).testMessages.some((m: any) => m.type === 'ready' && m.pane_id === id);
+    },
+    pane,
+  );
   await api(`/api/panes/${pane}/input`, { text: "printf '\\nREPLAY_🙂_OK\\n'\r" });
   const readTerminal = async () =>
     page.evaluate(async (id) => {
@@ -65,15 +70,19 @@ try {
       const buf = term.buffer.active;
       return Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '').join('\n');
     }, pane);
-  await page.waitForFunction(async (id) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    // A config update can rebuild the terminal, briefly unregistering it.
-    const buf = useStore.getState().terminals.get(id)?.buffer.active;
-    if (!buf) return false;
-    return Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '')
-      .join('\n')
-      .includes('\nREPLAY_🙂_OK\n');
-  }, pane);
+  await waitForAsync(
+    page,
+    async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      // A config update can rebuild the terminal, briefly unregistering it.
+      const buf = useStore.getState().terminals.get(id)?.buffer.active;
+      if (!buf) return false;
+      return Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '')
+        .join('\n')
+        .includes('\nREPLAY_🙂_OK\n');
+    },
+    pane,
+  );
   await page.waitForTimeout(250);
   const before = await readTerminal();
   const oldCount = await page.evaluate(
@@ -103,7 +112,7 @@ try {
       .findLast((s: WebSocket) => s.url.endsWith('/ws/control'))
       .send(JSON.stringify({ type: 'update_config', update: { animations: true }, request_id: 'config-test' }));
   }, pane);
-  await page.waitForFunction(async () => {
+  await waitForAsync(page, async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return useStore.getState().config.animations;
   });
@@ -136,13 +145,17 @@ try {
   await page.evaluate(() =>
     (window as any).testSockets.findLast((s: WebSocket) => s.url.endsWith('/ws/control')).close(),
   );
-  await page.waitForFunction(async (count) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    return (
-      useStore.getState().controlConnected &&
-      (window as any).testSockets.filter((s: WebSocket) => s.url.endsWith('/ws/control')).length > count
-    );
-  }, controlCount);
+  await waitForAsync(
+    page,
+    async (count) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return (
+        useStore.getState().controlConnectionState === 'connected' &&
+        (window as any).testSockets.filter((s: WebSocket) => s.url.endsWith('/ws/control')).length > count
+      );
+    },
+    controlCount,
+  );
   console.log('PASS correlated command errors and control reconnect');
 
   const second = await context.newPage();
@@ -153,7 +166,8 @@ try {
     return [term.cols, term.rows];
   }, pane);
   await second.goto(`${url}/s/${encodeURIComponent(session.name)}`);
-  await second.waitForFunction(
+  await waitForAsync(
+    second,
     async ({ id, size }) => {
       const { useStore } = await import('/src/state/store.tsx' as string);
       const term = useStore.getState().terminals.get(id);
@@ -177,7 +191,8 @@ try {
       return [term.cols, term.rows];
     }, pane);
   const waitForSize = (target: typeof page, size: number[], equal: boolean) =>
-    target.waitForFunction(
+    waitForAsync(
+      target,
       async ({ id, size, equal }) => {
         const { useStore } = await import('/src/state/store.tsx' as string);
         const term = useStore.getState().terminals.get(id);
@@ -193,7 +208,8 @@ try {
   await page.locator('[aria-label="Terminal input"]').first().press('Shift');
   await waitForSize(second, ownerSize, true);
   await page.close();
-  await second.waitForFunction(
+  await waitForAsync(
+    second,
     async ({ id, size }) => {
       const { useStore } = await import('/src/state/store.tsx' as string);
       const term = useStore.getState().terminals.get(id);

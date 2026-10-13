@@ -258,13 +258,13 @@ test-frontend:
 protocol:
     BTMUX_UPDATE_PROTOCOL=1 cargo test protocol::generated_protocol_is_current
 
-# Browser regressions against an isolated dev stack (requires BTMUX_AUTH_TOKEN)
+# Browser regressions, each file against its own fresh, isolated stack.
 test-browser:
-    cd frontend && bun reliability-test.ts && bun astryx-browser-test.ts && bun shader-wallpaper-browser-test.ts
+    cd frontend && bun browser-test-stack.ts reliability-test.ts astryx-browser-test.ts shader-wallpaper-browser-test.ts
 
-# Built-in Neovim regressions against an isolated dev stack (requires Neovim 0.12+).
+# Built-in Neovim regressions against a fresh, isolated stack (requires Neovim 0.12+).
 test-nvim-browser:
-    cd frontend && bun nvim-browser-test.ts
+    cd frontend && bun browser-test-stack.ts nvim-browser-test.ts
 
 # Bundled Neovim plugin regressions (requires Neovim).
 test-nvim-theme:

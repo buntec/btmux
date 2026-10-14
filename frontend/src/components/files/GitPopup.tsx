@@ -176,13 +176,13 @@ function buildActions(
           }),
         },
         {
-          key: 'x',
+          key: 'd',
           label: 'Delete',
           isDisabled: remoteView || !selected || selected.is_head,
           next: () => ({ kind: 'delete_branch', name: selected!.name }),
         },
         {
-          key: 'X',
+          key: 'D',
           label: 'Force delete',
           isDisabled: remoteView || !selected || selected.is_head,
           next: () => ({

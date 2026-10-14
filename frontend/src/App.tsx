@@ -9,6 +9,7 @@ import { getSessionMruOrder, recordSessionMruVisit } from './state/sessionMru';
 import { SessionView } from './components/SessionView';
 import { SessionPool } from './components/SessionPool';
 import { NvimSurface } from './components/NvimSurface';
+import { VscodeSurface } from './components/VscodeSurface';
 import { StatusBar } from './components/StatusBar';
 import { Overlay } from './components/Overlay';
 import { WindowGrid } from './components/WindowGrid';
@@ -82,6 +83,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   useEffect(() => {
     if (nvimOpen) setNvimMounted(true);
   }, [nvimOpen]);
+  const vscodeOpen = useStore((s) => s.vscodeOpen);
+  const vscodePaneId = useStore((s) => s.vscodePaneId);
+  const vscodeRect = useStore((s) => s.vscodeRect);
+  const [vscodeMounted, setVscodeMounted] = useState(vscodeOpen);
+  useEffect(() => {
+    if (vscodeOpen) setVscodeMounted(true);
+  }, [vscodeOpen]);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const overlay = useStore((s) => s.overlay);
   const navigate = useNavigate();
@@ -146,6 +154,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   useEffect(() => {
     if (nvimPaneGone) useStore.getState().setNvimOpen(false);
   }, [nvimPaneGone]);
+  const vscodePane = allSessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).find((p) => p.id === vscodePaneId);
+  const vscodeInActiveWindow = !!activeWindow?.panes.some((p) => p.id === vscodePaneId);
+  const vscodeShownRect = vscodeInActiveWindow && vscodeRect?.paneId === vscodePaneId ? vscodeRect : null;
+  const vscodePaneGone = vscodeOpen && !vscodePane;
+  useEffect(() => {
+    if (vscodePaneGone) useStore.getState().setVscodeOpen(false);
+  }, [vscodePaneGone]);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
@@ -242,6 +257,21 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
                 }}
                 activeSessionId={activeSessionId}
                 cwd={nvimPane?.cwd ?? null}
+              />
+            )}
+            {(vscodeOpen || vscodeMounted) && (
+              <VscodeSurface
+                config={effectiveConfig}
+                open={vscodeOpen}
+                paneId={vscodePaneId}
+                rect={vscodeOpen ? vscodeShownRect : null}
+                focused={vscodeOpen && vscodeShownRect !== null && focusPaneId === vscodePaneId}
+                zoomed={activeWindow?.zoomed_pane === vscodePaneId}
+                onActivate={() => {
+                  if (activeSessionId && vscodePaneId)
+                    send({ type: 'select_pane', session_id: activeSessionId, pane_id: vscodePaneId });
+                }}
+                cwd={vscodePane?.cwd ?? null}
               />
             )}
             {settingsOpen && config && <ConfigPage config={config} send={send} />}

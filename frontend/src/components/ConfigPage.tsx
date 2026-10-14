@@ -72,7 +72,7 @@ type Draft = {
   showPaneTitles: boolean;
   sessionSort: ClientConfig['session_sort'];
   windowSort: ClientConfig['window_sort'];
-  fileEditor: ClientConfig['file_editor'];
+  editor: ClientConfig['editor'];
   windowGridCount: number;
   binds: Record<string, string>;
   keyOverrides: Record<string, string>;
@@ -124,7 +124,7 @@ function initialDraft(config: ClientConfig): Draft {
     showPaneTitles: getShowPaneTitles(config),
     sessionSort: config.session_sort,
     windowSort: config.window_sort,
-    fileEditor: config.file_editor,
+    editor: config.editor,
     windowGridCount: config.window_grid_count,
     binds: Object.fromEntries(config.binds.map((bind) => [bind.action, bind.key])),
     keyOverrides: config.keys,
@@ -184,7 +184,7 @@ const TOML_DEFAULTS = {
   showPaneTitles: false,
   sessionSort: 'mru',
   windowSort: 'alphabetical',
-  fileEditor: 'neovim',
+  editor: 'neovim',
   windowGridCount: 4,
   wallpaperShader: '',
   wallpaperOpacity: 0.1,
@@ -256,7 +256,7 @@ function toToml(draft: Draft): string {
     boolLine('show-pane-titles', draft.showPaneTitles, TOML_DEFAULTS.showPaneTitles),
     strLine('session-sort', draft.sessionSort, TOML_DEFAULTS.sessionSort),
     strLine('window-sort', draft.windowSort, TOML_DEFAULTS.windowSort),
-    strLine('file-editor', draft.fileEditor, TOML_DEFAULTS.fileEditor),
+    strLine('editor', draft.editor, TOML_DEFAULTS.editor),
     intLine('window-grid-count', draft.windowGridCount, TOML_DEFAULTS.windowGridCount),
     optLine('colors', draft.colors),
     optLine('wallpaper', draft.wallpaper),
@@ -326,7 +326,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('showPaneTitles')) update.show_pane_titles = draft.showPaneTitles;
   if (dirty.has('sessionSort')) update.session_sort = draft.sessionSort;
   if (dirty.has('windowSort')) update.window_sort = draft.windowSort;
-  if (dirty.has('fileEditor')) update.file_editor = draft.fileEditor;
+  if (dirty.has('editor')) update.editor = draft.editor;
   if (dirty.has('windowGridCount')) update.window_grid_count = draft.windowGridCount;
   if (dirty.has('binds')) update.keys = draft.keyOverrides;
   if (dirty.has('colors')) update.colors = draft.colors;
@@ -590,11 +590,13 @@ export function ConfigPage({ config, send }: Props) {
   const choose = (
     key: { [K in DraftKey]: Draft[K] extends string ? K : never }[DraftKey],
     label: string,
-    options: { value: string; label: string }[],
+    options: { value: string; label: string; description?: string }[],
+    description?: string,
   ) => (
     <Selector
       key={key}
       label={label}
+      description={description}
       value={draft[key] || 'none'}
       options={options}
       onChange={(value) => update(key, (value === 'none' ? '' : value) as never)}
@@ -731,10 +733,30 @@ export function ConfigPage({ config, send }: Props) {
                         )}
                         {choose('sessionSort', 'Session sort', ordering)}
                         {choose('windowSort', 'Window sort', ordering)}
-                        {choose('fileEditor', 'Open files in', [
-                          { value: 'pane', label: 'Pane editor' },
-                          { value: 'neovim', label: 'Built-in Neovim' },
-                        ])}
+                        {choose(
+                          'editor',
+                          'Editor',
+                          [
+                            {
+                              value: 'neovim',
+                              label: 'Neovim',
+                              description:
+                                "Run headless Neovim with btmux's built-in GUI. Injects config for theming and UI. (Requires Neovim 0.12+ on PATH.)",
+                            },
+                            {
+                              value: 'vscode',
+                              label: 'VS Code',
+                              description:
+                                'Run headless VS Code (code serve-web). Injects an extension to sync theme and font. (Requires VS Code.)',
+                            },
+                            {
+                              value: 'pane',
+                              label: 'Terminal',
+                              description: 'Run $EDITOR in the pane.',
+                            },
+                          ],
+                          'Opens with prefix + e, or from the file browser and Git mode.',
+                        )}
                         <NumberInput
                           label="Window grid count"
                           value={draft.windowGridCount}

@@ -27,8 +27,8 @@ title bars, vi-style navigation, bundled font families and weights, image or
 procedural wallpapers, and steady-state, session-switch, and pane-switch WebGL
 effects.
 
-The `[terminal]` `font-family` and `font-weight` set the terminal, the built-in
-Neovim, and code-like UI text such as paths, session and window names, and key
+The `[terminal]` `font-family` and `font-weight` set the terminal, the Neovim
+GUI, and code-like UI text such as paths, session and window names, and key
 hints. Other UI text uses Geist Sans.
 
 Wallpapers are disabled by default. Set `wallpaper` to an image URL or path,
@@ -81,11 +81,24 @@ Home Manager module installs both files when `programs.fish.enable` is set.
 Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described in
 [btmux for tmux users](tmux.md).
 
-## Built-in Neovim
+## Editor
 
-`file-editor` chooses where the file browser and Git mode open files: `"neovim"`
-or `"pane"`. The default is `"neovim"` when Neovim 0.12 or newer is on the server's
-`PATH`, else `"pane"`. See [Built-in Neovim](neovim.md).
+`editor` chooses the editor that `<prefix> + e`, the file browser, and Git
+mode open: `"neovim"` (your Neovim in btmux's GUI over the pane), `"vscode"`
+(VS Code in the browser over the pane), or `"pane"` (the terminal: the pane's
+running Neovim, else `$EDITOR` in its shell). The default is `"neovim"` when
+Neovim 0.12 or newer is on the server's `PATH`, else `"pane"`. See
+[Neovim GUI](neovim.md).
+
+With `"vscode"`, `<prefix> + e` toggles VS Code over the active pane, opened
+in the pane's folder; pressing Esc twice quickly also hides it. The first time,
+btmux asks you to accept the VS Code Server license (once per profile).
+`vscode-server` picks the server, read when it starts: `"code"` (default) runs
+`code serve-web` from an installed VS Code, which downloads the matching server
+on first use; `"openvscode-server"` uses `openvscode-server` from `PATH`. A
+bundled extension syncs btmux's color scheme and terminal font into VS Code;
+turn off `btmux.syncTheme` or `btmux.syncFont` in VS Code's settings to keep
+your own. Webviews such as the Markdown preview need internet access.
 
 ## LaTeX overlay
 

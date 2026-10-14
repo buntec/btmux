@@ -512,12 +512,19 @@ export function runAction(
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'git');
       break;
     }
-    case 'neovim': {
-      // Toggle over the active pane, or move the surface there.
+    case 'editor': {
+      // Toggle the configured editor over the active pane, or move it there.
       const win = session?.windows[session.active_window];
       const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
-      if (store.nvimOpen && store.nvimPaneId === paneId) store.setNvimOpen(false);
-      else if (paneId) store.setNvimOpen(true, paneId);
+      if (!paneId) break;
+      const editor = store.config?.editor;
+      if (editor === 'pane') {
+        send({ type: 'open_file', pane_id: paneId, path: null, line: null });
+      } else if (editor === 'vscode') {
+        store.setVscodeOpen(!(store.vscodeOpen && store.vscodePaneId === paneId), paneId);
+      } else {
+        store.setNvimOpen(!(store.nvimOpen && store.nvimPaneId === paneId), paneId);
+      }
       break;
     }
     case 'process-view': {

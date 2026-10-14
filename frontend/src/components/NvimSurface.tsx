@@ -28,7 +28,7 @@ const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.ho
 const BUTTONS = ['left', 'middle', 'right'];
 /** Scroll animation length when `smooth-scroll-duration` is unset. */
 /** Max gap between two Esc presses that hide the surface. */
-const DOUBLE_ESC_MS = 300;
+export const DOUBLE_ESC_MS = 300;
 
 /** Neovim's integer handle for a window (a msgpack ext). */
 const windowId = (win: unknown): number | null => {

@@ -52,13 +52,13 @@ cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
 
 Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the command palette.
 
-## Built-in Neovim GUI
+## Neovim GUI
 
 `<prefix> + e` opens a Neovim GUI drawn by btmux, with its command line,
 completion menu, messages, LSP signature help, and floating windows rendered as native UI. The file
 browser and Git mode open files there by default. It needs Neovim 0.12 or newer
 (without it, files open in the pane);
-see [Built-in Neovim](docs/neovim.md) for config tips and the bundled plugin.
+see [Neovim GUI](docs/neovim.md) for config tips and the bundled plugin.
 
 ## Learn more
 
@@ -66,7 +66,7 @@ see [Built-in Neovim](docs/neovim.md) for config tips and the bundled plugin.
 - [Configuration](docs/configuration.md): `~/.config/btmux/config.toml`, themes, and profiles
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization
 - [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux
-- [Built-in Neovim](docs/neovim.md): the Neovim GUI, its plugin, and config tips
+- [Neovim GUI](docs/neovim.md): the Neovim GUI, its plugin, and config tips
 - [Automation and AI agents](docs/automation.md): REST API, MCP, and agent notifications
 
 ## Development

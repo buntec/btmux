@@ -1,4 +1,4 @@
-//! `btmux open-editor`: open a file (or just the editor) where `file-editor`
+//! `btmux open-editor`: open a file (or just the editor) where `editor`
 //! says: the built-in Neovim, or `$EDITOR` in this terminal.
 //!
 //! Also injected into a pane's shell by `OpenFile` so the typed line stays
@@ -36,7 +36,7 @@ pub fn editor_argv(editor: &str, file: Option<&str>, line: Option<u32>) -> Vec<S
     argv
 }
 
-/// Open `file` where `file-editor` says. Returns the exit code on failure.
+/// Open `file` where `editor` says. Returns the exit code on failure.
 pub async fn run(file: Option<&str>, line: Option<u32>) -> i32 {
     let file = match file.map(std::path::absolute).transpose() {
         Ok(file) => file.map(|f| f.to_string_lossy().into_owned()),
@@ -56,7 +56,7 @@ pub async fn run(file: Option<&str>, line: Option<u32>) -> i32 {
 }
 
 /// Ask the server owning this pane to open the built-in Neovim. `Ok(false)`
-/// means use `$EDITOR`: outside a btmux pane, `file-editor = "pane"`, or no
+/// means use `$EDITOR`: outside a btmux pane, `editor = "pane"`, or no
 /// server (or an older one) to ask.
 async fn open_in_server(file: Option<&str>, line: Option<u32>) -> Result<bool, String> {
     let env = |name| std::env::var(name).ok().filter(|v| !v.is_empty());

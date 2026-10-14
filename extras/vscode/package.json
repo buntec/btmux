@@ -1,0 +1,41 @@
+{
+  "name": "btmux",
+  "publisher": "btmux",
+  "displayName": "btmux",
+  "description": "btmux integration: color scheme and font sync, and file opening.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "btmux",
+      "properties": {
+        "btmux.syncTheme": {
+          "type": "boolean",
+          "default": true,
+          "description": "Match the btmux color scheme. Turn off to keep your own theme and color customizations."
+        },
+        "btmux.syncFont": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use the btmux terminal font in the editor and terminal. Turn off to keep your own font settings."
+        }
+      }
+    }
+  }
+}

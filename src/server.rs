@@ -91,6 +91,11 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_open_editor),
         )
         .route("/api/nvim/file", axum::routing::get(api_nvim_file))
+        .route("/api/vscode", get(crate::vscode::status))
+        .route(
+            "/api/vscode/license",
+            axum::routing::post(crate::vscode::accept),
+        )
         .route(
             "/api/panes/{pane_id}/editor-file",
             axum::routing::get(api_pane_editor_file),
@@ -103,6 +108,12 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/file", get(serve_raw_file))
         .route("/wallpaper", get(serve_wallpaper))
+        .route(
+            crate::vscode::BASE_PATH,
+            axum::routing::any(crate::vscode::proxy),
+        )
+        .route("/vscode/", axum::routing::any(crate::vscode::proxy))
+        .route("/vscode/{*path}", axum::routing::any(crate::vscode::proxy))
         .merge(crate::api::router())
         .nest_service("/mcp", crate::mcp::mcp_service(state.clone()))
         .route("/", get(|| async { serve("index.html") }))
@@ -582,31 +593,40 @@ struct OpenEditorRequest {
     line: Option<u32>,
 }
 
-/// `btmux open-editor`: with `file-editor = "neovim"`, open `path` (if any) in
-/// the built-in Neovim and show it over the pane's session in every tab.
+/// `btmux open-editor`: with `editor = "neovim"` or `"vscode"`, open
+/// `path` (if any) in that editor and show it over the pane's session in every tab.
 /// Replies `{"opened": false}` when the caller should run `$EDITOR` instead.
 async fn api_open_editor(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
     Json(body): Json<OpenEditorRequest>,
 ) -> Response {
-    let file_editor = {
+    let editor = {
         let mgr = state.read().await;
         if mgr.find_pane(pane_id).is_none() {
             return StatusCode::NOT_FOUND.into_response();
         }
-        mgr.config().file_editor.clone()
+        mgr.config().editor.clone()
     };
-    if file_editor == crate::config::FileEditor::Pane {
-        return Json(serde_json::json!({ "opened": false })).into_response();
-    }
-    if let Some(path) = &body.path {
-        if let Err(error) = ws::nvim::open(path, body.line).await {
-            return (StatusCode::BAD_GATEWAY, error).into_response();
+    let msg = match editor {
+        crate::config::Editor::Pane => {
+            return Json(serde_json::json!({ "opened": false })).into_response();
         }
-    }
-
-    let msg = ws::control::ServerMessage::OpenNvim { pane_id };
+        crate::config::Editor::Neovim => {
+            if let Some(path) = &body.path {
+                if let Err(error) = ws::nvim::open(path, body.line).await {
+                    return (StatusCode::BAD_GATEWAY, error).into_response();
+                }
+            }
+            ws::control::ServerMessage::OpenNvim { pane_id }
+        }
+        crate::config::Editor::Vscode => {
+            if let Some(path) = &body.path {
+                crate::vscode::open(path, body.line);
+            }
+            ws::control::ServerMessage::OpenVscode { pane_id }
+        }
+    };
     let _ = state
         .read()
         .await

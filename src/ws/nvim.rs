@@ -108,16 +108,20 @@ fn create_private_dir(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("create {}: {e}", path.display()))
 }
 
-struct PrivateDir(PathBuf);
+pub(crate) struct PrivateDir(PathBuf);
 
 impl PrivateDir {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         Self::create(std::env::temp_dir().join(format!("btmux-{}", uuid::Uuid::new_v4().simple())))
     }
 
     fn create(path: PathBuf) -> Result<Self, String> {
         create_private_dir(&path)?;
         Ok(Self(path))
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
     }
 }
 

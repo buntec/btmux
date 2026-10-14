@@ -148,8 +148,8 @@ pub enum SubCommand {
     /// Print the btmux version and exit.
     Version,
     /// Open FILE (or just the editor), jumping to LINE. In a btmux pane with
-    /// `file-editor = "neovim"`, this opens the built-in Neovim; otherwise
-    /// `$EDITOR` (falling back to `vi`).
+    /// `editor = "neovim"` or `"vscode"`, this opens that editor over the
+    /// pane; otherwise `$EDITOR` (falling back to `vi`).
     OpenEditor {
         file: Option<String>,
         line: Option<u32>,
@@ -239,19 +239,33 @@ pub enum WindowSort {
     Alphabetical,
 }
 
-/// Where the file browser and Git mode open files.
-/// Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
+/// The editor `prefix + e`, the file browser, Git mode, and `btmux open-editor`
+/// open. Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
-pub enum FileEditor {
+pub enum Editor {
     /// The pane's foreground Neovim, or `$EDITOR` in its shell.
     Pane,
-    /// The built-in Neovim (`prefix + e`).
+    /// The built-in Neovim.
     Neovim,
+    /// VS Code.
+    Vscode,
 }
 
-impl FileEditor {
+/// The server behind the VS Code surface.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum VscodeServer {
+    /// `code serve-web` from an installed VS Code.
+    #[default]
+    Code,
+    /// `openvscode-server` on `PATH`.
+    OpenvscodeServer,
+}
+
+impl Editor {
     /// The default: Neovim if the built-in one can start, else the pane.
     fn detect() -> Self {
         if crate::ws::nvim::available() {
@@ -405,9 +419,11 @@ pub struct FileConfig {
     /// Sort order for the window list (status bar, choose-tree, switcher).
     #[serde(rename = "window-sort", default)]
     pub window_sort: WindowSort,
-    /// Where the file browser and Git mode open files.
-    #[serde(rename = "file-editor")]
-    pub file_editor: Option<FileEditor>,
+    /// The editor `prefix + e`, the file browser, and Git mode open.
+    pub editor: Option<Editor>,
+    /// The server behind VS Code. Read when it starts.
+    #[serde(rename = "vscode-server", default)]
+    pub vscode_server: VscodeServer,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -461,7 +477,8 @@ impl Default for FileConfig {
             pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
-            file_editor: None,
+            editor: None,
+            vscode_server: VscodeServer::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -872,7 +889,9 @@ pub struct ClientConfig {
     /// Sort order for the window list (status bar, choose-tree, switcher).
     pub window_sort: WindowSort,
     /// Where the file browser and Git mode open files.
-    pub file_editor: FileEditor,
+    pub editor: Editor,
+    /// The server behind VS Code.
+    pub vscode_server: VscodeServer,
     /// How many recently-viewed windows the window-grid (`prefix + w`) shows.
     pub window_grid_count: u32,
     /// btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
@@ -940,7 +959,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("f", "file-browser"),
     ("g", "git-view"),
     ("t", "process-view"),
-    ("e", "neovim"),
+    ("e", "editor"),
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling
@@ -1316,10 +1335,16 @@ pub fn generate_config_toml() -> String {
 # "alphabetical" = sorted by name (default).
 # window-sort = "alphabetical"
 
-# Where the file browser and Git mode open files.
-# "pane" = the pane's foreground Neovim, or $EDITOR in its shell,
-# "neovim" = the built-in Neovim (prefix + e) (default if Neovim 0.12+ is on PATH).
-# file-editor = "neovim"
+# The editor prefix + e, the file browser, and Git mode open.
+# "neovim" = your Neovim in btmux's GUI (default if Neovim 0.12+ is on PATH),
+# "vscode" = VS Code in the browser,
+# "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell.
+# editor = "neovim"
+
+# The server behind VS Code, read when it starts.
+# "code" = `code serve-web` from an installed VS Code (default),
+# "openvscode-server" = openvscode-server on PATH.
+# vscode-server = "code"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
@@ -1613,7 +1638,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
-        file_editor: file.file_editor.clone().unwrap_or_else(FileEditor::detect),
+        editor: file.editor.clone().unwrap_or_else(Editor::detect),
+        vscode_server: file.vscode_server,
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
         color_schemes,
@@ -1649,7 +1675,7 @@ pub struct ConfigUpdate {
     pub keys: Option<BTreeMap<String, String>>,
     pub session_sort: Option<SessionSort>,
     pub window_sort: Option<WindowSort>,
-    pub file_editor: Option<FileEditor>,
+    pub editor: Option<Editor>,
     pub window_grid_count: Option<u32>,
     pub colors: Option<String>,
     /// Parsed palette for a remote `colors` override. Filled by the WebSocket
@@ -1720,8 +1746,8 @@ impl ConfigUpdate {
         if other.window_sort.is_some() {
             self.window_sort = other.window_sort.clone();
         }
-        if other.file_editor.is_some() {
-            self.file_editor = other.file_editor.clone();
+        if other.editor.is_some() {
+            self.editor = other.editor.clone();
         }
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
@@ -1863,8 +1889,8 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     if let Some(window_sort) = &overrides.window_sort {
         file.window_sort = window_sort.clone();
     }
-    if let Some(file_editor) = &overrides.file_editor {
-        file.file_editor = Some(file_editor.clone());
+    if let Some(editor) = &overrides.editor {
+        file.editor = Some(editor.clone());
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
@@ -2171,7 +2197,7 @@ palette:
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
-        assert_eq!(resolved.file_editor, FileEditor::detect());
+        assert_eq!(resolved.editor, Editor::detect());
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.15);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));
@@ -2228,7 +2254,7 @@ palette:
                 keys: Some(keys),
                 session_sort: Some(SessionSort::Alphabetical),
                 window_sort: Some(WindowSort::Created),
-                file_editor: Some(FileEditor::Pane),
+                editor: Some(Editor::Pane),
                 window_grid_count: Some(9),
                 renderer: Some("canvas".to_string()),
                 cursor_blink: Some(false),
@@ -2258,7 +2284,7 @@ palette:
         );
         assert_eq!(resolved.session_sort, SessionSort::Alphabetical);
         assert_eq!(resolved.window_sort, WindowSort::Created);
-        assert_eq!(resolved.file_editor, FileEditor::Pane);
+        assert_eq!(resolved.editor, Editor::Pane);
         assert_eq!(resolved.window_grid_count, 9);
         assert_eq!(resolved.terminal.renderer.as_deref(), Some("canvas"));
         assert_eq!(resolved.terminal.cursor_blink, Some(false));

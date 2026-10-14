@@ -164,6 +164,11 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return crate::ws::nvim::open(path, *line).await;
     }
 
+    if let ClientMessage::VscodeOpen { path, line } = &cmd {
+        crate::vscode::open(path, *line);
+        return Ok(());
+    }
+
     if let ClientMessage::OpenFile {
         pane_id,
         path,
@@ -180,6 +185,10 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         if let Some(pgrp) = foreground {
             let neovim_pids = foreground_neovim_pids(pgrp).await;
             if !neovim_pids.is_empty() {
+                // Already in the editor.
+                let Some(path) = path else {
+                    return Ok(());
+                };
                 for pid in neovim_pids {
                     for addr in neovim_socket_paths(pid).await {
                         if neovim_server_pid(&addr).await == Some(pid)
@@ -196,7 +205,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         let Some(pane) = mgr.find_pane(*pane_id) else {
             return Err("Pane no longer exists".into());
         };
-        let text = shell_editor_open_command(path, *line);
+        let text = shell_editor_open_command(path.as_deref(), *line);
         return pane.pty.send_shell_command(text.into_bytes()).await;
     }
 
@@ -298,6 +307,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::WritePaneInput { .. }
         | ClientMessage::OpenFile { .. }
         | ClientMessage::NvimOpen { .. }
+        | ClientMessage::VscodeOpen { .. }
         | ClientMessage::FocusClient => unreachable!(),
     }
 
@@ -407,12 +417,15 @@ fn validate_command(
     Ok(())
 }
 
-/// Build the shell text that runs `btmux open-editor` on `path` in the pane's
-/// own shell (`$BTMUX_BIN` is set at spawn), jumping to `line` when given. The
+/// Build the shell text that runs `btmux open-editor` (on `path`, if any) in the
+/// pane's own shell (`$BTMUX_BIN` is set at spawn), jumping to `line` when given. The
 /// editor-specific arguments are resolved by that subcommand, which keeps the
 /// typed line short. The leading space keeps it out of history in shells that
 /// honor it.
-fn shell_editor_open_command(path: &str, line: Option<u32>) -> String {
+fn shell_editor_open_command(path: Option<&str>, line: Option<u32>) -> String {
+    let Some(path) = path else {
+        return " \"$BTMUX_BIN\" open-editor\n".into();
+    };
     let quoted = crate::session::manager::shell_single_quote(path);
     match line.filter(|&l| l >= 1) {
         Some(line) => format!(" \"$BTMUX_BIN\" open-editor {quoted} {line}\n"),
@@ -806,15 +819,20 @@ pub(crate) enum ClientMessage {
         pane_id: Uuid,
         text: String,
     },
-    /// Open a file in the pane's foreground Neovim, or run `$EDITOR` when the
-    /// shell is foreground.
+    /// Open a file (or, without `path`, just the editor) in the pane's
+    /// foreground Neovim, or run `$EDITOR` when the shell is foreground.
     OpenFile {
         pane_id: Uuid,
-        path: String,
+        path: Option<String>,
         line: Option<u32>,
     },
     /// Open a file in the built-in Neovim (`/ws/nvim`).
     NvimOpen {
+        path: String,
+        line: Option<u32>,
+    },
+    /// Open a file in VS Code (`/vscode/`).
+    VscodeOpen {
         path: String,
         line: Option<u32>,
     },
@@ -880,6 +898,10 @@ pub enum ServerMessage {
     },
     /// Show the built-in Neovim over the pane's session.
     OpenNvim {
+        pane_id: Uuid,
+    },
+    /// Show VS Code over the pane's session.
+    OpenVscode {
         pane_id: Uuid,
     },
 }

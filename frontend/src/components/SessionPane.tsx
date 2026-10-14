@@ -44,6 +44,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const paneNumbersVisible = useStore((s) => s.paneNumbersVisible);
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
   const nvimPaneId = useStore((s) => (s.nvimOpen ? s.nvimPaneId : null));
+  const vscodePaneId = useStore((s) => (s.vscodeOpen ? s.vscodePaneId : null));
   const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
   const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
   const fileBrowserMode = useStore((s) => s.fileBrowserInitialMode);
@@ -120,7 +121,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     // Don't steal focus into the terminal while the file browser occupies that pane.
     const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
     // Neovim takes focus itself when it covers the active pane.
-    const nvimOwnsActivePane = nvimPaneId === focusId;
+    const nvimOwnsActivePane = nvimPaneId === focusId || vscodePaneId === focusId;
     if (
       settingsOpen ||
       overlay ||
@@ -152,6 +153,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     fileBrowserOpen,
     fileBrowserPaneId,
     nvimPaneId,
+    vscodePaneId,
     isActiveSession,
     settingsOpen,
     previewConfig,
@@ -221,18 +223,23 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   );
   const showPaneNumbers = isActiveSession && paneNumbersVisible && !zoomedPaneId;
 
-  // Place the Neovim surface over its pane while this session is shown.
-  const nvimRect =
-    nvimPaneId === null
+  // Place the Neovim and VS Code surfaces over their panes while this session is shown.
+  const pinnedRect = (paneId: string | null): LayoutRect | null =>
+    paneId === null
       ? null
       : zoomedPaneId
-        ? zoomedPaneId === nvimPaneId
-          ? { ...HIDDEN, paneId: nvimPaneId }
+        ? zoomedPaneId === paneId
+          ? { ...HIDDEN, paneId }
           : null
-        : (rectByPane.get(nvimPaneId) ?? null);
+        : (rectByPane.get(paneId) ?? null);
+  const nvimRect = pinnedRect(nvimPaneId);
   useLayoutEffect(() => {
     if (isActiveSession) useStore.getState().setNvimRect(nvimRect);
   }, [isActiveSession, nvimRect?.paneId, nvimRect?.top, nvimRect?.left, nvimRect?.width, nvimRect?.height]);
+  const vscodeRect = pinnedRect(vscodePaneId);
+  useLayoutEffect(() => {
+    if (isActiveSession) useStore.getState().setVscodeRect(vscodeRect);
+  }, [isActiveSession, vscodeRect?.paneId, vscodeRect?.top, vscodeRect?.left, vscodeRect?.width, vscodeRect?.height]);
 
   // The keep-alive pool: one TerminalPane per pane across *every* window of the
   // session, keyed by paneId so the instance survives window switches (same key

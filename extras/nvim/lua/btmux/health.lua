@@ -90,7 +90,7 @@ end
 function M.check()
   vim.health.start("btmux")
   if not vim.g.btmux then
-    return vim.health.info("Not running in btmux's built-in Neovim.")
+    return vim.health.info("Not running in btmux's Neovim GUI.")
   end
   local found = M.findings()
   if #found == 0 then

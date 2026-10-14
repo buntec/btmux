@@ -362,12 +362,12 @@ try {
   await page.keyboard.press('Enter');
   const prompt = page.getByText('Confirmation probe', { exact: false });
   await prompt.waitFor();
-  await page.keyboard.press('Control+b');
+  await page.keyboard.press('Control+a');
   await page.keyboard.press('e');
   await page.waitForFunction(() => !(window as any).nvimStore.getState().nvimOpen);
   await prompt.waitFor({ state: 'hidden' });
   assert.equal(await focusedLabel(), 'Terminal input');
-  await page.keyboard.press('Control+b');
+  await page.keyboard.press('Control+a');
   await page.keyboard.press('e');
   await prompt.waitFor({ state: 'visible' });
   // Evict the editor's session from the four-session pool while the prompt is open.

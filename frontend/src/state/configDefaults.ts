@@ -6,7 +6,7 @@ import type { ClientConfig, FontEntry } from './types';
  * config defaults; once connected, ClientConfig remains authoritative.
  */
 export const CONFIG_DEFAULTS = {
-  prefix: 'C-b',
+  prefix: 'C-a',
   repeatTime: 0,
   animations: true,
   showPaneTitles: false,

@@ -13,7 +13,7 @@ pub const DEFAULT_SHELL: &str = "/bin/bash";
 pub const DEFAULT_PTY_COLS: u16 = 80;
 pub const DEFAULT_PTY_ROWS: u16 = 24;
 
-pub const DEFAULT_PREFIX: &str = "C-b";
+pub const DEFAULT_PREFIX: &str = "C-a";
 pub const DEFAULT_VI_MODE: bool = false;
 pub const DEFAULT_REPEAT_TIME: u32 = 0;
 pub const DEFAULT_ANIMATIONS: bool = true;

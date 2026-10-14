@@ -184,7 +184,7 @@ function quote(value: string): string {
 // (frontend fallbacks for a not-yet-loaded config) since a couple of fields
 // here have no wire-level equivalent (vi-mode, log levels).
 const TOML_DEFAULTS = {
-  prefix: 'C-b',
+  prefix: 'C-a',
   viMode: false,
   animations: true,
   showPaneTitles: false,
@@ -741,7 +741,7 @@ export function ConfigPage({ config, send }: Props) {
                             update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
                           }}
                         />
-                        {text('prefix', 'Prefix key', 'Use tmux notation such as C-b, C-a, or M-x.')}
+                        {text('prefix', 'Prefix key', 'Use tmux notation such as C-a, C-b, or M-x.')}
                         {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
                         {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
                         {toggle('animations', 'Animations')}

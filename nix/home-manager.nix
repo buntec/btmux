@@ -130,7 +130,7 @@ in
       default = { };
       example = lib.literalExpression ''
         {
-          prefix = "C-a";
+          prefix = "C-b";
           vi-mode = true;
           terminal = {
             font-family = "JetBrains Mono";

@@ -1,7 +1,8 @@
 # btmux for tmux users
 
-The default prefix is `C-b` and most default keys match tmux. Press
-`<prefix> + ?` for the live list. This page covers where btmux differs.
+The default prefix is `C-a`, the most common tmux remap (set `prefix = "C-b"`
+for stock tmux). Most default keys match tmux. Press `<prefix> + ?` for the
+live list. This page covers where btmux differs.
 
 ## Same as tmux
 
@@ -70,7 +71,7 @@ on macOS, sockets belonging to inaccessible processes may be omitted entirely.
   session cannot be killed. REST and MCP still refuse to remove the last pane or
   window.
 - **send-prefix.** `<prefix> <prefix>` sends the prefix key to the pane, so
-  `C-b C-b` reaches nested tmux or readline.
+  `C-a C-a` reaches nested tmux or readline's beginning-of-line.
 - **Resize.** `<prefix> C-Arrow` resizes by 1 cell and `<prefix> M-Arrow` by 5;
   the pane's edge in that direction moves. macOS reserves Ctrl+Arrow for Spaces,
   so rebind (for example `resize-pane-left = "M-ArrowLeft"`). Any

@@ -162,7 +162,7 @@ default.
   programs.btmux = {
     enable = true;
     settings = {
-      prefix = "C-a";
+      prefix = "C-b";
       terminal.font-family = "JetBrains Mono";
       terminal.font-size = 16;
     };

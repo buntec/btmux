@@ -110,7 +110,7 @@ echo "Warming the build cache for rust-analyzer…"
 (cd "$demo_cwd" && env "${rust_env[@]}" cargo check --workspace --all-targets --quiet)
 
 # The default config's prefix.
-prefix="C-b"
+prefix="C-a"
 
 work_dir="$(mktemp -d)"
 # Kept beside the output until the conversion succeeds.

@@ -109,7 +109,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
           );
         })}
       </TabList>
-      {prefixActive && <KeyCap keys={config?.prefix ?? 'C-b'} />}
+      {prefixActive && <KeyCap keys={config?.prefix ?? 'C-a'} />}
       <HStack gap={1} className="hidden lg:flex">
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>

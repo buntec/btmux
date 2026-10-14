@@ -1,7 +1,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
     },
     response::IntoResponse,
 };
@@ -10,15 +10,37 @@ use serde::{Deserialize, Serialize};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use uuid::Uuid;
 
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ColorMode};
 use crate::git;
 use crate::session::layout::LayoutPreset;
 use crate::session::manager::SessionSnapshot;
 use crate::session::SessionSummary;
 use crate::AppState;
 
-pub async fn handle(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+#[derive(Deserialize)]
+pub struct ControlQuery {
+    /// The browser's system color mode, so the first config already matches it.
+    color_mode: Option<ColorMode>,
+}
+
+pub async fn handle(
+    State(state): State<AppState>,
+    Query(query): Query<ControlQuery>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, state, query.color_mode))
+}
+
+/// Record a browser's system color mode and broadcast the config if the shown
+/// color scheme changed.
+fn set_system_color_mode(mgr: &mut crate::session::manager::SessionManager, mode: ColorMode) {
+    if let Some(config) = mgr.set_system_color_mode(mode) {
+        let json = serde_json::to_string(&ServerMessage::Config {
+            config: Box::new(config.clone()),
+        })
+        .unwrap();
+        let _ = mgr.events().send(json);
+    }
 }
 
 /// Build a `ServerMessage::State` snapshot from `mgr` and broadcast it to every
@@ -59,11 +81,14 @@ async fn resynchronize(
     initial_messages(&mgr)
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
+async fn handle_socket(socket: WebSocket, state: AppState, color_mode: Option<ColorMode>) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     // Subscribe and snapshot under one guard; never hold it during socket I/O.
     let (client, mut events, initial) = {
         let mut mgr = state.write().await;
+        if let Some(mode) = color_mode {
+            set_system_color_mode(&mut mgr, mode);
+        }
         let client = mgr.register_client();
         (client, mgr.events().subscribe(), initial_messages(&mgr))
     };
@@ -114,6 +139,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             let result = match value.and_then(serde_json::from_value::<ClientMessage>) {
                 Ok(ClientMessage::FocusClient) => {
                     state.write().await.focus_client(client);
+                    Ok(())
+                }
+                Ok(ClientMessage::SystemColorMode { mode }) => {
+                    set_system_color_mode(&mut *state.write().await, mode);
                     Ok(())
                 }
                 Ok(cmd) => handle_command(cmd, &state).await,
@@ -215,14 +244,21 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
     // or the config file is reloaded.
     if let ClientMessage::UpdateConfig { update } = &cmd {
         let mut update = update.clone();
-        if let Some(colors) = update.colors.as_deref() {
-            if crate::config::is_color_scheme_url(colors) {
-                match crate::config::load_remote_color_scheme(colors).await {
-                    Ok(theme) => update.resolved_colors = Some(Box::new(theme)),
-                    Err(error) => {
-                        tracing::warn!("color scheme override failed: {error}");
-                        return Err(format!("Color scheme error: {error}"));
-                    }
+        for (colors, resolved) in [
+            (&update.colors_dark, &mut update.resolved_colors_dark),
+            (&update.colors_light, &mut update.resolved_colors_light),
+        ] {
+            let Some(url) = colors
+                .as_deref()
+                .filter(|c| crate::config::is_color_scheme_url(c))
+            else {
+                continue;
+            };
+            match crate::config::load_remote_color_scheme(url).await {
+                Ok(theme) => *resolved = Some(Box::new(theme)),
+                Err(error) => {
+                    tracing::warn!("color scheme override failed: {error}");
+                    return Err(format!("Color scheme error: {error}"));
                 }
             }
         }
@@ -308,7 +344,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::OpenFile { .. }
         | ClientMessage::NvimOpen { .. }
         | ClientMessage::VscodeOpen { .. }
-        | ClientMessage::FocusClient => unreachable!(),
+        | ClientMessage::FocusClient
+        | ClientMessage::SystemColorMode { .. } => unreachable!(),
     }
 
     broadcast_state(&mgr);
@@ -779,6 +816,10 @@ pub(crate) enum ClientMessage {
     },
     /// This client's window gained focus, so it now shows OS notifications.
     FocusClient,
+    /// The browser's system color mode, shown while `appearance` is `auto`.
+    SystemColorMode {
+        mode: ColorMode,
+    },
     CyclePane {
         session_id: Uuid,
         delta: i32,

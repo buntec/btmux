@@ -109,7 +109,7 @@ try {
     const { useStore } = await import('/src/state/store.tsx' as string);
     (window as any).testTerminal = useStore.getState().terminals.get(id);
     (window as any).testSockets
-      .findLast((s: WebSocket) => s.url.endsWith('/ws/control'))
+      .findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control')
       .send(JSON.stringify({ type: 'update_config', update: { animations: true }, request_id: 'config-test' }));
   }, pane);
   await waitForAsync(page, async () => {
@@ -123,9 +123,39 @@ try {
     }, pane),
   );
   console.log('PASS configuration updates retain terminal instances');
+
+  // `appearance = "auto"` follows the system color mode this browser reports.
+  const colorMode = (mode: 'dark' | 'light') =>
+    waitForAsync(
+      page,
+      async (mode) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        const config = useStore.getState().config;
+        return config.color_mode === mode && config.theme.background === config[`${mode}_theme`].background;
+      },
+      mode,
+    );
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await colorMode('dark');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await colorMode('light');
+  assert(
+    await page.evaluate(async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().terminals.get(id) === (window as any).testTerminal;
+    }, pane),
+    'a theme switch must keep the terminal instance',
+  );
+  await page.evaluate(() =>
+    (window as any).testSockets
+      .findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control')
+      .send(JSON.stringify({ type: 'update_config', update: { appearance: 'dark' } })),
+  );
+  await colorMode('dark');
+  console.log('PASS auto appearance follows the system color mode');
   await page.evaluate(() => {
     (window as any).testSockets
-      .findLast((s: WebSocket) => s.url.endsWith('/ws/control'))
+      .findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control')
       .send(
         JSON.stringify({
           type: 'kill_session',
@@ -140,10 +170,10 @@ try {
     ),
   );
   const controlCount = await page.evaluate(
-    () => (window as any).testSockets.filter((s: WebSocket) => s.url.endsWith('/ws/control')).length,
+    () => (window as any).testSockets.filter((s: WebSocket) => new URL(s.url).pathname === '/ws/control').length,
   );
   await page.evaluate(() =>
-    (window as any).testSockets.findLast((s: WebSocket) => s.url.endsWith('/ws/control')).close(),
+    (window as any).testSockets.findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control').close(),
   );
   await waitForAsync(
     page,
@@ -151,7 +181,7 @@ try {
       const { useStore } = await import('/src/state/store.tsx' as string);
       return (
         useStore.getState().controlConnectionState === 'connected' &&
-        (window as any).testSockets.filter((s: WebSocket) => s.url.endsWith('/ws/control')).length > count
+        (window as any).testSockets.filter((s: WebSocket) => new URL(s.url).pathname === '/ws/control').length > count
       );
     },
     controlCount,

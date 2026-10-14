@@ -10,6 +10,8 @@ export type {
   Command,
   TerminalOptions,
   Theme,
+  Appearance,
+  ColorMode,
   SessionSort,
   WindowSort,
   AgentState,

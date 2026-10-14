@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
-import type { ClientConfig } from '../state/types';
-import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
+import type { ClientConfig, ColorMode } from '../state/types';
+import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
+import { APPEARANCES } from '../lib/appearance';
+import { systemColorMode } from '../state/startupTheme';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import {
   WALLPAPER_SHADERS,
@@ -64,7 +66,9 @@ type Draft = {
   prefix: string;
   shell: string;
   viMode: boolean;
-  colors: string;
+  appearance: ClientConfig['appearance'];
+  colorsDark: string;
+  colorsLight: string;
   fontFamily: string;
   fontWeight: number;
   fontSize: number;
@@ -116,7 +120,9 @@ function initialDraft(config: ClientConfig): Draft {
     prefix: config.prefix,
     shell: config.shell ?? '',
     viMode: config.vi_mode,
-    colors: config.active_color_scheme ?? '',
+    appearance: config.appearance,
+    colorsDark: config.colors_dark ?? '',
+    colorsLight: config.colors_light ?? '',
     fontFamily: getTerminalFontFamily(config),
     fontWeight: getTerminalFontWeight(config),
     fontSize: getTerminalFontSize(config),
@@ -186,6 +192,7 @@ const TOML_DEFAULTS = {
   windowSort: 'alphabetical',
   editor: 'neovim',
   windowGridCount: 4,
+  appearance: 'auto',
   wallpaperShader: '',
   wallpaperOpacity: 0.1,
   desktopBackgroundOpacity: 0.95,
@@ -258,7 +265,9 @@ function toToml(draft: Draft): string {
     strLine('window-sort', draft.windowSort, TOML_DEFAULTS.windowSort),
     strLine('editor', draft.editor, TOML_DEFAULTS.editor),
     intLine('window-grid-count', draft.windowGridCount, TOML_DEFAULTS.windowGridCount),
-    optLine('colors', draft.colors),
+    strLine('appearance', draft.appearance, TOML_DEFAULTS.appearance),
+    optLine('colors-dark', draft.colorsDark),
+    optLine('colors-light', draft.colorsLight),
     optLine('wallpaper', draft.wallpaper),
     strLine('wallpaper-shader', draft.wallpaperShader, TOML_DEFAULTS.wallpaperShader),
     numLine('wallpaper-opacity', draft.wallpaperOpacity, TOML_DEFAULTS.wallpaperOpacity, 2),
@@ -329,7 +338,9 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('editor')) update.editor = draft.editor;
   if (dirty.has('windowGridCount')) update.window_grid_count = draft.windowGridCount;
   if (dirty.has('binds')) update.keys = draft.keyOverrides;
-  if (dirty.has('colors')) update.colors = draft.colors;
+  if (dirty.has('appearance')) update.appearance = draft.appearance;
+  if (dirty.has('colorsDark')) update.colors_dark = draft.colorsDark;
+  if (dirty.has('colorsLight')) update.colors_light = draft.colorsLight;
   if (dirty.has('fontFamily')) update.font_family = draft.fontFamily;
   if (dirty.has('fontWeight')) update.font_weight = draft.fontWeight;
   if (dirty.has('fontSize')) update.font_size = draft.fontSize;
@@ -371,10 +382,14 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   return update;
 }
 
-function previewTheme(config: ClientConfig, draft: Draft, colorSchemeTouched: boolean) {
-  if (!colorSchemeTouched) return config.theme;
-  if (!draft.colors) return config.default_theme;
-  return config.color_scheme_themes[draft.colors] ?? config.default_theme;
+const COLORS_KEY = { dark: 'colorsDark', light: 'colorsLight' } as const satisfies Record<ColorMode, DraftKey>;
+
+function previewTheme(config: ClientConfig, draft: Draft, dirty: Set<DraftKey>) {
+  const mode = draft.appearance === 'auto' ? systemColorMode() : draft.appearance;
+  const resolved = mode === 'dark' ? config.dark_theme : config.light_theme;
+  const key = COLORS_KEY[mode];
+  if (!dirty.has(key)) return resolved;
+  return config.color_scheme_themes[draft[key] || DEFAULT_COLOR_SCHEMES[mode]] ?? resolved;
 }
 
 const TAB_LABELS = {
@@ -432,7 +447,6 @@ export function ConfigPage({ config, send }: Props) {
   const toast = useToast();
   const [draft, setDraft] = useState(() => initialDraft(config));
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
-  const [colorSchemeTouched, setColorSchemeTouched] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showToml, setShowToml] = useState(false);
   const [clearBackdrop, setClearBackdrop] = useState(false);
@@ -441,7 +455,7 @@ export function ConfigPage({ config, send }: Props) {
   const previewConfig = useMemo<ClientConfig>(
     () => ({
       ...config,
-      theme: previewTheme(config, draft, colorSchemeTouched),
+      theme: previewTheme(config, draft, dirty),
       animations: draft.animations,
       show_pane_titles: draft.showPaneTitles,
       terminal: {
@@ -481,7 +495,7 @@ export function ConfigPage({ config, send }: Props) {
       pane_switch_border: draft.paneSwitchBorderStyle || null,
       pane_switch_border_speed: draft.paneSwitchBorderSpeed,
     }),
-    [config, draft, dirty, colorSchemeTouched],
+    [config, draft, dirty],
   );
 
   // The active session consumes this local layer directly, so draft changes
@@ -497,7 +511,6 @@ export function ConfigPage({ config, send }: Props) {
   useEffect(() => {
     setDraft(initialDraft(config));
     setDirty(new Set());
-    setColorSchemeTouched(false);
   }, [config]);
 
   const update = <K extends DraftKey>(key: K, value: Draft[K]) => {
@@ -696,20 +709,26 @@ export function ConfigPage({ config, send }: Props) {
                   {tab === 'general' && (
                     <VStack gap={4} id="settings-general" role="tabpanel" aria-label={TAB_LABELS.general}>
                       <FormLayout>
-                        <Selector
-                          label="Color scheme"
-                          value={draft.colors || DEFAULT_COLOR_SCHEME}
-                          hasSearch
-                          presentation="adaptive"
-                          options={config.color_schemes.map((value) => ({
-                            value,
-                            label: colorSchemeLabel(value),
-                          }))}
-                          onChange={(value) => {
-                            setColorSchemeTouched(true);
-                            update('colors', value);
-                          }}
-                        />
+                        {choose(
+                          'appearance',
+                          'Appearance',
+                          APPEARANCES.map(({ value, label }) => ({ value, label })),
+                          'Auto follows the system setting.',
+                        )}
+                        {(['dark', 'light'] as const).map((mode) => (
+                          <Selector
+                            key={mode}
+                            label={mode === 'dark' ? 'Dark color scheme' : 'Light color scheme'}
+                            value={draft[COLORS_KEY[mode]] || DEFAULT_COLOR_SCHEMES[mode]}
+                            hasSearch
+                            presentation="adaptive"
+                            options={config.color_schemes.map((value) => ({
+                              value,
+                              label: colorSchemeLabel(value),
+                            }))}
+                            onChange={(value) => update(COLORS_KEY[mode], value)}
+                          />
+                        ))}
                         <Selector
                           label="Terminal font"
                           description="Also used for paths, names, and key hints in the UI."

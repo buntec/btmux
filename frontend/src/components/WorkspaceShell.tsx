@@ -10,6 +10,7 @@ import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { getSessionSort, getWindowSort } from '../state/configDefaults';
 import { SessionNavItem } from './SessionNavItem';
 import { AgentNavItem } from './AgentNavItem';
+import { APPEARANCES } from '../lib/appearance';
 import type { ClientMessage } from '../protocol/messages';
 
 let mruVersion = 0;
@@ -54,6 +55,12 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
     state.setAgentGridOpen(false);
     state.setFileBrowserOpen(false);
   };
+  const appearanceIndex = Math.max(
+    0,
+    APPEARANCES.findIndex(({ value }) => value === (config?.appearance ?? 'auto')),
+  );
+  const appearance = APPEARANCES[appearanceIndex];
+  const nextAppearance = APPEARANCES[(appearanceIndex + 1) % APPEARANCES.length];
   const newSession = () => {
     closeSurfaces();
     setOverlay({ mode: 'prompt', title: 'New session', value: '', action: 'new-session' });
@@ -81,6 +88,13 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
           header={collapsed ? undefined : <SideNavHeading heading="btmux" className="btm-brand" />}
           footerIcons={
             <>
+              <IconButton
+                label={`Appearance: ${appearance.label}`}
+                tooltip={`Appearance: ${appearance.label}`}
+                variant="ghost"
+                icon={<appearance.icon />}
+                onClick={() => send({ type: 'update_config', update: { appearance: nextAppearance.value } })}
+              />
               <IconButton
                 label="Settings"
                 tooltip="Settings"

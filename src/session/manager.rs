@@ -9,7 +9,7 @@ use super::{
     layout::{Layout, LayoutPreset},
     AgentState, AgentStatus, Pane, PaneSnapshot, Session, SessionSummary, Window,
 };
-use crate::config::{ClientConfig, ConfigUpdate, FileConfig};
+use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
@@ -24,6 +24,10 @@ pub struct SessionManager {
     /// Session-only overrides from the settings UI and command palette, dropped
     /// on every config-file reload. Never written to disk.
     overrides: ConfigUpdate,
+    /// The system color mode a browser last reported, for `appearance = "auto"`.
+    system_color_mode: ColorMode,
+    /// Why config.toml was rejected; cleared when it loads.
+    config_error: Option<String>,
     /// `file_config` + `overrides`, resolved — this is what the browser sees.
     config: ClientConfig,
     events: broadcast::Sender<String>,
@@ -65,7 +69,7 @@ impl SessionManager {
         cli_shell: Option<String>,
     ) -> Self {
         let (events, _) = broadcast::channel::<String>(64);
-        let config = crate::config::resolve_binds(&file_config);
+        let config = crate::config::resolve_binds(&file_config, ColorMode::default());
         let pty_env = PtyEnv {
             exit_tx,
             meta_tx,
@@ -80,6 +84,8 @@ impl SessionManager {
             cli_shell,
             file_config,
             overrides: ConfigUpdate::default(),
+            system_color_mode: ColorMode::default(),
+            config_error: None,
             config,
             events,
             agents: HashMap::new(),
@@ -364,7 +370,8 @@ impl SessionManager {
     pub fn set_file_config(&mut self, file_config: FileConfig) -> &ClientConfig {
         self.file_config = file_config;
         self.overrides = ConfigUpdate::default();
-        self.config = crate::config::resolve_binds(&self.file_config);
+        self.config_error = None;
+        self.config = self.resolve();
         if self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
         }
@@ -378,7 +385,7 @@ impl SessionManager {
     /// keep a setting the user edits config.toml themselves.
     pub fn apply_config_override(&mut self, update: &ConfigUpdate) -> &ClientConfig {
         self.overrides.merge(update);
-        self.config = crate::config::resolve_with_overrides(&self.file_config, &self.overrides);
+        self.config = self.resolve();
         if update.shell.is_some() && self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
         }
@@ -390,7 +397,7 @@ impl SessionManager {
     /// from the last-loaded config file (including built-in defaults).
     pub fn reset_config_overrides(&mut self) -> &ClientConfig {
         self.overrides = ConfigUpdate::default();
-        self.config = crate::config::resolve_binds(&self.file_config);
+        self.config = self.resolve();
         if let Some(shell) = &self.cli_shell {
             self.shell = shell.clone();
         } else {
@@ -398,6 +405,38 @@ impl SessionManager {
         }
         self.sync_palette();
         &self.config
+    }
+
+    /// Record a browser's system color mode. Returns the new config if the
+    /// shown color scheme changed.
+    pub fn set_system_color_mode(&mut self, mode: ColorMode) -> Option<&ClientConfig> {
+        if self.system_color_mode == mode {
+            return None;
+        }
+        self.system_color_mode = mode;
+        if self.config.color_mode == self.config.appearance.color_mode(mode) {
+            return None;
+        }
+        self.config = self.resolve();
+        self.sync_palette();
+        Some(&self.config)
+    }
+
+    /// Record that config.toml was rejected; the current config stays in use.
+    pub fn set_config_error(&mut self, error: String) -> &ClientConfig {
+        self.config_error = Some(error.clone());
+        self.config.config_error = Some(error);
+        &self.config
+    }
+
+    fn resolve(&self) -> ClientConfig {
+        let mut config = crate::config::resolve_with_overrides(
+            &self.file_config,
+            &self.overrides,
+            self.system_color_mode,
+        );
+        config.config_error = self.config_error.clone();
+        config
     }
 
     /// Publish the resolved theme to PTY color queries and notify programs
@@ -1394,12 +1433,64 @@ mod palette_tests {
         );
         assert!(mgr.pty_env.palette.get().unwrap().is_dark());
         mgr.apply_config_override(&ConfigUpdate {
-            colors: Some("btmux-default-light".into()),
+            colors_dark: Some("btmux-default-light".into()),
             ..Default::default()
         });
         assert!(!mgr.pty_env.palette.get().unwrap().is_dark());
         mgr.reset_config_overrides();
         assert!(mgr.pty_env.palette.get().unwrap().is_dark());
+    }
+
+    #[test]
+    fn config_error_persists_until_the_file_loads() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        assert_eq!(mgr.config().config_error, None);
+        mgr.set_config_error("bad key".into());
+        mgr.apply_config_override(&ConfigUpdate {
+            animations: Some(false),
+            ..Default::default()
+        });
+        mgr.reset_config_overrides();
+        assert_eq!(mgr.config().config_error.as_deref(), Some("bad key"));
+        mgr.set_file_config(FileConfig::default());
+        assert_eq!(mgr.config().config_error, None);
+    }
+
+    #[test]
+    fn auto_appearance_follows_the_system_color_mode() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        assert!(mgr.set_system_color_mode(ColorMode::Light).is_some());
+        assert_eq!(mgr.config().color_mode, ColorMode::Light);
+        assert!(!mgr.pty_env.palette.get().unwrap().is_dark());
+        assert!(mgr.set_system_color_mode(ColorMode::Light).is_none());
+        mgr.apply_config_override(&ConfigUpdate {
+            appearance: Some(crate::config::Appearance::Dark),
+            ..Default::default()
+        });
+        assert!(mgr.pty_env.palette.get().unwrap().is_dark());
+        // A pinned appearance ignores the system.
+        assert!(mgr.set_system_color_mode(ColorMode::Dark).is_none());
+        assert!(mgr.set_system_color_mode(ColorMode::Light).is_none());
+        mgr.reset_config_overrides();
+        assert_eq!(mgr.config().color_mode, ColorMode::Light);
     }
 }
 

@@ -468,9 +468,9 @@ try {
         .getImageData(Math.floor((x - r.left) * scale), Math.floor((y - r.top) * scale), 1, 1).data[3];
     });
   for (const colors of ['btmux-default-light', 'btmux-default-dark']) {
-    await update({ colors });
+    await update({ appearance: 'dark', colors_dark: colors });
     await page.waitForFunction((colors) => {
-      return (window as any).nvimStore.getState().config?.active_color_scheme === colors;
+      return (window as any).nvimStore.getState().config?.colors_dark === colors;
     }, colors);
     const palette = await page.evaluate(async () => {
       const { useStore } = await import('/src/state/store.tsx' as string);

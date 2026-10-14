@@ -84,7 +84,7 @@ function baseEnv() {
   return env;
 }
 
-async function withStack(dir: string, run: (url: string, token: string) => Promise<number>) {
+async function withStack(dir: string, run: (url: string, token: string, configHome: string) => Promise<number>) {
   const [backendPort, vitePort] = [await freePort(), await freePort()];
   const token = randomBytes(18).toString('base64url');
   const url = `http://localhost:${vitePort}`;
@@ -139,7 +139,7 @@ async function withStack(dir: string, run: (url: string, token: string) => Promi
       if (interrupted) return 130;
       await Bun.sleep(200);
     }
-    return await run(url, token);
+    return await run(url, token, xdg.XDG_CONFIG_HOME);
   } finally {
     await Promise.all([stop(vite), stop(backend)]);
   }
@@ -159,10 +159,10 @@ for (const [index, test] of tests.entries()) {
   console.log(`\n=== ${test}`);
   let code: number;
   try {
-    code = await withStack(dir, async (url, token) => {
+    code = await withStack(dir, async (url, token, configHome) => {
       const child = start('bun', [test], {
         cwd: frontend,
-        env: { ...process.env, BTMUX_TEST_URL: url, BTMUX_AUTH_TOKEN: token },
+        env: { ...process.env, BTMUX_TEST_URL: url, BTMUX_AUTH_TOKEN: token, BTMUX_TEST_CONFIG_HOME: configHome },
       });
       const code = await exited(child);
       live.delete(child);

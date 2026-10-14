@@ -308,7 +308,7 @@ optional: `prefix` (tmux-style, e.g. `"C-a"`), `shell` (CLI `--shell` still wins
 a `[keys]` table mapping **action name → key** to override defaults, appearance
 settings (wallpapers, shaders, sorting, animations, pane titles, and window-grid
 count), a `[terminal]` table of ghostty-web options, an optional `[log]` table,
-and an inline `[theme]` base16/24 palette. `deny_unknown_fields` makes typos a
+and `appearance` with dark and light color schemes. `deny_unknown_fields` makes typos a
 config error, so update `generate_config_toml` and tests when adding fields.
 
 `[terminal]` mirrors ghostty-web's `ITerminalOptions` minus the runtime fields
@@ -321,15 +321,23 @@ colored cell backgrounds over a transparent background). Keys are **kebab-case i
 so the same struct round-trips both ways. Unset fields serialize as `null`;
 `TerminalPane.tsx` omits them so ghostty-web's own default applies.
 
-`[theme]` is an inline base16 (`base00`–`base0F`) or base24 (adds `base10`–`base17`)
-palette. `colors` may instead name a palette in the config colors directory, an
-absolute or `~/`-relative YAML path, or an HTTP(S) YAML file; both top-level and
-`palette`-wrapped documents are supported. An inline `[theme]` takes precedence.
-Schemes in `extras/colors/` are compiled in (`BUNDLED_COLOR_SCHEMES`) and
-resolvable by name; a colors-directory file of the same name wins. With nothing
-configured the server sends `btmux-default-dark`, so `ClientConfig.theme` is never
-null. The frontend's `FALLBACK_THEME` (`state/startupTheme.ts`) mirrors it for
-first paint and is checked by a Rust test.
+There are dark and light schemes. `appearance` (`auto`, `dark`, `light`)
+picks the shown one; `auto` uses the system color mode browsers report
+(`?color_mode=` on `/ws/control`, then `system_color_mode` on change and focus;
+last report wins), held in `SessionManager` and passed to `resolve_binds`. The
+shown variant is shared server state, like the theme PTY color queries answer.
+`ClientConfig` carries `theme`/`color_palette` for it, its `color_mode`, and
+both `dark_theme`/`light_theme` for previews and the first-paint cache.
+`[theme-dark]`/`[theme-light]` are inline base16 (`base00`–`base0F`) or base24
+(adds `base10`–`base17`) palettes. `colors-dark`/`colors-light` may instead name
+a palette in the config colors directory, an absolute or `~/`-relative YAML
+path, or an HTTP(S) YAML file; both top-level and `palette`-wrapped documents
+are supported. An inline palette takes precedence. Schemes in `extras/colors/`
+are compiled in (`BUNDLED_COLOR_SCHEMES`) and resolvable by name; a
+colors-directory file of the same name wins. Unset, the server uses
+`btmux-default-dark`/`btmux-default-light`. The frontend's
+`FALLBACK_DARK_THEME`/`FALLBACK_LIGHT_THEME` (`state/startupTheme.ts`) mirror
+them for first paint and are checked by a Rust test.
 `BaseTheme::to_theme`
 translates it to ghostty-web's `ITheme` (fg/bg/cursor/
 selection + 16 ANSI colors) using the canonical tinted-theming ANSI mapping. **base24
@@ -390,11 +398,13 @@ the store, not server state); `LatexOverlay.tsx` highlights source cells with
 
 **Live config reload:** `main.rs` watches the config file's _parent dir_ with
 `notify` (to catch editors' atomic rename-on-save), debounces, re-resolves, and
-broadcasts a new `Config`. A parse error logs and **keeps the last good config**.
+broadcasts a new `Config`. A parse error logs and **keeps the last good config**
+(the defaults at startup); `ClientConfig.config_error` carries the error: a banner
+above the panes until the file loads, with the message in a `config-error` overlay.
 
 **Session-only overrides:** the command-palette pickers and settings appearance
 overlay send `update_config` and **never touch config.toml**. They can override
-the selected colors, fonts, animations, wallpapers, and shader/border settings.
+the appearance, color schemes, fonts, animations, wallpapers, and shader/border settings.
 `SessionManager` keeps the last-loaded `FileConfig` plus an accumulated
 `ConfigUpdate` override layer, and `resolve_with_overrides` re-resolves the
 `ClientConfig` from the two on every change. The overrides are for trying

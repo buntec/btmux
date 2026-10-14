@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
+import type { Appearance } from '../state/types';
 import { Overlay, PickerItem } from '../state/types';
 import { paneIdsInOrder } from '../state/layout';
 import { adjacentSession } from '../state/sessionNavigation';
@@ -19,7 +20,8 @@ import { parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey } from '../lib
 import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { sendToNvim } from '../components/NvimSurface';
-import { colorSchemeLabel, DEFAULT_COLOR_SCHEME } from '../lib/colorSchemeLabel';
+import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
+import { APPEARANCES } from '../lib/appearance';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -444,8 +446,10 @@ export function runAction(
       openOverlay({ mode: 'command', title: 'Commands', commands: store.config?.commands ?? [] });
       break;
     case 'choose-colors': {
+      // Picks the scheme for the mode currently shown.
+      const mode = store.config?.color_mode ?? 'dark';
       const schemes = store.config?.color_schemes ?? [];
-      const active = store.config?.active_color_scheme || DEFAULT_COLOR_SCHEME;
+      const active = store.config?.[`colors_${mode}`] || DEFAULT_COLOR_SCHEMES[mode];
       const items: PickerItem[] = schemes.map((s) => ({
         id: s,
         label: colorSchemeLabel(s),
@@ -453,9 +457,19 @@ export function runAction(
       }));
       openOverlay({
         mode: 'picker',
-        title: 'Color scheme',
+        title: `Color scheme (${mode})`,
         items,
-        onSelect: (id) => send({ type: 'update_config', update: { colors: id } }),
+        onSelect: (id) => send({ type: 'update_config', update: { [`colors_${mode}`]: id } }),
+      });
+      break;
+    }
+    case 'choose-appearance': {
+      const active = store.config?.appearance ?? 'auto';
+      openOverlay({
+        mode: 'picker',
+        title: 'Appearance',
+        items: APPEARANCES.map(({ value, label }) => ({ id: value, label, active: value === active })),
+        onSelect: (id) => send({ type: 'update_config', update: { appearance: id as Appearance } }),
       });
       break;
     }

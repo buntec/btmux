@@ -62,13 +62,13 @@ try {
   }, pane);
   await page.waitForFunction(() =>
     (window as any).shaderSockets.some(
-      (socket: WebSocket) => socket.url.endsWith('/ws/control') && socket.readyState === WebSocket.OPEN,
+      (socket: WebSocket) => new URL(socket.url).pathname === '/ws/control' && socket.readyState === WebSocket.OPEN,
     ),
   );
   const send = (message: unknown) =>
     page.evaluate((message) => {
       const control = (window as any).shaderSockets.findLast(
-        (socket: WebSocket) => socket.url.endsWith('/ws/control') && socket.readyState === WebSocket.OPEN,
+        (socket: WebSocket) => new URL(socket.url).pathname === '/ws/control' && socket.readyState === WebSocket.OPEN,
       );
       control.send(JSON.stringify(message));
     }, message);

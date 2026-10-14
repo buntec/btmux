@@ -1,3 +1,5 @@
+import type { ColorMode } from '../state/types';
+
 /** Short name for a color scheme given as a path or URL. */
 export function colorSchemeLabel(value: string): string {
   return value.includes('/')
@@ -9,5 +11,8 @@ export function colorSchemeLabel(value: string): string {
     : value;
 }
 
-/** Bundled scheme used when `colors` is unset (mirrors DEFAULT_COLOR_SCHEME in config.rs). */
-export const DEFAULT_COLOR_SCHEME = 'btmux-default-dark';
+/** Bundled schemes used when `colors-dark`/`colors-light` is unset (mirror config.rs). */
+export const DEFAULT_COLOR_SCHEMES: Record<ColorMode, string> = {
+  dark: 'btmux-default-dark',
+  light: 'btmux-default-light',
+};

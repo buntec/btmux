@@ -26,6 +26,8 @@ fn generated_protocol_is_current() {
         SessionSort::decl(&config),
         WindowSort::decl(&config),
         Editor::decl(&config),
+        Appearance::decl(&config),
+        ColorMode::decl(&config),
         VscodeServer::decl(&config),
         LogConfig::decl(&config),
         NotificationConfig::decl(&config),

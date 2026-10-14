@@ -11,6 +11,7 @@ import { SessionPool } from './components/SessionPool';
 import { NvimSurface } from './components/NvimSurface';
 import { VscodeSurface } from './components/VscodeSurface';
 import { StatusBar } from './components/StatusBar';
+import { ConfigErrorBanner } from './components/ConfigErrorBanner';
 import { Overlay } from './components/Overlay';
 import { WindowGrid } from './components/WindowGrid';
 import { AgentGrid } from './components/AgentGrid';
@@ -235,6 +236,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         />
       ) : null}
       <Layout
+        header={config?.config_error ? <ConfigErrorBanner /> : undefined}
         content={
           <LayoutContent isScrollable={false} padding={0} className="relative min-h-0 overflow-hidden">
             <SessionPool send={send} />

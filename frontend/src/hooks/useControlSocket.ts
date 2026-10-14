@@ -3,6 +3,7 @@ import { useStore } from '../state/store';
 import { ClientMessage, NotificationLevel, ServerMessage } from '../protocol/messages';
 import { windowAttended } from '../lib/windowAttention';
 import { atLeast } from '../lib/notifications';
+import { SYSTEM_LIGHT_QUERY, systemColorMode } from '../state/startupTheme';
 
 let nextRequestId = 0;
 let osNotificationsOffered = false;
@@ -32,19 +33,29 @@ export function useControlSocket() {
     let disposed = false;
     // This connection's id; the server names the client that shows OS notifications.
     let clientId: number | null = null;
+    // The server shows the dark or light scheme the system of the browser that
+    // last reported (or was focused) prefers, while `appearance` is `auto`.
+    const reportColorMode = () => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'system_color_mode', mode: systemColorMode() }));
+      }
+    };
     const reportFocus = () => {
       if (clientId != null && ws?.readyState === WebSocket.OPEN && windowAttended()) {
         ws.send(JSON.stringify({ type: 'focus_client' }));
+        reportColorMode();
       }
     };
     window.addEventListener('focus', reportFocus);
     document.addEventListener('visibilitychange', reportFocus);
+    const systemLight = window.matchMedia?.(SYSTEM_LIGHT_QUERY);
+    systemLight?.addEventListener('change', reportColorMode);
 
     function connect() {
       if (disposed) return;
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws/control`);
+      ws = new WebSocket(`${protocol}//${window.location.host}/ws/control?color_mode=${systemColorMode()}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -169,6 +180,7 @@ export function useControlSocket() {
       disposed = true;
       window.removeEventListener('focus', reportFocus);
       document.removeEventListener('visibilitychange', reportFocus);
+      systemLight?.removeEventListener('change', reportColorMode);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };

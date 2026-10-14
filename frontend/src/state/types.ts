@@ -10,6 +10,8 @@ export type {
   Command,
   TerminalOptions,
   Theme,
+  Appearance,
+  ColorMode,
   SessionSort,
   WindowSort,
   AgentState,
@@ -58,6 +60,7 @@ export interface PickerItem {
 
 export type Overlay =
   | { mode: 'info'; title: string }
+  | { mode: 'config-error'; title: string }
   | { mode: 'prompt'; title: string; value: string; action: PromptAction; targetSessionId?: string }
   | { mode: 'keys'; title: string; binds: Bind[] }
   | { mode: 'command'; title: string; commands: Command[] }

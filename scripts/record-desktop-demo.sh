@@ -127,7 +127,7 @@ mkdir -p "$config_home/btmux"
 # An opaque window keeps the desktop out of the recording.
 cat >"$config_home/btmux/config.toml" <<EOF
 desktop-background-opacity = 1.0
-colors = "btmux-default-$mode"
+appearance = "$mode"
 EOF
 # A prompt without user and host names.
 cat >"$config_home/fish/config.fish" <<'EOF'

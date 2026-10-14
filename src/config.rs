@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 use clap::Parser;
@@ -239,6 +238,38 @@ pub enum WindowSort {
     Alphabetical,
 }
 
+/// Which color scheme is shown. `Auto` follows the system setting browsers report.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum Appearance {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+/// A dark or light color scheme variant.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum ColorMode {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    /// The variant shown when the system prefers `system`.
+    pub fn color_mode(self, system: ColorMode) -> ColorMode {
+        match self {
+            Appearance::Auto => system,
+            Appearance::Dark => ColorMode::Dark,
+            Appearance::Light => ColorMode::Light,
+        }
+    }
+}
+
 /// The editor `prefix + e`, the file browser, Git mode, and `btmux open-editor`
 /// open. Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -432,17 +463,28 @@ pub struct FileConfig {
     pub keys: BTreeMap<String, String>,
     /// ghostty-web terminal options (cursor, fonts, scrollback, …).
     pub terminal: TerminalOptions,
-    /// Inline base16/base24 palette translated to an `ITheme` for the browser.
-    pub theme: Option<BaseTheme>,
+    /// Whether the dark or light color scheme is shown; `auto` follows the
+    /// browser's system setting.
+    pub appearance: Appearance,
+    /// Inline base16/base24 palettes translated to an `ITheme` for the browser.
+    #[serde(rename = "theme-dark")]
+    pub theme_dark: Option<BaseTheme>,
+    #[serde(rename = "theme-light")]
+    pub theme_light: Option<BaseTheme>,
     /// Name of a color scheme file in `$XDG_CONFIG_HOME/btmux/colors/` (falling back
     /// to `~/.config/btmux/colors/`) without extension, an absolute or `~/`-relative
-    /// local path, or an HTTP(S) URL to a base16/base24 YAML file. Overridden by an
-    /// inline `[theme]` if both are present.
-    pub colors: Option<String>,
-    /// Parsed palette for a remote `colors` URL. This is populated while the
-    /// config is loaded and is not read from or written to config.toml.
+    /// local path, or an HTTP(S) URL to a base16/base24 YAML file. Overridden by the
+    /// matching inline `[theme-dark]`/`[theme-light]`.
+    #[serde(rename = "colors-dark")]
+    pub colors_dark: Option<String>,
+    #[serde(rename = "colors-light")]
+    pub colors_light: Option<String>,
+    /// Parsed palettes for remote `colors-*` URLs. These are populated while the
+    /// config is loaded and are not read from or written to config.toml.
     #[serde(skip)]
-    pub resolved_colors: Option<BaseTheme>,
+    pub resolved_colors_dark: Option<BaseTheme>,
+    #[serde(skip)]
+    pub resolved_colors_light: Option<BaseTheme>,
     /// Logging configuration.
     pub log: LogConfig,
     /// OS notification preferences.
@@ -482,9 +524,13 @@ impl Default for FileConfig {
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
-            theme: None,
-            colors: None,
-            resolved_colors: None,
+            appearance: Appearance::default(),
+            theme_dark: None,
+            theme_light: None,
+            colors_dark: None,
+            colors_light: None,
+            resolved_colors_dark: None,
+            resolved_colors_light: None,
             log: LogConfig::default(),
             notifications: NotificationConfig::default(),
         }
@@ -834,12 +880,17 @@ pub struct ClientConfig {
     /// Built-in command-palette entries (prefix + `:`).
     pub commands: Vec<Command>,
     pub terminal: TerminalOptions,
-    /// Resolved `ITheme`; the bundled default when no palette is configured.
+    /// The `appearance` setting.
+    pub appearance: Appearance,
+    /// The variant `theme` shows: `appearance`, or the reported system setting.
+    pub color_mode: ColorMode,
+    /// Resolved `ITheme` of the shown variant.
     pub theme: Theme,
     /// Original Base16/24 slots for the built-in Neovim colorscheme.
     pub color_palette: BaseTheme,
-    /// The bundled default theme, for previewing an unset `colors`.
-    pub default_theme: Theme,
+    /// Both variants, for previews and the browser's first paint.
+    pub dark_theme: Theme,
+    pub light_theme: Theme,
     pub vi_mode: bool,
     /// Repeat window in ms for repeatable keys; 0 disables.
     pub repeat_time: u32,
@@ -902,10 +953,13 @@ pub struct ClientConfig {
     /// Resolved themes for locally previewing available color schemes in the
     /// browser without applying a session-only override.
     pub color_scheme_themes: BTreeMap<String, Theme>,
-    /// Currently active color scheme name (from `colors` in config.toml), or null.
-    pub active_color_scheme: Option<String>,
+    /// Configured `colors-dark`/`colors-light`, or null for the bundled defaults.
+    pub colors_dark: Option<String>,
+    pub colors_light: Option<String>,
     /// Bundled font families with their available weight ranges.
     pub fonts: Vec<FontEntry>,
+    /// Why config.toml was last rejected, while it still is. Set by `SessionManager`.
+    pub config_error: Option<String>,
 }
 
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
@@ -1016,7 +1070,8 @@ const BUNDLED_COLOR_SCHEMES: &[(&str, &str)] = &[
     ),
 ];
 
-const DEFAULT_COLOR_SCHEME: &str = "btmux-default-dark";
+pub const DEFAULT_DARK_COLOR_SCHEME: &str = "btmux-default-dark";
+pub const DEFAULT_LIGHT_COLOR_SCHEME: &str = "btmux-default-light";
 
 fn bundled_color_scheme(name: &str) -> Option<BaseTheme> {
     BUNDLED_COLOR_SCHEMES
@@ -1025,15 +1080,12 @@ fn bundled_color_scheme(name: &str) -> Option<BaseTheme> {
         .and_then(|(_, yaml)| parse_color_scheme(yaml))
 }
 
-static DEFAULT_THEME: LazyLock<Theme> = LazyLock::new(|| {
-    bundled_color_scheme(DEFAULT_COLOR_SCHEME)
+/// The bundled default dark theme.
+#[cfg(test)]
+pub fn default_theme() -> Theme {
+    bundled_color_scheme(DEFAULT_DARK_COLOR_SCHEME)
         .expect("bundled default color scheme parses")
         .to_theme()
-});
-
-/// The theme used when no `[theme]` or `colors` is configured.
-pub fn default_theme() -> Theme {
-    DEFAULT_THEME.clone()
 }
 
 /// Load a color scheme YAML file by name from the colors directory (falling
@@ -1113,17 +1165,28 @@ pub async fn load_remote_color_scheme(url: &str) -> Result<BaseTheme, String> {
         .ok_or_else(|| "color scheme YAML does not contain base00–base0F".to_string())
 }
 
-/// Load the config file and resolve a remote `colors` URL, if configured.
+/// Load the config file and resolve remote `colors-*` URLs, if configured.
 /// Keeping this separate from `load` preserves the synchronous config parser
 /// used by commands that only need to inspect scalar settings (such as the
 /// service installer).
 pub async fn load_with_colors(path: &std::path::Path) -> Result<FileConfig, String> {
     let mut config = load(path)?;
-    if config.theme.is_none() {
-        if let Some(colors) = config.colors.as_deref() {
-            if is_color_scheme_url(colors) {
-                config.resolved_colors = Some(load_remote_color_scheme(colors).await?);
-            }
+    if config.theme_dark.is_none() {
+        if let Some(url) = config
+            .colors_dark
+            .as_deref()
+            .filter(|c| is_color_scheme_url(c))
+        {
+            config.resolved_colors_dark = Some(load_remote_color_scheme(url).await?);
+        }
+    }
+    if config.theme_light.is_none() {
+        if let Some(url) = config
+            .colors_light
+            .as_deref()
+            .filter(|c| is_color_scheme_url(c))
+        {
+            config.resolved_colors_light = Some(load_remote_color_scheme(url).await?);
         }
     }
     Ok(config)
@@ -1350,6 +1413,19 @@ pub fn generate_config_toml() -> String {
 # thumbnails, laid out on a square-ish grid.
 # window-grid-count = {DEFAULT_WINDOW_GRID_COUNT}
 
+# Show the dark or light color scheme; "auto" follows the system setting.
+# appearance = "auto"
+
+# Color schemes from $XDG_CONFIG_HOME/btmux/colors/<name>.yaml (falling back to
+# ~/.config/btmux/colors/; base16/base24 YAML files), an absolute or ~/relative
+# local path, or a URL to a base16/base24 YAML file.
+# Bundled: btmux-default-dark, btmux-default-light (the defaults), kauz-dark,
+# kauz-light. A colors-directory file of the same name takes precedence.
+# A `palette` wrapper is supported.
+# An inline [theme-dark] or [theme-light] below overrides these.
+# colors-dark = "catppuccin-mocha"
+# colors-light = "https://example.com/theme.yml"
+
 # Per-action key overrides. Uncomment a line to rebind that action.
 # [keys]
 {keys_lines}
@@ -1388,16 +1464,6 @@ pub fn generate_config_toml() -> String {
 # os = true
 # os-level = "attention"   # lowest level shown: "info", "success", "attention", or "error"
 
-# Color scheme from $XDG_CONFIG_HOME/btmux/colors/<name>.yaml (falling back to
-# ~/.config/btmux/colors/; base16/base24 YAML files), an absolute or ~/relative
-# local path, or a URL to a base16/base24 YAML file.
-# Bundled: btmux-default-dark (the default), btmux-default-light, kauz-dark,
-# kauz-light. A colors-directory file of the same name takes precedence.
-# A `palette` wrapper is supported.
-# An inline [theme] below overrides this.
-# colors = "catppuccin-mocha"
-# colors = "https://example.com/theme.yml"
-
 # Native Shaders component parameters, kept separately for each wallpaper.
 # Use Settings > Wallpaper to explore defaults and copy the full TOML.
 # Parameter names use kebab-case; arrays and inline tables are supported.
@@ -1407,8 +1473,9 @@ pub fn generate_config_toml() -> String {
 # speed = 2.0  # multiplied by wallpaper-speed
 # center = {{ x = 0.5, y = 0.0 }}
 
-# Inline base16 color palette. Uncomment the entire [theme] block to activate.
-# [theme]
+# Inline base16 color palette. Uncomment the entire block to activate;
+# [theme-light] works the same way.
+# [theme-dark]
 # base00 = "#1e1e2e"  # background
 # base01 = "#181825"  # alt background
 # base02 = "#313244"  # selection background
@@ -1439,11 +1506,38 @@ const VI_BINDS: &[(&str, &str)] = &[
     ("l", "navigate-right"),
 ];
 
+/// The dark or light palette: an inline palette, else a resolved remote palette,
+/// a local palette path, or a named scheme, else the bundled default.
+fn variant_palette(file: &FileConfig, mode: ColorMode) -> BaseTheme {
+    let (inline, colors, resolved, default) = match mode {
+        ColorMode::Dark => (
+            &file.theme_dark,
+            &file.colors_dark,
+            &file.resolved_colors_dark,
+            DEFAULT_DARK_COLOR_SCHEME,
+        ),
+        ColorMode::Light => (
+            &file.theme_light,
+            &file.colors_light,
+            &file.resolved_colors_light,
+            DEFAULT_LIGHT_COLOR_SCHEME,
+        ),
+    };
+    inline
+        .clone()
+        .or_else(|| match colors.as_deref() {
+            Some(url) if is_color_scheme_url(url) => resolved.clone(),
+            Some(name) => load_color_scheme(name),
+            None => None,
+        })
+        .unwrap_or_else(|| bundled_color_scheme(default).expect("bundled color scheme parses"))
+}
+
 /// Merge a FileConfig's `[keys]` overrides over the default bind table to produce
 /// the ClientConfig the browser consumes. An override moves the action onto a new
 /// key (the action's old default key is dropped); identical-key collisions take
-/// the override.
-pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
+/// the override. `system` is the reported system color mode for `appearance = "auto"`.
+pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
     // Primary table: one canonical key per action (used for the ? overlay and
     // for user overrides).
     let mut by_action: BTreeMap<String, String> = DEFAULT_BINDS
@@ -1539,29 +1633,14 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         .unwrap_or(DEFAULT_WALLPAPER_RESOLUTION)
         .clamp(0.1, 1.0);
 
-    // Inline [theme] takes priority; fall back to a resolved remote palette, a
-    // local palette path, or a named scheme from the colors directory.
-    let selected_palette = file
-        .theme
-        .is_none()
-        .then_some(file.colors.as_deref())
-        .flatten()
-        .and_then(|colors| {
-            if is_color_scheme_url(colors) {
-                file.resolved_colors.clone()
-            } else {
-                load_color_scheme(colors)
-            }
-        });
-    let color_palette = file
-        .theme
-        .clone()
-        .or_else(|| selected_palette.clone())
-        .unwrap_or_else(|| {
-            bundled_color_scheme(DEFAULT_COLOR_SCHEME).expect("bundled default color scheme parses")
-        });
+    let color_mode = file.appearance.color_mode(system);
+    let dark_palette = variant_palette(file, ColorMode::Dark);
+    let light_palette = variant_palette(file, ColorMode::Light);
+    let color_palette = match color_mode {
+        ColorMode::Dark => dark_palette.clone(),
+        ColorMode::Light => light_palette.clone(),
+    };
     let theme = color_palette.to_theme();
-    let selected_color_theme = selected_palette.map(|palette| palette.to_theme());
 
     let (wallpaper_url, wallpaper_path) = match &file.wallpaper {
         Some(raw) if raw.starts_with('/') => (
@@ -1579,22 +1658,33 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         other => (other.clone(), None),
     };
 
+    // Configured URLs and paths are listed too, so pickers can preview them.
     let mut color_schemes = list_color_schemes();
-    if let (Some(colors), Some(_)) = (&file.colors, &selected_color_theme) {
-        if (is_color_scheme_url(colors) || is_color_scheme_path(colors))
-            && !color_schemes.contains(colors)
-        {
-            color_schemes.push(colors.clone());
+    let mut color_scheme_themes = BTreeMap::new();
+    for (colors, resolved) in [
+        (&file.colors_dark, &file.resolved_colors_dark),
+        (&file.colors_light, &file.resolved_colors_light),
+    ] {
+        let Some(colors) = colors else { continue };
+        let palette = if is_color_scheme_url(colors) {
+            resolved.clone()
+        } else if is_color_scheme_path(colors) {
+            load_color_scheme(colors)
+        } else {
+            continue;
+        };
+        if let Some(palette) = palette {
+            if !color_schemes.contains(colors) {
+                color_schemes.push(colors.clone());
+            }
+            color_scheme_themes.insert(colors.clone(), palette.to_theme());
         }
     }
-    let mut color_scheme_themes: BTreeMap<String, Theme> = color_schemes
-        .iter()
-        .filter(|name| !is_color_scheme_url(name))
-        .filter_map(|name| load_color_scheme(name).map(|base| (name.clone(), base.to_theme())))
-        .collect();
-    if let (Some(colors), Some(selected_theme)) = (&file.colors, selected_color_theme) {
-        if is_color_scheme_url(colors) || is_color_scheme_path(colors) {
-            color_scheme_themes.insert(colors.clone(), selected_theme);
+    for name in &color_schemes {
+        if !color_scheme_themes.contains_key(name) && !is_color_scheme_url(name) {
+            if let Some(palette) = load_color_scheme(name) {
+                color_scheme_themes.insert(name.clone(), palette.to_theme());
+            }
         }
     }
 
@@ -1610,9 +1700,12 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         notifications: file.notifications.clone(),
         commands: default_commands(),
         terminal: file.terminal.clone(),
+        appearance: file.appearance,
+        color_mode,
         theme,
         color_palette,
-        default_theme: default_theme(),
+        dark_theme: dark_palette.to_theme(),
+        light_theme: light_palette.to_theme(),
         vi_mode: file.vi_mode,
         repeat_time: file.repeat_time,
         animations: file.animations,
@@ -1644,7 +1737,8 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
         version: VERSION.to_string(),
         color_schemes,
         color_scheme_themes,
-        active_color_scheme: file.colors.clone(),
+        colors_dark: file.colors_dark.clone(),
+        colors_light: file.colors_light.clone(),
         fonts: BUNDLED_FONTS
             .iter()
             .map(|f| FontEntry {
@@ -1653,6 +1747,7 @@ pub fn resolve_binds(file: &FileConfig) -> ClientConfig {
                 weight_max: f.weight_max,
             })
             .collect(),
+        config_error: None,
     }
 }
 
@@ -1677,11 +1772,15 @@ pub struct ConfigUpdate {
     pub window_sort: Option<WindowSort>,
     pub editor: Option<Editor>,
     pub window_grid_count: Option<u32>,
-    pub colors: Option<String>,
-    /// Parsed palette for a remote `colors` override. Filled by the WebSocket
+    pub appearance: Option<Appearance>,
+    pub colors_dark: Option<String>,
+    pub colors_light: Option<String>,
+    /// Parsed palettes for remote `colors_*` overrides. Filled by the WebSocket
     /// handler after fetching; never accepted from the browser as JSON.
     #[serde(skip)]
-    pub resolved_colors: Option<Box<BaseTheme>>,
+    pub resolved_colors_dark: Option<Box<BaseTheme>>,
+    #[serde(skip)]
+    pub resolved_colors_light: Option<Box<BaseTheme>>,
     pub font_family: Option<String>,
     pub font_weight: Option<u16>,
     pub font_size: Option<f32>,
@@ -1752,9 +1851,16 @@ impl ConfigUpdate {
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
         }
-        if other.colors.is_some() {
-            self.colors = other.colors.clone();
-            self.resolved_colors = other.resolved_colors.clone();
+        if other.appearance.is_some() {
+            self.appearance = other.appearance;
+        }
+        if other.colors_dark.is_some() {
+            self.colors_dark = other.colors_dark.clone();
+            self.resolved_colors_dark = other.resolved_colors_dark.clone();
+        }
+        if other.colors_light.is_some() {
+            self.colors_light = other.colors_light.clone();
+            self.resolved_colors_light = other.resolved_colors_light.clone();
         }
         if other.font_family.is_some() {
             self.font_family = other.font_family.clone();
@@ -1865,7 +1971,11 @@ impl ConfigUpdate {
 
 /// Resolve the browser-facing config from the on-disk config with the
 /// session-only overrides layered on top.
-pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> ClientConfig {
+pub fn resolve_with_overrides(
+    file: &FileConfig,
+    overrides: &ConfigUpdate,
+    system: ColorMode,
+) -> ClientConfig {
     let mut file = file.clone();
 
     if let Some(prefix) = &overrides.prefix {
@@ -1895,13 +2005,21 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
     }
-    if let Some(colors) = &overrides.colors {
-        file.colors = Some(colors.clone()).filter(|c| !c.is_empty());
-        file.resolved_colors = overrides.resolved_colors.as_deref().cloned();
-        // An inline [theme] outranks `colors`, so picking a scheme (or "none")
-        // has to drop it — otherwise the picker would appear to do nothing for
-        // anyone with an inline palette.
-        file.theme = None;
+    if let Some(appearance) = overrides.appearance {
+        file.appearance = appearance;
+    }
+    // An inline palette outranks `colors-*`, so picking a scheme (or "none")
+    // has to drop it — otherwise the picker would appear to do nothing for
+    // anyone with an inline palette.
+    if let Some(colors) = &overrides.colors_dark {
+        file.colors_dark = Some(colors.clone()).filter(|c| !c.is_empty());
+        file.resolved_colors_dark = overrides.resolved_colors_dark.as_deref().cloned();
+        file.theme_dark = None;
+    }
+    if let Some(colors) = &overrides.colors_light {
+        file.colors_light = Some(colors.clone()).filter(|c| !c.is_empty());
+        file.resolved_colors_light = overrides.resolved_colors_light.as_deref().cloned();
+        file.theme_light = None;
     }
     if let Some(family) = &overrides.font_family {
         file.terminal.font_family = Some(family.clone());
@@ -2007,7 +2125,7 @@ pub fn resolve_with_overrides(file: &FileConfig, overrides: &ConfigUpdate) -> Cl
         file.pane_switch_border_speed = Some(speed.clamp(0.05, 1.0));
     }
 
-    resolve_binds(&file)
+    resolve_binds(&file, system)
 }
 
 #[cfg(test)]
@@ -2055,24 +2173,67 @@ palette:
 
     #[test]
     fn unset_colors_use_bundled_default_theme() {
-        let resolved = resolve_binds(&FileConfig::default());
+        let resolved = resolve_binds(&FileConfig::default(), ColorMode::Dark);
 
         assert_eq!(resolved.theme, default_theme());
         assert_eq!(resolved.theme.background, "#14110b");
         // base24 bright slot, not the base16 accent.
         assert_eq!(resolved.theme.bright_red, "#ffacb3");
         assert_eq!(resolved.color_palette.to_theme(), resolved.theme);
+        assert_eq!(resolved.appearance, Appearance::Auto);
+        assert_eq!(resolved.color_mode, ColorMode::Dark);
+    }
+
+    #[test]
+    fn appearance_selects_the_dark_or_light_scheme() {
+        let light = bundled_color_scheme(DEFAULT_LIGHT_COLOR_SCHEME).unwrap();
+        let file = FileConfig::default();
+        let resolved = resolve_binds(&file, ColorMode::Light);
+        assert_eq!(resolved.color_mode, ColorMode::Light);
+        assert_eq!(resolved.color_palette, light);
+
+        let file: FileConfig = toml::from_str(
+            "appearance = \"dark\"\ncolors-dark = \"kauz-dark\"\ncolors-light = \"kauz-light\"",
+        )
+        .unwrap();
+        let resolved = resolve_binds(&file, ColorMode::Light);
+        assert_eq!(resolved.color_mode, ColorMode::Dark);
+        assert_eq!(
+            resolved.color_palette,
+            load_color_scheme("kauz-dark").unwrap()
+        );
+        assert_eq!(resolved.theme, resolved.dark_theme);
+        assert_eq!(
+            resolved.light_theme,
+            load_color_scheme("kauz-light").unwrap().to_theme()
+        );
+
+        let resolved = resolve_with_overrides(
+            &file,
+            &ConfigUpdate {
+                appearance: Some(Appearance::Light),
+                ..ConfigUpdate::default()
+            },
+            ColorMode::Dark,
+        );
+        assert_eq!(resolved.color_mode, ColorMode::Light);
+        assert_eq!(resolved.colors_light.as_deref(), Some("kauz-light"));
+        assert_eq!(
+            resolved.color_palette,
+            load_color_scheme("kauz-light").unwrap()
+        );
+        assert!(toml::from_str::<FileConfig>("appearance = \"dim\"").is_err());
     }
 
     #[test]
     fn nvim_palette_preserves_inline_and_override_slots() {
         let palette = parse_color_scheme(BASE24_YAML).unwrap();
         let file = FileConfig {
-            theme: Some(palette.clone()),
-            colors: Some("btmux-default-light".into()),
+            theme_dark: Some(palette.clone()),
+            colors_dark: Some("btmux-default-light".into()),
             ..FileConfig::default()
         };
-        let resolved = resolve_binds(&file);
+        let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.color_palette, palette);
         let serialized = serde_json::to_value(&resolved.color_palette).unwrap();
         assert_eq!(serialized["base0F"], "#ff00ff");
@@ -2080,9 +2241,10 @@ palette:
         let overridden = resolve_with_overrides(
             &file,
             &ConfigUpdate {
-                colors: Some("btmux-default-light".into()),
+                colors_dark: Some("btmux-default-light".into()),
                 ..ConfigUpdate::default()
             },
+            ColorMode::Dark,
         );
         assert_eq!(
             overridden.color_palette,
@@ -2102,15 +2264,22 @@ palette:
     }
 
     #[test]
-    fn frontend_fallback_theme_matches_default() {
+    fn frontend_fallback_themes_match_defaults() {
         let source = include_str!("../frontend/src/state/startupTheme.ts");
-        let expected = serde_json::to_value(default_theme()).unwrap();
-        for (key, value) in expected.as_object().unwrap() {
-            let line = format!("  {key}: '{}',", value.as_str().unwrap());
-            assert!(
-                source.contains(&line),
-                "FALLBACK_THEME should contain `{line}`"
-            );
+        for (constant, scheme) in [
+            ("FALLBACK_DARK_THEME", DEFAULT_DARK_COLOR_SCHEME),
+            ("FALLBACK_LIGHT_THEME", DEFAULT_LIGHT_COLOR_SCHEME),
+        ] {
+            let start = source
+                .find(&format!("export const {constant}"))
+                .unwrap_or_else(|| panic!("{constant} should exist"));
+            let block = &source[start..start + source[start..].find("};").unwrap()];
+            let theme = bundled_color_scheme(scheme).unwrap().to_theme();
+            let expected = serde_json::to_value(theme).unwrap();
+            for (key, value) in expected.as_object().unwrap() {
+                let line = format!("  {key}: '{}',", value.as_str().unwrap());
+                assert!(block.contains(&line), "{constant} should contain `{line}`");
+            }
         }
     }
 
@@ -2118,17 +2287,17 @@ palette:
     fn remote_color_scheme_is_used_as_the_active_theme() {
         let url = "https://example.com/theme.yml";
         let mut file = FileConfig::default();
-        file.colors = Some(url.to_string());
-        file.resolved_colors = Some(parse_color_scheme(BASE24_YAML).unwrap());
+        file.colors_dark = Some(url.to_string());
+        file.resolved_colors_dark = Some(parse_color_scheme(BASE24_YAML).unwrap());
 
-        let resolved = resolve_binds(&file);
+        let resolved = resolve_binds(&file, ColorMode::Dark);
 
         assert!(is_color_scheme_url(url));
-        assert_eq!(resolved.active_color_scheme.as_deref(), Some(url));
+        assert_eq!(resolved.colors_dark.as_deref(), Some(url));
         assert_eq!(resolved.theme.background, "#000000");
         assert_eq!(
             resolved.color_palette,
-            file.resolved_colors.clone().unwrap()
+            file.resolved_colors_dark.clone().unwrap()
         );
         assert!(resolved.color_schemes.iter().any(|scheme| scheme == url));
         assert!(resolved.color_scheme_themes.contains_key(url));
@@ -2142,14 +2311,11 @@ palette:
 
         let path_string = path.to_string_lossy().into_owned();
         let mut file = FileConfig::default();
-        file.colors = Some(path_string.clone());
-        let resolved = resolve_binds(&file);
+        file.colors_dark = Some(path_string.clone());
+        let resolved = resolve_binds(&file, ColorMode::Dark);
 
         std::fs::remove_file(&path).expect("test palette should be removed");
-        assert_eq!(
-            resolved.active_color_scheme.as_deref(),
-            Some(path_string.as_str())
-        );
+        assert_eq!(resolved.colors_dark.as_deref(), Some(path_string.as_str()));
         assert_eq!(resolved.theme.background, "#000000");
         assert!(resolved.color_schemes.contains(&path_string));
         assert_eq!(
@@ -2165,7 +2331,7 @@ palette:
     #[test]
     fn empty_config_uses_built_in_defaults() {
         let config: FileConfig = toml::from_str("").expect("empty config should parse");
-        let resolved = resolve_binds(&config);
+        let resolved = resolve_binds(&config, ColorMode::Dark);
 
         assert!(resolved
             .binds
@@ -2206,7 +2372,7 @@ palette:
     #[test]
     fn backdrop_settings_are_clamped() {
         let file: FileConfig = toml::from_str("backdrop-blur = 99.0\nbackdrop-dim = 0.1").unwrap();
-        let resolved = resolve_binds(&file);
+        let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.backdrop_blur, 50.0);
         assert_eq!(resolved.backdrop_dim, 0.1);
     }
@@ -2223,7 +2389,7 @@ palette:
         let example = generate_config_toml();
         assert!(example.contains("# check-for-updates = true"));
         let file: FileConfig = toml::from_str(&example).unwrap();
-        let resolved = resolve_binds(&file);
+        let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.wallpaper, None);
         assert_eq!(resolved.wallpaper_shader, None);
     }
@@ -2272,6 +2438,7 @@ palette:
                 os_notification_level: Some(NotificationLevel::Error),
                 ..ConfigUpdate::default()
             },
+            ColorMode::Dark,
         );
 
         assert_eq!(resolved.prefix, "C-a");
@@ -2322,8 +2489,7 @@ palette:
         let resolved = resolve_with_overrides(
             &file,
             &ConfigUpdate {
-                colors: Some(String::new()),
-                resolved_colors: None,
+                colors_dark: Some(String::new()),
                 font_family: Some("Departure Mono".to_string()),
                 font_weight: Some(400),
                 font_size: Some(21.0),
@@ -2344,9 +2510,10 @@ palette:
                 pane_switch_border_speed: Some(1.2),
                 ..ConfigUpdate::default()
             },
+            ColorMode::Dark,
         );
 
-        assert_eq!(resolved.active_color_scheme, None);
+        assert_eq!(resolved.colors_dark, None);
         assert_eq!(
             resolved.terminal.font_family.as_deref(),
             Some("Departure Mono")
@@ -2392,7 +2559,7 @@ stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 
 "##,
         )
         .unwrap();
-        let resolved = resolve_binds(&file);
+        let resolved = resolve_binds(&file, ColorMode::Dark);
         let wire = serde_json::to_value(&resolved).unwrap();
         assert_eq!(
             wire["wallpaper_shader_params"]["aurora"]["curtain-count"],
@@ -2417,7 +2584,7 @@ stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 
             wallpaper_opacity: Some(0.4),
             ..ConfigUpdate::default()
         });
-        let preview = resolve_with_overrides(&file, &overrides);
+        let preview = resolve_with_overrides(&file, &overrides, ColorMode::Dark);
         assert_eq!(
             preview.wallpaper_shader_params["aurora"]["speed"],
             ShaderValue::Number(4.0)
@@ -2430,11 +2597,11 @@ stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 
             wallpaper_shader_params: Some(BTreeMap::new()),
             ..ConfigUpdate::default()
         });
-        assert!(resolve_with_overrides(&file, &overrides)
+        assert!(resolve_with_overrides(&file, &overrides, ColorMode::Dark)
             .wallpaper_shader_params
             .is_empty());
         assert_eq!(
-            resolve_binds(&file).wallpaper_shader_params,
+            resolve_binds(&file, ColorMode::Dark).wallpaper_shader_params,
             file.wallpaper_shader_params
         );
     }

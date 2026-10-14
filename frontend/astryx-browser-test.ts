@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { createSocket } from 'node:dgram';
-import { FALLBACK_THEME } from './src/state/startupTheme';
+import { FALLBACK_DARK_THEME } from './src/state/startupTheme';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
 const token = process.env.BTMUX_AUTH_TOKEN;
@@ -39,10 +39,16 @@ const pane = snapshot.windows[0].panes[0].id;
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 try {
   const startup = await browser.newContext();
-  await startup.addInitScript((theme) => localStorage.setItem('btmux-theme', JSON.stringify(theme)), {
-    ...FALLBACK_THEME,
-    background: '#273549',
-  });
+  await startup.addInitScript(
+    (theme) => {
+      localStorage.setItem('btmux-appearance', 'dark');
+      localStorage.setItem('btmux-theme-dark', JSON.stringify(theme));
+    },
+    {
+      ...FALLBACK_DARK_THEME,
+      background: '#273549',
+    },
+  );
   await startup.route('**/api/sessions', (route) => route.fulfill({ json: [] }));
   await startup.routeWebSocket(/\/ws\/control/, () => {});
   const loadingPage = await startup.newPage();

@@ -7,7 +7,10 @@ btmux creates a configuration file on first launch:
 ```
 
 It respects `$XDG_CONFIG_HOME`, all fields are optional, and most changes are
-picked up live. Log-level changes take effect after a restart. Run the following
+picked up live. Log-level changes take effect after a restart. If the file
+can't be parsed, btmux keeps the last valid configuration (the defaults at
+startup) and shows a banner until the file is fixed; its Show error button opens
+the full message. Run the following
 command for the complete documented set of options:
 
 ```sh
@@ -38,16 +41,33 @@ btmux checks GitHub for newer releases about once a day and shows a toast when
 one is available. It never downloads or installs anything; upgrade with whatever
 method you installed with. Set `check-for-updates = false` to turn the check off.
 
-The `colors` option accepts:
+btmux has a dark and a light color scheme. `appearance` picks which one is
+shown: `"auto"` (the default) follows the system setting of the browser that
+connected or was focused last, while `"dark"` and `"light"` pin one. The same
+scheme is shown in every tab and reported to programs in panes. The sidebar's
+appearance button and the `choose-appearance` command switch it for the
+session.
 
-- the name of a bundled scheme: `btmux-default-dark` (the default),
-  `btmux-default-light`, `kauz-dark`, or `kauz-light`;
+```toml
+appearance = "auto"
+colors-dark = "kauz-dark"
+colors-light = "kauz-light"
+```
+
+`colors-dark` (default `btmux-default-dark`) and `colors-light` (default
+`btmux-default-light`) accept:
+
+- the name of a bundled scheme: `btmux-default-dark`, `btmux-default-light`,
+  `kauz-dark`, or `kauz-light`;
 - the name of a base16/base24 YAML file in `$XDG_CONFIG_HOME/btmux/colors/`
   (falling back to `~/.config/btmux/colors/`), which takes precedence over a
   bundled scheme of the same name. The name is the filename without its
   `.yaml` or `.yml` extension; files with other extensions are ignored;
 - an absolute or `~/`-relative local YAML path; or
 - an `http://` or `https://` URL to a YAML palette.
+
+An inline `[theme-dark]` or `[theme-light]` table of `base00`–`base0F` (and
+optionally `base10`–`base17`) overrides the matching option.
 
 Palettes may be defined at the top level or nested under `palette`. They must
 contain `base00`–`base0F`; a file without them is skipped with a warning in the
@@ -56,12 +76,14 @@ with any of them missing it is treated as base16. Remote palettes are fetched
 whenever the configuration loads.
 
 Schemes in the colors directory and the bundled schemes appear in the colors
-picker of the command palette. Picking one there is session-only; set `colors`
-in `config.toml` to keep it.
+picker of the command palette, which sets the scheme of the mode currently
+shown, and in Settings. Changes there are session-only; set `appearance`,
+`colors-dark`, or `colors-light` in `config.toml` to keep them.
 
 Programs in a pane can query the scheme: btmux answers OSC 4/10/11/12 color
 queries and `CSI ? 996 n`, and sends `CSI ? 997 ; 1|2 n` to programs that
-enabled mode 2031 whenever the theme changes. Fish uses this to set
+enabled mode 2031 whenever the theme changes, including when `appearance`
+switches between dark and light. Fish uses this to set
 `fish_terminal_color_theme` and switch light/dark theme variants.
 
 ### Fish theme

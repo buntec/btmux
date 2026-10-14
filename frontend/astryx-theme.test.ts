@@ -1,21 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 import { createBtmuxTheme, readableColor, contrastRatio, terminalColorMode } from './src/lib/astryx-theme';
-import { FALLBACK_THEME } from './src/state/startupTheme';
+import { FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME } from './src/state/startupTheme';
 
 describe('terminal-derived Astryx theme', () => {
   test('uses the palette, sans for UI and headings, and the terminal font for code', () => {
-    const theme = createBtmuxTheme(FALLBACK_THEME, 'JetBrains Mono', true);
-    expect(theme.tokens['--color-background-body']).toBe(FALLBACK_THEME.background);
-    expect(theme.tokens['--color-accent']).toBe(FALLBACK_THEME.blue);
+    const theme = createBtmuxTheme(FALLBACK_DARK_THEME, 'JetBrains Mono', true);
+    expect(theme.tokens['--color-background-body']).toBe(FALLBACK_DARK_THEME.background);
+    expect(theme.tokens['--color-accent']).toBe(FALLBACK_DARK_THEME.blue);
     expect(theme.tokens['--font-family-body']).toContain('Geist Variable');
     expect(theme.tokens['--font-family-heading']).toContain('Geist Variable');
     expect(theme.tokens['--font-family-code']).toContain('JetBrains Mono');
-    expect(theme.localTokens?.['--astryx-theme-neutral-color-status-fill-error']).toBe(FALLBACK_THEME.red);
+    expect(theme.localTokens?.['--astryx-theme-neutral-color-status-fill-error']).toBe(FALLBACK_DARK_THEME.red);
   });
 
   test('adopts light palettes and maintains readable secondary and status text', () => {
-    const palette = { ...FALLBACK_THEME, background: '#ffffff', foreground: '#333333' };
-    expect(terminalColorMode(FALLBACK_THEME)).toBe('dark');
+    const palette = { ...FALLBACK_DARK_THEME, background: '#ffffff', foreground: '#333333' };
+    expect(terminalColorMode(FALLBACK_DARK_THEME)).toBe('dark');
+    expect(terminalColorMode(FALLBACK_LIGHT_THEME)).toBe('light');
     expect(terminalColorMode(palette)).toBe('light');
     const theme = createBtmuxTheme(palette, 'Fira Code', true);
     const background = theme.tokens['--color-background-popover'] as string;

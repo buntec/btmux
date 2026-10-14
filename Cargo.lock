@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "btmux"
-version = "0.0.144"
+version = "0.0.145"
 dependencies = [
  "async-recursion",
  "axum",

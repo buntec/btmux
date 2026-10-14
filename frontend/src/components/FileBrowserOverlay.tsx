@@ -633,7 +633,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
       if (isDir) {
         send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text: `cd ${shellQuote(path)}\n` });
-      } else if (useStore.getState().config?.file_editor !== 'pane') {
+      } else if (useStore.getState().config?.editor === 'vscode') {
+        send({ type: 'vscode_open', path, line: line ?? null });
+        useStore.getState().setVscodeOpen(true, paneId);
+      } else if (useStore.getState().config?.editor !== 'pane') {
         send({ type: 'nvim_open', path, line: line ?? null });
         // Show the surface before closing so the pane doesn't reclaim focus.
         useStore.getState().setNvimOpen(true, paneId);

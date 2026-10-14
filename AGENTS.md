@@ -46,6 +46,12 @@ launchd/systemd service.
 Keep code comments and git commit messages extremely concise.
 Use American English consistently.
 
+## Compatibility
+
+There are no backward compatibility guarantees before 0.1.0. Rename or remove
+config fields, key actions, saved state, and wire or API types freely, without
+aliases or migrations.
+
 ## Architecture
 
 ### Server-authoritative state
@@ -156,7 +162,7 @@ handling must be reviewed with `ws/files.rs`, `fs_ops.rs`, and
 
 ### Built-in Neovim
 
-`prefix + e` (`neovim` action) toggles a Neovim GUI over the active pane
+`prefix + e` (`editor` action) opens the `editor` setting. With `neovim`, it toggles a Neovim GUI over the active pane
 (`NvimSurface.tsx`), or moves it there if it is pinned to another pane; a
 second Esc within 300 ms also hides it (the first still reaches Neovim). The
 surface is pinned to that pane (`nvimPaneId`; the active `SessionPane`
@@ -226,13 +232,54 @@ such glyphs render outside the grid too. These
 detects plugins and settings that duplicate or break this UI; the plugin
 toasts once after the first `UIEnter` if it finds any.
 
-`file-editor` (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
+The `editor` setting (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
 `nvim_open`, which opens the file via `--remote-expr` on the shared socket;
-`pane` keeps the older `open_file` path (the pane's foreground Neovim, else
-`$EDITOR` in its shell). `btmux open-editor [FILE] [LINE]` asks its pane's
+`vscode` sends `vscode_open`; `pane` keeps the older `open_file` path (the
+pane's foreground Neovim, else `$EDITOR` in its shell), which `prefix + e`
+sends without a path. `btmux open-editor [FILE] [LINE]` asks its pane's
 server (`POST /api/panes/{id}/open-editor`): with `neovim` it opens the file
 and broadcasts `open_nvim` to show the surface; otherwise, or outside btmux, it
 execs `$EDITOR`.
+
+### VS Code
+
+With `editor = "vscode"`, `prefix + e` toggles VS Code over the active pane
+(`VscodeSurface.tsx`), pinned and hidden by a double Esc like the Neovim
+surface; only one of the two
+covers a pane. `src/vscode.rs` lazily spawns one VS Code server per btmux
+server, without a connection token, on a private Unix socket, and proxies
+`/vscode/` (HTTP and WebSocket) to it behind `auth.rs`. `vscode-server`
+picks it, read when it starts: `code` (default) runs `code serve-web` from an
+installed VS Code (`code` on `PATH`, else the macOS app bundle), which
+downloads the matching server on first use; `openvscode-server` (on `PATH`)
+is opt-in. The surface first calls `GET /api/vscode`, which starts the server
+and reports `ready`, `license`, or an error. The desktop `code` CLI doesn't
+enforce the VS Code Server license, so btmux asks once per profile
+(`POST /api/vscode/license` writes `<state dir>/vscode/license-accepted`) and
+then always passes `--accept-server-license-terms`. The server runs in its own
+process group, since `code` is a wrapper that starts several processes. User
+data and extensions are per profile (`<state dir>/vscode`, the same layout for
+both servers). The iframe is same-origin,
+so the surface replays its keydowns to the keybinding hook and swallows those
+btmux handles. Moving an iframe in the DOM or changing its `src` reloads VS
+Code: it reloads only when opened over a pane in another folder.
+
+The extension in `extras/vscode` is embedded and installed into the profile's
+extensions on each start, registered in VS Code's `extensions.json` (the
+server ignores `--builtin-extensions-dir`) under a folder named with a hash of
+its files, so any change makes VS Code rescan it. It connects back over
+`BTMUX_VSCODE_SOCKET`, which carries newline-delimited JSON: `style` (the
+base16/24 `color_palette` and the terminal font, on connect and on every
+change) and `open`
+(`editor = "vscode"`, `vscode_open`, `btmux open-editor`). The last open is
+replayed to extension hosts that connect within 30 s, as VS Code may still be
+starting or reloading. The extension writes the palette and font to user
+settings (color customizations and the editor and integrated terminal font,
+the editor at 80% size;
+`btmux.syncTheme` and `btmux.syncFont` turn them off), which VS Code for the
+web keeps in the browser. Bundled fonts are web fonts, so the surface copies
+this page's `@font-face` rules into the iframe on each load. Change both sides
+of this protocol together.
 
 ### Layout tree — the shared contract
 

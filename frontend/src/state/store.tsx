@@ -37,11 +37,15 @@ interface AppStore {
   // with a session→window tree and a live pane preview. Like the window-grid it
   // takes over the keyboard while open (the keybinding hook early-returns).
   switcherOpen: boolean;
-  // Neovim surface (prefix + e), pinned over nvimPaneId.
+  // Neovim surface (prefix + e with editor = neovim), pinned over nvimPaneId.
   nvimOpen: boolean;
   nvimPaneId: string | null;
   // The pinned pane's rect in the shown window, published by the active SessionPane.
   nvimRect: LayoutRect | null;
+  // VS Code surface (prefix + e with editor = vscode), pinned like Neovim.
+  vscodeOpen: boolean;
+  vscodePaneId: string | null;
+  vscodeRect: LayoutRect | null;
   // File browser overlay (prefix + f / g)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
@@ -102,6 +106,8 @@ interface AppStore {
   // Opening pins the surface to paneId (default: the current pin).
   setNvimOpen: (open: boolean, paneId?: string | null) => void;
   setNvimRect: (rect: LayoutRect | null) => void;
+  setVscodeOpen: (open: boolean, paneId?: string | null) => void;
+  setVscodeRect: (rect: LayoutRect | null) => void;
   setNavigateFn: (fn: ((path: string) => void) | null) => void;
   setControlSendFn: (fn: ((message: ClientMessage) => void) | null) => void;
   // Navigate to the window containing a pane, if it can be located.
@@ -110,6 +116,16 @@ interface AppStore {
   getSession: (sessionId: string) => SessionState | null;
   getActivePaneId: (sessionId: string) => string | null;
 }
+
+const sameRect = (a: LayoutRect | null, b: LayoutRect | null) =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.paneId === b.paneId &&
+    a.top === b.top &&
+    a.left === b.left &&
+    a.width === b.width &&
+    a.height === b.height);
 
 export const useStore = create<AppStore>((set, get) => ({
   sessions: [],
@@ -129,6 +145,9 @@ export const useStore = create<AppStore>((set, get) => ({
   nvimOpen: false,
   nvimPaneId: null,
   nvimRect: null,
+  vscodeOpen: false,
+  vscodePaneId: null,
+  vscodeRect: null,
   fileBrowserOpen: false,
   fileBrowserCwd: null,
   fileBrowserInitialMode: 'files',
@@ -178,22 +197,21 @@ export const useStore = create<AppStore>((set, get) => ({
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
+  // One editor surface per pane: opening one over the other's pane closes the other.
   setNvimOpen: (open, paneId) =>
-    set((s) => ({ nvimOpen: open, nvimPaneId: open && paneId !== undefined ? paneId : s.nvimPaneId })),
-  setNvimRect: (rect) =>
     set((s) => {
-      const old = s.nvimRect;
-      const same =
-        old === rect ||
-        (old &&
-          rect &&
-          old.paneId === rect.paneId &&
-          old.top === rect.top &&
-          old.left === rect.left &&
-          old.width === rect.width &&
-          old.height === rect.height);
-      return same ? s : { nvimRect: rect };
+      const nvimPaneId = open && paneId !== undefined ? paneId : s.nvimPaneId;
+      const covers = open && s.vscodeOpen && s.vscodePaneId === nvimPaneId;
+      return { nvimOpen: open, nvimPaneId, ...(covers && { vscodeOpen: false }) };
     }),
+  setNvimRect: (rect) => set((s) => (sameRect(s.nvimRect, rect) ? s : { nvimRect: rect })),
+  setVscodeOpen: (open, paneId) =>
+    set((s) => {
+      const vscodePaneId = open && paneId !== undefined ? paneId : s.vscodePaneId;
+      const covers = open && s.nvimOpen && s.nvimPaneId === vscodePaneId;
+      return { vscodeOpen: open, vscodePaneId, ...(covers && { nvimOpen: false }) };
+    }),
+  setVscodeRect: (rect) => set((s) => (sameRect(s.vscodeRect, rect) ? s : { vscodeRect: rect })),
   showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
   toggleLatex: (paneId) =>
     set((s) => {

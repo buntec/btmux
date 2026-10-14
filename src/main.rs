@@ -22,6 +22,7 @@ mod server;
 mod service;
 mod session;
 mod update_check;
+mod vscode;
 mod ws;
 
 use std::sync::Arc;
@@ -277,6 +278,9 @@ async fn main() {
             std::process::exit(2);
         });
     let auth = Arc::new(auth);
+    if let Some(dir) = state_file.as_ref().and_then(|p| p.parent()) {
+        vscode::set_data_dir(dir.join("vscode"));
+    }
     {
         let mut mgr = state.write().await;
         let restored = state_file
@@ -391,6 +395,7 @@ async fn main() {
         } => tracing::warn!("timed out waiting for connections to close"),
     }
     ws::nvim::shutdown().await;
+    vscode::shutdown().await;
     if let Some(path) = state_file {
         let snapshots = state.read().await.all_snapshots();
         if let Err(error) = persistence::save(&path, &snapshots) {

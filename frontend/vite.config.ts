@@ -40,6 +40,11 @@ export default defineConfig({
         target: backend,
         changeOrigin: true,
       },
+      // Keep Host: VS Code builds its WebSocket URLs from it.
+      '/vscode': {
+        target: backend,
+        ws: true,
+      },
     },
   },
 });

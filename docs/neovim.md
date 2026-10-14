@@ -1,4 +1,4 @@
-# Built-in Neovim
+# Neovim GUI
 
 `<prefix> + e` opens a Neovim GUI over the active pane; the other panes stay
 visible, and zooming the pane (`<prefix> + z`) makes Neovim fill the window. btmux draws the
@@ -15,17 +15,17 @@ Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`.
 
 ## Opening files
 
-The file browser and Git mode open files in the built-in Neovim, or in the pane
-when the server can't find Neovim 0.12+ at startup. To always open them in
-the pane instead (its running Neovim, or `$EDITOR` in its shell), set:
+The file browser and Git mode open files in the Neovim GUI, or in the pane
+when the server can't find Neovim 0.12+ at startup. To use the pane instead
+(its running Neovim, or `$EDITOR` in its shell), also for `<prefix> + e`, set:
 
 ```toml
-file-editor = "pane"
+editor = "pane"
 ```
 
 `btmux open-editor [FILE] [LINE]` follows the same setting from a btmux pane:
-it opens the built-in Neovim (at FILE, if given) over the pane, or
-runs `$EDITOR` in the terminal when `file-editor = "pane"` or outside btmux.
+it opens the Neovim GUI (at FILE, if given) over the pane, or
+runs `$EDITOR` in the terminal when `editor = "pane"` or outside btmux.
 
 ## Your Neovim config
 
@@ -79,7 +79,7 @@ attaches.
 
 ## Fonts, scrolling, and keys
 
-The built-in editor uses btmux's selected Base16/24 palette through the bundled
+The Neovim GUI uses btmux's selected Base16/24 palette through the bundled
 `btmux` colorscheme. It applies when the GUI opens and follows live theme changes,
 including session-only color overrides. Your regular Neovim config still loads;
 the GUI applies its colorscheme afterward. `ColorScheme` autocmds can customize

@@ -73,6 +73,7 @@ impl SessionManager {
             palette: SharedPalette::default(),
         };
         pty_env.palette.set(Palette::from_theme(&config.theme));
+        crate::vscode::configure(&config);
         Self {
             sessions: Vec::new(),
             shell,
@@ -402,6 +403,8 @@ impl SessionManager {
     /// Publish the resolved theme to PTY color queries and notify programs
     /// that enabled mode 2031.
     fn sync_palette(&mut self) {
+        // VS Code also follows the terminal font and picks its server.
+        crate::vscode::configure(&self.config);
         let palette = Palette::from_theme(&self.config.theme);
         if !self.pty_env.palette.set(palette.clone()) {
             return;

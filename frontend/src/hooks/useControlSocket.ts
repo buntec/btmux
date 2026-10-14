@@ -136,6 +136,9 @@ export function useControlSocket() {
         } else if (msg.type === 'open_nvim') {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setNvimOpen(true, msg.pane_id);
+        } else if (msg.type === 'open_vscode') {
+          useStore.getState().navigateToPane(msg.pane_id);
+          useStore.getState().setVscodeOpen(true, msg.pane_id);
         }
       };
 

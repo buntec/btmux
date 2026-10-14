@@ -26,6 +26,8 @@ pub struct SessionManager {
     overrides: ConfigUpdate,
     /// The system color mode a browser last reported, for `appearance = "auto"`.
     system_color_mode: ColorMode,
+    /// Why config.toml was rejected; cleared when it loads.
+    config_error: Option<String>,
     /// `file_config` + `overrides`, resolved — this is what the browser sees.
     config: ClientConfig,
     events: broadcast::Sender<String>,
@@ -83,6 +85,7 @@ impl SessionManager {
             file_config,
             overrides: ConfigUpdate::default(),
             system_color_mode: ColorMode::default(),
+            config_error: None,
             config,
             events,
             agents: HashMap::new(),
@@ -367,6 +370,7 @@ impl SessionManager {
     pub fn set_file_config(&mut self, file_config: FileConfig) -> &ClientConfig {
         self.file_config = file_config;
         self.overrides = ConfigUpdate::default();
+        self.config_error = None;
         self.config = self.resolve();
         if self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
@@ -418,12 +422,21 @@ impl SessionManager {
         Some(&self.config)
     }
 
+    /// Record that config.toml was rejected; the current config stays in use.
+    pub fn set_config_error(&mut self, error: String) -> &ClientConfig {
+        self.config_error = Some(error.clone());
+        self.config.config_error = Some(error);
+        &self.config
+    }
+
     fn resolve(&self) -> ClientConfig {
-        crate::config::resolve_with_overrides(
+        let mut config = crate::config::resolve_with_overrides(
             &self.file_config,
             &self.overrides,
             self.system_color_mode,
-        )
+        );
+        config.config_error = self.config_error.clone();
+        config
     }
 
     /// Publish the resolved theme to PTY color queries and notify programs
@@ -1426,6 +1439,30 @@ mod palette_tests {
         assert!(!mgr.pty_env.palette.get().unwrap().is_dark());
         mgr.reset_config_overrides();
         assert!(mgr.pty_env.palette.get().unwrap().is_dark());
+    }
+
+    #[test]
+    fn config_error_persists_until_the_file_loads() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        assert_eq!(mgr.config().config_error, None);
+        mgr.set_config_error("bad key".into());
+        mgr.apply_config_override(&ConfigUpdate {
+            animations: Some(false),
+            ..Default::default()
+        });
+        mgr.reset_config_overrides();
+        assert_eq!(mgr.config().config_error.as_deref(), Some("bad key"));
+        mgr.set_file_config(FileConfig::default());
+        assert_eq!(mgr.config().config_error, None);
     }
 
     #[test]

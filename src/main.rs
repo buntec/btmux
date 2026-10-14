@@ -206,6 +206,7 @@ async fn main() {
     }
 
     let config_path = config::config_path();
+    let mut config_error = None;
     let file_config = match &config_path {
         Some(path) => match config::load_with_colors(path).await {
             Ok(cfg) => {
@@ -222,6 +223,7 @@ async fn main() {
                     path.display(),
                     e
                 );
+                config_error = Some(e);
                 config::FileConfig::default()
             }
         },
@@ -246,14 +248,18 @@ async fn main() {
     // PTY reader threads signal here when OSC title/cwd metadata changes so the
     // debounced task below re-broadcasts state without a full structural mutation.
     let (meta_tx, meta_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-    let state: AppState = Arc::new(RwLock::new(SessionManager::new(
+    let mut manager = SessionManager::new(
         shell,
         file_config,
         exit_tx,
         meta_tx,
         args.port,
         args.shell.clone(),
-    )));
+    );
+    if let Some(error) = config_error {
+        manager.set_config_error(error);
+    }
+    let state: AppState = Arc::new(RwLock::new(manager));
 
     // Restore the saved session tree from disk if present; otherwise start with
     // a single default session. Process state can't be restored — each pane gets
@@ -683,13 +689,12 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
         Ok(cfg) => cfg,
         Err(e) => {
             tracing::error!("config reload failed: {} — keeping previous config", e);
-            let toast_json = serde_json::to_string(&ServerMessage::Toast {
-                message: format!("Config error: {e}"),
-                level: ws::control::ToastLevel::Error,
+            let mut mgr = state.write().await;
+            let json = serde_json::to_string(&ServerMessage::Config {
+                config: Box::new(mgr.set_config_error(e).clone()),
             })
             .unwrap();
-            let mgr = state.read().await;
-            let _ = mgr.events().send(toast_json);
+            let _ = mgr.events().send(json);
             return;
         }
     };

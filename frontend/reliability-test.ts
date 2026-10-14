@@ -1,6 +1,8 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
@@ -153,6 +155,37 @@ try {
   );
   await colorMode('dark');
   console.log('PASS auto appearance follows the system color mode');
+
+  // Only an isolated stack's config may be edited.
+  const configHome = process.env.BTMUX_TEST_CONFIG_HOME;
+  if (configHome) {
+    const configFile = path.join(configHome, 'btmux', 'config.toml');
+    const original = readFileSync(configFile, 'utf8');
+    const banner = page.getByText('Config error: config.toml was rejected');
+    writeFileSync(configFile, 'not-a-setting = true\n');
+    await banner.waitFor();
+    const details = page.getByText('unknown field `not-a-setting`');
+    assert.equal(await details.count(), 0, 'the full error must stay behind the button');
+    await page.getByRole('button', { name: 'Show error' }).click();
+    await details.waitFor();
+    await page.keyboard.press('Escape');
+    await details.waitFor({ state: 'detached' });
+    // Settings changes keep the warning while the file is still rejected.
+    await page.evaluate(() =>
+      (window as any).testSockets
+        .findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control')
+        .send(JSON.stringify({ type: 'update_config', update: { animations: true } })),
+    );
+    await page.waitForTimeout(500);
+    assert(await banner.isVisible(), 'the config error must stay visible');
+    // Fixing the file removes the banner and closes an open error dialog.
+    await page.getByRole('button', { name: 'Show error' }).click();
+    await details.waitFor();
+    writeFileSync(configFile, original);
+    await banner.waitFor({ state: 'detached' });
+    await details.waitFor({ state: 'detached' });
+    console.log('PASS rejected config shows a warning until it loads');
+  }
   await page.evaluate(() => {
     (window as any).testSockets
       .findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control')

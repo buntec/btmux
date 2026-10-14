@@ -11,6 +11,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Layout, LayoutContent, LayoutFooter, HStack, VStack, Section } from '@astryxdesign/core/Layout';
 import { InfoDialog } from './InfoDialog';
+import { ConfigErrorDialog } from './ConfigErrorBanner';
 import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
 import type { Bind, ClientConfig, Command } from '../state/types';
@@ -178,6 +179,7 @@ export function Overlay({ sessionId, send, config }: Props) {
     if (!open) close();
   };
   if (overlay.mode === 'info') return <InfoDialog onClose={close} />;
+  if (overlay.mode === 'config-error') return <ConfigErrorDialog onClose={close} />;
   if (overlay.mode === 'confirm')
     return (
       <AlertDialog

@@ -7,7 +7,10 @@ btmux creates a configuration file on first launch:
 ```
 
 It respects `$XDG_CONFIG_HOME`, all fields are optional, and most changes are
-picked up live. Log-level changes take effect after a restart. Run the following
+picked up live. Log-level changes take effect after a restart. If the file
+can't be parsed, btmux keeps the last valid configuration (the defaults at
+startup) and shows a banner until the file is fixed; its Show error button opens
+the full message. Run the following
 command for the complete documented set of options:
 
 ```sh

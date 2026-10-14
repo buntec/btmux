@@ -398,7 +398,9 @@ the store, not server state); `LatexOverlay.tsx` highlights source cells with
 
 **Live config reload:** `main.rs` watches the config file's _parent dir_ with
 `notify` (to catch editors' atomic rename-on-save), debounces, re-resolves, and
-broadcasts a new `Config`. A parse error logs and **keeps the last good config**.
+broadcasts a new `Config`. A parse error logs and **keeps the last good config**
+(the defaults at startup); `ClientConfig.config_error` carries the error: a banner
+above the panes until the file loads, with the message in a `config-error` overlay.
 
 **Session-only overrides:** the command-palette pickers and settings appearance
 overlay send `update_config` and **never touch config.toml**. They can override

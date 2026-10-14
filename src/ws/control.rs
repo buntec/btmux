@@ -961,7 +961,6 @@ pub enum FileBrowserMode {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum ToastLevel {
     Info,
-    Error,
 }
 
 pub use crate::session::NotificationLevel;

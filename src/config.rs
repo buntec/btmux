@@ -958,6 +958,8 @@ pub struct ClientConfig {
     pub colors_light: Option<String>,
     /// Bundled font families with their available weight ranges.
     pub fonts: Vec<FontEntry>,
+    /// Why config.toml was last rejected, while it still is. Set by `SessionManager`.
+    pub config_error: Option<String>,
 }
 
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
@@ -1745,6 +1747,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
                 weight_max: f.weight_max,
             })
             .collect(),
+        config_error: None,
     }
 }
 

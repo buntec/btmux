@@ -250,7 +250,11 @@ colors_dark: string | null, colors_light: string | null,
 /**
  * Bundled font families with their available weight ranges.
  */
-fonts: Array<FontEntry>, };
+fonts: Array<FontEntry>,
+/**
+ * Why config.toml was last rejected, while it still is. Set by `SessionManager`.
+ */
+config_error: string | null, };
 
 // prettier-ignore
 export type ServerInfo = { version: string, profile: string | null, config_file: string | null, state_file: string | null, token_file: string | null, token_source: string, listen_address: string, executable: string | null, };
@@ -280,7 +284,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, };
 
 // prettier-ignore
-export type ToastLevel = "info" | "error";
+export type ToastLevel = "info";
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

@@ -1,6 +1,6 @@
 // Browser keyboard events → Neovim `nvim_input` key notation.
 
-const SPECIAL: Record<string, string> = {
+export const NVIM_SPECIAL_KEYS: Record<string, string> = {
   Enter: 'CR',
   Escape: 'Esc',
   Backspace: 'BS',
@@ -54,7 +54,7 @@ export function nvimKey(e: KeyboardEvent, mac = IS_MAC): string | null {
   }
 
   const fkey = /^F\d{1,2}$/.test(key);
-  const special = SPECIAL[key] ?? (fkey ? key : undefined);
+  const special = NVIM_SPECIAL_KEYS[key] ?? (fkey ? key : undefined);
   if (special === undefined && key.length !== 1 && [...key].length !== 1) return null;
 
   // Shift is already folded into printable characters.

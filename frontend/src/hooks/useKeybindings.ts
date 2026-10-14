@@ -7,6 +7,7 @@ import { paneIdsInOrder } from '../state/layout';
 import { adjacentSession } from '../state/sessionNavigation';
 import { sortWindows } from '../state/windowMru';
 import {
+  CONFIG_DEFAULTS,
   getFontWeightRange,
   getPrefix,
   getRepeatTime,
@@ -16,7 +17,7 @@ import {
   FONT_WEIGHT_STEP,
 } from '../state/configDefaults';
 
-import { parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey } from '../lib/prefixKey';
+import { matchesPrefix, parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey } from '../lib/prefixKey';
 import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { sendToNvim } from '../components/NvimSurface';
@@ -28,10 +29,6 @@ const DISPLAY_PANES_MS = 1500;
 
 /** Auto-hide timer for the display-panes overlay (module-scoped: one at a time). */
 let paneNumbersTimer = 0;
-
-function matchesPrefix(e: KeyboardEvent, p: ParsedKey): boolean {
-  return e.ctrlKey === p.ctrl && e.altKey === p.alt && e.key.toLowerCase() === p.key;
-}
 
 function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
   const keys = prefixNvimKeys(p);
@@ -71,7 +68,10 @@ export function useKeybindings(
   const repeatActiveRef = useRef(false);
   const repeatTimerRef = useRef<number>(0);
 
-  const prefix = useMemo(() => parsePrefix(getPrefix(config)), [config?.prefix]);
+  const prefix = useMemo(
+    () => parsePrefix(getPrefix(config)) ?? parsePrefix(CONFIG_DEFAULTS.prefix)!,
+    [config?.prefix],
+  );
   const binds = useMemo(() => {
     const map = new Map<string, string>();
     for (const b of config?.binds ?? []) map.set(b.key, b.action);

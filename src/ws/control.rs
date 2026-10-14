@@ -244,6 +244,9 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
     // or the config file is reloaded.
     if let ClientMessage::UpdateConfig { update } = &cmd {
         let mut update = update.clone();
+        if let Some(prefix) = update.prefix.as_mut().filter(|p| !p.trim().is_empty()) {
+            *prefix = crate::config::parse_prefix(prefix)?;
+        }
         for (colors, resolved) in [
             (&update.colors_dark, &mut update.resolved_colors_dark),
             (&update.colors_light, &mut update.resolved_colors_light),

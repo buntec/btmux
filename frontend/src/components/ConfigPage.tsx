@@ -56,6 +56,7 @@ import {
 } from '@astryxdesign/core/Layout';
 import { KeyCap } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
+import { prefixError } from '../lib/prefixKey';
 
 interface Props {
   config: ClientConfig;
@@ -518,7 +519,10 @@ export function ConfigPage({ config, send }: Props) {
     setDirty((current) => new Set(current).add(key));
   };
 
+  const prefixInvalid = dirty.has('prefix') && draft.prefix.trim() !== '' ? prefixError(draft.prefix) : null;
+
   const apply = () => {
+    if (prefixInvalid) return;
     const update = toConfigUpdate(draft, dirty);
     if (Object.keys(update).length === 0) return;
     send({ type: 'update_config', update });
@@ -570,6 +574,7 @@ export function ConfigPage({ config, send }: Props) {
     key: { [K in DraftKey]: Draft[K] extends string ? K : never }[DraftKey],
     label: string,
     description?: string,
+    error?: string | null,
   ) => (
     <TextInput
       key={key}
@@ -577,6 +582,7 @@ export function ConfigPage({ config, send }: Props) {
       value={draft[key]}
       onChange={(value) => update(key, value as never)}
       description={description}
+      status={error ? { type: 'error', message: error } : undefined}
     />
   );
   const range = (
@@ -741,7 +747,12 @@ export function ConfigPage({ config, send }: Props) {
                             update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
                           }}
                         />
-                        {text('prefix', 'Prefix key', 'Use tmux notation such as C-a, C-b, or M-x.')}
+                        {text(
+                          'prefix',
+                          'Prefix key',
+                          'Use tmux notation such as C-a, C-b, M-x, or C-Space.',
+                          prefixInvalid,
+                        )}
                         {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
                         {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
                         {toggle('animations', 'Animations')}
@@ -935,7 +946,12 @@ export function ConfigPage({ config, send }: Props) {
                   </HStack>
                   <HStack gap={2} wrap="wrap">
                     <Button label="Close" onClick={goBack} />
-                    <Button label="Apply" variant="primary" onClick={apply} isDisabled={dirty.size === 0} />
+                    <Button
+                      label="Apply"
+                      variant="primary"
+                      onClick={apply}
+                      isDisabled={dirty.size === 0 || !!prefixInvalid}
+                    />
                   </HStack>
                 </HStack>
               </LayoutFooter>

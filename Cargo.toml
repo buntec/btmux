@@ -12,7 +12,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
-rust-embed = { version = "8", features = ["axum"] }
+rust-embed = { version = "8", features = ["axum", "compression"] }
 mime_guess = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "local-time"] }

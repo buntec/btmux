@@ -37,16 +37,23 @@ let
 
   defaultEnvironment = {
     HOME = config.home.homeDirectory;
-    PATH = lib.concatStringsSep ":" [
-      "${config.home.profileDirectory}/bin"
-      (lib.makeBinPath [ pkgs.coreutils ])
-      "/usr/local/bin"
-      "/opt/homebrew/bin"
-      "/usr/bin"
-      "/bin"
-      "/usr/sbin"
-      "/sbin"
-    ];
+    # Panes inherit this PATH, so include the usual Nix profiles.
+    PATH = lib.concatStringsSep ":" (
+      lib.optional isLinux "/run/wrappers/bin"
+      ++ [
+        "${config.home.profileDirectory}/bin"
+        "/etc/profiles/per-user/${config.home.username}/bin"
+        "/run/current-system/sw/bin"
+        "/nix/var/nix/profiles/default/bin"
+        (lib.makeBinPath [ pkgs.coreutils ])
+        "/usr/local/bin"
+        "/opt/homebrew/bin"
+        "/usr/bin"
+        "/bin"
+        "/usr/sbin"
+        "/sbin"
+      ]
+    );
     XDG_CONFIG_HOME = config.xdg.configHome;
     XDG_STATE_HOME = config.xdg.stateHome;
   }

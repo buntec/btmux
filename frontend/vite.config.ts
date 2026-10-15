@@ -8,8 +8,33 @@ import path from 'path';
 // test harness overrides it.
 const backend = `http://localhost:${process.env.BTMUX_BACKEND_PORT ?? 8044}`;
 
+// Keep only woff2 sources in @font-face rules so fallback formats aren't bundled.
+// `Once` runs before Vite's url-rewriting `Once`, which emits the assets.
+type FontFaceRoot = {
+  walkAtRules(
+    name: string,
+    cb: (rule: { walkDecls(prop: string, cb: (decl: { value: string }) => void): void }) => void,
+  ): void;
+};
+const woff2Only = {
+  postcssPlugin: 'woff2-only',
+  Once(root: FontFaceRoot) {
+    root.walkAtRules('font-face', (rule) => {
+      rule.walkDecls('src', (decl) => {
+        const woff2 = decl.value
+          .split(/,(?![^(]*\))/)
+          .filter((source) => /format\(\s*['"]?woff2['"]?\s*\)/.test(source));
+        if (woff2.length) decl.value = woff2.map((source) => source.trim()).join(', ');
+      });
+    });
+  },
+};
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  css: {
+    postcss: { plugins: [woff2Only] },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

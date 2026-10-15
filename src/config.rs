@@ -14,7 +14,6 @@ pub const DEFAULT_PTY_COLS: u16 = 80;
 pub const DEFAULT_PTY_ROWS: u16 = 24;
 
 pub const DEFAULT_PREFIX: &str = "C-a";
-pub const DEFAULT_VI_MODE: bool = false;
 pub const DEFAULT_REPEAT_TIME: u32 = 0;
 pub const DEFAULT_ANIMATIONS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
@@ -434,11 +433,6 @@ pub struct FileConfig {
     pub prefix: Option<String>,
     /// Shell override (CLI `--shell` still wins over this).
     pub shell: Option<String>,
-    /// When true, h/j/k/l are added as additional navigation keys alongside
-    /// the arrow keys. The default `l → last-window` binding is dropped since
-    /// `l` becomes navigate-right; rebind it via `[keys]` if needed.
-    #[serde(rename = "vi-mode")]
-    pub vi_mode: bool,
     /// Milliseconds after a repeatable key (pane navigation and resizing) during
     /// which another repeatable key runs without the prefix. 0 disables.
     #[serde(rename = "repeat-time")]
@@ -570,7 +564,6 @@ impl Default for FileConfig {
         Self {
             prefix: None,
             shell: None,
-            vi_mode: DEFAULT_VI_MODE,
             repeat_time: DEFAULT_REPEAT_TIME,
             animations: DEFAULT_ANIMATIONS,
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
@@ -965,7 +958,6 @@ pub struct ClientConfig {
     /// Both variants, for previews and the browser's first paint.
     pub dark_theme: Theme,
     pub light_theme: Theme,
-    pub vi_mode: bool,
     /// Repeat window in ms for repeatable keys; 0 disables.
     pub repeat_time: u32,
     /// Whether CSS animations/transitions are enabled in the browser.
@@ -1038,7 +1030,8 @@ pub struct ClientConfig {
 
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
-/// and intentionally absent here, as is `kill-session` (unbound by default).
+/// and intentionally absent here, as are `kill-session` and `last-window`
+/// (unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
     ("\"", "split-horizontal"),
@@ -1074,7 +1067,6 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     (")", "next-session"),
     ("(", "prev-session"),
     ("$", "rename-session"),
-    ("l", "last-window"),
     ("L", "last-session"),
     ("o", "next-pane"),
     ("{", "swap-pane-back"),
@@ -1398,13 +1390,6 @@ pub fn generate_config_toml() -> String {
 # Shell to spawn in new panes. Defaults to $SHELL / {DEFAULT_SHELL}.
 # shell = "{DEFAULT_SHELL}"
 
-# Enable vi-style navigation after the prefix:
-#   h/l  → navigate panes left/right (alongside arrow keys)
-#   j/k  → cycle sessions next/prev  (alongside ) and ()
-# The default `l → last-window` binding is dropped because `l` becomes
-# navigate-right; rebind it via `[keys]` if you need it.
-# vi-mode = {DEFAULT_VI_MODE}
-
 # Milliseconds after a pane navigation or resize key during which another one
 # runs without pressing the prefix again (tmux repeat-time). 0 (default) disables.
 # repeat-time = {DEFAULT_REPEAT_TIME}
@@ -1571,9 +1556,7 @@ pub fn generate_config_toml() -> String {
     )
 }
 
-/// vi-mode extra binds: (key, action). These supplement the arrow-key defaults.
-/// `l` conflicts with the `last-window` default so that binding is dropped when
-/// vi mode is active (users can restore it via `[keys]` if needed).
+/// Extra hjkl navigation binds: (key, action), alongside the arrow-key defaults.
 const VI_BINDS: &[(&str, &str)] = &[
     ("h", "navigate-left"),
     ("j", "navigate-down"),
@@ -1620,11 +1603,6 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .map(|(k, a)| (a.to_string(), k.to_string()))
         .collect();
 
-    // vi-mode: drop `l → last-window` since `l` becomes navigate-right.
-    if file.vi_mode {
-        by_action.remove("last-window");
-    }
-
     for (action, key) in &file.keys {
         by_action.insert(action.clone(), key.clone());
     }
@@ -1634,16 +1612,13 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .map(|(action, key)| Bind { key, action })
         .collect();
 
-    // vi-mode: append extra hjkl binds (the arrow-key binds remain).
-    if file.vi_mode {
-        for (key, action) in VI_BINDS {
-            // Only add if not already covered by a user override on this key.
-            if !binds.iter().any(|b| b.key == *key) {
-                binds.push(Bind {
-                    key: key.to_string(),
-                    action: action.to_string(),
-                });
-            }
+    // Extra hjkl binds, unless a user override took the key.
+    for (key, action) in VI_BINDS {
+        if !binds.iter().any(|b| b.key == *key) {
+            binds.push(Bind {
+                key: key.to_string(),
+                action: action.to_string(),
+            });
         }
     }
 
@@ -1781,7 +1756,6 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         color_palette,
         dark_theme: dark_palette.to_theme(),
         light_theme: light_palette.to_theme(),
-        vi_mode: file.vi_mode,
         repeat_time: file.repeat_time,
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
@@ -1840,7 +1814,6 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
 pub struct ConfigUpdate {
     pub prefix: Option<String>,
     pub shell: Option<String>,
-    pub vi_mode: Option<bool>,
     pub show_pane_titles: Option<bool>,
     pub keys: Option<BTreeMap<String, String>>,
     pub session_sort: Option<SessionSort>,
@@ -1902,9 +1875,6 @@ impl ConfigUpdate {
         }
         if other.shell.is_some() {
             self.shell = other.shell.clone();
-        }
-        if other.vi_mode.is_some() {
-            self.vi_mode = other.vi_mode;
         }
         if other.show_pane_titles.is_some() {
             self.show_pane_titles = other.show_pane_titles;
@@ -2058,9 +2028,6 @@ pub fn resolve_with_overrides(
     }
     if let Some(shell) = &overrides.shell {
         file.shell = Some(shell.clone()).filter(|value| !value.trim().is_empty());
-    }
-    if let Some(vi_mode) = overrides.vi_mode {
-        file.vi_mode = vi_mode;
     }
     if let Some(show_pane_titles) = overrides.show_pane_titles {
         file.show_pane_titles = show_pane_titles;
@@ -2412,7 +2379,14 @@ palette:
             .binds
             .iter()
             .any(|bind| bind.key == "a" && bind.action == "agent-grid"));
-        assert!(!config.vi_mode);
+        assert!(resolved
+            .binds
+            .iter()
+            .any(|bind| bind.key == "l" && bind.action == "navigate-right"));
+        assert!(!resolved
+            .binds
+            .iter()
+            .any(|bind| bind.action == "last-window"));
         assert_eq!(config.repeat_time, DEFAULT_REPEAT_TIME);
         assert!(resolved
             .binds
@@ -2515,7 +2489,6 @@ palette:
             &ConfigUpdate {
                 prefix: Some("C-a".to_string()),
                 shell: Some("/bin/zsh".to_string()),
-                vi_mode: Some(true),
                 show_pane_titles: Some(true),
                 keys: Some(keys),
                 session_sort: Some(SessionSort::Alphabetical),
@@ -2543,7 +2516,6 @@ palette:
 
         assert_eq!(resolved.prefix, "C-a");
         assert_eq!(resolved.shell.as_deref(), Some("/bin/zsh"));
-        assert!(resolved.vi_mode);
         assert!(resolved.show_pane_titles);
         assert_eq!(
             resolved.keys.get("new-window").map(String::as_str),

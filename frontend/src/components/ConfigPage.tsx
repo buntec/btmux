@@ -66,7 +66,6 @@ interface Props {
 type Draft = {
   prefix: string;
   shell: string;
-  viMode: boolean;
   appearance: ClientConfig['appearance'];
   colorsDark: string;
   colorsLight: string;
@@ -120,7 +119,6 @@ function initialDraft(config: ClientConfig): Draft {
   return {
     prefix: config.prefix,
     shell: config.shell ?? '',
-    viMode: config.vi_mode,
     appearance: config.appearance,
     colorsDark: config.colors_dark ?? '',
     colorsLight: config.colors_light ?? '',
@@ -183,10 +181,9 @@ function quote(value: string): string {
 // Mirrors the built-in defaults in `src/config.rs` (the `DEFAULT_*` constants
 // and each struct's `Default` impl). Kept separate from `CONFIG_DEFAULTS`
 // (frontend fallbacks for a not-yet-loaded config) since a couple of fields
-// here have no wire-level equivalent (vi-mode, log levels).
+// here have no wire-level equivalent (log levels).
 const TOML_DEFAULTS = {
   prefix: 'C-a',
-  viMode: false,
   animations: true,
   showPaneTitles: false,
   sessionSort: 'mru',
@@ -259,7 +256,6 @@ function toToml(draft: Draft): string {
   const topLines = [
     strLine('prefix', draft.prefix, TOML_DEFAULTS.prefix),
     draft.shell ? `shell = ${quote(draft.shell)}` : null,
-    boolLine('vi-mode', draft.viMode, TOML_DEFAULTS.viMode),
     boolLine('animations', draft.animations, TOML_DEFAULTS.animations),
     boolLine('show-pane-titles', draft.showPaneTitles, TOML_DEFAULTS.showPaneTitles),
     strLine('session-sort', draft.sessionSort, TOML_DEFAULTS.sessionSort),
@@ -332,7 +328,6 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   const update: ConfigUpdate = {};
   if (dirty.has('prefix')) update.prefix = draft.prefix;
   if (dirty.has('shell')) update.shell = draft.shell;
-  if (dirty.has('viMode')) update.vi_mode = draft.viMode;
   if (dirty.has('showPaneTitles')) update.show_pane_titles = draft.showPaneTitles;
   if (dirty.has('sessionSort')) update.session_sort = draft.sessionSort;
   if (dirty.has('windowSort')) update.window_sort = draft.windowSort;
@@ -754,7 +749,6 @@ export function ConfigPage({ config, send }: Props) {
                           prefixInvalid,
                         )}
                         {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
-                        {toggle('viMode', 'Vi mode', 'Add h/j/k/l pane navigation bindings.')}
                         {toggle('animations', 'Animations')}
                         {toggle(
                           'showPaneTitles',

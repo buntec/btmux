@@ -8,7 +8,7 @@ live list. This page covers where btmux differs.
 
 `%` `"` split, `x` kill pane, `z` zoom, `o` next pane, `;` last pane, `{` `}`
 swap pane, `Space` next layout, `q` pane numbers, arrows navigate, `c` new
-window, `n` `p` `l` window next/prev/last, `0`-`9` select window, `,` rename
+window, `n` `p` window next/prev, `0`-`9` select window, `,` rename
 window, `&` kill window, `$` rename session, `(` `)` previous/next session, `L`
 last session, `[` capture scrollback, `/` search, `]` paste, `?` key list, `:` prompt.
 
@@ -25,6 +25,7 @@ last session, `[` capture scrollback, `/` search, `]` paste, `?` key list, `:` p
 | `g` `a` | (unbound)   | git view, agent grid                              |
 | `e`     | (unbound)   | editor (`editor` setting)                         |
 | `[`     | copy mode   | opens the scrollback in `$EDITOR` inside the pane |
+| `l`     | last-window | pane right (`h` `j` `k` too); last-window unbound |
 
 Rebind any of them under `[keys]` in `config.toml`.
 
@@ -102,8 +103,6 @@ on macOS, sockets belonging to inaccessible processes may be omitted entirely.
   session "0" instead of ending the server.
 - **Browser keys.** Cmd/Meta combinations and function keys are not forwarded to
   the terminal.
-- **`vi-mode`.** It adds `h` `j` `k` `l` for pane navigation after the prefix
-  and drops the `l` last-window binding. It is unrelated to tmux's `mode-keys`.
 - **`[keys]`.** Each action has one key. Overriding it moves the action off its
   default key rather than adding a second one.
 

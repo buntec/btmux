@@ -138,7 +138,7 @@ in
       example = lib.literalExpression ''
         {
           prefix = "C-b";
-          vi-mode = true;
+          repeat-time = 500;
           terminal = {
             font-family = "JetBrains Mono";
             font-size = 16;
@@ -148,7 +148,7 @@ in
       description = ''
         btmux's `config.toml`, represented as a Nix attribute set. The
         attribute names and values use btmux's TOML schema; for example,
-        `vi-mode` and `font-size` retain their kebab-case names. An empty set
+        `repeat-time` and `font-size` retain their kebab-case names. An empty set
         produces an empty configuration file, allowing btmux's built-in
         defaults to apply.
 

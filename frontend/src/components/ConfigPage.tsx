@@ -214,7 +214,7 @@ const TOML_DEFAULTS = {
   scrollback: 100_000,
   fontFamily: 'Geist Mono',
   fontSize: 18,
-  fontWeight: 200,
+  fontWeight: 300,
   convertEol: false,
   disableStdin: false,
   smoothScrollDuration: 120,

@@ -34,7 +34,7 @@ export const CONFIG_DEFAULTS = {
     scrollback: 100_000,
     fontSize: 18,
     fontFamily: 'Geist Mono',
-    fontWeight: 200,
+    fontWeight: 300,
     allowTransparency: null,
     convertEol: null,
     disableStdin: null,

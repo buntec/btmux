@@ -175,7 +175,9 @@ default.
 }
 ```
 
-`services.btmux` is accepted as an alias for `programs.btmux`. Set
+`services.btmux` is accepted as an alias for `programs.btmux`. The service uses
+the same launchd label and systemd unit as `btmux install`, so `btmux restart`
+works with it. If you used `btmux install` before, run `btmux uninstall` first. Set
 `programs.btmux.service.enable = false` to install and configure btmux without
 starting it. Override `package` to use a different build or package source, or
 set it to `null` (with the service disabled) to only write the configuration.

@@ -278,6 +278,8 @@ in
     launchd.agents.btmux = lib.mkIf (cfg.service.enable && isDarwin) {
       enable = true;
       config = {
+        # Same label as `btmux install`, so `btmux restart` and `uninstall` work.
+        Label = "com.btmux.server";
         ProgramArguments = programArguments;
         EnvironmentVariables = serviceEnvironment;
         KeepAlive = {

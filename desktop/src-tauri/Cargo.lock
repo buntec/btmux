@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "btmux-desktop"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
  "libc",
  "notify-rust",

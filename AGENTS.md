@@ -120,9 +120,10 @@ profile.
 
 `btmux upgrade` (`handoff.rs`) keeps them instead: it asks the profile's server
 (`POST /api/server/upgrade`) to re-exec into the CLI's binary in the same
-process, after checking that binary's hidden `handoff-version`. The server
-holds the state lock, stops every PTY reader (unread output stays in the
-kernel), shuts down Neovim and VS Code, and writes session snapshots, replay
+process, after checking that binary's hidden `handoff-version`. It refuses
+while the built-in Neovim has unsaved changes. The server holds the state
+lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
+output stays in the kernel), and writes session snapshots, replay
 journals, title/cwd, program-set colors, any partly read escape sequence, and
 accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
@@ -130,8 +131,12 @@ file survive `execve`; shells stay its children. The new process takes them
 over through `BTMUX_HANDOFF` before anything spawns; browsers reconnect and
 replay. If the exec fails, the readers and writers restart, tabs get an error
 toast, and `btmux upgrade` reports the error (`upgrade_error` in `/api/info`).
-Bump `handoff::VERSION` whenever the handoff file changes. The Home
-Manager module upgrades this way when only the package changed.
+It exits with status 3 whenever the server keeps running unchanged, and checks
+the pid to tell an exec from a service manager's restart. Bump
+`handoff::VERSION` whenever the handoff file changes; `just protocol` then
+records its shape in `src/handoff.schema`, and the tests reject a changed shape
+without a bump. The Home Manager module upgrades this way when only the package
+changed, and doesn't restart on status 3.
 
 `discovery.rs` is shared with the Tauri launcher. After binding, standalone
 servers (not bundled desktop servers) publish an owner-only `state.server`

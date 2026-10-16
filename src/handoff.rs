@@ -23,7 +23,7 @@ use crate::session::manager::SessionSnapshot;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -46,6 +46,7 @@ pub fn configure(listener: RawFd, lock: Option<RawFd>, state_file: Option<PathBu
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct Header {
     version: u32,
     listener: RawFd,
@@ -55,6 +56,7 @@ struct Header {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct PaneHeader {
     id: Uuid,
     fd: RawFd,
@@ -68,13 +70,15 @@ struct PaneHeader {
     spawn_cwd: Option<PathBuf>,
     color_reports: bool,
     colors: Vec<Option<[u8; 3]>>,
-    pending: Vec<u8>,
-    /// Length of the unwritten input, which follows the journal bytes.
+    /// Length of the partly read escape sequence, which follows the journal bytes.
+    pending: usize,
+    /// Length of the unwritten input, which follows the pending bytes.
     input: usize,
     bin: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 enum Event {
     Data(usize),
     Size(u16, u16),
@@ -138,6 +142,8 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 }
             });
         }
+        let mut pending = vec![0; pane.pending];
+        file.read_exact(&mut pending).map_err(error)?;
         let mut input = vec![0; pane.input];
         file.read_exact(&mut input).map_err(error)?;
         panes.push((
@@ -153,7 +159,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 spawn_cwd: pane.spawn_cwd,
                 color_reports: pane.color_reports,
                 colors: pane.colors,
-                pending: pane.pending,
+                pending,
                 input,
                 bin: pane.bin,
             },
@@ -167,13 +173,27 @@ pub fn take() -> Result<Option<Inherited>, String> {
     }))
 }
 
+/// Why an upgrade didn't start.
+pub enum Refusal {
+    /// Only a restart can move the server to the new binary.
+    Incompatible(String),
+    /// Retry later, e.g. once Neovim's buffers are saved.
+    Busy(String),
+}
+
 /// Check that `exe` accepts this server's handoff, then re-execute into it
 /// once the caller has replied.
-pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), String> {
-    let context = CONTEXT.get().ok_or("this server cannot upgrade in place")?;
+pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), Refusal> {
+    let context = CONTEXT
+        .get()
+        .ok_or_else(|| Refusal::Incompatible("this server cannot upgrade in place".into()))?;
     if !exe.is_absolute() || !exe.is_file() {
-        return Err(format!("{} is not an executable file", exe.display()));
+        return Err(Refusal::Incompatible(format!(
+            "{} is not an executable file",
+            exe.display()
+        )));
     }
+    let incompatible = Refusal::Incompatible;
     let output = tokio::time::timeout(
         Duration::from_secs(10),
         tokio::process::Command::new(&exe)
@@ -182,17 +202,20 @@ pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), String> {
             .output(),
     )
     .await
-    .map_err(|_| format!("{} did not respond", exe.display()))?
-    .map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
+    .map_err(|_| incompatible(format!("{} did not respond", exe.display())))?
+    .map_err(|e| incompatible(format!("cannot run {}: {e}", exe.display())))?;
     let version = String::from_utf8_lossy(&output.stdout);
     if !output.status.success() || version.trim() != VERSION.to_string() {
-        return Err(format!(
+        return Err(incompatible(format!(
             "{} cannot take over this server (handoff version {VERSION}); restart it instead",
             exe.display()
-        ));
+        )));
     }
+    crate::ws::nvim::check_saved()
+        .await
+        .map_err(Refusal::Busy)?;
     if IN_PROGRESS.swap(true, Ordering::SeqCst) {
-        return Err("an upgrade is already in progress".into());
+        return Err(Refusal::Busy("an upgrade is already in progress".into()));
     }
     *LAST_ERROR.lock().unwrap() = None;
     tokio::spawn(async move {
@@ -225,9 +248,12 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     tracing::info!("upgrading in place to {}", exe.display());
     // Held until exec, so nothing changes or spawns meanwhile.
     let mut manager = state.write().await;
-    let (sessions, panes) = manager.export_handoff(Duration::from_secs(2));
-    crate::ws::nvim::shutdown().await;
+    // Before anything stops: Neovim refuses to quit with unsaved changes.
+    if let Err(error) = crate::ws::nvim::quit().await {
+        return error;
+    }
     crate::vscode::shutdown().await;
+    let (sessions, panes) = manager.export_handoff(Duration::from_secs(2));
     if let Some(path) = &context.state_file {
         if let Err(error) = crate::persistence::save(path, &sessions) {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
@@ -320,7 +346,7 @@ fn write(
                 spawn_cwd: pane.spawn_cwd.clone(),
                 color_reports: pane.color_reports,
                 colors: pane.colors.clone(),
-                pending: pane.pending.clone(),
+                pending: pane.pending.len(),
                 input: pane.input.len(),
                 bin: pane.bin.clone(),
             })
@@ -336,6 +362,7 @@ fn write(
                 out.write_all(bytes)?;
             }
         }
+        out.write_all(&pane.pending)?;
         out.write_all(&pane.input)?;
     }
     out.flush()?;
@@ -344,6 +371,9 @@ fn write(
     Ok(file)
 }
 
+/// `btmux upgrade` exit status when the server keeps running unchanged.
+const KEPT: i32 = 3;
+
 /// `btmux upgrade`: move the profile's server to this binary.
 pub async fn run_cli(profile: Option<&str>) -> i32 {
     match upgrade_server(profile).await {
@@ -351,23 +381,25 @@ pub async fn run_cli(profile: Option<&str>) -> i32 {
             println!("btmux server upgraded to {version}");
             0
         }
-        Err(error) => {
+        Err((code, error)) => {
             eprintln!("btmux: {error}");
-            1
+            code
         }
     }
 }
 
-async fn upgrade_server(profile: Option<&str>) -> Result<String, String> {
-    let state = crate::persistence::state_path(profile)?
-        .ok_or("cannot resolve the btmux state directory")?;
+async fn upgrade_server(profile: Option<&str>) -> Result<String, (i32, String)> {
+    let failed = |error: String| (1, error);
+    let state = crate::persistence::state_path(profile)
+        .map_err(failed)?
+        .ok_or_else(|| failed("cannot resolve the btmux state directory".into()))?;
     let server = crate::discovery::read_registration(&state.with_extension("server"))
-        .ok_or("no running btmux server found")?;
+        .ok_or_else(|| failed("no running btmux server found".into()))?;
     let url = format!("http://{}", server.address);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| failed(e.to_string()))?;
     let info = || async {
         client
             .get(format!("{url}/api/info"))
@@ -382,10 +414,8 @@ async fn upgrade_server(profile: Option<&str>) -> Result<String, String> {
     };
     let before = info()
         .await
-        .ok_or("cannot reach the btmux server")?
-        .get("instance")
-        .cloned();
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        .ok_or_else(|| failed("cannot reach the btmux server".into()))?;
+    let exe = std::env::current_exe().map_err(|e| failed(e.to_string()))?;
     let response = client
         .post(format!("{url}/api/server/upgrade"))
         .bearer_auth(&server.token)
@@ -393,27 +423,107 @@ async fn upgrade_server(profile: Option<&str>) -> Result<String, String> {
         .body(serde_json::json!({ "executable": exe }).to_string())
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| failed(e.to_string()))?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(if body.is_empty() {
-            format!("upgrade refused: {status}")
+        let code = if status == reqwest::StatusCode::LOCKED {
+            KEPT
         } else {
-            body
-        });
+            1
+        };
+        return Err((
+            code,
+            if body.is_empty() {
+                format!("upgrade refused: {status}")
+            } else {
+                body
+            },
+        ));
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(250)).await;
         if let Some(info) = info().await {
-            if info.get("instance") != before.as_ref() {
+            if info["instance"] != before["instance"] {
+                // An exec keeps the pid; a service manager's restart doesn't.
+                if info["pid"] != before["pid"] {
+                    return Err(failed(
+                        "the server restarted instead of upgrading in place; its shells were lost"
+                            .into(),
+                    ));
+                }
                 return Ok(info["version"].as_str().unwrap_or("?").to_string());
             }
             if let Some(error) = info["upgrade_error"].as_str() {
-                return Err(format!("upgrade failed: {error}"));
+                return Err((KEPT, format!("upgrade failed: {error}")));
             }
         }
     }
-    Err("timed out waiting for the upgraded server".into())
+    Err(failed("timed out waiting for the upgraded server".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ts_rs::TS;
+
+    /// A change to the handoff file's shape needs a new `VERSION`, or the old
+    /// server execs a binary that can't read its handoff.
+    #[test]
+    fn format_changes_bump_the_version() {
+        use crate::session::{
+            layout::Layout, manager::WindowSnapshot, AgentState, AgentStatus, NotificationLevel,
+            PaneAlert, PaneSnapshot,
+        };
+        let config = ts_rs::Config::default();
+        let schema = [
+            Header::decl(&config),
+            PaneHeader::decl(&config),
+            Event::decl(&config),
+            SessionSnapshot::decl(&config),
+            WindowSnapshot::decl(&config),
+            PaneSnapshot::decl(&config),
+            PaneAlert::decl(&config),
+            AgentStatus::decl(&config),
+            AgentState::decl(&config),
+            NotificationLevel::decl(&config),
+            Layout::decl(&config),
+        ]
+        .join("\n");
+        // Without doc comments.
+        let mut shape = String::new();
+        let mut rest = schema.as_str();
+        while let Some((before, after)) = rest.split_once("/**") {
+            shape.push_str(before);
+            rest = after.split_once("*/").map_or("", |(_, after)| after);
+        }
+        shape.push_str(rest);
+        let shape: Vec<_> = shape
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        let output = format!("// handoff version {VERSION}\n{}\n", shape.join("\n"));
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/handoff.schema");
+        let recorded = std::fs::read_to_string(&path).unwrap_or_default();
+        if recorded == output {
+            return;
+        }
+        let recorded_version: u32 = recorded
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("// handoff version "))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        assert!(
+            VERSION > recorded_version,
+            "The handoff format changed: bump handoff::VERSION, then run just protocol"
+        );
+        assert!(
+            std::env::var_os("BTMUX_UPDATE_PROTOCOL").is_some(),
+            "Run just protocol to record handoff version {VERSION}"
+        );
+        std::fs::write(&path, output).unwrap();
+    }
 }

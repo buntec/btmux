@@ -40,7 +40,8 @@ Skipping `brew update` can leave a stale tap that doesn't list the new release.
 `btmux upgrade` re-executes the running server in place, keeping its shells and
 scrollback; if it reports that the running server can't take over (it predates
 the command, or the upgrade format changed), run `btmux restart` instead, which
-ends running pane processes. Without either the service keeps the old version,
+ends running pane processes. It refuses while the built-in Neovim has unsaved
+changes, and exits with status 3 when the server keeps running the old version. Without either the service keeps the old version,
 and the desktop app shows
 a version-mismatch warning (**About btmux** lists both versions). A service
 installed from Homebrew points at the version-independent
@@ -184,7 +185,9 @@ default.
 the same launchd label and systemd unit as `btmux install`, so `btmux restart`
 works with it. When only the package changes, activation runs `btmux upgrade`,
 so running shells survive; it falls back to a restart if the running server
-can't upgrade in place, and restarts when the service's options change. If you used `btmux install` before, run `btmux uninstall` first. Set
+can't upgrade in place, and restarts when the service's options change. If the
+upgrade is refused or fails while the server keeps running (for example, with
+unsaved Neovim buffers), activation only warns; run `btmux upgrade` later. If you used `btmux install` before, run `btmux uninstall` first. Set
 `programs.btmux.service.enable = false` to install and configure btmux without
 starting it. Override `package` to use a different build or package source, or
 set it to `null` (with the service disabled) to only write the configuration.

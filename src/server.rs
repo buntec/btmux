@@ -39,6 +39,8 @@ pub struct ServerInfo {
     pub executable: Option<String>,
     /// Changes on every start, including an in-place upgrade.
     pub instance: String,
+    /// Kept by an in-place upgrade.
+    pub pid: u32,
 }
 
 pub fn info_routes(info: ServerInfo) -> Router {
@@ -137,9 +139,11 @@ async fn api_upgrade(
     State(state): State<AppState>,
     Json(request): Json<UpgradeRequest>,
 ) -> impl IntoResponse {
+    use crate::handoff::Refusal;
     match crate::handoff::upgrade(state, request.executable).await {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
-        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+        Err(Refusal::Incompatible(error)) => (StatusCode::CONFLICT, error).into_response(),
+        Err(Refusal::Busy(error)) => (StatusCode::LOCKED, error).into_response(),
     }
 }
 
@@ -812,6 +816,7 @@ mod pane_notification_tests {
             listen_address: "127.0.0.1:8004".into(),
             executable: None,
             instance: "test".into(),
+            pid: 0,
         })
         .layer(axum::middleware::from_fn_with_state(
             auth,

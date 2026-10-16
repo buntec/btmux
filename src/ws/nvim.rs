@@ -283,7 +283,78 @@ pub async fn current_file() -> Option<String> {
     super::control::neovim_current_file(&addr.to_string_lossy()).await
 }
 
+/// Modified buffers `:qall` refuses to abandon, by name.
+const MODIFIED_BUFFERS: &str = "join(map(filter(getbufinfo({'bufmodified': 1}), \
+    {_, b -> index(['', 'acwrite'], getbufvar(b.bufnr, '&buftype')) >= 0}), \
+    {_, b -> empty(b.name) ? '[No Name]' : fnamemodify(b.name, ':~')}), ', ')";
+
+async fn modified_buffers(addr: &Path) -> Result<String, String> {
+    let output = tokio::time::timeout(
+        Duration::from_secs(2),
+        Command::new("nvim")
+            .arg("--server")
+            .arg(addr)
+            .args(["--remote-expr", MODIFIED_BUFFERS])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .map_err(|_| "Neovim did not respond (is it waiting at a prompt?)".to_string())?
+    .map_err(|e| format!("cannot reach Neovim: {e}"))?;
+    if !output.status.success() {
+        return Err("cannot check Neovim for unsaved changes".into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Fail if the built-in Neovim has unsaved changes.
+pub async fn check_saved() -> Result<(), String> {
+    let addr = {
+        let server = SERVER.lock().await;
+        match server.as_ref().filter(|server| server.running()) {
+            Some(server) => server.socket(),
+            None => return Ok(()),
+        }
+    };
+    match modified_buffers(&addr).await? {
+        modified if modified.is_empty() => Ok(()),
+        modified => Err(format!("Neovim has unsaved changes: {modified}")),
+    }
+}
+
+/// Quit the built-in Neovim with `:qall`, keeping it if it has unsaved changes.
+pub async fn quit() -> Result<(), String> {
+    let mut server = SERVER.lock().await;
+    if let Some(running) = server.as_mut().filter(|server| server.running()) {
+        match modified_buffers(&running.socket()).await? {
+            modified if modified.is_empty() => {}
+            modified => return Err(format!("Neovim has unsaved changes: {modified}")),
+        }
+        let request = rpc_request("nvim_exec_lua", "vim.cmd.qall()", "");
+        running
+            .stdin
+            .write_all(&request)
+            .await
+            .map_err(|e| format!("write to nvim: {e}"))?;
+        let mut state = running.state.clone();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            state.wait_for(|state| matches!(state, State::Exited(_))),
+        )
+        .await
+        .map_err(|_| "Neovim did not quit".to_string())?
+        .map_err(|_| "Neovim did not quit".to_string())?;
+    }
+    server.take();
+    Ok(())
+}
+
+/// Quit the built-in Neovim, killing it if it doesn't.
 pub async fn shutdown() {
+    if let Err(error) = quit().await {
+        tracing::warn!("killing Neovim: {error}");
+    }
     if let Some(NvimServer {
         mut state, kill, ..
     }) = SERVER.lock().await.take()
@@ -426,11 +497,43 @@ mod tests {
         assert_eq!(request.len(), 12 + 300);
     }
 
+    /// Tests share the one built-in Neovim.
+    static SHARED: Mutex<()> = Mutex::const_new(());
+
+    #[tokio::test]
+    async fn quitting_keeps_unsaved_changes() {
+        if !available() {
+            return;
+        }
+        let _shared = SHARED.lock().await;
+        let (_, addr, state) = connect().await.unwrap();
+        let eval = |expr: &str| {
+            let status = std::process::Command::new("nvim")
+                .arg("--server")
+                .arg(&addr)
+                .args(["--remote-expr", expr])
+                .stdout(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        eval("execute('call setline(1, \"x\")')");
+        let error = check_saved().await.unwrap_err();
+        assert!(error.contains("[No Name]"), "{error}");
+        assert!(quit().await.is_err());
+        assert!(matches!(*state.borrow(), State::Running));
+        eval("execute('set nomodified')");
+        quit().await.unwrap();
+        assert!(matches!(*state.borrow(), State::Exited(_)));
+        assert!(SERVER.lock().await.is_none());
+    }
+
     #[tokio::test]
     async fn reconnects_after_the_socket_is_removed() {
         if !available() {
             return;
         }
+        let _shared = SHARED.lock().await;
         let (_, path, state) = connect().await.unwrap();
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
         let (_, again, _) = connect().await.unwrap();

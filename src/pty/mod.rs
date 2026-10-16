@@ -12,8 +12,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::io::RawFd;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use uuid::Uuid;
@@ -66,6 +67,24 @@ impl PtyIo {
             stop_tx,
         })
     }
+}
+
+/// This server's binary, read at startup: once it is replaced on disk, Linux
+/// reports `<path> (deleted)`.
+pub fn server_exe() -> Option<&'static Path> {
+    static EXE: LazyLock<Option<PathBuf>> = LazyLock::new(|| std::env::current_exe().ok());
+    EXE.as_deref()
+}
+
+/// Hang up a shell no waiter thread watches, and reap it.
+pub fn hang_up(pid: libc::pid_t) {
+    unsafe { libc::kill(pid, libc::SIGHUP) };
+    std::thread::spawn(move || {
+        let mut status = 0;
+        while unsafe { libc::waitpid(pid, &mut status, 0) } == -1
+            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+        {}
+    });
 }
 
 /// A close-on-exec pipe: (read, write).
@@ -414,7 +433,7 @@ impl PtyHandle {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());
-        self.bin = std::env::current_exe().ok();
+        self.bin = server_exe().map(Path::to_path_buf);
         if let Some(exe) = &self.bin {
             cmd.env("BTMUX_BIN", exe);
         }
@@ -457,9 +476,7 @@ impl PtyHandle {
             Vec::new(),
             Vec::new(),
         )
-        .inspect_err(|_| unsafe {
-            libc::kill(pid, libc::SIGHUP);
-        })
+        .inspect_err(|_| hang_up(pid))
     }
 
     /// Take over a shell from the server that re-executed into this one.
@@ -497,8 +514,8 @@ impl PtyHandle {
     /// The program that runs `btmux` subcommands in this pane's shell: its
     /// `$BTMUX_BIN`, unless an upgrade replaced that binary.
     pub fn shell_bin(&self) -> String {
-        match std::env::current_exe() {
-            Ok(exe) if self.bin.as_ref() != Some(&exe) => {
+        match server_exe() {
+            Some(exe) if self.bin.as_deref() != Some(exe) => {
                 crate::session::manager::shell_single_quote(&exe.to_string_lossy())
             }
             _ => "\"$BTMUX_BIN\"".into(),
@@ -717,6 +734,10 @@ impl PtyHandle {
                 }
                 if let Some(reply) = reply.take() {
                     let _ = reply.send(Ok(()));
+                }
+                // `stop_io` can't queue `Stop` while the queue is full.
+                if is_readable(writer_stop.as_raw_fd()) {
+                    break;
                 }
                 match input_rx.blocking_recv() {
                     None => return,
@@ -1425,10 +1446,10 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn adopted_shells_run_the_current_binary() {
         let mut pane = pane("/bin/sh");
-        pane.bin = std::env::current_exe().ok();
+        pane.bin = server_exe().map(Path::to_path_buf);
         assert_eq!(pane.shell_bin(), "\"$BTMUX_BIN\"");
         pane.bin = Some("/old/btmux".into());
-        let exe = std::env::current_exe().unwrap();
+        let exe = server_exe().unwrap();
         assert_eq!(
             pane.shell_bin(),
             crate::session::manager::shell_single_quote(&exe.to_string_lossy())

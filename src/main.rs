@@ -219,6 +219,8 @@ async fn main() {
         eprintln!("btmux: {error}");
         std::process::exit(2);
     });
+    // Before an upgrade can replace the binary on disk.
+    pty::server_exe();
 
     let config_path = config::config_path();
     let mut config_error = None;
@@ -356,11 +358,9 @@ async fn main() {
         }
         .to_string(),
         listen_address: format!("{}:{}", args.host, args.port),
-        executable: std::env::current_exe()
-            .ok()
-            .as_deref()
-            .and_then(absolute_path),
+        executable: pty::server_exe().and_then(absolute_path),
         instance: uuid::Uuid::new_v4().to_string(),
+        pid: std::process::id(),
     };
 
     // Watch the config file and live-reload on change.

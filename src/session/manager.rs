@@ -1276,7 +1276,7 @@ impl SessionManager {
             };
             if let Err(error) = adopted {
                 tracing::warn!(%id, "cannot adopt shell: {error}");
-                unsafe { libc::kill(pid, libc::SIGHUP) };
+                crate::pty::hang_up(pid);
             }
         }
         for (id, alert) in unread {

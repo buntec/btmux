@@ -261,7 +261,11 @@ export type ServerInfo = { version: string, profile: string | null, config_file:
 /**
  * Changes on every start, including an in-place upgrade.
  */
-instance: string, };
+instance: string,
+/**
+ * Kept by an in-place upgrade.
+ */
+pid: number, };
 
 // prettier-ignore
 export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "state": "error", message: string, };

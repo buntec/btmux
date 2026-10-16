@@ -345,7 +345,8 @@ in
             # Darwin's first activation (re)loaded the agent itself.
             lib.optionalString isDarwin ''&& -n "$btmuxPrevPackage"''
           } ]]; then
-            if ! run env XDG_STATE_HOME=${lib.escapeShellArg serviceEnvironment.XDG_STATE_HOME} ${lib.getExe cfg.package} ${
+            btmuxUpgrade=0
+            run env XDG_STATE_HOME=${lib.escapeShellArg serviceEnvironment.XDG_STATE_HOME} ${lib.getExe cfg.package} ${
               lib.escapeShellArgs (
                 lib.optionals (cfg.service.profile != null) [
                   "--profile"
@@ -353,7 +354,11 @@ in
                 ]
                 ++ [ "upgrade" ]
               )
-            }; then
+            } || btmuxUpgrade=$?
+            if [[ $btmuxUpgrade == 3 ]]; then
+              # Still running, shells intact (e.g. unsaved Neovim buffers).
+              warnEcho "btmux keeps running the old version; run 'btmux upgrade' to retry"
+            elif [[ $btmuxUpgrade != 0 ]]; then
               warnEcho "In-place btmux upgrade failed; restarting it"
               ${restartService}
             fi

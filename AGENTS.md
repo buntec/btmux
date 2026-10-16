@@ -123,7 +123,8 @@ profile.
 process, after checking that binary's hidden `handoff-version`. The server
 holds the state lock, stops every PTY reader (unread output stays in the
 kernel), shuts down Neovim and VS Code, and writes session snapshots, replay
-journals, title/cwd, program-set colors, and any partly read escape sequence
+journals, title/cwd, program-set colors, any partly read escape sequence, and
+accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
 over through `BTMUX_HANDOFF` before anything spawns; browsers reconnect and

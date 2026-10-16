@@ -31,6 +31,10 @@ pub struct Handoff {
     pub colors: Vec<Option<colors::Rgb>>,
     /// An escape sequence the reader had only partly seen.
     pub pending: Vec<u8>,
+    /// Accepted input not yet written to the PTY.
+    pub input: Vec<u8>,
+    /// The `BTMUX_BIN` the shell was started with.
+    pub bin: Option<std::path::PathBuf>,
 }
 
 /// What a reader stopped for a handoff leaves behind.
@@ -62,12 +66,29 @@ pub fn set_cloexec(fd: RawFd, enabled: bool) -> std::io::Result<()> {
     Ok(())
 }
 
+fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Wait until `fd` is readable. `Ok(false)` means `stop` is readable or closed.
 fn wait_readable(fd: RawFd, stop: RawFd) -> std::io::Result<bool> {
+    wait_ready(fd, libc::POLLIN, stop)
+}
+
+/// Wait until `fd` is writable. `Ok(false)` means `stop` is readable or closed.
+fn wait_writable(fd: RawFd, stop: RawFd) -> std::io::Result<bool> {
+    wait_ready(fd, libc::POLLOUT, stop)
+}
+
+fn wait_ready(fd: RawFd, events: libc::c_short, stop: RawFd) -> std::io::Result<bool> {
     let mut fds = [
         libc::pollfd {
             fd,
-            events: libc::POLLIN,
+            events,
             revents: 0,
         },
         libc::pollfd {
@@ -83,6 +104,32 @@ fn wait_readable(fd: RawFd, stop: RawFd) -> std::io::Result<bool> {
         }
     }
     Ok(fds[1].revents == 0)
+}
+
+/// Write `data` unless `stop` fires first. `Ok(false)` leaves the rest in `data`.
+fn write_until_stopped(file: &File, stop: RawFd, data: &mut Vec<u8>) -> std::io::Result<bool> {
+    let mut written = 0;
+    let result = loop {
+        if written == data.len() {
+            break Ok(true);
+        }
+        match wait_writable(file.as_raw_fd(), stop) {
+            Ok(true) => {}
+            other => break other,
+        }
+        match (&mut &*file).write(&data[written..]) {
+            Ok(0) => break Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => written += n,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                ) => {}
+            Err(e) => break Err(e),
+        }
+    };
+    data.drain(..written);
+    result
 }
 
 /// Server-wide context shared by every PTY.
@@ -108,6 +155,8 @@ enum PtyInput {
         shell_pid: libc::pid_t,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// Wakes an idle writer for a handoff.
+    Stop,
 }
 
 impl InputSender {
@@ -162,6 +211,10 @@ pub struct PtyHandle {
     /// Write end of the pipe that stops the reader.
     stop_reader: Option<OwnedFd>,
     reader_stopped: Mutex<Option<std::sync::mpsc::Receiver<ReaderState>>>,
+    /// Input the stopped writer did not write.
+    writer_stopped: Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    /// The `BTMUX_BIN` the shell was started with.
+    bin: Option<std::path::PathBuf>,
     viewers: Vec<(Uuid, u16, u16)>,
     /// The interactive viewer whose size the PTY follows.
     owner_tx: watch::Sender<Option<Uuid>>,
@@ -222,6 +275,8 @@ impl PtyHandle {
             master: None,
             stop_reader: None,
             reader_stopped: Mutex::new(None),
+            writer_stopped: Mutex::new(None),
+            bin: None,
             viewers: Vec::new(),
             owner_tx: watch::channel(None).0,
             size: Arc::new(Mutex::new((0, 0))),
@@ -324,7 +379,8 @@ impl PtyHandle {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());
-        if let Ok(exe) = std::env::current_exe() {
+        self.bin = std::env::current_exe().ok();
+        if let Some(exe) = &self.bin {
             cmd.env("BTMUX_BIN", exe);
         }
         if let Some(token) = crate::auth::shell_token() {
@@ -356,10 +412,19 @@ impl PtyHandle {
             self.color_reports.clone(),
         );
         let replay = Replay::new(cols, rows, self.scrollback_bytes);
-        self.start(master, pid, cols, rows, replay, interceptor, Vec::new())
-            .inspect_err(|_| unsafe {
-                libc::kill(pid, libc::SIGHUP);
-            })
+        self.start(
+            master,
+            pid,
+            cols,
+            rows,
+            replay,
+            interceptor,
+            Vec::new(),
+            Vec::new(),
+        )
+        .inspect_err(|_| unsafe {
+            libc::kill(pid, libc::SIGHUP);
+        })
     }
 
     /// Take over a shell from the server that re-executed into this one.
@@ -368,6 +433,7 @@ impl PtyHandle {
         *self.title.lock().unwrap() = handoff.title;
         *self.cwd.lock().unwrap() = handoff.cwd;
         self.spawn_cwd = handoff.spawn_cwd;
+        self.bin = handoff.bin;
         self.color_reports
             .store(handoff.color_reports, Ordering::Relaxed);
         let mut interceptor = vt_query::VtQueryInterceptor::with_colors(
@@ -389,21 +455,43 @@ impl PtyHandle {
             replay,
             interceptor,
             handoff.pending,
+            handoff.input,
         )
     }
 
-    /// Stop the reader without consuming further output, for a handoff.
-    pub fn stop_reader(&self) {
-        if let Some(stop) = &self.stop_reader {
-            unsafe { libc::write(stop.as_raw_fd(), [0u8].as_ptr().cast(), 1) };
+    /// The program that runs `btmux` subcommands in this pane's shell: its
+    /// `$BTMUX_BIN`, unless an upgrade replaced that binary.
+    pub fn shell_bin(&self) -> String {
+        match std::env::current_exe() {
+            Ok(exe) if self.bin.as_ref() != Some(&exe) => {
+                crate::session::manager::shell_single_quote(&exe.to_string_lossy())
+            }
+            _ => "\"$BTMUX_BIN\"".into(),
         }
     }
 
-    /// Wait for the stopped reader and export this pane's state. `None` if
-    /// the pane has no live shell.
+    /// Stop the reader and writer without consuming further output or
+    /// input, for a handoff.
+    pub fn stop_io(&self) {
+        if let Some(stop) = &self.stop_reader {
+            unsafe { libc::write(stop.as_raw_fd(), [0u8].as_ptr().cast(), 1) };
+            // A full queue means the writer isn't idle.
+            let _ = self.input_tx.0.try_send(PtyInput::Stop);
+        }
+    }
+
+    /// Wait for the stopped reader and writer and export this pane's state.
+    /// `None` if the pane has no live shell.
     pub fn export_handoff(&mut self, timeout: Duration) -> Option<(RawFd, Handoff)> {
         let stopped = self.reader_stopped.get_mut().unwrap().take()?;
         let reader = stopped.recv_timeout(timeout).ok()?;
+        let input = self
+            .writer_stopped
+            .get_mut()
+            .unwrap()
+            .take()
+            .and_then(|stopped| stopped.recv_timeout(timeout).ok())
+            .unwrap_or_default();
         let pid = (*self.child.lock().unwrap())?;
         let master = self.master.as_ref()?.as_raw_fd();
         let (cols, rows) = *self.size.lock().unwrap();
@@ -421,6 +509,8 @@ impl PtyHandle {
                 color_reports: self.color_reports.load(Ordering::Relaxed),
                 colors: reader.colors,
                 pending: reader.pending,
+                input,
+                bin: self.bin.clone(),
             },
         ))
     }
@@ -435,11 +525,15 @@ impl PtyHandle {
         replay: Replay,
         interceptor: vt_query::VtQueryInterceptor,
         pending: Vec<u8>,
+        input: Vec<u8>,
     ) -> Result<(), String> {
         let io_error = |e: std::io::Error| format!("failed to start PTY: {e}");
+        // So a stalled program can't block the writer through a handoff.
+        set_nonblocking(master.as_raw_fd()).map_err(io_error)?;
         let mut reader = File::from(master.try_clone().map_err(io_error)?);
-        let mut writer = File::from(master.try_clone().map_err(io_error)?);
+        let writer = File::from(master.try_clone().map_err(io_error)?);
         let (stop_rx, stop_tx) = pipe().map_err(io_error)?;
+        let writer_stop = stop_rx.try_clone().map_err(io_error)?;
         set_size(master.as_raw_fd(), cols, rows);
 
         self.shell_pid = Some(pid);
@@ -471,6 +565,8 @@ impl PtyHandle {
         let (input_tx, mut input_rx) = mpsc::channel::<PtyInput>(32);
         let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
         *self.reader_stopped.get_mut().unwrap() = Some(stopped_rx);
+        let (writer_stopped_tx, writer_stopped_rx) = std::sync::mpsc::channel();
+        *self.writer_stopped.get_mut().unwrap() = Some(writer_stopped_rx);
         self.stop_reader = Some(stop_tx);
 
         let mut output = OutputPipeline {
@@ -507,7 +603,11 @@ impl PtyHandle {
                                 break;
                             }
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                            ) => {}
                         Err(_) => break,
                     }
                 }
@@ -520,47 +620,70 @@ impl PtyHandle {
             }
         });
 
-        // Dedicated blocking writer — serializes input and backend DA replies,
+        // Dedicated writer — serializes input and backend DA replies,
         // filtering stale CPR responses from emulator input.
         let pending_cpr_pgrps_writer = self.pending_cpr_pgrps.clone();
         let master_fd_writer = self.master_fd.clone();
         std::thread::spawn(move || {
-            while let Some(input) = input_rx.blocking_recv() {
-                match input {
-                    PtyInput::Raw(data) => {
-                        let filtered = Self::filter_stale_cpr(
-                            &data,
-                            &pending_cpr_pgrps_writer,
-                            &master_fd_writer,
-                        );
-                        if !filtered.is_empty() && writer.write_all(&filtered).is_err() {
-                            break;
+            let filter = |data: &[u8]| {
+                Self::filter_stale_cpr(data, &pending_cpr_pgrps_writer, &master_fd_writer)
+            };
+            let mut unwritten = input;
+            let mut reply: Option<oneshot::Sender<Result<(), String>>> = None;
+            loop {
+                match write_until_stopped(&writer, writer_stop.as_raw_fd(), &mut unwritten) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(e) => {
+                        if let Some(reply) = reply {
+                            let _ = reply.send(Err(format!("PTY input unavailable: {e}")));
                         }
+                        return;
                     }
-                    PtyInput::ShellCommand {
+                }
+                if let Some(reply) = reply.take() {
+                    let _ = reply.send(Ok(()));
+                }
+                match input_rx.blocking_recv() {
+                    None => return,
+                    Some(PtyInput::Stop) => break,
+                    Some(PtyInput::Raw(data)) => unwritten = filter(&data),
+                    Some(PtyInput::ShellCommand {
                         data,
                         shell_pid,
-                        reply,
-                    } => {
+                        reply: sender,
+                    }) => {
                         let foreground = master_fd_writer
                             .lock()
                             .unwrap()
                             .map(|fd| unsafe { libc::tcgetpgrp(fd) });
-                        let result = if foreground == Some(shell_pid) {
-                            writer
-                                .write_all(&data)
-                                .map_err(|e| format!("PTY input unavailable: {e}"))
+                        if foreground == Some(shell_pid) {
+                            unwritten = data;
+                            reply = Some(sender);
                         } else {
-                            Err("Cannot open file: the pane is not at a shell prompt".into())
-                        };
-                        let write_failed = foreground == Some(shell_pid) && result.is_err();
-                        let _ = reply.send(result);
-                        if write_failed {
-                            break;
+                            let _ = sender.send(Err(
+                                "Cannot open file: the pane is not at a shell prompt".into(),
+                            ));
                         }
                     }
                 }
             }
+            // Stopped for a handoff: the next server writes the rest.
+            if let Some(reply) = reply {
+                let _ = reply.send(Ok(()));
+            }
+            input_rx.close();
+            while let Ok(input) = input_rx.try_recv() {
+                match input {
+                    PtyInput::Raw(data) => unwritten.extend(filter(&data)),
+                    // Its foreground check can't carry over.
+                    PtyInput::ShellCommand { reply, .. } => {
+                        let _ = reply.send(Err("The btmux server is upgrading".into()));
+                    }
+                    PtyInput::Stop => {}
+                }
+            }
+            let _ = writer_stopped_tx.send(unwritten);
         });
 
         self.input_tx = InputSender(input_tx);
@@ -1095,7 +1218,7 @@ mod lifecycle_tests {
             .unwrap();
         read_until(&mut rx, "BEFORE_HANDOFF").await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        old.stop_reader();
+        old.stop_io();
         let (fd, handoff) = old
             .export_handoff(std::time::Duration::from_secs(2))
             .unwrap();
@@ -1129,11 +1252,53 @@ mod lifecycle_tests {
             title.starts_with("ti") && title.ends_with("tle"),
             "{title:?}"
         );
-        new.stop_reader();
+        new.stop_io();
         let (_, handoff) = new
             .export_handoff(std::time::Duration::from_secs(2))
             .unwrap();
         assert_eq!(handoff.colors[256], Some([0x12, 0x34, 0x56]));
+    }
+    #[tokio::test]
+    async fn handoff_keeps_unwritten_input() {
+        let mut old = pane("/bin/sh");
+        old.ensure_spawned(80, 24).unwrap();
+        let (mut rx, _) = old.subscribe_replay();
+        old.input_tx
+            .send(
+                b"stty raw -echo; printf 'RAW_''READY'; sleep 2; head -c 262144 | wc -c\r".to_vec(),
+            )
+            .unwrap();
+        read_until(&mut rx, "RAW_READY").await;
+        for _ in 0..4 {
+            old.input_tx.send(vec![b'x'; 64 * 1024]).unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        old.stop_io();
+        let (fd, handoff) = old
+            .export_handoff(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(!handoff.input.is_empty());
+        let master = unsafe { BorrowedFd::borrow_raw(fd) }
+            .try_clone_to_owned()
+            .unwrap();
+        std::mem::forget(old);
+
+        let mut new = pane("/bin/sh");
+        new.adopt(master, handoff).unwrap();
+        let (mut rx, _) = new.subscribe_replay();
+        read_until(&mut rx, "262144").await;
+    }
+    #[tokio::test]
+    async fn adopted_shells_run_the_current_binary() {
+        let mut pane = pane("/bin/sh");
+        pane.bin = std::env::current_exe().ok();
+        assert_eq!(pane.shell_bin(), "\"$BTMUX_BIN\"");
+        pane.bin = Some("/old/btmux".into());
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(
+            pane.shell_bin(),
+            crate::session::manager::shell_single_quote(&exe.to_string_lossy())
+        );
     }
     #[tokio::test]
     async fn oldest_viewer_owns_size_until_disconnect() {

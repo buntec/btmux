@@ -68,6 +68,9 @@ struct PaneHeader {
     color_reports: bool,
     colors: Vec<Option<[u8; 3]>>,
     pending: Vec<u8>,
+    /// Length of the unwritten input, which follows the journal bytes.
+    input: usize,
+    bin: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -130,6 +133,8 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 }
             });
         }
+        let mut input = vec![0; pane.input];
+        file.read_exact(&mut input).map_err(error)?;
         panes.push((
             pane.id,
             master,
@@ -144,6 +149,8 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 color_reports: pane.color_reports,
                 colors: pane.colors,
                 pending: pane.pending,
+                input,
+                bin: pane.bin,
             },
         ));
     }
@@ -274,6 +281,8 @@ fn write(
                 color_reports: pane.color_reports,
                 colors: pane.colors.clone(),
                 pending: pane.pending.clone(),
+                input: pane.input.len(),
+                bin: pane.bin.clone(),
             })
             .collect(),
     };
@@ -287,6 +296,7 @@ fn write(
                 out.write_all(bytes)?;
             }
         }
+        out.write_all(&pane.input)?;
     }
     out.flush()?;
     drop(out);

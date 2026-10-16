@@ -1207,7 +1207,7 @@ impl SessionManager {
         })
     }
 
-    /// Stop every PTY reader and export the session tree and live shells for
+    /// Stop every PTY reader and writer and export the session tree and live shells for
     /// an in-place upgrade.
     pub fn export_handoff(
         &mut self,
@@ -1223,7 +1223,7 @@ impl SessionManager {
                 .flat_map(|w| &w.panes)
         };
         for pane in panes() {
-            pane.pty.stop_reader();
+            pane.pty.stop_io();
         }
         let mut exported = Vec::new();
         for pane in self

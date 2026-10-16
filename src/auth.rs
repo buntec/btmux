@@ -30,11 +30,7 @@ impl Auth {
         port: u16,
         public_urls: &[String],
     ) -> Result<Self, String> {
-        if token.len() < 4
-            || !token
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
-        {
+        if !crate::discovery::valid_token(&token) {
             return Err(
                 "BTMUX_AUTH_TOKEN must contain at least 4 ASCII letters, digits, '-' or '_'".into(),
             );

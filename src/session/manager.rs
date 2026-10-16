@@ -1207,6 +1207,70 @@ impl SessionManager {
         })
     }
 
+    /// Stop every PTY reader and export the session tree and live shells for
+    /// an in-place upgrade.
+    pub fn export_handoff(
+        &mut self,
+        timeout: Duration,
+    ) -> (
+        Vec<SessionSnapshot>,
+        Vec<(Uuid, std::os::fd::RawFd, crate::pty::Handoff)>,
+    ) {
+        let panes = || {
+            self.sessions
+                .iter()
+                .flat_map(|s| &s.windows)
+                .flat_map(|w| &w.panes)
+        };
+        for pane in panes() {
+            pane.pty.stop_reader();
+        }
+        let mut exported = Vec::new();
+        for pane in self
+            .sessions
+            .iter_mut()
+            .flat_map(|s| &mut s.windows)
+            .flat_map(|w| &mut w.panes)
+        {
+            if let Some((fd, handoff)) = pane.pty.export_handoff(timeout) {
+                exported.push((pane.id, fd, handoff));
+            }
+        }
+        (self.all_snapshots(), exported)
+    }
+
+    /// Rebuild the session tree from a handoff and adopt its running shells.
+    pub fn restore_handoff(
+        &mut self,
+        sessions: Vec<SessionSnapshot>,
+        panes: Vec<(Uuid, std::os::fd::OwnedFd, crate::pty::Handoff)>,
+    ) -> usize {
+        let unread: Vec<_> = sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter_map(|p| Some((p.id, p.unread.clone()?)))
+            .collect();
+        let restored = self.restore_from_snapshots(sessions);
+        for (id, master, handoff) in panes {
+            let pid = handoff.pid;
+            let adopted = match self.find_pane_mut(id) {
+                Some(pane) => pane.pty.adopt(master, handoff),
+                None => Err("pane not found".into()),
+            };
+            if let Err(error) = adopted {
+                tracing::warn!(%id, "cannot adopt shell: {error}");
+                unsafe { libc::kill(pid, libc::SIGHUP) };
+            }
+        }
+        for (id, alert) in unread {
+            if let Some(pane) = self.find_pane_mut(id) {
+                pane.unread = Some(alert);
+            }
+        }
+        restored
+    }
+
     pub fn snapshot_by_id(&self, session_id: Uuid) -> Option<SessionSnapshot> {
         self.sessions
             .iter()

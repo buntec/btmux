@@ -12,6 +12,7 @@ mod file_search;
 mod fish_theme;
 mod fs_ops;
 mod git;
+mod handoff;
 mod mcp;
 mod persistence;
 #[cfg(test)]
@@ -205,6 +206,20 @@ async fn main() {
         return;
     }
 
+    if let Some(config::SubCommand::HandoffVersion) = args.command {
+        println!("{}", handoff::VERSION);
+        return;
+    }
+
+    if let Some(config::SubCommand::Upgrade) = args.command {
+        std::process::exit(handoff::run_cli(args.profile.as_deref()).await);
+    }
+
+    let mut inherited = handoff::take().unwrap_or_else(|error| {
+        eprintln!("btmux: {error}");
+        std::process::exit(2);
+    });
+
     let config_path = config::config_path();
     let mut config_error = None;
     let file_config = match &config_path {
@@ -271,12 +286,16 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    let _profile_lock = state_file.as_ref().map(|path| {
-        persistence::ProfileLock::acquire(path).unwrap_or_else(|error| {
-            eprintln!("btmux: {error}");
-            std::process::exit(2);
-        })
-    });
+    let inherited_lock = inherited.as_mut().and_then(|i| i.lock.take());
+    let profile_lock = match inherited_lock {
+        Some(fd) => Some(persistence::ProfileLock::adopt(fd)),
+        None => state_file.as_ref().map(|path| {
+            persistence::ProfileLock::acquire(path).unwrap_or_else(|error| {
+                eprintln!("btmux: {error}");
+                std::process::exit(2);
+            })
+        }),
+    };
     let auth = auth::load_token(state_file.as_deref())
         .and_then(|token| auth::Auth::new(token, &args.host, args.port, &args.public_url))
         .unwrap_or_else(|error| {
@@ -287,7 +306,12 @@ async fn main() {
     if let Some(dir) = state_file.as_ref().and_then(|p| p.parent()) {
         vscode::set_data_dir(dir.join("vscode"));
     }
-    {
+    let inherited_listener = if let Some(inherited) = inherited {
+        let mut mgr = state.write().await;
+        let restored = mgr.restore_handoff(inherited.sessions, inherited.panes);
+        tracing::info!("upgraded in place with {} session(s)", restored);
+        Some(inherited.listener)
+    } else {
         let mut mgr = state.write().await;
         let restored = state_file
             .as_ref()
@@ -299,7 +323,8 @@ async fn main() {
         } else if let Some(p) = &state_file {
             tracing::info!("restored {} session(s) from {}", restored, p.display());
         }
-    }
+        None
+    };
 
     spawn_pane_exit_handler(exit_rx, state.clone());
     spawn_agent_reaper(state.clone(), agent_manifest_dir());
@@ -335,6 +360,7 @@ async fn main() {
             .ok()
             .as_deref()
             .and_then(absolute_path),
+        instance: uuid::Uuid::new_v4().to_string(),
     };
 
     // Watch the config file and live-reload on change.
@@ -348,14 +374,31 @@ async fn main() {
     let app = server::create_app(state.clone())
         .merge(server::info_routes(info))
         .layer(axum::middleware::from_fn_with_state(auth, auth::protect));
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap_or_else(|e| {
+    let upgraded = inherited_listener.is_some();
+    let listener = match inherited_listener {
+        Some(listener) => listener
+            .set_nonblocking(true)
+            .and_then(|()| tokio::net::TcpListener::from_std(listener)),
+        None => tokio::net::TcpListener::bind(&addr).await,
+    }
+    .unwrap_or_else(|e| {
         eprintln!("error: cannot bind to {addr}: {e}");
         if e.kind() == std::io::ErrorKind::AddrInUse {
-            eprintln!("hint: another instance of btmux (or another program) is already using this port.");
+            eprintln!(
+                "hint: another instance of btmux (or another program) is already using this port."
+            );
             eprintln!("      Use --port <PORT> to pick a different port.");
         }
         std::process::exit(1);
     });
+    {
+        use std::os::fd::AsRawFd;
+        handoff::configure(
+            listener.as_raw_fd(),
+            profile_lock.as_ref().map(|lock| lock.raw_fd()),
+            state_file.clone(),
+        );
+    }
 
     // Bundled desktop servers stop with their app, so only it lists them.
     let _registration = state_file
@@ -376,7 +419,7 @@ async fn main() {
             }
         });
 
-    if !args.no_browser {
+    if !args.no_browser && !upgraded {
         let url = format!("http://{}:{}", args.host, args.port);
         if let Err(e) = open::that(&url) {
             tracing::warn!("could not open browser: {}", e);

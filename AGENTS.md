@@ -94,6 +94,9 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   claims on keydown, paste, or mousedown). Followers and mirrors keep the
   ordered server sizes instead of fitting locally: a local resize reflows and
   clears the prompt, which the shell never redraws.
+  `portable-pty` only opens the PTY and spawns the shell: btmux keeps its own
+  close-on-exec master fd, sizes it with `TIOCSWINSZ`, and reaps the shell with
+  `waitpid`. Readers poll the master and a per-pane stop pipe.
   PTY writes use a dedicated blocking thread and a bounded queue. Pane disposal
   signals the foreground group and kills the shell; a waiter reaps the child.
 - **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. `ghostty-web` _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder. The canned bytes mirror `ghostty-web`'s exact DA replies for the pinned build — re-probe if `ghostty-web` is bumped. Don't remove this without a replacement.
@@ -114,6 +117,18 @@ back to `$HOME/.local/state/btmux/state.json`). `--profile NAME` uses a separate
 restored; restored panes spawn fresh shells lazily in their saved cwd. A
 per-profile OS file lock prevents two btmux processes from owning the same
 profile.
+
+`btmux upgrade` (`handoff.rs`) keeps them instead: it asks the profile's server
+(`POST /api/server/upgrade`) to re-exec into the CLI's binary in the same
+process, after checking that binary's hidden `handoff-version`. The server
+holds the state lock, stops every PTY reader (unread output stays in the
+kernel), shuts down Neovim and VS Code, and writes session snapshots, replay
+journals, title/cwd, program-set colors, and any partly read escape sequence
+to an unlinked file. PTY masters, the listener, the profile lock, and that
+file survive `execve`; shells stay its children. The new process takes them
+over through `BTMUX_HANDOFF` before anything spawns; browsers reconnect and
+replay. Bump `handoff::VERSION` whenever the handoff file changes. The Home
+Manager module upgrades this way when only the package changed.
 
 `discovery.rs` is shared with the Tauri launcher. After binding, standalone
 servers (not bundled desktop servers) publish an owner-only `state.server`

@@ -150,6 +150,18 @@ impl Overrides {
     pub fn clear(&mut self) {
         self.0.fill(None);
     }
+
+    pub fn to_vec(&self) -> Vec<Option<Rgb>> {
+        self.0.to_vec()
+    }
+
+    pub fn from_slice(colors: &[Option<Rgb>]) -> Self {
+        let mut overrides = Self::default();
+        for (slot, color) in overrides.0.iter_mut().zip(colors) {
+            *slot = *color;
+        }
+        overrides
+    }
 }
 
 /// An OSC color spec: `#` followed by 1–4 hex digits per channel, or

@@ -50,6 +50,20 @@ impl Replay {
         }
     }
 
+    /// Rebuilds a journal from `snapshot()` events.
+    pub fn restore(cols: u16, rows: u16, cap: usize, events: Vec<Output>) -> Self {
+        let mut replay = Self::new(cols, rows, cap);
+        let mut events = events.into_iter();
+        // The checkpoint's size and contents become the head again.
+        for event in events.by_ref().take(2) {
+            replay.advance(&event);
+        }
+        for event in events {
+            replay.push(event);
+        }
+        replay
+    }
+
     pub fn push(&mut self, event: Output) {
         self.revision = self.revision.wrapping_add(1);
         if let Some(live) = &mut self.live {
@@ -212,6 +226,24 @@ mod tests {
         let parser = restore(&replay);
         assert_eq!(parser.screen().contents(), "a🙂b");
         assert_eq!(parser.screen().size(), (30, 100));
+    }
+    #[test]
+    fn restoring_a_snapshot_keeps_one_checkpoint() {
+        let mut replay = Replay::new(80, 24, 3);
+        replay.push(Output::Data(Bytes::from_static(b"evicted ")));
+        replay.push(Output::Data(Bytes::from_static(b"kept")));
+        for _ in 0..3 {
+            replay = Replay::restore(80, 24, 1000, replay.snapshot());
+        }
+        let resets = |replay: &Replay| {
+            replay
+                .snapshot()
+                .iter()
+                .filter(|event| matches!(event, Output::Data(bytes) if bytes.starts_with(b"\x1bc")))
+                .count()
+        };
+        assert_eq!(resets(&replay), 1);
+        assert_eq!(restore(&replay).screen().contents(), "evicted kept");
     }
     #[test]
     fn alternate_screen_survives_eviction() {

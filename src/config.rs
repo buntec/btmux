@@ -274,6 +274,12 @@ pub enum SubCommand {
     Uninstall,
     /// Restart the background service (e.g. after updating the btmux binary).
     Restart,
+    /// Move the running `--profile` server to this binary in place, keeping
+    /// its shells and scrollback.
+    Upgrade,
+    /// Print the in-place upgrade format this binary accepts.
+    #[command(hide = true)]
+    HandoffVersion,
 }
 
 /// The btmux version, taken from `Cargo.toml` at compile time. Shown by the

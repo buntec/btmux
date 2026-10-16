@@ -37,6 +37,8 @@ pub struct ServerInfo {
     pub token_source: String,
     pub listen_address: String,
     pub executable: Option<String>,
+    /// Changes on every start, including an in-place upgrade.
+    pub instance: String,
 }
 
 pub fn info_routes(info: ServerInfo) -> Router {
@@ -72,6 +74,7 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_create_window),
         )
         .route("/api/notify", axum::routing::post(api_notify))
+        .route("/api/server/upgrade", axum::routing::post(api_upgrade))
         .route(
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify)
@@ -122,6 +125,21 @@ pub fn create_app(state: AppState) -> Router {
             get(|Path(path): Path<String>| async move { serve(&path) }),
         )
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct UpgradeRequest {
+    executable: std::path::PathBuf,
+}
+
+async fn api_upgrade(
+    State(state): State<AppState>,
+    Json(request): Json<UpgradeRequest>,
+) -> impl IntoResponse {
+    match crate::handoff::upgrade(state, request.executable).await {
+        Ok(()) => StatusCode::ACCEPTED.into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -792,6 +810,7 @@ mod pane_notification_tests {
             token_source: "token file".into(),
             listen_address: "127.0.0.1:8004".into(),
             executable: None,
+            instance: "test".into(),
         })
         .layer(axum::middleware::from_fn_with_state(
             auth,

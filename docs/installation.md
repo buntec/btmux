@@ -26,18 +26,22 @@ brew install --cask buntec/btmux/btmux   # desktop app
 The desktop app is not notarized; the cask clears its quarantine attribute so
 macOS does not block it. Both are updated with each release.
 
-To upgrade, update the tap first, then restart the background service (see
-`btmux install`) so it runs the new binary:
+To upgrade, update the tap first, then move the background service (see
+`btmux install`) to the new binary:
 
 ```sh
 brew update
 brew upgrade buntec/btmux/btmux            # server/CLI
 brew upgrade --cask buntec/btmux/btmux     # desktop app
-btmux restart                              # ends running pane processes
+btmux upgrade                              # keeps running pane processes
 ```
 
 Skipping `brew update` can leave a stale tap that doesn't list the new release.
-Without the restart the service keeps the old version, and the desktop app shows
+`btmux upgrade` re-executes the running server in place, keeping its shells and
+scrollback; if it reports that the running server can't take over (it predates
+the command, or the upgrade format changed), run `btmux restart` instead, which
+ends running pane processes. Without either the service keeps the old version,
+and the desktop app shows
 a version-mismatch warning (**About btmux** lists both versions). A service
 installed from Homebrew points at the version-independent
 `<prefix>/opt/btmux/bin/btmux`, so it survives upgrades; if you installed it
@@ -105,6 +109,7 @@ Linux.
 btmux install              # install and start on 127.0.0.1:8004
 btmux --port 8004 install  # bake command-line options into the service
 btmux install --print      # print the unit without installing it
+btmux upgrade              # move the running server to this binary, keeping shells
 btmux restart              # restart the installed service
 btmux uninstall            # stop and remove the service
 ```
@@ -177,7 +182,9 @@ default.
 
 `services.btmux` is accepted as an alias for `programs.btmux`. The service uses
 the same launchd label and systemd unit as `btmux install`, so `btmux restart`
-works with it. If you used `btmux install` before, run `btmux uninstall` first. Set
+works with it. When only the package changes, activation runs `btmux upgrade`,
+so running shells survive; it falls back to a restart if the running server
+can't upgrade in place, and restarts when the service's options change. If you used `btmux install` before, run `btmux uninstall` first. Set
 `programs.btmux.service.enable = false` to install and configure btmux without
 starting it. Override `package` to use a different build or package source, or
 set it to `null` (with the service disabled) to only write the configuration.

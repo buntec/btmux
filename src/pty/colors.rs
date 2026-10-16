@@ -240,6 +240,12 @@ impl SharedPalette {
         *current = palette;
         true
     }
+
+    /// Blocks readers that answer color queries.
+    #[cfg(test)]
+    pub fn lock(&self) -> std::sync::RwLockWriteGuard<'_, Option<Palette>> {
+        self.0.write().unwrap()
+    }
 }
 
 #[cfg(test)]

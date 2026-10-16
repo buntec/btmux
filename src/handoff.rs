@@ -1,8 +1,8 @@
 //! In-place upgrade (`btmux upgrade`): the server re-executes a new binary in
 //! its own process. PTY masters, the listener, and the profile lock stay open
 //! across `execve`, and shells remain its children, so they keep running.
-//! Sessions and replay journals pass through an unlinked file. Once PTY
-//! readers stop, a failed exec ends the server.
+//! Sessions and replay journals pass through an unlinked file. If the exec
+//! fails, the stopped PTY readers and writers restart.
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, Write};
@@ -10,7 +10,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::body::Bytes;
@@ -34,6 +34,7 @@ struct Context {
 
 static CONTEXT: OnceLock<Context> = OnceLock::new();
 static IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
 /// Descriptors to keep across an upgrade, besides PTY masters.
 pub fn configure(listener: RawFd, lock: Option<RawFd>, state_file: Option<PathBuf>) {
@@ -120,6 +121,10 @@ pub fn take() -> Result<Option<Inherited>, String> {
         .iter()
         .map(|pane| unsafe { OwnedFd::from_raw_fd(pane.fd) })
         .collect();
+    // Startup runs programs (`nvim --version`) before the shells are adopted.
+    for master in &masters {
+        set_cloexec(master.as_raw_fd(), true).map_err(error)?;
+    }
     let mut panes = Vec::new();
     for (pane, master) in header.panes.into_iter().zip(masters) {
         let mut journal = Vec::with_capacity(pane.journal.len());
@@ -189,17 +194,33 @@ pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), String> {
     if IN_PROGRESS.swap(true, Ordering::SeqCst) {
         return Err("an upgrade is already in progress".into());
     }
+    *LAST_ERROR.lock().unwrap() = None;
     tokio::spawn(async move {
         // Let the reply reach the client.
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let error = execute(state, context, &exe).await;
+        let error = execute(state.clone(), context, &exe).await;
         tracing::error!("in-place upgrade failed: {error}");
-        std::process::exit(1);
+        let toast = crate::ws::control::ServerMessage::Toast {
+            message: format!("Upgrade failed: {error}"),
+            level: crate::ws::control::ToastLevel::Error,
+        };
+        let _ = state
+            .read()
+            .await
+            .events()
+            .send(serde_json::to_string(&toast).unwrap());
+        *LAST_ERROR.lock().unwrap() = Some(error);
+        IN_PROGRESS.store(false, Ordering::SeqCst);
     });
     Ok(())
 }
 
-/// Only returns on failure.
+/// Why the last upgrade failed, for `btmux upgrade`.
+pub fn last_error() -> Option<String> {
+    LAST_ERROR.lock().unwrap().clone()
+}
+
+/// Only returns on failure, with the shells running again.
 async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     tracing::info!("upgrading in place to {}", exe.display());
     // Held until exec, so nothing changes or spawns meanwhile.
@@ -212,13 +233,32 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
+    let error = exec(context, exe, sessions, &panes);
+    let kept = [context.listener]
+        .into_iter()
+        .chain(context.lock)
+        .chain(panes.iter().map(|(_, fd, _)| *fd));
+    for fd in kept {
+        let _ = set_cloexec(fd, true);
+    }
+    manager.resume_handoff(panes);
+    error
+}
+
+/// Only returns on failure.
+fn exec(
+    context: &Context,
+    exe: &Path,
+    sessions: Vec<SessionSnapshot>,
+    panes: &[(Uuid, RawFd, Handoff)],
+) -> String {
     let dir = context
         .state_file
         .as_deref()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(std::env::temp_dir);
-    let file = match write(&dir, context, sessions, &panes) {
+    let file = match write(&dir, context, sessions, panes) {
         Ok(file) => file,
         Err(error) => return format!("cannot write handoff: {error}"),
     };
@@ -369,6 +409,9 @@ async fn upgrade_server(profile: Option<&str>) -> Result<String, String> {
         if let Some(info) = info().await {
             if info.get("instance") != before.as_ref() {
                 return Ok(info["version"].as_str().unwrap_or("?").to_string());
+            }
+            if let Some(error) = info["upgrade_error"].as_str() {
+                return Err(format!("upgrade failed: {error}"));
             }
         }
     }

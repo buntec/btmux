@@ -288,7 +288,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, };
 
 // prettier-ignore
-export type ToastLevel = "info";
+export type ToastLevel = "info" | "error";
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

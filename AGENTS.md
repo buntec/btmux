@@ -128,7 +128,9 @@ accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
 over through `BTMUX_HANDOFF` before anything spawns; browsers reconnect and
-replay. Bump `handoff::VERSION` whenever the handoff file changes. The Home
+replay. If the exec fails, the readers and writers restart, tabs get an error
+toast, and `btmux upgrade` reports the error (`upgrade_error` in `/api/info`).
+Bump `handoff::VERSION` whenever the handoff file changes. The Home
 Manager module upgrades this way when only the package changed.
 
 `discovery.rs` is shared with the Tauri launcher. After binding, standalone

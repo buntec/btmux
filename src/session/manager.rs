@@ -1239,6 +1239,22 @@ impl SessionManager {
         (self.all_snapshots(), exported)
     }
 
+    /// Restart the shells `export_handoff` stopped, after a failed upgrade.
+    pub fn resume_handoff(&mut self, panes: Vec<(Uuid, std::os::fd::RawFd, crate::pty::Handoff)>) {
+        for (id, _, handoff) in panes {
+            let pid = handoff.pid;
+            let resumed = match self.find_pane_mut(id) {
+                Some(pane) => pane.pty.resume(handoff),
+                None => Err("pane not found".into()),
+            };
+            if let Err(error) = resumed {
+                tracing::warn!(%id, "cannot resume shell: {error}");
+                // Its waiter reaps it and removes the pane.
+                unsafe { libc::kill(pid, libc::SIGHUP) };
+            }
+        }
+    }
+
     /// Rebuild the session tree from a handoff and adopt its running shells.
     pub fn restore_handoff(
         &mut self,

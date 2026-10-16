@@ -45,7 +45,8 @@ pub fn info_routes(info: ServerInfo) -> Router {
     Router::new().route(
         "/api/info",
         get(move || {
-            let info = info.clone();
+            let mut info = serde_json::to_value(&info).unwrap();
+            info["upgrade_error"] = crate::handoff::last_error().into();
             async move { Json(info) }
         }),
     )

@@ -1112,6 +1112,10 @@ mod tests {
         fs::write(&file, "one\n").unwrap();
 
         let repo = Repository::init(&root).unwrap();
+        // Without a global identity, as on CI.
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "btmux").unwrap();
+        config.set_str("user.email", "btmux@example.com").unwrap();
         let mut index = repo.index().unwrap();
         index.add_path(Path::new("file.txt")).unwrap();
         index.write().unwrap();

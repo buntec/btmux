@@ -41,7 +41,8 @@ Skipping `brew update` can leave a stale tap that doesn't list the new release.
 scrollback; if it reports that the running server can't take over (it predates
 the command, or the upgrade format changed), run `btmux restart` instead, which
 ends running pane processes. It refuses while the built-in Neovim has unsaved
-changes, and exits with status 3 when the server keeps running the old version. Without either the service keeps the old version,
+changes, and exits with status 3 when the server keeps running the old version.
+[How in-place upgrades work](upgrade.md) explains the mechanism. Without either the service keeps the old version,
 and the desktop app shows
 a version-mismatch warning (**About btmux** lists both versions). A service
 installed from Homebrew points at the version-independent

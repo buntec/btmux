@@ -63,6 +63,7 @@ see [Neovim GUI](docs/neovim.md) for config tips and the bundled plugin.
 ## Learn more
 
 - [Installation](docs/installation.md): services, tokens, remote access, and shell completions
+- [In-place upgrades](docs/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
 - [Configuration](docs/configuration.md): `~/.config/btmux/config.toml`, themes, and profiles
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization
 - [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux

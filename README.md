@@ -6,7 +6,7 @@ A tmux-style terminal manager for the browser and desktop, powered by [ghostty-w
 
 - Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and preset layouts
 - Server-side sessions: (re)connect from any number of frontends
-- Batteries included: file browser, Git mode, process viewer, Neovim GUI
+- Batteries included: file browser, Git mode, process viewer, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
 - Single self-contained binary
 - Interactive shader wallpapers
@@ -76,19 +76,25 @@ cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
 
 Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the command palette.
 
-## Neovim GUI
+## Editor
 
-`<prefix> + e` opens a Neovim GUI drawn by btmux, with its command line,
-completion menu, messages, LSP signature help, and floating windows rendered as native UI. The file
-browser and Git mode open files there by default. It needs Neovim 0.12 or newer
-(without it, files open in the pane);
-see [Neovim GUI](docs/neovim.md) for config tips and the bundled plugin.
+`<prefix> + e` opens the configured `editor` over the active pane, and the file
+browser and Git mode open files there:
+
+- `"neovim"`: a Neovim GUI drawn by btmux, with its command line, completion
+  menu, messages, LSP signature help, and floating windows rendered as native
+  UI. The default when Neovim 0.12 or newer is on `PATH`; see
+  [Neovim GUI](docs/neovim.md).
+- `"vscode"`: VS Code in the browser, using btmux's color scheme and font.
+- `"pane"`: `$EDITOR` run in the pane's shell. The default without Neovim 0.12.
+
+See [Editor](docs/configuration.md#editor) for details.
 
 ## Learn more
 
 - [Installation](docs/installation.md): services, tokens, remote access, and shell completions
 - [In-place upgrades](docs/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
-- [Configuration](docs/configuration.md): `~/.config/btmux/config.toml`, themes, and profiles
+- [Configuration](docs/configuration.md): `~/.config/btmux/config.toml`, themes, editors, and profiles
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization
 - [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux
 - [Neovim GUI](docs/neovim.md): the Neovim GUI, its plugin, and config tips
@@ -108,8 +114,8 @@ just dev    # backend on :8044, frontend on http://localhost:5173
 just check  # type-check Rust and TypeScript
 ```
 
-Run `just` to list all recipes. The dev server uses the `dev` profile, so its
-token is in `~/.local/state/btmux/dev/state.token`.
+Run `just` to list all recipes. The dev server uses the `dev` profile and the
+fixed access token `1234`.
 
 ## License
 

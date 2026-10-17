@@ -14,6 +14,9 @@ use crate::git::RepoLayout;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
 
+/// A live shell handed to an upgraded server: pane, PTY master, and state.
+pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
+
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     shell: String,
@@ -1205,6 +1208,105 @@ impl SessionManager {
             // Transient: the cycle starts fresh after a restore.
             last_preset: None,
         })
+    }
+
+    /// Stop every PTY reader and writer and export the session tree and live shells for
+    /// an in-place upgrade. If a pane doesn't stop in time, every shell resumes.
+    pub fn export_handoff(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<(Vec<SessionSnapshot>, Vec<HandoffPane>), String> {
+        let panes = || {
+            self.sessions
+                .iter()
+                .flat_map(|s| &s.windows)
+                .flat_map(|w| &w.panes)
+        };
+        for pane in panes() {
+            pane.pty.stop_io();
+        }
+        let deadline = Instant::now() + timeout;
+        let mut exported = Vec::new();
+        let mut stuck = 0;
+        for pane in self
+            .sessions
+            .iter_mut()
+            .flat_map(|s| &mut s.windows)
+            .flat_map(|w| &mut w.panes)
+        {
+            match pane.pty.export_handoff(deadline) {
+                Ok(Some((fd, handoff))) => exported.push((pane.id, fd, handoff)),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(id = %pane.id, "cannot hand off shell: {error}");
+                    stuck += 1;
+                }
+            }
+        }
+        if stuck > 0 {
+            self.resume_handoff(exported);
+            return Err(format!("{stuck} pane(s) did not stop in time"));
+        }
+        Ok((self.all_snapshots(), exported))
+    }
+
+    /// Restart the shells `export_handoff` stopped, after a failed upgrade.
+    pub fn resume_handoff(&mut self, panes: Vec<HandoffPane>) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for pane in self
+            .sessions
+            .iter_mut()
+            .flat_map(|s| &mut s.windows)
+            .flat_map(|w| &mut w.panes)
+        {
+            if let Err(error) = pane.pty.recover(deadline) {
+                tracing::warn!(id = %pane.id, "cannot resume shell: {error}");
+            }
+        }
+        for (id, _, handoff) in panes {
+            let pid = handoff.pid;
+            let resumed = match self.find_pane_mut(id) {
+                Some(pane) => pane.pty.resume(handoff),
+                None => Err("pane not found".into()),
+            };
+            if let Err(error) = resumed {
+                tracing::warn!(%id, "cannot resume shell: {error}");
+                // Its waiter reaps it and removes the pane.
+                unsafe { libc::kill(pid, libc::SIGHUP) };
+            }
+        }
+    }
+
+    /// Rebuild the session tree from a handoff and adopt its running shells.
+    pub fn restore_handoff(
+        &mut self,
+        sessions: Vec<SessionSnapshot>,
+        panes: Vec<(Uuid, std::os::fd::OwnedFd, crate::pty::Handoff)>,
+    ) -> usize {
+        let unread: Vec<_> = sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter_map(|p| Some((p.id, p.unread.clone()?)))
+            .collect();
+        let restored = self.restore_from_snapshots(sessions);
+        for (id, master, handoff) in panes {
+            let pid = handoff.pid;
+            let adopted = match self.find_pane_mut(id) {
+                Some(pane) => pane.pty.adopt(master, handoff),
+                None => Err("pane not found".into()),
+            };
+            if let Err(error) = adopted {
+                tracing::warn!(%id, "cannot adopt shell: {error}");
+                crate::pty::hang_up(pid);
+            }
+        }
+        for (id, alert) in unread {
+            if let Some(pane) = self.find_pane_mut(id) {
+                pane.unread = Some(alert);
+            }
+        }
+        restored
     }
 
     pub fn snapshot_by_id(&self, session_id: Uuid) -> Option<SessionSnapshot> {

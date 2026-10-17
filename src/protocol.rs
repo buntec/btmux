@@ -44,7 +44,6 @@ fn generated_protocol_is_current() {
         ConfigUpdate::decl(&config),
         ClientMessage::decl(&config),
         ServerMessage::decl(&config),
-        ToastLevel::decl(&config),
         FileBrowserMode::decl(&config),
         crate::ws::processes::PortInfo::decl(&config),
     ];

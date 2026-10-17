@@ -6,7 +6,7 @@ use serde::Deserialize;
 use tokio::time::Instant;
 
 use crate::config::VERSION;
-use crate::ws::control::{ServerMessage, ToastLevel};
+use crate::ws::control::{NotificationLevel, ServerMessage};
 use crate::AppState;
 
 const LATEST_RELEASE_API: &str = "https://api.github.com/repos/buntec/btmux/releases/latest";
@@ -91,7 +91,7 @@ pub fn spawn(state: AppState) {
                     "btmux {} is available (running {VERSION}): {RELEASES_URL}",
                     tag.trim_start_matches('v')
                 ),
-                level: ToastLevel::Info,
+                level: NotificationLevel::Info,
             };
             let json = serde_json::to_string(&message).unwrap();
             // Fails only when no browser is connected; retry on a later tick.

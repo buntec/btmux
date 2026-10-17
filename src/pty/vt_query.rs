@@ -97,6 +97,20 @@ impl VtQueryInterceptor {
         }
     }
 
+    /// Program-set colors and the unfinished sequence, for an in-place upgrade.
+    pub fn export(&self) -> (Vec<Option<super::colors::Rgb>>, Vec<u8>) {
+        let pending = if self.state == State::Ground {
+            Vec::new()
+        } else {
+            self.raw_seq.clone()
+        };
+        (self.overrides.to_vec(), pending)
+    }
+
+    pub fn set_overrides(&mut self, colors: &[Option<super::colors::Rgb>]) {
+        self.overrides = Overrides::from_slice(colors);
+    }
+
     /// Feed a chunk of PTY output through the interceptor.
     pub fn feed(&mut self, data: &[u8]) -> FilterResult {
         let mut result = FilterResult {

@@ -234,7 +234,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         let Some(pane) = mgr.find_pane(*pane_id) else {
             return Err("Pane no longer exists".into());
         };
-        let text = shell_editor_open_command(path.as_deref(), *line);
+        let text = shell_editor_open_command(&pane.pty.shell_bin(), path.as_deref(), *line);
         return pane.pty.send_shell_command(text.into_bytes()).await;
     }
 
@@ -458,18 +458,18 @@ fn validate_command(
 }
 
 /// Build the shell text that runs `btmux open-editor` (on `path`, if any) in the
-/// pane's own shell (`$BTMUX_BIN` is set at spawn), jumping to `line` when given. The
-/// editor-specific arguments are resolved by that subcommand, which keeps the
-/// typed line short. The leading space keeps it out of history in shells that
-/// honor it.
-fn shell_editor_open_command(path: Option<&str>, line: Option<u32>) -> String {
+/// pane's own shell through `bin` (`PtyHandle::shell_bin`), jumping to `line`
+/// when given. The editor-specific arguments are resolved by that subcommand,
+/// which keeps the typed line short. The leading space keeps it out of history
+/// in shells that honor it.
+fn shell_editor_open_command(bin: &str, path: Option<&str>, line: Option<u32>) -> String {
     let Some(path) = path else {
-        return " \"$BTMUX_BIN\" open-editor\n".into();
+        return format!(" {bin} open-editor\n");
     };
     let quoted = crate::session::manager::shell_single_quote(path);
     match line.filter(|&l| l >= 1) {
-        Some(line) => format!(" \"$BTMUX_BIN\" open-editor {quoted} {line}\n"),
-        None => format!(" \"$BTMUX_BIN\" open-editor {quoted}\n"),
+        Some(line) => format!(" {bin} open-editor {quoted} {line}\n"),
+        None => format!(" {bin} open-editor {quoted}\n"),
     }
 }
 
@@ -616,7 +616,7 @@ async fn neovim_socket_paths(pid: u32) -> Vec<String> {
         _ => Vec::new(),
     };
     #[cfg(target_os = "linux")]
-    {
+    let paths = {
         let mut paths = paths;
         let linux_paths = tokio::task::spawn_blocking(move || linux_socket_paths(pid))
             .await
@@ -626,9 +626,8 @@ async fn neovim_socket_paths(pid: u32) -> Vec<String> {
                 paths.push(path);
             }
         }
-        return paths;
-    }
-    #[cfg(not(target_os = "linux"))]
+        paths
+    };
     paths
 }
 
@@ -908,7 +907,7 @@ pub enum ServerMessage {
     },
     Toast {
         message: String,
-        level: ToastLevel,
+        level: NotificationLevel,
     },
     PaneNotification {
         pane_id: Uuid,
@@ -957,13 +956,6 @@ pub enum FileBrowserMode {
     Files,
     Git,
     Process,
-}
-
-#[derive(Serialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub enum ToastLevel {
-    Info,
 }
 
 pub use crate::session::NotificationLevel;

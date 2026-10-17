@@ -99,6 +99,14 @@ try {
     },
   });
   const canvas = page.locator('canvas[data-shader-state]');
+  /** Wait for a redraw; software WebGPU (as on CI) can take a while. */
+  const redrawn = async (before: string, message: string) => {
+    const deadline = Date.now() + 10_000;
+    while ((await canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())) === before) {
+      assert(Date.now() < deadline, message);
+      await page.waitForTimeout(100);
+    }
+  };
   await page.waitForFunction(() =>
     ['ready', 'unavailable'].includes(
       document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderState ?? '',
@@ -125,8 +133,7 @@ try {
       },
     });
     await page.waitForFunction(() => !(window as any).shaderStore.getState().config.animations);
-    await page.waitForTimeout(250);
-    assert((await capture()) !== initial, 'native parameter changes must change rendered pixels');
+    await redrawn(initial, 'native parameter changes must change rendered pixels');
     const frozen = await capture();
     await page.waitForTimeout(250);
     assert((await capture()) === frozen, 'disabled animations must preserve the last frame');
@@ -210,11 +217,11 @@ try {
       const idle = await capture();
       await move();
       if (id !== 'boids') assert((await capture()) === idle, `${id} must ignore disabled pointer input`);
-      else assert((await capture()) !== idle, 'Boids must animate without pointer input');
+      else await redrawn(idle, 'Boids must animate without pointer input');
       await configure({ wallpaper_shader_follows_mouse_cursor: true });
       const before = await capture();
       await move();
-      assert((await capture()) !== before, `${id} must respond to pointer movement`);
+      await redrawn(before, `${id} must respond to pointer movement`);
       await configure({ animations: false });
       const frozen = await capture();
       await move();
@@ -230,7 +237,7 @@ try {
       });
       const keyboard = await capture();
       await move(true);
-      assert((await capture()) !== keyboard, `${id} must respond to terminal cursor movement`);
+      await redrawn(keyboard, `${id} must respond to terminal cursor movement`);
       await sameTerminal();
       console.log(`PASS ${id} pointer input, terminal cursor, animation pause, and zero speed`);
     }
@@ -325,11 +332,7 @@ try {
       Object.keys((window as any).shaderStore.getState().configPreview.wallpaper_shader_params.grid ?? {}).length === 8,
   );
   if (available) {
-    await page.waitForTimeout(200);
-    assert(
-      (await canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())) !== beforeGrid,
-      'static shaders must redraw after randomization',
-    );
+    await redrawn(beforeGrid!, 'static shaders must redraw after randomization');
   }
   const preview = await page.evaluate(() => (window as any).shaderStore.getState().configPreview);
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();

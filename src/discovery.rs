@@ -24,8 +24,9 @@ pub fn state_dir() -> Option<PathBuf> {
     Some(base.join("btmux"))
 }
 
+/// The server's credential rule, shared with `auth.rs`.
 pub fn valid_token(token: &str) -> bool {
-    token.len() >= 32
+    token.len() >= 4
         && token
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
@@ -176,6 +177,17 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(read_registration(&state.with_extension("server")).is_none());
+        drop(registration);
+        // Any credential the server accepts.
+        let registration = Registration::publish(
+            &state,
+            "127.0.0.1:8004".parse().unwrap(),
+            None,
+            "1234".into(),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(read_registration(&state.with_extension("server")).is_some());
         drop(registration);
         std::fs::remove_dir_all(dir).unwrap();
     }

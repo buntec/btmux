@@ -95,7 +95,7 @@ on macOS, sockets belonging to inaccessible processes may be omitted entirely.
   by all tabs. `L` toggles back to the tab's previous session.
 - **No attach or detach.** Closing the tab is the detach; the server keeps the
   shells running. After a btmux restart the layout returns but processes and
-  scrollback do not.
+  scrollback do not; `btmux upgrade` keeps both.
 - **Size owner.** The first interactive viewer sets a pane's size until it
   leaves or another viewer types, pastes or clicks in it; tmux sizes to the
   smallest client by default.

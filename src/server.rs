@@ -37,13 +37,18 @@ pub struct ServerInfo {
     pub token_source: String,
     pub listen_address: String,
     pub executable: Option<String>,
+    /// Changes on every start, including an in-place upgrade.
+    pub instance: String,
+    /// Kept by an in-place upgrade.
+    pub pid: u32,
 }
 
 pub fn info_routes(info: ServerInfo) -> Router {
     Router::new().route(
         "/api/info",
         get(move || {
-            let info = info.clone();
+            let mut info = serde_json::to_value(&info).unwrap();
+            info["upgrade_error"] = crate::handoff::last_error().into();
             async move { Json(info) }
         }),
     )
@@ -72,6 +77,7 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_create_window),
         )
         .route("/api/notify", axum::routing::post(api_notify))
+        .route("/api/server/upgrade", axum::routing::post(api_upgrade))
         .route(
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify)
@@ -122,6 +128,23 @@ pub fn create_app(state: AppState) -> Router {
             get(|Path(path): Path<String>| async move { serve(&path) }),
         )
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct UpgradeRequest {
+    executable: std::path::PathBuf,
+}
+
+async fn api_upgrade(
+    State(state): State<AppState>,
+    Json(request): Json<UpgradeRequest>,
+) -> impl IntoResponse {
+    use crate::handoff::Refusal;
+    match crate::handoff::upgrade(state, request.executable).await {
+        Ok(()) => StatusCode::ACCEPTED.into_response(),
+        Err(Refusal::Incompatible(error)) => (StatusCode::CONFLICT, error).into_response(),
+        Err(Refusal::Busy(error)) => (StatusCode::LOCKED, error).into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -792,6 +815,8 @@ mod pane_notification_tests {
             token_source: "token file".into(),
             listen_address: "127.0.0.1:8004".into(),
             executable: None,
+            instance: "test".into(),
+            pid: 0,
         })
         .layer(axum::middleware::from_fn_with_state(
             auth,

@@ -28,8 +28,9 @@ wire types; the tests reject stale generated types. `just check` and `just lint`
 remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
 reconnect/replay, config updates, correlated command errors, and multiple viewers,
-followed by Astryx interaction, theme, and shader wallpaper checks
-(`just test-nvim-browser` covers the Neovim surface). `frontend/browser-test-stack.ts`
+followed by upgrade, Astryx interaction, theme, and Git checks
+(`just test-nvim-browser` covers the Neovim surface; `just test-shader-browser`,
+run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
 repo state don't affect it; failures keep the stack logs. Async page predicates must
@@ -94,6 +95,9 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   claims on keydown, paste, or mousedown). Followers and mirrors keep the
   ordered server sizes instead of fitting locally: a local resize reflows and
   clears the prompt, which the shell never redraws.
+  `portable-pty` only opens the PTY and spawns the shell: btmux keeps its own
+  close-on-exec master fd, sizes it with `TIOCSWINSZ`, and reaps the shell with
+  `waitpid`. Readers poll the master and a per-pane stop pipe.
   PTY writes use a dedicated blocking thread and a bounded queue. Pane disposal
   signals the foreground group and kills the shell; a waiter reaps the child.
 - **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. `ghostty-web` _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder. The canned bytes mirror `ghostty-web`'s exact DA replies for the pinned build — re-probe if `ghostty-web` is bumped. Don't remove this without a replacement.
@@ -114,6 +118,32 @@ back to `$HOME/.local/state/btmux/state.json`). `--profile NAME` uses a separate
 restored; restored panes spawn fresh shells lazily in their saved cwd. A
 per-profile OS file lock prevents two btmux processes from owning the same
 profile.
+
+`btmux upgrade` (`handoff.rs`) keeps them instead: it asks the profile's server
+(`POST /api/server/upgrade`) to re-exec into the CLI's binary in the same
+process, after running that binary's hidden `handoff-version` with the
+server's arguments, which the exec passes on. It refuses
+while the built-in Neovim has unsaved changes. The server holds the state
+lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
+output stays in the kernel), and writes session snapshots, replay
+journals, title/cwd, program-set colors, any partly read escape sequence, and
+accepted input not yet written to the PTY (the writer stops too)
+to an unlinked file. PTY masters, the listener, the profile lock, and that
+file survive `execve`; shells stay its children. The new process takes them
+over through `BTMUX_HANDOFF` before anything spawns; browsers reconnect and
+replay. Tabs get a toast when an upgrade starts or is refused; after
+reconnecting, the frontend toasts a changed server version. If the exec fails,
+the readers and writers restart, tabs get an error toast, and `btmux upgrade`
+reports the error (`upgrade_error` in `/api/info`). If a pane's reader or
+writer doesn't stop within 2 s, the upgrade fails before the exec; one that
+stops later restarts without its state. `handoff-version` prints
+the handoff version and the btmux version.
+It exits with status 3 whenever the server keeps running unchanged, and checks
+the pid to tell an exec from a service manager's restart. Bump
+`handoff::VERSION` whenever the handoff file changes; `just protocol` then
+records its shape in `src/handoff.schema`, and the tests reject a changed shape
+without a bump. The Home Manager module upgrades this way when only the package
+changed, and doesn't restart on status 3.
 
 `discovery.rs` is shared with the Tauri launcher. After binding, standalone
 servers (not bundled desktop servers) publish an owner-only `state.server`

@@ -195,6 +195,16 @@ impl ProfileLock {
         }
         Ok(Self(file))
     }
+
+    /// A lock held by the server this one re-executed from.
+    pub fn adopt(fd: std::os::fd::OwnedFd) -> Self {
+        Self(fd.into())
+    }
+
+    pub fn raw_fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd;
+        self.0.as_raw_fd()
+    }
 }
 
 impl Drop for ProfileLock {

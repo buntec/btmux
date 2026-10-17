@@ -17,21 +17,23 @@ let
 
   settingsFormat = pkgs.formats.toml { };
 
-  programArguments = [
-    (lib.getExe cfg.package)
-  ]
-  ++ lib.optional (!cfg.service.openBrowser) "--no-browser"
-  ++ [
-    "--host"
-    cfg.service.host
-    "--port"
-    (toString cfg.service.port)
-  ]
-  ++ lib.optional (cfg.service.profile != null) "--profile"
-  ++ lib.optional (cfg.service.profile != null) cfg.service.profile
-  ++ lib.optional (cfg.service.shell != null) "--shell"
-  ++ lib.optional (cfg.service.shell != null) (toString cfg.service.shell)
-  ++ cfg.service.extraArgs;
+  programArguments =
+    exe:
+    [
+      exe
+    ]
+    ++ lib.optional (!cfg.service.openBrowser) "--no-browser"
+    ++ [
+      "--host"
+      cfg.service.host
+      "--port"
+      (toString cfg.service.port)
+    ]
+    ++ lib.optional (cfg.service.profile != null) "--profile"
+    ++ lib.optional (cfg.service.profile != null) cfg.service.profile
+    ++ lib.optional (cfg.service.shell != null) "--shell"
+    ++ lib.optional (cfg.service.shell != null) (toString cfg.service.shell)
+    ++ cfg.service.extraArgs;
 
   configuredShell = config.home.sessionVariables.SHELL or null;
 
@@ -65,6 +67,24 @@ let
   environmentList = lib.mapAttrsToList (name: value: "${name}=${value}") serviceEnvironment;
 
   configFile = settingsFormat.generate "btmux-config.toml" cfg.settings;
+
+  # Everything an in-place upgrade can't change, since it keeps the running
+  # server's arguments and environment.
+  serviceDefinition = builtins.hashString "sha256" (
+    builtins.toJSON {
+      arguments = programArguments "btmux";
+      environment = serviceEnvironment;
+    }
+  );
+
+  restartService =
+    if isDarwin then
+      ''run /bin/launchctl kickstart -k "gui/$UID/com.btmux.server" || warnEcho "Failed to restart btmux"''
+    else
+      ''run systemctl --user try-restart btmux.service || warnEcho "Failed to restart btmux"'';
+
+  # Home Manager already reloads a changed launchd agent.
+  restartOnDefinitionChange = if isDarwin then ":" else restartService;
 
   completionPackage = pkgs.runCommand "btmux-shell-completions" { } ''
     mkdir -p "$out/share/bash-completion/completions" \
@@ -264,10 +284,12 @@ in
       Unit = {
         Description = "btmux — browser-based terminal manager";
         After = [ "network.target" ];
+        # Upgrades go through `btmux upgrade` (see below).
+        X-SwitchMethod = "keep-old";
       };
 
       Service = {
-        ExecStart = lib.escapeShellArgs programArguments;
+        ExecStart = lib.escapeShellArgs (programArguments (lib.getExe cfg.package));
         Environment = environmentList;
         Restart = "on-failure";
       };
@@ -280,7 +302,12 @@ in
       config = {
         # Same label as `btmux install`, so `btmux restart` and `uninstall` work.
         Label = "com.btmux.server";
-        ProgramArguments = programArguments;
+        # The profile's btmux, so upgrades leave the plist unchanged: Home
+        # Manager would bootout the agent, and when run from a btmux pane the
+        # activation dies with it before bootstrapping the new one.
+        ProgramArguments = programArguments "${config.home.profileDirectory}/bin/${
+          cfg.package.meta.mainProgram or "btmux"
+        }";
         EnvironmentVariables = serviceEnvironment;
         KeepAlive = {
           Crashed = true;
@@ -292,5 +319,51 @@ in
         StandardOutPath = "${config.home.homeDirectory}/Library/Logs/btmux.log";
       };
     };
+
+    # A new package moves the running server in place with `btmux upgrade`,
+    # keeping its shells; a changed service definition restarts it. Either
+    # survives this activation running in a btmux pane.
+    home.activation.upgradeBtmux = lib.mkIf cfg.service.enable (
+      lib.hm.dag.entryAfter
+        [
+          "installPackages"
+          "linkGeneration"
+          (if isDarwin then "setupLaunchAgents" else "reloadSystemd")
+        ]
+        ''
+          btmuxDir=${lib.escapeShellArg "${serviceEnvironment.XDG_STATE_HOME}/btmux"}
+          btmuxPrevPackage=$(cat "$btmuxDir/service-package" 2>/dev/null || true)
+          btmuxPrevService=$(cat "$btmuxDir/service-definition" 2>/dev/null || true)
+          run mkdir -p "$btmuxDir"
+          if [[ ! -v DRY_RUN ]]; then
+            echo ${cfg.package} > "$btmuxDir/service-package"
+            echo ${serviceDefinition} > "$btmuxDir/service-definition"
+          fi
+          if [[ -n "$btmuxPrevService" && "$btmuxPrevService" != ${serviceDefinition} ]]; then
+            ${restartOnDefinitionChange}
+          elif [[ "$btmuxPrevPackage" != ${cfg.package} ${
+            # Darwin's first activation (re)loaded the agent itself.
+            lib.optionalString isDarwin ''&& -n "$btmuxPrevPackage"''
+          } ]]; then
+            btmuxUpgrade=0
+            run env XDG_STATE_HOME=${lib.escapeShellArg serviceEnvironment.XDG_STATE_HOME} ${lib.getExe cfg.package} ${
+              lib.escapeShellArgs (
+                lib.optionals (cfg.service.profile != null) [
+                  "--profile"
+                  cfg.service.profile
+                ]
+                ++ [ "upgrade" ]
+              )
+            } || btmuxUpgrade=$?
+            if [[ $btmuxUpgrade == 3 ]]; then
+              # Still running, shells intact (e.g. unsaved Neovim buffers).
+              warnEcho "btmux keeps running the old version; run 'btmux upgrade' to retry"
+            elif [[ $btmuxUpgrade != 0 ]]; then
+              warnEcho "In-place btmux upgrade failed; restarting it"
+              ${restartService}
+            fi
+          fi
+        ''
+    );
   };
 }

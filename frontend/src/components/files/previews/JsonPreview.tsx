@@ -9,7 +9,7 @@ import { Button } from '@astryxdesign/core/Button';
 
 SyntaxHighlighter.registerLanguage('json', json);
 
-const MAX_HIGHLIGHT_BYTES = 20 * 1024;
+const MAX_HIGHLIGHT_BYTES = 100 * 1024;
 const MAX_LINES = 5000;
 
 export function JsonPreview() {

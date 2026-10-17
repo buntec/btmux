@@ -3,13 +3,16 @@
 --   osascript desktop-demo.applescript connect
 --   osascript desktop-demo.applescript line <text>
 --   osascript desktop-demo.applescript park
---   osascript desktop-demo.applescript play <prefix> [delay scale] [lsp ready file]
+--   osascript desktop-demo.applescript play <demo> <prefix> [delay scale] [sync test]
 --
 -- `connect` expects the demo server to be the picker's only, focused entry,
 -- fills the primary screen's visible area, and prints the window bounds as
 -- x,y,w,h. `park` moves the mouse onto the menu bar, out of the recording.
--- `play` multiplies its pauses, typing, and mouse movement by the delay scale
--- (default 1), and waits for the ready file before using rust-analyzer.
+-- `play` runs one demo (panes, files, nvim, agents, latex, or shaders), multiplying its
+-- pauses, typing, and mouse movement by the delay scale (default 1). It waits
+-- for marker files in the server's sync dir: lsp-ready once rust-analyzer has
+-- loaded, and the demo agents' progress. The sync test is a shell command
+-- that, followed by "/<marker>", checks for one, e.g. "test -e <sync dir>".
 -- Every keystroke first checks that btmux is frontmost, so typing never lands
 -- in another app.
 
@@ -20,7 +23,7 @@ use scripting additions
 property bundleId : "com.btmux.desktop"
 property mouseScript : ""
 property delayScale : 1
-property lspReady : ""
+property syncTest : ""
 
 on run argv
 	set mouseScript to (do shell script "dirname " & quoted form of POSIX path of (path to me)) & "/desktop-demo-mouse.js"
@@ -33,12 +36,12 @@ on run argv
 	else if command is "park" then
 		park()
 	else if command is "play" then
-		if (count of argv) > 2 then
+		if (count of argv) > 3 then
 			-- NSString parsing ignores the locale's decimal separator.
-			set delayScale to (current application's NSString's stringWithString:(item 3 of argv))'s doubleValue()
+			set delayScale to (current application's NSString's stringWithString:(item 4 of argv))'s doubleValue()
 		end if
-		if (count of argv) > 3 then set lspReady to item 4 of argv
-		play(item 2 of argv)
+		if (count of argv) > 4 then set syncTest to item 5 of argv
+		play(item 2 of argv, item 3 of argv)
 	else
 		error "Unknown command: " & command
 	end if
@@ -72,8 +75,26 @@ on connect()
 	return (px as text) & "," & (py as text) & "," & (sw as text) & "," & (sh as text)
 end connect
 
-on play(prefixSpec)
-	-- Splits
+on play(demo, prefixSpec)
+	if demo is "panes" then
+		playPanes(prefixSpec)
+	else if demo is "files" then
+		playFiles(prefixSpec)
+	else if demo is "nvim" then
+		playNvim(prefixSpec)
+	else if demo is "agents" then
+		playAgents(prefixSpec)
+	else if demo is "latex" then
+		playLatex(prefixSpec)
+	else if demo is "shaders" then
+		playShaders(prefixSpec)
+	else
+		error "Unknown demo: " & demo
+	end if
+end play
+
+-- Sessions, windows, and panes
+on playPanes(prefixSpec)
 	typeSlowly("echo \"hello from btmux\"")
 	enter()
 	pace(1)
@@ -89,38 +110,148 @@ on play(prefixSpec)
 	pace(1.5)
 	chordKey(prefixSpec, 123) -- left
 	pace(0.8)
+	repeat 2 times
+		sendPrefix(prefixSpec)
+		optionKey(124) -- right, resize by 5
+		pace(0.5)
+	end repeat
+	pace(0.5)
 	chord(prefixSpec, "z")
 	pace(1.2)
 	chord(prefixSpec, "z")
 	pace(1)
+	-- Every layout preset
+	repeat 5 times
+		chord(prefixSpec, " ")
+		pace(1)
+	end repeat
+	pace(0.5)
 
-	-- File browser: README.md is second to last, then scroll its preview and
-	-- walk up through more files.
-	chord(prefixSpec, "f")
-	pace(1.5)
-	press("G")
+	-- Rename this window, then open another
+	chord(prefixSpec, ",")
+	pace(0.8)
+	repeat 16 times
+		keyCode(51) -- backspace
+	end repeat
+	typeSlowly("code")
+	pace(0.5)
+	enter()
 	pace(1)
-	press("k")
+	-- New windows open in HOME, the playground
+	chord(prefixSpec, "c")
+	pace(1.2)
+	typeSlowly("ls")
+	enter()
+	pace(1)
+	typeSlowly("cd ghostty-web")
+	enter()
+	pace(0.6)
+	typeSlowly("git status")
+	enter()
+	pace(1.5)
+	chord(prefixSpec, "p")
+	pace(1.2)
+	chord(prefixSpec, "n")
+	pace(1.2)
+
+	-- Window grid: back to the first window
+	chord(prefixSpec, "w")
 	pace(2)
+	press("l")
+	pace(1)
+	enter()
+	pace(1.5)
+
+	-- Session picker: unfold both sessions and switch to ghostty-web
+	chord(prefixSpec, "s")
+	pace(1.2)
+	press("l")
+	pace(1.2)
 	repeat 3 times
+		press("j")
+		pace(0.6)
+	end repeat
+	press("l")
+	pace(1)
+	press("j")
+	pace(1)
+	enter()
+	pace(1.2)
+	typeSlowly("ls")
+	enter()
+	pace(1.5)
+	chord(prefixSpec, "L") -- last session
+	pace(1.5)
+
+	-- Key bindings: Ctrl-D to the bottom (4 half pages cover small screens),
+	-- then Ctrl-U back to the top
+	chord(prefixSpec, "?")
+	pace(1.5)
+	repeat 4 times
 		ctrl("d")
 		pace(0.7)
 	end repeat
-	pace(0.5)
-	repeat 2 times
-		ctrl("u")
-		pace(0.7)
-	end repeat
 	pace(0.8)
-	repeat 5 times
-		press("k")
-		pace(1)
+	repeat 4 times
+		ctrl("u")
+		pace(0.5)
 	end repeat
 	pace(1)
 	escape()
+	pace(1.5)
+end playPanes
+
+-- File browser (smooth preview scrolling, file and content search), Git
+-- mode, and process viewer
+on playFiles(prefixSpec)
+	-- Filter down to README.md and scroll its preview with smooth Ctrl-D/U
+	chord(prefixSpec, "f")
+	pace(1.5)
+	press("g")
+	press("/")
+	pace(0.4)
+	typeSlowly("readme")
+	pace(1.5)
+	repeat 3 times
+		ctrl("d")
+		pace(1)
+	end repeat
+	pace(0.5)
+	repeat 3 times
+		ctrl("u")
+		pace(0.8)
+	end repeat
+	pace(0.5)
+	escape() -- leave the filter
 	pace(0.8)
 
-	-- Git UI (the first Escape leaves Git mode, the second closes)
+	-- File search, then content search, each previewing the focused result
+	press("f")
+	pace(0.6)
+	typeSlowly("layout")
+	pace(1.5)
+	repeat 3 times
+		ctrl("n")
+		pace(1)
+	end repeat
+	pace(0.5)
+	escape() -- leave search
+	pace(0.6)
+	press("s")
+	pace(0.6)
+	typeSlowly("broadcast_state")
+	pace(1.5)
+	repeat 4 times
+		ctrl("n")
+		pace(1)
+	end repeat
+	pace(0.5)
+	escape() -- leave search
+	pace(0.3)
+	escape() -- close
+	pace(0.8)
+
+	-- Git mode (the first Escape leaves Git mode, the second closes)
 	chord(prefixSpec, "g")
 	pace(2)
 	repeat 3 times
@@ -133,8 +264,47 @@ on play(prefixSpec)
 	escape()
 	pace(0.8)
 
-	-- Built-in Neovim: open a Rust source, wait for rust-analyzer, then
-	-- retype a line with completion, docs, and signature help.
+	-- Process viewer: sort by memory, tree view, the ports view, then filter
+	-- down to the pane shells
+	chord(prefixSpec, "t")
+	pace(2)
+	repeat 4 times
+		press("j")
+		pace(0.4)
+	end repeat
+	pace(0.5)
+	press("s")
+	pace(1.5)
+	press("V")
+	pace(1.5)
+	ctrl("d")
+	pace(1.2)
+	press("p")
+	pace(1.5)
+	press("j")
+	pace(0.5)
+	enter()
+	pace(1.5)
+	press("p")
+	pace(1)
+	press("/")
+	pace(0.5)
+	typeSlowly("fish")
+	pace(0.5)
+	enter()
+	pace(1.5)
+	repeat 2 times
+		press("j")
+		pace(0.6)
+	end repeat
+	pace(1)
+	press("q")
+	pace(1.5)
+end playFiles
+
+-- Built-in Neovim: open a Rust source, wait for rust-analyzer, then retype a
+-- line with completion, docs, and signature help.
+on playNvim(prefixSpec)
 	chord(prefixSpec, "e")
 	pace(1.5)
 	typeSlowly(":e src/ses")
@@ -149,7 +319,7 @@ on play(prefixSpec)
 	pace(0.5)
 	enter()
 	pace(1)
-	waitForLsp()
+	waitFor("lsp-ready", 60)
 	press("S")
 	pace(0.5)
 	typeSlowly("ids.")
@@ -184,99 +354,176 @@ on play(prefixSpec)
 	typeSlowly(":q!")
 	pace(0.5)
 	enter()
-	pace(1.2)
-
-	-- Session picker: unfold both sessions
-	chord(prefixSpec, "s")
-	pace(1.2)
-	press("l")
-	pace(1.2)
-	repeat 2 times
-		press("j")
-		pace(0.6)
-	end repeat
-	press("l")
 	pace(1.5)
-	escape()
-	pace(0.8)
+end playNvim
 
-	-- Settings, through the command palette
+-- Agents (scripts/desktop-demo-agent.sh): three panes, then the agent grid
+-- once Claude waits for permission and Codex is done
+on playAgents(prefixSpec)
+	typeSlowly("claude")
+	enter()
+	pace(1.5)
+	typeSlowly("add a --json flag to btmux list")
+	enter()
+	pace(1.5)
+	chord(prefixSpec, "%")
+	pace(1.2)
+	typeSlowly("codex")
+	enter()
+	pace(1.5)
+	typeSlowly("why is pane replay slow?")
+	enter()
+	pace(1.5)
+	chord(prefixSpec, "\"")
+	pace(1.2)
+	typeSlowly("gemini")
+	enter()
+	pace(1.5)
+	typeSlowly("explain the session tree")
+	enter()
+	waitFor("claude-blocked", 30)
+	waitFor("codex-done", 30)
+	pace(2.5)
+
+	-- Jump to Claude and approve
+	chord(prefixSpec, "a")
+	pace(2.5)
+	press("1")
+	pace(1)
+	enter()
+	pace(1.5)
+	press("y")
+	waitFor("claude-done", 30)
+	pace(1.5)
+	waitFor("gemini-done", 60)
+	pace(2.5)
+
+	-- Everyone is done; jump to Gemini's answer
+	chord(prefixSpec, "a")
+	pace(2.5)
+	press("3")
+	pace(1)
+	enter()
+	pace(2.5)
+end playAgents
+
+-- LaTeX in agent output (scripts/desktop-demo-agent.sh), rendered in the
+-- side panel; hovering a formula highlights its source
+on playLatex(prefixSpec)
+	typeSlowly("codex")
+	enter()
+	pace(1.5)
+	typeSlowly("why is the Gaussian integral sqrt(pi)?")
+	enter()
+	waitFor("codex-done", 30)
+	pace(1.5)
+	chord(prefixSpec, "m")
+	pace(2)
+	-- The panel's formulas, top to bottom, at its horizontal center
+	set {cx, cy, cw, ch} to contentBounds()
+	set x to int(cx + cw - 240)
+	repeat with i from 0 to 7
+		mouse("glide " & x & " " & int(cy + 80 + i * 60) & " " & int(500 * delayScale))
+		pace(1)
+	end repeat
+	park()
+	pace(1)
+	chord(prefixSpec, "m")
+	pace(1.5)
+end playLatex
+
+-- Cursor Trail (from config.toml) follows the terminal cursor across panes,
+-- then the mouse; then Ink Flow, picked in Settings, does the same
+on playShaders(prefixSpec)
+	typeSlowly("echo \"wallpaper-shader-follows-keyboard-input = true makes the shader effect follow the keyboard cursor\"")
+	enter()
+	pace(1)
+	typeSlowly("git log --oneline -8")
+	enter()
+	pace(1.2)
+	chord(prefixSpec, "%")
+	pace(1.2)
+	typeSlowly("ls")
+	enter()
+	pace(1)
+	chord(prefixSpec, "\"")
+	pace(1.2)
+	typeSlowly("echo \"across panes\"")
+	enter()
+	pace(1)
+	chordKey(prefixSpec, 123) -- left
+	pace(0.8)
+	typeSlowly("echo \"wallpaper-shader-follows-mouse-cursor = true makes it follow the mouse\"")
+	enter()
+	pace(1)
+	mouseTour(4000)
+
+	chooseShader(prefixSpec, "ink")
+	-- Focus comes back to the terminal late; click the active, left pane
+	set {cx, cy, cw, ch} to contentBounds()
+	mouse("click " & int(cx + cw * 0.25) & " " & int(cy + ch * 0.6) & " " & int(600 * delayScale))
+	park()
+	pace(0.8)
+	typeSlowly("echo \"wallpaper-shader = ink-flow, applied from the settings\"")
+	enter()
+	pace(1)
+	chordKey(prefixSpec, 124) -- right
+	pace(0.8)
+	typeSlowly("git status")
+	enter()
+	pace(1.5)
+	mouseTour(5000)
+	pace(1.5)
+end playShaders
+
+-- Glides across the content, swirls around its center, and parks
+on mouseTour(swirlMs)
+	set {cx, cy, cw, ch} to contentBounds()
+	mouse("glide " & int(cx + cw * 0.2) & " " & int(cy + ch * 0.3) & " " & int(900 * delayScale))
+	pace(0.3)
+	mouse("glide " & int(cx + cw * 0.8) & " " & int(cy + ch * 0.75) & " " & int(1500 * delayScale))
+	pace(0.3)
+	mouse("swirl " & int(cx + cw / 2) & " " & int(cy + ch / 2) & " " & int(cw * 0.3) & " " & int(ch * 0.3) & " " & int(swirlMs * delayScale))
+	park()
+	pace(1)
+end mouseTour
+
+-- Picks a wallpaper shader in Settings by typing the start of its name, shows
+-- the generated TOML, and applies it, which also closes Settings; the
+-- terminal needs a click to get the keyboard back
+on chooseShader(prefixSpec, typed)
 	chord(prefixSpec, ":")
 	pace(0.8)
 	typeSlowly("set")
-	pace(0.8)
+	pace(0.6)
 	enter()
-	pace(1.5)
-	-- The app's webview tabs through every control (wry enables
-	-- tabFocusesLinks): the title is focused first, then Close, then the
-	-- selected tab. Arrows move between tabs and Enter opens one. The Tab
-	-- counts below match the Wallpaper tab's controls with Ink Flow selected.
+	pace(1.2)
+	-- The title is focused first, then Close, then the selected tab; arrows
+	-- move between tabs and Enter opens one
 	tabs(2)
-	pace(0.5)
-	repeat 6 times
-		keyCode(124) -- right
-		pace(0.2)
-		enter()
-		pace(0.7)
-	end repeat
-	repeat 2 times
-		keyCode(123) -- left, back to Wallpaper
-		pace(0.2)
+	repeat 4 times
+		keyCode(124) -- right, to Wallpaper
+		sleepFor(0.25)
 	end repeat
 	enter()
 	pace(1)
 	tabs(1) -- the procedural shader selector
+	enter()
+	pace(0.6)
+	typeSlowly(typed)
 	pace(0.5)
 	enter()
-	pace(0.8)
-	typeSlowly("ink")
-	pace(0.8)
-	enter()
-	pace(1.5)
-	tabs(2) -- wallpaper opacity, raised from 0.1 to 0.25
-	pace(0.5)
-	keyCode(116) -- page up, +0.1
-	pace(0.4)
-	repeat 5 times
-		keyCode(124) -- right, +0.01
-		pace(0.15)
-	end repeat
-	pace(0.8)
-	tabs(26) -- Apply
-	pace(0.5)
-	enter()
-	pace(1.5)
+	pace(1.2)
+	-- The dialog is centered and 90% of the content's height; Show TOML
+	-- widens it, which moves Apply
 	set {cx, cy, cw, ch} to contentBounds()
-	mouse("swirl " & int(cx + cw / 2) & " " & int(cy + ch / 2) & " " & int(cw * 0.3) & " " & int(ch * 0.3) & " " & int(8000 * delayScale))
-	pace(0.5)
-	park()
+	set midX to cx + cw / 2
+	set dialogBottom to cy + ch * 0.95
+	mouse("click " & int(midX - 207) & " " & int(dialogBottom - 37) & " " & int(800 * delayScale)) -- Show TOML
+	pace(2.5)
+	mouse("click " & int(midX - 47) & " " & int(dialogBottom - 32) & " " & int(800 * delayScale)) -- Apply
 	pace(1)
-
-	-- Key bindings: Ctrl-D to the bottom (4 half pages cover small screens),
-	-- then Ctrl-U back to the top
-	chord(prefixSpec, "?")
-	pace(1.5)
-	repeat 4 times
-		ctrl("d")
-		pace(0.7)
-	end repeat
-	pace(0.8)
-	repeat 4 times
-		ctrl("u")
-		pace(0.5)
-	end repeat
-	pace(1)
-	escape()
-	pace(1)
-
-	-- End on the About dialog
-	chord(prefixSpec, ":")
-	pace(0.8)
-	typeSlowly("about")
-	pace(0.8)
-	enter()
-	pace(3)
-end play
+end chooseShader
 
 -- The primary screen's area outside the menu bar and Dock, in the top-left
 -- origin coordinates System Events uses.
@@ -287,29 +534,17 @@ on visibleBounds()
 	return {vx as integer, (sh - vy - vh) as integer, vw as integer, vh as integer}
 end visibleBounds
 
--- The window's web content area, falling back to a standard title bar.
+-- The window's web content area: its frame below the title bar (32 points on
+-- macOS 26). While recording, `window 1` can be the capture indicator.
 on contentBounds()
 	tell application "System Events"
 		tell (first process whose bundle identifier is bundleId)
-			set {wx, wy} to position of window 1
-			set {ww, wh} to size of window 1
-			set best to {wx, wy + 28, ww, wh - 28}
-			set bestArea to 0
-			repeat with el in UI elements of window 1
-				try
-					if role of el is not "AXButton" then
-						set {ex, ey} to position of el
-						set {ew, eh} to size of el
-						if ew * eh > bestArea then
-							set bestArea to ew * eh
-							set best to {ex, ey, ew, eh}
-						end if
-					end if
-				end try
-			end repeat
+			set w to first window whose subrole is "AXStandardWindow"
+			set {wx, wy} to position of w
+			set {ww, wh} to size of w
 		end tell
 	end tell
-	return best
+	return {wx, wy + 32, ww, wh - 32}
 end contentBounds
 
 -- Mouse helpers
@@ -331,12 +566,12 @@ end park
 
 -- Keyboard helpers
 
+-- NSWorkspace, as asking System Events takes ~25 ms per keystroke.
 on ensureFront()
-	tell application "System Events"
-		if not (frontmost of (first process whose bundle identifier is bundleId)) then
-			error "btmux is no longer frontmost; stopping so keystrokes go nowhere else" number 1001
-		end if
-	end tell
+	set frontApp to current application's NSWorkspace's sharedWorkspace()'s frontmostApplication()
+	if frontApp is missing value or (frontApp's bundleIdentifier() as text) is not bundleId then
+		error "btmux is no longer frontmost; stopping so keystrokes go nowhere else" number 1001
+	end if
 end ensureFront
 
 on sendPrefix(prefixSpec)
@@ -351,7 +586,7 @@ on sendPrefix(prefixSpec)
 	if length of k is not 1 then error "Unsupported prefix key: " & k
 	ensureFront()
 	tell application "System Events" to keystroke k using modifier
-	delay 0.15
+	sleepFor(0.15)
 end sendPrefix
 
 on chord(prefixSpec, k)
@@ -372,7 +607,7 @@ end press
 on tabs(n)
 	repeat n times
 		keyCode(48)
-		delay 0.05
+		sleepFor(0.05)
 	end repeat
 end tabs
 
@@ -380,6 +615,11 @@ on ctrl(k)
 	ensureFront()
 	tell application "System Events" to keystroke k using control down
 end ctrl
+
+on optionKey(code)
+	ensureFront()
+	tell application "System Events" to key code code using option down
+end optionKey
 
 on keyCode(code)
 	ensureFront()
@@ -397,7 +637,7 @@ end escape
 on typeText(s, pause)
 	repeat with c in characters of s
 		press(c as text)
-		if pause > 0 then delay pause
+		sleepFor(pause)
 	end repeat
 end typeText
 
@@ -405,12 +645,24 @@ on typeSlowly(s)
 	typeText(s, 0.06 * delayScale)
 end typeSlowly
 
--- Unscaled: rust-analyzer loads at its own pace.
-on waitForLsp()
-	if lspReady is "" then return
-	do shell script "for i in $(seq 240); do [ -e " & quoted form of lspReady & " ] && exit 0; sleep 0.25; done; echo 'rust-analyzer did not load within 60s' >&2; exit 1"
-end waitForLsp
+-- Unscaled: rust-analyzer and the demo agents run at their own pace.
+-- Not "seconds", an AppleScript constant.
+on waitFor(marker, limit)
+	if syncTest is "" then return
+	set check to syncTest & "/" & marker
+	do shell script "end=$(($(date +%s) + " & limit & ")); until " & check & "; do [ $(date +%s) -lt $end ] || { echo '" & marker & " did not appear within " & limit & "s' >&2; exit 1; }; sleep 0.25; done"
+end waitFor
 
 on pace(duration)
-	delay duration * delayScale
+	sleepFor(duration * delayScale)
 end pace
+
+-- Timers of this background process are coalesced, so `delay` overshoots by
+-- up to ~100 ms; spin for the rest.
+on sleepFor(duration)
+	if duration ≤ 0 then return
+	set target to (current application's NSDate's timeIntervalSinceReferenceDate()) + duration
+	if duration > 0.25 then delay (duration - 0.2)
+	repeat while (current application's NSDate's timeIntervalSinceReferenceDate()) < target
+	end repeat
+end sleepFor

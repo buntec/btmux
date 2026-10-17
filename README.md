@@ -2,8 +2,6 @@
 
 A tmux-style terminal manager for the browser and desktop, powered by [ghostty-web](https://github.com/rcarmo/ghostty-web).
 
-https://github.com/user-attachments/assets/93f11edd-8dbe-4faa-a96c-5f0265c4906a
-
 ## Highlights
 
 - Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and preset layouts
@@ -15,6 +13,32 @@ https://github.com/user-attachments/assets/93f11edd-8dbe-4faa-a96c-5f0265c4906a
 - Support for base16/base24 color schemes
 - Highly configurable
 - REST API and MCP server
+
+## Demos
+
+### Sessions, windows, and panes
+
+https://github.com/user-attachments/assets/f120a4d9-7736-4415-9677-b3a33695be70
+
+### File browser, Git mode, and process viewer
+
+https://github.com/user-attachments/assets/ac87f6ac-3484-4f20-973f-73ef6d1d6b6f
+
+### Neovim GUI
+
+https://github.com/user-attachments/assets/eb5a2e6f-e1fa-4693-aedc-826e3cc078ab
+
+### Coding agents
+
+https://github.com/user-attachments/assets/c7ed8b36-b9b2-4a5c-8f92-3fa410e52e65
+
+### LaTeX overlay
+
+https://github.com/user-attachments/assets/a5eb0d69-40dc-4394-b75b-3b435f5c2ab5
+
+### Shader wallpapers
+
+https://github.com/user-attachments/assets/45419669-7e95-4e4b-9eb4-74b6746887f4
 
 ## Install
 

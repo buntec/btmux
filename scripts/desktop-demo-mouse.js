@@ -3,14 +3,35 @@
 //
 //   osascript -l JavaScript desktop-demo-mouse.js glide <x> <y> [ms]
 //   osascript -l JavaScript desktop-demo-mouse.js swirl <cx> <cy> <rx> <ry> <ms>
+//   osascript -l JavaScript desktop-demo-mouse.js click <x> <y> [ms]
 
 ObjC.import('CoreGraphics');
+ObjC.import('Foundation');
 
+const DOWN = 1;
+const UP = 2;
 const MOVED = 5;
 const FPS = 60;
 
 function post(type, x, y) {
   $.CGEventPost(0, $.CGEventCreateMouseEvent(null, type, { x, y }, 0));
+}
+
+function now() {
+  return $.NSDate.timeIntervalSinceReferenceDate;
+}
+
+// Timers of this background process are coalesced, so delay() overshoots by
+// up to ~100 ms; spin to the next frame instead.
+function frames(seconds, draw) {
+  const start = now();
+  for (let frame = 1; ; frame++) {
+    const target = start + frame / FPS;
+    while (now() < target);
+    const elapsed = Math.min(now() - start, seconds);
+    draw(elapsed);
+    if (elapsed >= seconds) return;
+  }
 }
 
 function position() {
@@ -20,24 +41,28 @@ function position() {
 
 function glide(x, y, seconds) {
   const [x0, y0] = position();
-  const steps = Math.max(1, Math.round(seconds * FPS));
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
+  frames(seconds, (elapsed) => {
+    const t = seconds > 0 ? elapsed / seconds : 1;
     const ease = t * t * (3 - 2 * t);
     post(MOVED, x0 + (x - x0) * ease, y0 + (y - y0) * ease);
-    delay(1 / FPS);
-  }
+  });
 }
 
 // A Lissajous figure around the center.
 function swirl(cx, cy, rx, ry, seconds) {
   glide(cx, cy, 0.5);
-  const steps = Math.round(seconds * FPS);
-  for (let i = 0; i <= steps; i++) {
-    const a = (2 * Math.PI * i) / FPS / 3;
+  frames(seconds, (elapsed) => {
+    const a = (2 * Math.PI * elapsed) / 3;
     post(MOVED, cx + rx * Math.sin(a), cy + ry * Math.sin(2 * a));
-    delay(1 / FPS);
-  }
+  });
+}
+
+// Glides there, then clicks.
+function click(x, y, seconds) {
+  glide(x, y, seconds);
+  post(DOWN, x, y);
+  frames(0.08, () => {});
+  post(UP, x, y);
 }
 
 function run(argv) {
@@ -45,5 +70,6 @@ function run(argv) {
   const n = rest.map(Number);
   if (command === 'glide') glide(n[0], n[1], (n[2] ?? 600) / 1000);
   else if (command === 'swirl') swirl(n[0], n[1], n[2], n[3], n[4] / 1000);
+  else if (command === 'click') click(n[0], n[1], (n[2] ?? 600) / 1000);
   else throw new Error(`Unknown command: ${command}`);
 }

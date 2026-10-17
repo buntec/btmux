@@ -21,6 +21,7 @@ The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 - `just build` — production build: frontend → `frontend/dist`, then `cargo build --release`.
 - `just run` — release binary serving the built frontend.
 - `just install` — production build + `cargo install --path .`
+- `just vm <cmd>` — Ubuntu VM via Multipass (`scripts/vm.sh`, `scripts/vm-cloud-init.yaml`) for Linux testing and clean demos. `up` creates it; `deploy` builds this working tree in the VM, `release [TAG]` installs a release binary, and both (re)start btmux as a systemd user service on `0.0.0.0:8004` (in-place `btmux upgrade` when running); `info` prints the host-reachable URL and token; `demo` records `record-demo.ts` against it; `shell`, `stop`, `delete`.
 - `just fmt` (alias `just format`) — format the whole codebase (`cargo fmt` + prettier). **Always run this before committing.**
 
 `just test` runs the Rust regression suite. `just protocol` regenerates the frontend

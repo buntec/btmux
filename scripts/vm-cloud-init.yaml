@@ -1,0 +1,28 @@
+#cloud-config
+# Base image for scripts/vm.sh. Toolchains for source builds are installed on
+# the first `vm.sh deploy`, so release-only VMs stay minimal.
+package_update: true
+packages:
+  - build-essential
+  - pkg-config
+  - curl
+  - ca-certificates
+  - git
+  - unzip
+  - ripgrep
+  - fish
+  - zsh
+write_files:
+  - path: /etc/profile.d/btmux-vm.sh
+    content: |
+      export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+runcmd:
+  # Run the btmux user service without an SSH session.
+  - loginctl enable-linger ubuntu
+  # Neovim 0.12+ for the built-in editor (distro packages lag).
+  - |
+    arch="$(uname -m | sed 's/aarch64/arm64/')"
+    curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-$arch.tar.gz" | tar -xz -C /opt
+    ln -sf "/opt/nvim-linux-$arch/bin/nvim" /usr/local/bin/nvim
+  # Git repo for demos to work in.
+  - su - ubuntu -c 'git clone --quiet https://github.com/buntec/btmux.git ~/btmux'

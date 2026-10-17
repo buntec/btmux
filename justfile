@@ -235,6 +235,10 @@ record-demo:
 record-desktop-demo mode="dark" delay_scale="1" output="":
     scripts/record-desktop-demo.sh --{{mode}} --delay-scale {{delay_scale}} {{output}}
 
+# Linux VM via Multipass (scripts/vm.sh): up, deploy, release [TAG], info, shell, demo, stop, delete
+vm *args:
+    scripts/vm.sh {{args}}
+
 # Kill all dev processes (vite, dev backend, concurrently)
 kill-dev:
     -pkill -f "target/debug/btmux"

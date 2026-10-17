@@ -81,7 +81,7 @@ impl Replay {
         }
         let reserved = cost <= self.cap
             && JOURNAL_BYTES
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                     (used + cost <= GLOBAL_BYTES).then_some(used + cost)
                 })
                 .is_ok();

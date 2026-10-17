@@ -616,7 +616,7 @@ async fn neovim_socket_paths(pid: u32) -> Vec<String> {
         _ => Vec::new(),
     };
     #[cfg(target_os = "linux")]
-    {
+    let paths = {
         let mut paths = paths;
         let linux_paths = tokio::task::spawn_blocking(move || linux_socket_paths(pid))
             .await
@@ -626,9 +626,8 @@ async fn neovim_socket_paths(pid: u32) -> Vec<String> {
                 paths.push(path);
             }
         }
-        return paths;
-    }
-    #[cfg(not(target_os = "linux"))]
+        paths
+    };
     paths
 }
 

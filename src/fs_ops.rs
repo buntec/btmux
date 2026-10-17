@@ -253,7 +253,6 @@ pub async fn list_tree(
     build_tree_node(&dir_path, &name, max_depth, max_items).await
 }
 
-#[async_recursion::async_recursion]
 async fn build_tree_node(
     path: &Path,
     name: &str,
@@ -299,8 +298,13 @@ async fn build_tree_node(
     for (entry_name, is_dir) in entries {
         if is_dir {
             let child_path = path.join(&entry_name);
-            let child =
-                build_tree_node(&child_path, &entry_name, remaining_depth - 1, max_items).await?;
+            let child = Box::pin(build_tree_node(
+                &child_path,
+                &entry_name,
+                remaining_depth - 1,
+                max_items,
+            ))
+            .await?;
             children.push(child);
         } else {
             children.push(TreeNode {
@@ -394,7 +398,6 @@ pub async fn create_entry(dir: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-#[async_recursion::async_recursion]
 async fn copy_entry(src: std::path::PathBuf, dst: std::path::PathBuf) -> Result<(), String> {
     let meta = tokio::fs::symlink_metadata(&src)
         .await
@@ -408,7 +411,7 @@ async fn copy_entry(src: std::path::PathBuf, dst: std::path::PathBuf) -> Result<
             .map_err(|e| format!("Cannot read dir {}: {}", src.display(), e))?;
         while let Some(entry) = rd.next_entry().await.map_err(|e| e.to_string())? {
             let child_dst = dst.join(entry.file_name());
-            copy_entry(entry.path(), child_dst).await?;
+            Box::pin(copy_entry(entry.path(), child_dst)).await?;
         }
     } else {
         tokio::fs::copy(&src, &dst)

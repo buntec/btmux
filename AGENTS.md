@@ -129,8 +129,11 @@ accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
 over through `BTMUX_HANDOFF` before anything spawns; browsers reconnect and
-replay. If the exec fails, the readers and writers restart, tabs get an error
-toast, and `btmux upgrade` reports the error (`upgrade_error` in `/api/info`).
+replay. Tabs get a toast when an upgrade starts or is refused; after
+reconnecting, the frontend toasts a changed server version. If the exec fails,
+the readers and writers restart, tabs get an error toast, and `btmux upgrade`
+reports the error (`upgrade_error` in `/api/info`). `handoff-version` prints
+the handoff version and the btmux version.
 It exits with status 3 whenever the server keeps running unchanged, and checks
 the pid to tell an exec from a service manager's restart. Bump
 `handoff::VERSION` whenever the handoff file changes; `just protocol` then

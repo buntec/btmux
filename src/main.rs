@@ -207,7 +207,7 @@ async fn main() {
     }
 
     if let Some(config::SubCommand::HandoffVersion) = args.command {
-        println!("{}", handoff::VERSION);
+        println!("{} {}", handoff::VERSION, config::VERSION);
         return;
     }
 
@@ -754,7 +754,7 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
 
     let toast_json = serde_json::to_string(&ServerMessage::Toast {
         message: "Config reloaded".into(),
-        level: ws::control::ToastLevel::Info,
+        level: ws::control::NotificationLevel::Info,
     })
     .unwrap();
 

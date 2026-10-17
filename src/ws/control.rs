@@ -908,7 +908,7 @@ pub enum ServerMessage {
     },
     Toast {
         message: String,
-        level: ToastLevel,
+        level: NotificationLevel,
     },
     PaneNotification {
         pane_id: Uuid,
@@ -957,14 +957,6 @@ pub enum FileBrowserMode {
     Files,
     Git,
     Process,
-}
-
-#[derive(Serialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub enum ToastLevel {
-    Info,
-    Error,
 }
 
 pub use crate::session::NotificationLevel;

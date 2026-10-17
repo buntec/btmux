@@ -20,6 +20,8 @@ use uuid::Uuid;
 use crate::pty::replay::Output;
 use crate::pty::{set_cloexec, Handoff};
 use crate::session::manager::SessionSnapshot;
+use crate::session::NotificationLevel;
+use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
@@ -184,6 +186,49 @@ pub enum Refusal {
 /// Check that `exe` accepts this server's handoff, then re-execute into it
 /// once the caller has replied.
 pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), Refusal> {
+    let (context, target) = match check(&exe).await {
+        Ok(checked) => checked,
+        Err(refusal) => {
+            let message = match &refusal {
+                Refusal::Incompatible(error) => format!("Upgrade refused: {error}"),
+                Refusal::Busy(error) => {
+                    format!("Upgrade postponed: {error}. Run btmux upgrade to retry.")
+                }
+            };
+            toast(&state, message, NotificationLevel::Attention).await;
+            return Err(refusal);
+        }
+    };
+    if IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        return Err(Refusal::Busy("an upgrade is already in progress".into()));
+    }
+    *LAST_ERROR.lock().unwrap() = None;
+    let message = format!("Upgrading btmux to {target}…");
+    toast(&state, message, NotificationLevel::Info).await;
+    tokio::spawn(async move {
+        // Let the reply and toast reach their clients.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let error = execute(state.clone(), context, &exe).await;
+        tracing::error!("in-place upgrade failed: {error}");
+        let message = format!("Upgrade failed: {error}");
+        toast(&state, message, NotificationLevel::Error).await;
+        *LAST_ERROR.lock().unwrap() = Some(error);
+        IN_PROGRESS.store(false, Ordering::SeqCst);
+    });
+    Ok(())
+}
+
+async fn toast(state: &AppState, message: String, level: NotificationLevel) {
+    let toast = ServerMessage::Toast { message, level };
+    let _ = state
+        .read()
+        .await
+        .events()
+        .send(serde_json::to_string(&toast).unwrap());
+}
+
+/// The upgrade's context and `exe`'s version, if it can take over.
+async fn check(exe: &Path) -> Result<(&'static Context, String), Refusal> {
     let context = CONTEXT
         .get()
         .ok_or_else(|| Refusal::Incompatible("this server cannot upgrade in place".into()))?;
@@ -196,7 +241,7 @@ pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), Refusal> {
     let incompatible = Refusal::Incompatible;
     let output = tokio::time::timeout(
         Duration::from_secs(10),
-        tokio::process::Command::new(&exe)
+        tokio::process::Command::new(exe)
             .arg("handoff-version")
             .kill_on_drop(true)
             .output(),
@@ -204,38 +249,20 @@ pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), Refusal> {
     .await
     .map_err(|_| incompatible(format!("{} did not respond", exe.display())))?
     .map_err(|e| incompatible(format!("cannot run {}: {e}", exe.display())))?;
+    // `<handoff version> <btmux version>`
     let version = String::from_utf8_lossy(&output.stdout);
-    if !output.status.success() || version.trim() != VERSION.to_string() {
+    let mut version = version.split_whitespace();
+    if !output.status.success() || version.next() != Some(&VERSION.to_string()) {
         return Err(incompatible(format!(
             "{} cannot take over this server (handoff version {VERSION}); restart it instead",
             exe.display()
         )));
     }
+    let target = version.next().unwrap_or("?").to_string();
     crate::ws::nvim::check_saved()
         .await
         .map_err(Refusal::Busy)?;
-    if IN_PROGRESS.swap(true, Ordering::SeqCst) {
-        return Err(Refusal::Busy("an upgrade is already in progress".into()));
-    }
-    *LAST_ERROR.lock().unwrap() = None;
-    tokio::spawn(async move {
-        // Let the reply reach the client.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        let error = execute(state.clone(), context, &exe).await;
-        tracing::error!("in-place upgrade failed: {error}");
-        let toast = crate::ws::control::ServerMessage::Toast {
-            message: format!("Upgrade failed: {error}"),
-            level: crate::ws::control::ToastLevel::Error,
-        };
-        let _ = state
-            .read()
-            .await
-            .events()
-            .send(serde_json::to_string(&toast).unwrap());
-        *LAST_ERROR.lock().unwrap() = Some(error);
-        IN_PROGRESS.store(false, Ordering::SeqCst);
-    });
-    Ok(())
+    Ok((context, target))
 }
 
 /// Why the last upgrade failed, for `btmux upgrade`.

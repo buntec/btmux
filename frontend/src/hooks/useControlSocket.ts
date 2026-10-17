@@ -103,7 +103,12 @@ export function useControlSocket() {
         } else if (msg.type === 'command_result') {
           if (msg.error) showToast(msg.error, 'error');
         } else if (msg.type === 'config') {
+          const previous = useStore.getState().config?.version;
           setConfig(msg.config);
+          // On reconnect after an upgrade or restart.
+          if (previous && previous !== msg.config.version) {
+            showToast(`btmux server updated to ${msg.config.version}`, 'success', { body: `Was ${previous}` });
+          }
         } else if (msg.type === 'toast') {
           showToast(msg.message, msg.level);
         } else if (msg.type === 'pane_notification') {

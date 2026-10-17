@@ -277,7 +277,7 @@ pub enum SubCommand {
     /// Move the running `--profile` server to this binary in place, keeping
     /// its shells and scrollback.
     Upgrade,
-    /// Print the in-place upgrade format this binary accepts.
+    /// Print the in-place upgrade format this binary accepts, and its version.
     #[command(hide = true)]
     HandoffVersion,
 }

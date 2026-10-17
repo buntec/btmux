@@ -85,9 +85,29 @@ try {
   const before = await readTerminal();
   const readyBefore = await readyCount();
 
+  const toasts = () =>
+    page.evaluate(() =>
+      (window as any).testMessages.filter((m: any) => m.type === 'toast').map((m: any) => `${m.level}: ${m.message}`),
+    );
+  const refused = await fetch(`${url}/api/server/upgrade`, {
+    headers,
+    method: 'POST',
+    body: JSON.stringify({ executable: '/nonexistent/btmux' }),
+  });
+  assert.equal(refused.status, 409);
+  await until(
+    async () => (await toasts()).some((t) => t.startsWith('attention: Upgrade refused: /nonexistent/btmux')),
+    'a refused upgrade must notify the browser',
+  );
+
   const info = await api('/api/info');
   await api('/api/server/upgrade', { executable: info.executable });
+  await until(
+    async () => (await toasts()).includes(`info: Upgrading btmux to ${info.version}…`),
+    'an upgrade must notify the browser before it starts',
+  );
   await until(async () => (await api('/api/info')).instance !== info.instance, 'server did not come back');
+  assert.equal((await api('/api/info')).pid, info.pid, 'an in-place upgrade keeps the pid');
   await until(async () => (await readyCount()) > readyBefore, 'pane did not reattach');
   await page.waitForTimeout(250);
   assert.equal(await readTerminal(), before, 'upgrade must preserve output without duplication');

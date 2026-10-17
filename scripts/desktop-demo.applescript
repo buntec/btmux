@@ -432,40 +432,98 @@ on playLatex(prefixSpec)
 	pace(1.5)
 end playLatex
 
--- The ink-flow wallpaper follows the terminal cursor while typing, across
--- panes, then the mouse
+-- Cursor Trail (from config.toml) follows the terminal cursor across panes,
+-- then the mouse; then Ink Flow, picked in Settings, does the same
 on playShaders(prefixSpec)
-	pace(1.5)
-	typeSlowly("echo \"the ink follows the cursor as you type\"")
+	typeSlowly("echo \"wallpaper-shader-follows-keyboard-input = true makes the shader effect follow the keyboard cursor\"")
 	enter()
 	pace(1)
-	typeSlowly("git log --oneline -12")
+	typeSlowly("git log --oneline -8")
 	enter()
-	pace(1.5)
-	chord(prefixSpec, "%")
 	pace(1.2)
-	typeSlowly("echo \"and jumps between panes\"")
-	enter()
-	pace(1)
-	chord(prefixSpec, "\"")
+	chord(prefixSpec, "%")
 	pace(1.2)
 	typeSlowly("ls")
 	enter()
 	pace(1)
+	chord(prefixSpec, "\"")
+	pace(1.2)
+	typeSlowly("echo \"across panes\"")
+	enter()
+	pace(1)
 	chordKey(prefixSpec, 123) -- left
 	pace(0.8)
-	typeSlowly("echo \"now the mouse\"")
+	typeSlowly("echo \"wallpaper-shader-follows-mouse-cursor = true makes it follow the mouse\"")
+	enter()
+	pace(1)
+	mouseTour(4000)
+
+	chooseShader(prefixSpec, "ink")
+	-- Focus comes back to the terminal late; click the active, left pane
+	set {cx, cy, cw, ch} to contentBounds()
+	mouse("click " & int(cx + cw * 0.25) & " " & int(cy + ch * 0.6) & " " & int(600 * delayScale))
+	park()
+	pace(0.8)
+	typeSlowly("echo \"wallpaper-shader = ink-flow, applied from the settings\"")
+	enter()
+	pace(1)
+	chordKey(prefixSpec, 124) -- right
+	pace(0.8)
+	typeSlowly("git status")
 	enter()
 	pace(1.5)
+	mouseTour(5000)
+	pace(1.5)
+end playShaders
+
+-- Glides across the content, swirls around its center, and parks
+on mouseTour(swirlMs)
 	set {cx, cy, cw, ch} to contentBounds()
 	mouse("glide " & int(cx + cw * 0.2) & " " & int(cy + ch * 0.3) & " " & int(900 * delayScale))
 	pace(0.3)
 	mouse("glide " & int(cx + cw * 0.8) & " " & int(cy + ch * 0.75) & " " & int(1500 * delayScale))
 	pace(0.3)
-	mouse("swirl " & int(cx + cw / 2) & " " & int(cy + ch / 2) & " " & int(cw * 0.3) & " " & int(ch * 0.3) & " " & int(6000 * delayScale))
+	mouse("swirl " & int(cx + cw / 2) & " " & int(cy + ch / 2) & " " & int(cw * 0.3) & " " & int(ch * 0.3) & " " & int(swirlMs * delayScale))
 	park()
-	pace(2)
-end playShaders
+	pace(1)
+end mouseTour
+
+-- Picks a wallpaper shader in Settings by typing the start of its name, shows
+-- the generated TOML, and applies it, which also closes Settings; the
+-- terminal needs a click to get the keyboard back
+on chooseShader(prefixSpec, typed)
+	chord(prefixSpec, ":")
+	pace(0.8)
+	typeSlowly("set")
+	pace(0.6)
+	enter()
+	pace(1.2)
+	-- The title is focused first, then Close, then the selected tab; arrows
+	-- move between tabs and Enter opens one
+	tabs(2)
+	repeat 4 times
+		keyCode(124) -- right, to Wallpaper
+		sleepFor(0.25)
+	end repeat
+	enter()
+	pace(1)
+	tabs(1) -- the procedural shader selector
+	enter()
+	pace(0.6)
+	typeSlowly(typed)
+	pace(0.5)
+	enter()
+	pace(1.2)
+	-- The dialog is centered and 90% of the content's height; Show TOML
+	-- widens it, which moves Apply
+	set {cx, cy, cw, ch} to contentBounds()
+	set midX to cx + cw / 2
+	set dialogBottom to cy + ch * 0.95
+	mouse("click " & int(midX - 207) & " " & int(dialogBottom - 37) & " " & int(800 * delayScale)) -- Show TOML
+	pace(2.5)
+	mouse("click " & int(midX - 47) & " " & int(dialogBottom - 32) & " " & int(800 * delayScale)) -- Apply
+	pace(1)
+end chooseShader
 
 -- The primary screen's area outside the menu bar and Dock, in the top-left
 -- origin coordinates System Events uses.

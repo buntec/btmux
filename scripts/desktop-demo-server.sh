@@ -10,7 +10,7 @@
 # `setup` recreates ~/btmux-demo with fresh clones of btmux and ghostty-web as
 # the demos' playground and the demo shells' HOME, so new windows open beside
 # the repos, and an isolated config: the default btmux config (plus an
-# opaque window, the color scheme, and an ink-flow wallpaper for the shaders
+# opaque window, the color scheme, and a wallpaper shader for the shaders
 # demo), fish with only the btmux
 # theme, and a minimal Neovim config with rust-analyzer, whose build cache it
 # warms when the nvim demo is recorded. `start` runs a server with a fresh
@@ -218,11 +218,11 @@ write_config() {
         # An opaque window keeps the desktop out of the recording.
         echo "desktop-background-opacity = 1.0"
         echo "appearance = \"$(<"$run_dir/mode")\""
-        # Ink that follows the keyboard and the mouse, more opaque than the
-        # default 0.1 to show up in the video.
+        # Cursor Trail, then Ink Flow in the demo, following the keyboard and
+        # the mouse; more opaque than the default 0.1 to show up in the video.
         if [[ "$1" == shaders ]]; then
             cat <<'EOF'
-wallpaper-shader = "ink-flow"
+wallpaper-shader = "cursor-trail"
 wallpaper-opacity = 0.25
 wallpaper-fps = 60
 wallpaper-speed = 1.0

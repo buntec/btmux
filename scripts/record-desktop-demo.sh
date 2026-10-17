@@ -5,9 +5,9 @@
 #
 # Demos: panes (sessions, windows, panes), files (file browser, Git mode,
 # process viewer), nvim (built-in Neovim), agents (agent detection, state, and
-# grid), latex (LaTeX overlay), and shaders (an ink-flow wallpaper following
-# the keyboard and mouse); all by default, each with a fresh server
-# and app. Records in dark mode by default. --delay-scale (0 < X <= 1,
+# grid), latex (LaTeX overlay), and shaders (wallpaper shaders following the
+# keyboard and mouse, switched in Settings); all by default, each with a fresh
+# server and app. Records in dark mode by default. --delay-scale (0 < X <= 1,
 # default 1) shortens the demos' pauses, typing, and mouse movement; 0.5 runs
 # them twice as fast. Each demo is saved as demo-<name>.mp4 (dark) or
 # demo-<name>-light.mp4 (light) in --out-dir, the repo root by default.
@@ -244,7 +244,9 @@ record() {
     echo "Recording $demo: window $window in $mode mode (delay scale $delay_scale)…"
     screencapture -v -x -o -C -l"$window" "$raw" >/dev/null 2>&1 &
     capture_pid=$!
-    sleep 2
+    # screencapture starts within ~0.25 s and the driver within ~0.3 s, so
+    # this leaves about a second of idle prompt.
+    sleep 1
     osascript "$driver" play "$demo" "$prefix" "$delay_scale" "$(sync_test "$sync_dir")"
     sleep 1
     kill -INT "$capture_pid"

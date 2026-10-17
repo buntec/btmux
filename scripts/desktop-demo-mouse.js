@@ -3,10 +3,13 @@
 //
 //   osascript -l JavaScript desktop-demo-mouse.js glide <x> <y> [ms]
 //   osascript -l JavaScript desktop-demo-mouse.js swirl <cx> <cy> <rx> <ry> <ms>
+//   osascript -l JavaScript desktop-demo-mouse.js click <x> <y> [ms]
 
 ObjC.import('CoreGraphics');
 ObjC.import('Foundation');
 
+const DOWN = 1;
+const UP = 2;
 const MOVED = 5;
 const FPS = 60;
 
@@ -54,10 +57,19 @@ function swirl(cx, cy, rx, ry, seconds) {
   });
 }
 
+// Glides there, then clicks.
+function click(x, y, seconds) {
+  glide(x, y, seconds);
+  post(DOWN, x, y);
+  frames(0.08, () => {});
+  post(UP, x, y);
+}
+
 function run(argv) {
   const [command, ...rest] = argv;
   const n = rest.map(Number);
   if (command === 'glide') glide(n[0], n[1], (n[2] ?? 600) / 1000);
   else if (command === 'swirl') swirl(n[0], n[1], n[2], n[3], n[4] / 1000);
+  else if (command === 'click') click(n[0], n[1], (n[2] ?? 600) / 1000);
   else throw new Error(`Unknown command: ${command}`);
 }

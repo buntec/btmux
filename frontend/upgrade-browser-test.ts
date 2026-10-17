@@ -1,5 +1,8 @@
 /** In-place upgrade keeps shells, replay, and browser sessions. Run with `just test-browser`. */
 import assert from 'node:assert/strict';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 
@@ -99,6 +102,19 @@ try {
     async () => (await toasts()).some((t) => t.startsWith('attention: Upgrade refused: /nonexistent/btmux')),
     'a refused upgrade must notify the browser',
   );
+  // A binary that rejects the server's arguments must not take over.
+  const dir = mkdtempSync(join(tmpdir(), 'btmux-upgrade-'));
+  const rejecting = join(dir, 'btmux');
+  writeFileSync(rejecting, "#!/bin/sh\necho \"error: unexpected argument '--port' found\" >&2\nexit 2\n");
+  chmodSync(rejecting, 0o755);
+  const rejected = await fetch(`${url}/api/server/upgrade`, {
+    headers,
+    method: 'POST',
+    body: JSON.stringify({ executable: rejecting }),
+  });
+  rmSync(dir, { recursive: true });
+  assert.equal(rejected.status, 409);
+  assert.match(await rejected.text(), /unexpected argument '--port' found/);
 
   const info = await api('/api/info');
   await api('/api/server/upgrade', { executable: info.executable });

@@ -120,7 +120,8 @@ profile.
 
 `btmux upgrade` (`handoff.rs`) keeps them instead: it asks the profile's server
 (`POST /api/server/upgrade`) to re-exec into the CLI's binary in the same
-process, after checking that binary's hidden `handoff-version`. It refuses
+process, after running that binary's hidden `handoff-version` with the
+server's arguments, which the exec passes on. It refuses
 while the built-in Neovim has unsaved changes. The server holds the state
 lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
 output stays in the kernel), and writes session snapshots, replay
@@ -132,7 +133,9 @@ over through `BTMUX_HANDOFF` before anything spawns; browsers reconnect and
 replay. Tabs get a toast when an upgrade starts or is refused; after
 reconnecting, the frontend toasts a changed server version. If the exec fails,
 the readers and writers restart, tabs get an error toast, and `btmux upgrade`
-reports the error (`upgrade_error` in `/api/info`). `handoff-version` prints
+reports the error (`upgrade_error` in `/api/info`). If a pane's reader or
+writer doesn't stop within 2 s, the upgrade fails before the exec; one that
+stops later restarts without its state. `handoff-version` prints
 the handoff version and the btmux version.
 It exits with status 3 whenever the server keeps running unchanged, and checks
 the pid to tell an exec from a service manager's restart. Bump

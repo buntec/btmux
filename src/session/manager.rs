@@ -14,6 +14,9 @@ use crate::git::RepoLayout;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
 
+/// A live shell handed to an upgraded server: pane, PTY master, and state.
+pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
+
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     shell: String,
@@ -1208,14 +1211,11 @@ impl SessionManager {
     }
 
     /// Stop every PTY reader and writer and export the session tree and live shells for
-    /// an in-place upgrade.
+    /// an in-place upgrade. If a pane doesn't stop in time, every shell resumes.
     pub fn export_handoff(
         &mut self,
         timeout: Duration,
-    ) -> (
-        Vec<SessionSnapshot>,
-        Vec<(Uuid, std::os::fd::RawFd, crate::pty::Handoff)>,
-    ) {
+    ) -> Result<(Vec<SessionSnapshot>, Vec<HandoffPane>), String> {
         let panes = || {
             self.sessions
                 .iter()
@@ -1225,22 +1225,44 @@ impl SessionManager {
         for pane in panes() {
             pane.pty.stop_io();
         }
+        let deadline = Instant::now() + timeout;
         let mut exported = Vec::new();
+        let mut stuck = 0;
         for pane in self
             .sessions
             .iter_mut()
             .flat_map(|s| &mut s.windows)
             .flat_map(|w| &mut w.panes)
         {
-            if let Some((fd, handoff)) = pane.pty.export_handoff(timeout) {
-                exported.push((pane.id, fd, handoff));
+            match pane.pty.export_handoff(deadline) {
+                Ok(Some((fd, handoff))) => exported.push((pane.id, fd, handoff)),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(id = %pane.id, "cannot hand off shell: {error}");
+                    stuck += 1;
+                }
             }
         }
-        (self.all_snapshots(), exported)
+        if stuck > 0 {
+            self.resume_handoff(exported);
+            return Err(format!("{stuck} pane(s) did not stop in time"));
+        }
+        Ok((self.all_snapshots(), exported))
     }
 
     /// Restart the shells `export_handoff` stopped, after a failed upgrade.
-    pub fn resume_handoff(&mut self, panes: Vec<(Uuid, std::os::fd::RawFd, crate::pty::Handoff)>) {
+    pub fn resume_handoff(&mut self, panes: Vec<HandoffPane>) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for pane in self
+            .sessions
+            .iter_mut()
+            .flat_map(|s| &mut s.windows)
+            .flat_map(|w| &mut w.panes)
+        {
+            if let Err(error) = pane.pty.recover(deadline) {
+                tracing::warn!(id = %pane.id, "cannot resume shell: {error}");
+            }
+        }
         for (id, _, handoff) in panes {
             let pid = handoff.pid;
             let resumed = match self.find_pane_mut(id) {

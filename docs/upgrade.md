@@ -31,8 +31,10 @@ the server's in-memory state, which is what the handoff file is for.
    `POST /api/server/upgrade` with its own executable path.
 
 2. **The server checks whether the upgrade is safe:**
-   - It runs `<new binary> handoff-version` and compares the handoff format
-     number. If the formats differ, it refuses, and you need a normal restart.
+   - It runs `<new binary> <server arguments> handoff-version` and compares
+     the handoff format number. If the formats differ, or the new binary
+     rejects the arguments the server was started with (which the exec passes
+     on), it refuses, and you need a normal restart.
    - It refuses to upgrade while the built-in Neovim has unsaved changes.
 
 3. **It tells the browsers.** Each tab gets a toast: "Upgrading btmux to X…"
@@ -83,6 +85,10 @@ the server's in-memory state, which is what the handoff file is for.
   buffers): the server keeps running unchanged, and `btmux upgrade` exits with
   status 3. The Home Manager module uses that code to tell this case apart from
   a real failure.
+- **A pane doesn't stop within 2 seconds:** the upgrade fails before the exec,
+  and every pane restarts. A pane that stops within 5 more seconds keeps its
+  state; after that it restarts anyway, losing the colors the program set
+  and any partly read escape sequence.
 - **`execve` itself fails:** the server marks the descriptors close-on-exec
   again, restarts the PTY readers and writers it stopped, toasts an error, and
   records it as `upgrade_error` in `/api/info` so the CLI can report it. Your

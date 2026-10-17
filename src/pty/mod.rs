@@ -15,7 +15,7 @@ use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use uuid::Uuid;
 
@@ -44,6 +44,50 @@ struct ReaderState {
     pending: Vec<u8>,
     /// Replies that reached the input queue after the writer stopped.
     unsent: Vec<u8>,
+}
+
+/// A report from a reader or writer stopped for a handoff.
+enum Stopped {
+    Reader(ReaderState),
+    /// Input not yet written.
+    Writer(Vec<u8>),
+}
+
+/// Collects the reports of a running reader and writer once told to stop.
+struct Stopping {
+    rx: std::sync::mpsc::Receiver<Stopped>,
+    /// Whether `stop_io` ran.
+    requested: bool,
+    reader: Option<ReaderState>,
+    input: Option<Vec<u8>>,
+}
+
+impl Stopping {
+    /// Wait until both reported, or the reader ended without a report (the
+    /// shell exited). `false` at `deadline`.
+    fn wait(&mut self, deadline: Instant) -> bool {
+        use std::sync::mpsc::RecvTimeoutError;
+        while self.reader.is_none() || self.input.is_none() {
+            let timeout = deadline.saturating_duration_since(Instant::now());
+            match self.rx.recv_timeout(timeout) {
+                Ok(Stopped::Reader(state)) => self.reader = Some(state),
+                Ok(Stopped::Writer(input)) => self.input = Some(input),
+                Err(RecvTimeoutError::Timeout) => return false,
+                // A writer that failed sends nothing.
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        true
+    }
+
+    /// Unwritten input, including replies the stopped reader couldn't queue.
+    fn input(&mut self) -> Vec<u8> {
+        let mut input = self.input.take().unwrap_or_default();
+        if let Some(reader) = &mut self.reader {
+            input.append(&mut reader.unsent);
+        }
+        input
+    }
 }
 
 /// Descriptors for a PTY's reader and writer threads.
@@ -264,9 +308,7 @@ pub struct PtyHandle {
     master: Option<OwnedFd>,
     /// Write end of the pipe that stops the reader.
     stop_reader: Option<OwnedFd>,
-    reader_stopped: Mutex<Option<std::sync::mpsc::Receiver<ReaderState>>>,
-    /// Input the stopped writer did not write.
-    writer_stopped: Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    stopping: Mutex<Option<Stopping>>,
     /// The `BTMUX_BIN` the shell was started with.
     bin: Option<std::path::PathBuf>,
     viewers: Vec<(Uuid, u16, u16)>,
@@ -328,8 +370,7 @@ impl PtyHandle {
             child: Arc::new(Mutex::new(None)),
             master: None,
             stop_reader: None,
-            reader_stopped: Mutex::new(None),
-            writer_stopped: Mutex::new(None),
+            stopping: Mutex::new(None),
             bin: None,
             viewers: Vec::new(),
             owner_tx: watch::channel(None).0,
@@ -529,28 +570,38 @@ impl PtyHandle {
             unsafe { libc::write(stop.as_raw_fd(), [0u8].as_ptr().cast(), 1) };
             // A full queue means the writer isn't idle.
             let _ = self.input_tx.0.try_send(PtyInput::Stop);
+            if let Some(stopping) = self.stopping.lock().unwrap().as_mut() {
+                stopping.requested = true;
+            }
         }
     }
 
     /// Wait for the stopped reader and writer and export this pane's state.
-    /// `None` if the pane has no live shell.
-    pub fn export_handoff(&mut self, timeout: Duration) -> Option<(RawFd, Handoff)> {
-        let stopped = self.reader_stopped.get_mut().unwrap().take()?;
-        let reader = stopped.recv_timeout(timeout).ok()?;
-        let mut input = self
-            .writer_stopped
-            .get_mut()
-            .unwrap()
-            .take()
-            .and_then(|stopped| stopped.recv_timeout(timeout).ok())
-            .unwrap_or_default();
-        input.extend(reader.unsent);
-        let pid = (*self.child.lock().unwrap())?;
-        let master = self.master.as_ref()?.as_raw_fd();
+    /// `Ok(None)` if the pane has no live shell; after an error, `recover`
+    /// restarts it.
+    pub fn export_handoff(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<(RawFd, Handoff)>, String> {
+        let slot = self.stopping.get_mut().unwrap();
+        let Some(stopping) = slot.as_mut().filter(|stopping| stopping.requested) else {
+            return Ok(None);
+        };
+        if !stopping.wait(deadline) {
+            return Err("its reader or writer did not stop in time".into());
+        }
+        let input = stopping.input();
+        let reader = stopping.reader.take();
+        *slot = None;
+        let (Some(reader), Some(pid), Some(master)) =
+            (reader, *self.child.lock().unwrap(), &self.master)
+        else {
+            return Ok(None);
+        };
         let (cols, rows) = *self.size.lock().unwrap();
         let journal = self.scrollback.lock().unwrap().snapshot();
-        Some((
-            master,
+        Ok(Some((
+            master.as_raw_fd(),
             Handoff {
                 pid,
                 cols,
@@ -565,18 +616,58 @@ impl PtyHandle {
                 input,
                 bin: self.bin.clone(),
             },
-        ))
+        )))
     }
 
     /// Restart the reader and writer stopped for a handoff that failed.
     pub fn resume(&mut self, handoff: Handoff) -> Result<(), String> {
+        self.restart(&handoff.colors, handoff.pending, handoff.input)
+    }
+
+    /// Restart a reader and writer that `export_handoff` gave up on. One that
+    /// still hasn't stopped by `deadline` loses its state (program-set colors,
+    /// a partly read sequence) and finishes the chunk it holds.
+    pub fn recover(&mut self, deadline: Instant) -> Result<(), String> {
+        let Some(mut stopping) = self
+            .stopping
+            .get_mut()
+            .unwrap()
+            .take_if(|stopping| stopping.requested)
+        else {
+            return Ok(());
+        };
+        let stopped = stopping.wait(deadline);
+        let input = stopping.input();
+        let (colors, pending) = match stopping.reader.take() {
+            Some(reader) => (reader.colors, reader.pending),
+            // Ended at EOF: the shell exited.
+            None if stopped => return Ok(()),
+            None => {
+                tracing::warn!(pane_id = %self.pane_id, "restarting a reader that did not stop");
+                Default::default()
+            }
+        };
+        self.restart(&colors, pending, input).inspect_err(|_| {
+            if let Some(pid) = *self.child.lock().unwrap() {
+                // Its waiter reaps it and removes the pane.
+                unsafe { libc::kill(pid, libc::SIGHUP) };
+            }
+        })
+    }
+
+    fn restart(
+        &mut self,
+        colors: &[Option<colors::Rgb>],
+        pending: Vec<u8>,
+        input: Vec<u8>,
+    ) -> Result<(), String> {
         let io = PtyIo::new(self.master.as_ref().ok_or("PTY has no master")?)?;
         let mut interceptor = vt_query::VtQueryInterceptor::with_colors(
             self.palette.clone(),
             self.color_reports.clone(),
         );
-        interceptor.set_overrides(&handoff.colors);
-        self.run_io(io, interceptor, handoff.pending, handoff.input);
+        interceptor.set_overrides(colors);
+        self.run_io(io, interceptor, pending, input);
         Ok(())
     }
 
@@ -645,9 +736,13 @@ impl PtyHandle {
         } = io;
         let (input_tx, mut input_rx) = mpsc::channel::<PtyInput>(32);
         let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
-        *self.reader_stopped.get_mut().unwrap() = Some(stopped_rx);
-        let (writer_stopped_tx, writer_stopped_rx) = std::sync::mpsc::channel();
-        *self.writer_stopped.get_mut().unwrap() = Some(writer_stopped_rx);
+        let writer_stopped_tx = stopped_tx.clone();
+        *self.stopping.get_mut().unwrap() = Some(Stopping {
+            rx: stopped_rx,
+            requested: false,
+            reader: None,
+            input: None,
+        });
         self.stop_reader = Some(stop_tx);
 
         let mut output = OutputPipeline {
@@ -701,11 +796,11 @@ impl PtyHandle {
             // The writer also closes the queue when it stops for a handoff.
             if stopped || (unsent.is_some() && is_readable(stop_rx.as_raw_fd())) {
                 let (colors, pending) = output.interceptor.export();
-                let _ = stopped_tx.send(ReaderState {
+                let _ = stopped_tx.send(Stopped::Reader(ReaderState {
                     colors,
                     pending,
                     unsent: unsent.unwrap_or_default(),
-                });
+                }));
             } else {
                 let _ = exit_tx.send(pane_id);
             }
@@ -778,7 +873,7 @@ impl PtyHandle {
                     PtyInput::Stop => {}
                 }
             }
-            let _ = writer_stopped_tx.send(unwritten);
+            let _ = writer_stopped_tx.send(Stopped::Writer(unwritten));
         });
 
         self.input_tx = InputSender(input_tx);
@@ -1291,6 +1386,9 @@ mod lifecycle_tests {
         .unwrap();
         assert!(exit_rx.try_recv().is_err());
     }
+    fn deadline() -> Instant {
+        Instant::now() + std::time::Duration::from_secs(2)
+    }
     async fn read_until(rx: &mut broadcast::Receiver<Output>, needle: &str) -> String {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let mut text = String::new();
@@ -1319,9 +1417,7 @@ mod lifecycle_tests {
         read_until(&mut rx, "BEFORE_HANDOFF").await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         old.stop_io();
-        let (fd, handoff) = old
-            .export_handoff(std::time::Duration::from_secs(2))
-            .unwrap();
+        let (fd, handoff) = old.export_handoff(deadline()).unwrap().unwrap();
         assert_eq!(handoff.pid, pid);
         // The prompt joins the unterminated title.
         assert!(handoff.pending.starts_with(b"\x1b]2;ti"));
@@ -1353,9 +1449,7 @@ mod lifecycle_tests {
             "{title:?}"
         );
         new.stop_io();
-        let (_, handoff) = new
-            .export_handoff(std::time::Duration::from_secs(2))
-            .unwrap();
+        let (_, handoff) = new.export_handoff(deadline()).unwrap().unwrap();
         assert_eq!(handoff.colors[256], Some([0x12, 0x34, 0x56]));
     }
     #[tokio::test]
@@ -1374,9 +1468,7 @@ mod lifecycle_tests {
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         old.stop_io();
-        let (fd, handoff) = old
-            .export_handoff(std::time::Duration::from_secs(2))
-            .unwrap();
+        let (fd, handoff) = old.export_handoff(deadline()).unwrap().unwrap();
         assert!(!handoff.input.is_empty());
         let master = unsafe { BorrowedFd::borrow_raw(fd) }
             .try_clone_to_owned()
@@ -1415,7 +1507,8 @@ mod lifecycle_tests {
         std::thread::sleep(std::time::Duration::from_millis(100));
         drop(lock);
         let (_, handoff) = pane
-            .export_handoff(std::time::Duration::from_secs(2))
+            .export_handoff(deadline())
+            .unwrap()
             .expect("the stopped shell is handed off");
         assert_eq!(handoff.pid, pid);
         // The next server writes the reply.
@@ -1433,14 +1526,89 @@ mod lifecycle_tests {
         let pid = pane.shell_pid.unwrap();
         let (mut rx, _) = pane.subscribe_replay();
         pane.stop_io();
-        let (_, handoff) = pane
-            .export_handoff(std::time::Duration::from_secs(2))
-            .unwrap();
+        let (_, handoff) = pane.export_handoff(deadline()).unwrap().unwrap();
         pane.resume(handoff).unwrap();
         pane.input_tx
             .send(b"printf 'RESUMED_''%s\\n' $$\r".to_vec())
             .unwrap();
         read_until(&mut rx, &format!("RESUMED_{pid}")).await;
+    }
+
+    /// A pane whose reader is blocked answering a color query.
+    async fn stuck_pane() -> (
+        PtyHandle,
+        colors::SharedPalette,
+        broadcast::Receiver<Output>,
+    ) {
+        let palette = colors::SharedPalette::default();
+        palette.set(colors::Palette::from_theme(&crate::config::default_theme()));
+        let env = PtyEnv {
+            exit_tx: mpsc::unbounded_channel().0,
+            meta_tx: mpsc::unbounded_channel().0,
+            port: 8044,
+            palette: palette.clone(),
+        };
+        let mut pane = PtyHandle::new_with_cwd("/bin/sh", Uuid::new_v4(), &env, None, 100);
+        pane.ensure_spawned(80, 24).unwrap();
+        let (mut rx, _) = pane.subscribe_replay();
+        pane.input_tx.send(b"printf 'READY'\r".to_vec()).unwrap();
+        read_until(&mut rx, "READY").await;
+        (pane, palette, rx)
+    }
+
+    #[tokio::test]
+    async fn stuck_handoff_recovers_shell() {
+        let (mut pane, palette, mut rx) = stuck_pane().await;
+        let pid = pane.shell_pid.unwrap();
+        let lock = palette.lock();
+        // `ESC ] 11 ; rgb:RRRR/GGGG/BBBB BEL` is 24 bytes.
+        pane.input_tx
+            .send(
+                b"stty -echo -icanon; printf '\\033]11;?\\007'; head -c 24 >/dev/null; \
+                  stty sane; echo GOT_''REPLY\r"
+                    .to_vec(),
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        pane.stop_io();
+        assert!(pane.export_handoff(Instant::now()).is_err());
+        drop(lock);
+        pane.recover(deadline()).unwrap();
+        // The query's program gets the reply.
+        read_until(&mut rx, "GOT_REPLY").await;
+        pane.input_tx
+            .send(b"printf 'RECOVERED_''%s\\n' $$\r".to_vec())
+            .unwrap();
+        read_until(&mut rx, &format!("RECOVERED_{pid}")).await;
+    }
+
+    #[tokio::test]
+    async fn late_reader_is_restarted_without_its_state() {
+        let (mut pane, palette, mut rx) = stuck_pane().await;
+        let pid = pane.shell_pid.unwrap();
+        let lock = palette.lock();
+        pane.input_tx
+            .send(b"printf '\\033]11;?\\007'\r".to_vec())
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        pane.stop_io();
+        assert!(pane.export_handoff(Instant::now()).is_err());
+        pane.recover(Instant::now()).unwrap();
+        drop(lock);
+        pane.input_tx
+            .send(b"printf 'RESTARTED_''%s\\n' $$\r".to_vec())
+            .unwrap();
+        read_until(&mut rx, &format!("RESTARTED_{pid}")).await;
+    }
+
+    #[tokio::test]
+    async fn recovering_a_running_pane_does_nothing() {
+        let (mut pane, _palette, mut rx) = stuck_pane().await;
+        pane.recover(Instant::now()).unwrap();
+        pane.input_tx
+            .send(b"printf 'STILL_''RUNNING'\r".to_vec())
+            .unwrap();
+        read_until(&mut rx, "STILL_RUNNING").await;
     }
 
     #[tokio::test]

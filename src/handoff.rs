@@ -239,9 +239,11 @@ async fn check(exe: &Path) -> Result<(&'static Context, String), Refusal> {
         )));
     }
     let incompatible = Refusal::Incompatible;
+    // With this server's arguments, which `exec` passes on.
     let output = tokio::time::timeout(
         Duration::from_secs(10),
         tokio::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
             .arg("handoff-version")
             .kill_on_drop(true)
             .output(),
@@ -249,10 +251,19 @@ async fn check(exe: &Path) -> Result<(&'static Context, String), Refusal> {
     .await
     .map_err(|_| incompatible(format!("{} did not respond", exe.display())))?
     .map_err(|e| incompatible(format!("cannot run {}: {e}", exe.display())))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr.lines().next().unwrap_or_default();
+        let reason = reason.trim().trim_start_matches("error: ");
+        return Err(incompatible(format!(
+            "{} cannot take over this server ({reason}); restart it instead",
+            exe.display()
+        )));
+    }
     // `<handoff version> <btmux version>`
     let version = String::from_utf8_lossy(&output.stdout);
     let mut version = version.split_whitespace();
-    if !output.status.success() || version.next() != Some(&VERSION.to_string()) {
+    if version.next() != Some(&VERSION.to_string()) {
         return Err(incompatible(format!(
             "{} cannot take over this server (handoff version {VERSION}); restart it instead",
             exe.display()
@@ -280,7 +291,10 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
         return error;
     }
     crate::vscode::shutdown().await;
-    let (sessions, panes) = manager.export_handoff(Duration::from_secs(2));
+    let (sessions, panes) = match manager.export_handoff(Duration::from_secs(2)) {
+        Ok(exported) => exported,
+        Err(error) => return error,
+    };
     if let Some(path) = &context.state_file {
         if let Err(error) = crate::persistence::save(path, &sessions) {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);

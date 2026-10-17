@@ -28,8 +28,9 @@ wire types; the tests reject stale generated types. `just check` and `just lint`
 remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
 reconnect/replay, config updates, correlated command errors, and multiple viewers,
-followed by Astryx interaction, theme, and shader wallpaper checks
-(`just test-nvim-browser` covers the Neovim surface). `frontend/browser-test-stack.ts`
+followed by upgrade, Astryx interaction, theme, and Git checks
+(`just test-nvim-browser` covers the Neovim surface; `just test-shader-browser`,
+run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
 repo state don't affect it; failures keep the stack logs. Async page predicates must

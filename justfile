@@ -260,7 +260,11 @@ protocol:
 
 # Browser regressions, each file against its own fresh, isolated stack.
 test-browser:
-    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts reliability-test.ts upgrade-browser-test.ts astryx-browser-test.ts git-branch-browser-test.ts git-log-browser-test.ts shader-wallpaper-browser-test.ts
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts reliability-test.ts upgrade-browser-test.ts astryx-browser-test.ts git-branch-browser-test.ts git-log-browser-test.ts
+
+# Shader wallpaper regressions (on demand; pixel checks need WebGPU).
+test-shader-browser:
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts shader-wallpaper-browser-test.ts
 
 # Built-in Neovim regressions against a fresh, isolated stack (requires Neovim 0.12+).
 test-nvim-browser:

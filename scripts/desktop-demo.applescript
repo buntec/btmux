@@ -201,32 +201,54 @@ on playPanes(prefixSpec)
 	pace(1.5)
 end playPanes
 
--- File browser, Git mode, and process viewer
+-- File browser (smooth preview scrolling, file and content search), Git
+-- mode, and process viewer
 on playFiles(prefixSpec)
-	-- README.md is second to last; scroll its preview, then walk up through
-	-- more files.
+	-- Filter down to README.md and scroll its preview with smooth Ctrl-D/U
 	chord(prefixSpec, "f")
 	pace(1.5)
-	press("G")
-	pace(1)
-	press("k")
-	pace(2)
+	press("g")
+	press("/")
+	pace(0.4)
+	typeSlowly("readme")
+	pace(1.5)
 	repeat 3 times
 		ctrl("d")
-		pace(0.7)
-	end repeat
-	pace(0.5)
-	repeat 2 times
-		ctrl("u")
-		pace(0.7)
-	end repeat
-	pace(0.8)
-	repeat 5 times
-		press("k")
 		pace(1)
 	end repeat
-	pace(1)
-	escape()
+	pace(0.5)
+	repeat 3 times
+		ctrl("u")
+		pace(0.8)
+	end repeat
+	pace(0.5)
+	escape() -- leave the filter
+	pace(0.8)
+
+	-- File search, then content search, each previewing the focused result
+	press("f")
+	pace(0.6)
+	typeSlowly("layout")
+	pace(1.5)
+	repeat 3 times
+		ctrl("n")
+		pace(1)
+	end repeat
+	pace(0.5)
+	escape() -- leave search
+	pace(0.6)
+	press("s")
+	pace(0.6)
+	typeSlowly("broadcast_state")
+	pace(1.5)
+	repeat 4 times
+		ctrl("n")
+		pace(1)
+	end repeat
+	pace(0.5)
+	escape() -- leave search
+	pace(0.3)
+	escape() -- close
 	pace(0.8)
 
 	-- Git mode (the first Escape leaves Git mode, the second closes)

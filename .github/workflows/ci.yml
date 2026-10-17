@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v2
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      # The binary embeds frontend/dist.
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: just lint
+
+      - name: Test
+        run: just test
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: extractions/setup-just@v2
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Type-check
+        run: just check-frontend
+
+      - name: Check formatting
+        working-directory: frontend
+        run: bunx prettier --check "src/**/*.{ts,tsx}"
+
+      - name: Test
+        run: just test-frontend
+
+  browser:
+    name: Browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v2
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Install browser dependencies
+        working-directory: frontend
+        run: bunx playwright install --with-deps chromium
+
+      - name: Test
+        run: just test-browser

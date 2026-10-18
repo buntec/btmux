@@ -57,6 +57,9 @@ const BLEND_MODES: Record<ShaderBlendMode, BlendMode> = {
   saturation: 'saturation',
 };
 
+// These read the pointer position even while it is inactive.
+const IDLE_POINTER_OFFSCREEN = new Set(['Boids', 'PixelSort']);
+
 const definitions = new Map<string, Promise<GpuShaderDefinition>>();
 
 function loadDefinition(id: string): Promise<GpuShaderDefinition> {
@@ -116,7 +119,12 @@ export function createWallpaperRenderer(
       return {
         ...params,
         deltaTime: running() ? params.deltaTime * current.speed : 0,
-        pointer: source.name === 'Boids' && !seen ? { x: -10, y: -10 } : { ...pointer, seen },
+        // Park unseen input where simulations start, so a new layer gets no impulse.
+        pointer: seen
+          ? { ...pointer, seen }
+          : IDLE_POINTER_OFFSCREEN.has(source.name)
+            ? { x: -10, y: -10 }
+            : { x: 0.5, y: 0.5, seen },
         pointerActive: seen,
       };
     };

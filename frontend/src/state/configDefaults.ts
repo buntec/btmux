@@ -1,3 +1,4 @@
+import type { ShaderLayer } from '../generated/protocol';
 import type { ClientConfig, FontEntry } from './types';
 
 /**
@@ -10,7 +11,7 @@ export const CONFIG_DEFAULTS = {
   repeatTime: 0,
   animations: true,
   showPaneTitles: false,
-  wallpaperShader: null,
+  wallpaperShaders: [] as ShaderLayer[],
   wallpaperOpacity: 0.1,
   desktopBackgroundOpacity: 0.95,
   wallpaperBlur: 0,
@@ -85,11 +86,8 @@ export function getTerminalFontWeight(config: ConfigLike): number {
   return config?.terminal.fontWeight ?? CONFIG_DEFAULTS.terminal.fontWeight;
 }
 
-export function getWallpaperShader(config: ConfigLike): string | null {
-  // A null config means the socket has not delivered defaults yet. Once a
-  // config exists, preserve an explicit null to allow wallpaper shaders to be
-  // disabled.
-  return config ? config.wallpaper_shader : CONFIG_DEFAULTS.wallpaperShader;
+export function getWallpaperShaders(config: ConfigLike): ShaderLayer[] {
+  return config?.wallpaper_shaders ?? CONFIG_DEFAULTS.wallpaperShaders;
 }
 
 export function getWallpaperOpacity(config: ConfigLike): number {

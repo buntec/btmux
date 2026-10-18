@@ -15,6 +15,7 @@ import { PaneSearch } from './PaneSearch';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
 import { cn } from '../lib/utils';
 import { desktopTransparency } from '../lib/desktopTransparency';
+import { activeShaderLayers } from '../lib/wallpaperCatalog';
 import {
   CONFIG_DEFAULTS,
   getAnimations,
@@ -82,7 +83,7 @@ export function buildTerminalOptions(config: ClientConfig | null): PaneTerminalO
 export function terminalTransparency(config: ClientConfig | null): boolean {
   if (!config) return false;
   // Let wallpapers and the desktop backdrop show through the terminal.
-  const hasWallpaper = config.wallpaper != null || config.wallpaper_shader != null;
+  const hasWallpaper = config.wallpaper != null || activeShaderLayers(config.wallpaper_shaders).length > 0;
   return config.terminal?.allowTransparency ?? (hasWallpaper || desktopTransparency);
 }
 

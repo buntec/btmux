@@ -12,6 +12,7 @@ import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { getAnimations, getWindowSort } from '../state/configDefaults';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
+import { activeShaderLayers } from '../lib/wallpaperCatalog';
 import type { ClientMessage } from '../protocol/messages';
 import { SysStatBar } from './SysStatBar';
 
@@ -46,7 +47,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     else state().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
   };
   const animations = getAnimations(config);
-  const hasShader = config?.wallpaper_shader != null;
+  const hasShader = activeShaderLayers(config?.wallpaper_shaders).length > 0;
   return (
     <HStack
       gap={2}

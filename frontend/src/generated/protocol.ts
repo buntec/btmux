@@ -98,6 +98,27 @@ cellBackgroundOpacity: number | null, };
 export type ShaderValue = null | number | boolean | string | Array<ShaderValue> | { [key in string]: ShaderValue };
 
 // prettier-ignore
+export type ShaderBlendMode = "normal" | "normal-oklch" | "normal-oklab" | "multiply" | "screen" | "linear-dodge" | "overlay" | "difference" | "color-dodge" | "exclusion" | "color" | "luminosity" | "darken" | "lighten" | "color-burn" | "linear-burn" | "soft-light" | "hard-light" | "hue" | "saturation";
+
+// prettier-ignore
+export type ShaderLayer = {
+/**
+ * Generator or effect ID, e.g. `"aurora"` or `"film-grain"`.
+ */
+shader: string, enabled: boolean, "blend-mode": ShaderBlendMode, opacity: number,
+/**
+ * Whether pointer and terminal-cursor input reaches this layer.
+ */
+interactive: boolean,
+/**
+ * Native parameters in kebab-case.
+ */
+params: { [key in string]: ShaderValue }, };
+
+// prettier-ignore
+export type ShaderLayers = Array<ShaderLayer>;
+
+// prettier-ignore
 export type ClientConfig = { prefix: string, binds: Array<Bind>,
 /**
  * The configured shell for new panes, or `null` to use `$SHELL`.
@@ -157,9 +178,9 @@ show_pane_titles: boolean,
  */
 wallpaper: string | null,
 /**
- * Name of the procedural WebGPU wallpaper rendered by the frontend.
+ * Procedural WebGPU wallpaper layers rendered by the frontend, bottom first.
  */
-wallpaper_shader: string | null, wallpaper_shader_params: { [key in string]: { [key in string]: ShaderValue } },
+wallpaper_shaders: ShaderLayers,
 /**
  * Opacity of the wallpaper: 0.0 = invisible, 1.0 = fully visible.
  * Always `Some` when a wallpaper is configured (defaults to 0.10).
@@ -269,7 +290,7 @@ pid: number, };
 export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "state": "error", message: string, };
 
 // prettier-ignore
-export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_shader_params?: { [key in string]: { [key in string]: ShaderValue } }, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
+export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shaders?: ShaderLayers, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
 /**
  * Border-draw style name; `"none"` (or the empty string) disables it.
  */

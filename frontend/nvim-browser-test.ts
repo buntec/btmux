@@ -488,7 +488,13 @@ try {
   console.log('PASS live light/dark themes synchronize Neovim syntax and Base24 terminal colors');
 
   // Unset allow-transparency enables it automatically when a wallpaper is selected.
-  await update({ wallpaper_shader: 'aurora', wallpaper_opacity: 0.7, wallpaper_resolution: 0.4 });
+  await update({
+    wallpaper_shaders: [
+      { shader: 'aurora', enabled: true, 'blend-mode': 'normal', opacity: 1, interactive: true, params: {} },
+    ],
+    wallpaper_opacity: 0.7,
+    wallpaper_resolution: 0.4,
+  });
   await page.waitForFunction(() =>
     ['ready', 'unavailable'].includes(
       document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderState ?? '',

@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useStore } from '../state/store';
-import { findWallpaperShader, type WallpaperShaderParams } from '../lib/wallpaperCatalog';
+import type { ShaderLayer } from '../generated/protocol';
+import { findWallpaperShader } from '../lib/wallpaperCatalog';
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
 import type { WallpaperRenderer, WallpaperRuntimeOptions } from '../lib/wallpaperRenderer';
 
 interface ShaderWallpaperProps {
-  shaderId: string;
-  params: WallpaperShaderParams;
+  layers: ShaderLayer[];
   opacity: number;
   blur: number;
   saturate: number;
@@ -26,9 +26,13 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
   latest.current = props;
   const showToast = useStore((s) => s.showToast);
 
+  const unknown = props.layers
+    .filter((layer) => layer.enabled && !findWallpaperShader(layer.shader))
+    .map((layer) => JSON.stringify(layer.shader))
+    .join(', ');
   useEffect(() => {
-    if (!findWallpaperShader(props.shaderId)) showToast(`Unknown wallpaper shader "${props.shaderId}"`, 'attention');
-  }, [props.shaderId, showToast]);
+    if (unknown) showToast(`Unknown wallpaper shader ${unknown}`, 'attention');
+  }, [unknown, showToast]);
   const runtime = (): WallpaperRuntimeOptions => ({
     ...latest.current,
     paused: !!latest.current.paused || latest.current.opacity === 0,
@@ -36,7 +40,7 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !findWallpaperShader(props.shaderId)) return;
+    if (!canvas) return;
     let disposed = false;
     let instance: WallpaperRenderer | null = null;
     const unavailable = () => {
@@ -49,10 +53,9 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
     canvas.dataset.shaderState = 'loading';
     canvas.style.visibility = '';
     void import('../lib/wallpaperRenderer')
-      .then(async ({ loadWallpaperRenderer }) => {
-        const create = await loadWallpaperRenderer(props.shaderId);
-        if (disposed || !create) return;
-        instance = create(canvas, runtime(), unavailable);
+      .then(async ({ createWallpaperRenderer }) => {
+        if (disposed) return;
+        instance = createWallpaperRenderer(canvas, runtime(), unavailable);
         rendererRef.current = instance;
         await instance.initialize();
         if (!disposed && canvas.dataset.shaderState !== 'unavailable') canvas.dataset.shaderState = 'ready';
@@ -63,7 +66,7 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
       instance?.dispose();
       if (rendererRef.current === instance) rendererRef.current = null;
     };
-  }, [props.shaderId]);
+  }, []);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -94,12 +97,5 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
     };
   }, []);
 
-  return findWallpaperShader(props.shaderId) ? (
-    <canvas
-      ref={canvasRef}
-      data-shader-id={props.shaderId}
-      aria-hidden="true"
-      className="fixed -z-10 pointer-events-none"
-    />
-  ) : null;
+  return <canvas ref={canvasRef} aria-hidden="true" className="fixed -z-10 pointer-events-none" />;
 }

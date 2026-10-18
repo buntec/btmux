@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test';
 import {
+  createShaderLayer,
   findWallpaperShader,
   parameterValue,
-  wallpaperParamsToml,
+  wallpaperLayersToml,
   WALLPAPER_SHADERS,
 } from './src/lib/wallpaperCatalog';
-import { randomizeWallpaperParams } from './src/lib/wallpaperRandomize';
+import { randomizeShaderParams } from './src/lib/wallpaperRandomize';
 
 function randomStream(seed: number) {
   return () => {
@@ -17,12 +18,12 @@ function randomStream(seed: number) {
 test('every shader gets a complete native parameter set that round-trips through TOML', () => {
   for (const shader of WALLPAPER_SHADERS) {
     for (const random of [() => 0, () => 0.999999, randomStream(17)]) {
-      const params = randomizeWallpaperParams(shader, {}, random);
-      expect(Object.keys(params[shader.id])).toEqual(shader.params.map((param) => param.key));
+      const params = randomizeShaderParams(shader, {}, random);
+      expect(Object.keys(params)).toEqual(shader.params.map((param) => param.key));
       for (const param of shader.params) {
-        const value = params[shader.id][param.key];
+        const value = params[param.key];
         expect(parameterValue(param, value)).toEqual(value);
-        if (param.kind === 'number') {
+        if (param.kind === 'number' && param.min !== undefined && param.max !== undefined) {
           expect(value).toBeGreaterThanOrEqual(param.min!);
           expect(value).toBeLessThanOrEqual(param.max!);
           const steps = (Number(value) - param.min!) / param.step!;
@@ -39,35 +40,38 @@ test('every shader gets a complete native parameter set that round-trips through
           for (let i = 1; i < stops.length; i++) expect(stops[i].position).toBeGreaterThan(stops[i - 1].position);
         }
       }
-      expect(Bun.TOML.parse(wallpaperParamsToml(params).join('\n'))['wallpaper-shader-params']).toEqual(params);
+      const layer = { ...createShaderLayer(shader.id), params };
+      const toml = Bun.TOML.parse(wallpaperLayersToml([layer]).join('\n')) as Record<string, any>;
+      expect(toml['wallpaper-shader'][0].params ?? {}).toEqual(
+        Object.fromEntries(Object.entries(params).filter(([, value]) => value !== null)),
+      );
     }
   }
 });
 
-test('randomization replaces explicit seeds and settings without changing other shaders or input objects', () => {
-  const params = { aurora: { seed: 0, speed: 0, 'color-a': '#123456' }, 'chroma-flow': { radius: 2 } };
+test('randomization replaces explicit seeds and settings without changing the input object', () => {
+  const params = { seed: 0, speed: 0, 'color-a': '#123456' };
   const before = structuredClone(params);
-  const randomized = randomizeWallpaperParams(findWallpaperShader('aurora')!, params, () => 0);
-  expect(randomized.aurora.seed).not.toBe(0);
-  expect(randomized.aurora.speed).not.toBe(0);
-  expect(randomized.aurora['color-a']).not.toBe('#123456');
-  expect(randomized['chroma-flow']).toBe(params['chroma-flow']);
+  const randomized = randomizeShaderParams(findWallpaperShader('aurora')!, params, () => 0);
+  expect(randomized.seed).not.toBe(0);
+  expect(randomized.speed).not.toBe(0);
+  expect(randomized['color-a']).not.toBe('#123456');
   expect(params).toEqual(before);
 });
 
 test('seedless shaders vary colors and dynamics, and expensive or invisible settings are avoided', () => {
   const chroma = findWallpaperShader('chroma-flow')!;
-  const first = randomizeWallpaperParams(chroma, {}, randomStream(1))['chroma-flow'];
-  const second = randomizeWallpaperParams(chroma, {}, randomStream(2))['chroma-flow'];
+  const first = randomizeShaderParams(chroma, {}, randomStream(1));
+  const second = randomizeShaderParams(chroma, {}, randomStream(2));
   for (const param of chroma.params) expect(first[param.key]).not.toEqual(second[param.key]);
   for (let attempt = 0; attempt < 50; attempt++) {
-    const boids = randomizeWallpaperParams(findWallpaperShader('boids')!, {}, randomStream(attempt));
-    expect(boids.boids.count).toBeLessThanOrEqual(2400);
-    const strands = randomizeWallpaperParams(findWallpaperShader('strands')!, {}, randomStream(attempt));
-    expect(strands.strands['line-width']).toBeGreaterThan(0);
-    const gradient = randomizeWallpaperParams(findWallpaperShader('linear-gradient')!, {}, randomStream(attempt));
-    const start = gradient['linear-gradient'].start as { x: number; y: number };
-    const end = gradient['linear-gradient'].end as { x: number; y: number };
+    const boids = randomizeShaderParams(findWallpaperShader('boids')!, {}, randomStream(attempt));
+    expect(boids.count).toBeLessThanOrEqual(2400);
+    const strands = randomizeShaderParams(findWallpaperShader('strands')!, {}, randomStream(attempt));
+    expect(strands['line-width']).toBeGreaterThan(0);
+    const gradient = randomizeShaderParams(findWallpaperShader('linear-gradient')!, {}, randomStream(attempt));
+    const start = gradient.start as { x: number; y: number };
+    const end = gradient.end as { x: number; y: number };
     expect(Math.hypot(start.x - end.x, start.y - end.y)).toBeGreaterThan(0.7);
   }
 });

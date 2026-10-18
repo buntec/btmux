@@ -157,24 +157,128 @@ pub enum ShaderValue {
     Object(BTreeMap<String, ShaderValue>),
 }
 
-pub type WallpaperShaderParams = BTreeMap<String, BTreeMap<String, ShaderValue>>;
+pub type ShaderParams = BTreeMap<String, ShaderValue>;
 
-fn shader_params<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<WallpaperShaderParams, D::Error> {
-    fn finite(value: &ShaderValue) -> bool {
-        match value {
-            ShaderValue::Number(number) => number.is_finite(),
-            ShaderValue::Array(values) => values.iter().all(finite),
-            ShaderValue::Object(values) => values.values().all(finite),
-            _ => true,
+/// Most wallpaper shader layers one stack may hold.
+pub const MAX_WALLPAPER_SHADER_LAYERS: usize = 8;
+
+/// How a shader layer composites over the layers beneath it.
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum ShaderBlendMode {
+    #[default]
+    Normal,
+    NormalOklch,
+    NormalOklab,
+    Multiply,
+    Screen,
+    LinearDodge,
+    Overlay,
+    Difference,
+    ColorDodge,
+    Exclusion,
+    Color,
+    Luminosity,
+    Darken,
+    Lighten,
+    ColorBurn,
+    LinearBurn,
+    SoftLight,
+    HardLight,
+    Hue,
+    Saturation,
+}
+
+/// One layer of the wallpaper shader stack. Layers render bottom to top; an
+/// effect layer processes everything beneath it.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ShaderLayer {
+    /// Generator or effect ID, e.g. `"aurora"` or `"film-grain"`.
+    pub shader: String,
+    pub enabled: bool,
+    pub blend_mode: ShaderBlendMode,
+    pub opacity: f32,
+    /// Whether pointer and terminal-cursor input reaches this layer.
+    pub interactive: bool,
+    /// Native parameters in kebab-case.
+    pub params: ShaderParams,
+}
+
+impl<'de> Deserialize<'de> for ShaderLayer {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "kebab-case", deny_unknown_fields)]
+        struct Raw {
+            shader: String,
+            #[serde(default = "default_true")]
+            enabled: bool,
+            #[serde(default)]
+            blend_mode: ShaderBlendMode,
+            #[serde(default = "default_one")]
+            opacity: f32,
+            #[serde(default = "default_true")]
+            interactive: bool,
+            #[serde(default)]
+            params: ShaderParams,
         }
+        fn finite(value: &ShaderValue) -> bool {
+            match value {
+                ShaderValue::Number(number) => number.is_finite(),
+                ShaderValue::Array(values) => values.iter().all(finite),
+                ShaderValue::Object(values) => values.values().all(finite),
+                _ => true,
+            }
+        }
+        fn default_true() -> bool {
+            true
+        }
+        fn default_one() -> f32 {
+            1.0
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        if !(0.0..=1.0).contains(&raw.opacity) {
+            return Err(D::Error::custom("opacity must be between 0 and 1"));
+        }
+        if !raw.params.values().all(finite) {
+            return Err(D::Error::custom("shader parameters must be finite"));
+        }
+        Ok(Self {
+            shader: raw.shader,
+            enabled: raw.enabled,
+            blend_mode: raw.blend_mode,
+            opacity: raw.opacity,
+            interactive: raw.interactive,
+            params: raw.params,
+        })
     }
-    let params = WallpaperShaderParams::deserialize(deserializer)?;
-    if !params.values().flat_map(BTreeMap::values).all(finite) {
-        return Err(D::Error::custom("shader parameters must be finite"));
+}
+
+/// The wallpaper shader stack, bottom layer first.
+#[derive(Serialize, Debug, Clone, PartialEq, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ShaderLayers(pub Vec<ShaderLayer>);
+
+impl<'de> Deserialize<'de> for ShaderLayers {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let layers = Vec::<ShaderLayer>::deserialize(deserializer)?;
+        if layers.len() > MAX_WALLPAPER_SHADER_LAYERS {
+            return Err(D::Error::custom(format!(
+                "at most {MAX_WALLPAPER_SHADER_LAYERS} wallpaper shader layers are supported"
+            )));
+        }
+        Ok(Self(layers))
     }
-    Ok(params)
+}
+
+impl std::ops::Deref for ShaderLayers {
+    type Target = Vec<ShaderLayer>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// Command-line arguments. These take precedence over the file config where they overlap.
@@ -452,13 +556,9 @@ pub struct FileConfig {
     pub check_for_updates: bool,
     /// URL of a background image displayed behind all terminal panes.
     pub wallpaper: Option<String>,
-    /// Name of a procedural WebGPU background displayed behind the app.
-    /// Disabled by default.
+    /// Procedural WebGPU background layers, bottom first. Empty by default.
     #[serde(rename = "wallpaper-shader")]
-    pub wallpaper_shader: Option<String>,
-    /// Native generator parameters, grouped by wallpaper ID.
-    #[serde(rename = "wallpaper-shader-params", deserialize_with = "shader_params")]
-    pub wallpaper_shader_params: WallpaperShaderParams,
+    pub wallpaper_shaders: ShaderLayers,
     /// How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
     /// Defaults to 0.10 when a wallpaper is configured.
     #[serde(rename = "wallpaper-opacity")]
@@ -572,8 +672,7 @@ impl Default for FileConfig {
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
             check_for_updates: DEFAULT_CHECK_FOR_UPDATES,
             wallpaper: None,
-            wallpaper_shader: None,
-            wallpaper_shader_params: BTreeMap::new(),
+            wallpaper_shaders: ShaderLayers::default(),
             wallpaper_opacity: Some(DEFAULT_WALLPAPER_OPACITY),
             desktop_background_opacity: Some(DEFAULT_DESKTOP_BACKGROUND_OPACITY),
             wallpaper_blur: Some(DEFAULT_WALLPAPER_BLUR),
@@ -956,9 +1055,8 @@ pub struct ClientConfig {
     /// URL of a background image displayed behind all terminal panes, or `null`.
     /// When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
     pub wallpaper: Option<String>,
-    /// Name of the procedural WebGPU wallpaper rendered by the frontend.
-    pub wallpaper_shader: Option<String>,
-    pub wallpaper_shader_params: WallpaperShaderParams,
+    /// Procedural WebGPU wallpaper layers rendered by the frontend, bottom first.
+    pub wallpaper_shaders: ShaderLayers,
     /// The resolved absolute path to a local wallpaper file, if any. Not sent to
     /// the browser — used by the `/wallpaper` route to serve the file.
     #[serde(skip)]
@@ -1400,8 +1498,8 @@ pub fn generate_config_toml() -> String {
 # Accepts a URL or a local file path (absolute or ~/relative).
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
-# Or use a procedural WebGPU wallpaper (takes precedence over `wallpaper`).
-# wallpaper-shader = "aurora"
+# Or stack procedural WebGPU shader layers (they take precedence over
+# `wallpaper`); see the [[wallpaper-shader]] example below.
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = {DEFAULT_WALLPAPER_OPACITY:.2}
 # macOS desktop window theme tint: 0.0 = clear, 1.0 = opaque.
@@ -1509,14 +1607,25 @@ pub fn generate_config_toml() -> String {
 # os = true
 # os-level = "attention"   # lowest level shown: "info", "success", "attention", or "error"
 
-# Native Shaders component parameters, kept separately for each wallpaper.
-# Use Settings > Wallpaper to explore defaults and copy the full TOML.
+# Wallpaper shader layers, bottom first (at most {MAX_WALLPAPER_SHADER_LAYERS}). A generator draws
+# new content; an effect processes every layer beneath it. Use Settings >
+# Wallpaper to explore shaders and parameters and copy the full TOML.
 # Parameter names use kebab-case; arrays and inline tables are supported.
-# [wallpaper-shader-params.aurora]
+# [[wallpaper-shader]]
+# shader = "aurora"
+# [wallpaper-shader.params]
 # color-a = "#a533f8"
 # curtain-count = 3
 # speed = 2.0  # multiplied by wallpaper-speed
 # center = {{ x = 0.5, y = 0.0 }}
+#
+# [[wallpaper-shader]]
+# shader = "film-grain"
+# enabled = true
+# blend-mode = "normal"  # or "screen", "multiply", "overlay", "soft-light", ...
+# opacity = 1.0
+# interactive = true     # whether pointer and terminal-cursor input reach it
+# params = {{ strength = 0.4 }}
 
 # Inline base16 color palette. Uncomment the entire block to activate;
 # [theme-light] works the same way.
@@ -1607,7 +1716,8 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         }
     }
 
-    let has_wallpaper = file.wallpaper.is_some() || file.wallpaper_shader.is_some();
+    let has_wallpaper =
+        file.wallpaper.is_some() || file.wallpaper_shaders.iter().any(|layer| layer.enabled);
     let wallpaper_opacity = if has_wallpaper {
         Some(
             file.wallpaper_opacity
@@ -1745,8 +1855,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
         wallpaper: wallpaper_url,
-        wallpaper_shader: file.wallpaper_shader.clone(),
-        wallpaper_shader_params: file.wallpaper_shader_params.clone(),
+        wallpaper_shaders: file.wallpaper_shaders.clone(),
         wallpaper_path,
         wallpaper_opacity,
         desktop_background_opacity: file
@@ -1829,8 +1938,7 @@ pub struct ConfigUpdate {
     pub os_notifications: Option<bool>,
     pub os_notification_level: Option<NotificationLevel>,
     pub wallpaper: Option<String>,
-    pub wallpaper_shader: Option<String>,
-    pub wallpaper_shader_params: Option<WallpaperShaderParams>,
+    pub wallpaper_shaders: Option<ShaderLayers>,
     pub wallpaper_opacity: Option<f32>,
     pub desktop_background_opacity: Option<f32>,
     pub wallpaper_blur: Option<f32>,
@@ -1933,8 +2041,8 @@ impl ConfigUpdate {
         if other.wallpaper.is_some() {
             self.wallpaper = other.wallpaper.clone();
         }
-        if other.wallpaper_shader.is_some() {
-            self.wallpaper_shader = other.wallpaper_shader.clone();
+        if other.wallpaper_shaders.is_some() {
+            self.wallpaper_shaders = other.wallpaper_shaders.clone();
         }
         if other.wallpaper_opacity.is_some() {
             self.wallpaper_opacity = other.wallpaper_opacity;
@@ -1964,9 +2072,6 @@ impl ConfigUpdate {
         if other.wallpaper_shader_follows_keyboard_input.is_some() {
             self.wallpaper_shader_follows_keyboard_input =
                 other.wallpaper_shader_follows_keyboard_input;
-        }
-        if other.wallpaper_shader_params.is_some() {
-            self.wallpaper_shader_params = other.wallpaper_shader_params.clone();
         }
         if other.backdrop_blur.is_some() {
             self.backdrop_blur = other.backdrop_blur;
@@ -2077,8 +2182,8 @@ pub fn resolve_with_overrides(
     if let Some(wallpaper) = &overrides.wallpaper {
         file.wallpaper = Some(wallpaper.clone()).filter(|s| !s.is_empty());
     }
-    if let Some(shader) = &overrides.wallpaper_shader {
-        file.wallpaper_shader = Some(shader.clone()).filter(|s| !s.is_empty());
+    if let Some(layers) = &overrides.wallpaper_shaders {
+        file.wallpaper_shaders = layers.clone();
     }
     if let Some(opacity) = overrides.wallpaper_opacity {
         file.wallpaper_opacity = Some(opacity.clamp(0.0, 1.0));
@@ -2106,9 +2211,6 @@ pub fn resolve_with_overrides(
     }
     if let Some(enabled) = overrides.wallpaper_shader_follows_keyboard_input {
         file.wallpaper_shader_follows_keyboard_input = enabled;
-    }
-    if let Some(params) = &overrides.wallpaper_shader_params {
-        file.wallpaper_shader_params = params.clone();
     }
     if let Some(blur) = overrides.backdrop_blur {
         file.backdrop_blur = Some(blur.clamp(0.0, 50.0));
@@ -2354,7 +2456,7 @@ palette:
         assert!(config.animations);
         assert!(!resolved.show_pane_titles);
         assert_eq!(resolved.wallpaper, None);
-        assert_eq!(resolved.wallpaper_shader, None);
+        assert!(resolved.wallpaper_shaders.is_empty());
         assert_eq!(resolved.wallpaper_opacity, None);
         assert_eq!(resolved.desktop_background_opacity, 0.95);
         assert_eq!(resolved.wallpaper_saturate, None);
@@ -2397,7 +2499,23 @@ palette:
         let file: FileConfig = toml::from_str(&example).unwrap();
         let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.wallpaper, None);
-        assert_eq!(resolved.wallpaper_shader, None);
+        assert!(resolved.wallpaper_shaders.is_empty());
+
+        // The commented layer example parses once uncommented.
+        let layers = example
+            .lines()
+            .skip_while(|line| *line != "# [[wallpaper-shader]]")
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| line.trim_start_matches('#').trim_start())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: FileConfig = toml::from_str(&layers).unwrap();
+        let shaders = file
+            .wallpaper_shaders
+            .iter()
+            .map(|layer| layer.shader.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(shaders, ["aurora", "film-grain"]);
     }
 
     #[test]
@@ -2516,7 +2634,7 @@ palette:
                 font_size: Some(21.0),
                 animations: Some(false),
                 wallpaper: Some("https://example.com/wallpaper.png".to_string()),
-                wallpaper_shader: Some(String::new()),
+                wallpaper_shaders: Some(ShaderLayers::default()),
                 wallpaper_opacity: Some(0.65),
                 wallpaper_blur: Some(8.0),
                 wallpaper_saturate: Some(0.75),
@@ -2546,7 +2664,7 @@ palette:
             resolved.wallpaper.as_deref(),
             Some("https://example.com/wallpaper.png")
         );
-        assert_eq!(resolved.wallpaper_shader, None);
+        assert!(resolved.wallpaper_shaders.is_empty());
         assert_eq!(resolved.wallpaper_opacity, Some(0.65));
         assert_eq!(resolved.wallpaper_blur, Some(8.0));
         assert_eq!(resolved.wallpaper_saturate, Some(0.75));
@@ -2560,46 +2678,56 @@ palette:
         assert_eq!(resolved.pane_switch_border, None);
         assert_eq!(resolved.pane_switch_border_speed, 1.0);
 
-        assert_eq!(file.wallpaper_shader, None);
+        assert!(file.wallpaper_shaders.is_empty());
         assert_eq!(file.terminal.font_size, Some(18.0));
         assert!(file.animations);
     }
     #[test]
-    fn shader_parameters_round_trip_and_override_without_changing_file() {
+    fn shader_layers_round_trip_and_override_without_changing_file() {
         let file: FileConfig = toml::from_str(
             r##"
-wallpaper-shader = "aurora"
-[wallpaper-shader-params.aurora]
+[[wallpaper-shader]]
+shader = "aurora"
+[wallpaper-shader.params]
 color-a = "#123456"
 curtain-count = 3
 speed = 2.5
 center = { x = 0.3, y = 0.7 }
-[wallpaper-shader-params.strands]
-pin-edges = true
-stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 }]
+
+[[wallpaper-shader]]
+shader = "film-grain"
+blend-mode = "soft-light"
+opacity = 0.5
+enabled = false
+interactive = false
+params = { stops = [{ color = "#ff0000", position = 0 }], animated = true }
 "##,
         )
         .unwrap();
+        let [aurora, grain] = &file.wallpaper_shaders[..] else {
+            panic!("expected two layers");
+        };
+        assert!(aurora.enabled && aurora.interactive);
+        assert_eq!(aurora.blend_mode, ShaderBlendMode::Normal);
+        assert_eq!(aurora.opacity, 1.0);
+        assert!(!grain.enabled && !grain.interactive);
+        assert_eq!(grain.blend_mode, ShaderBlendMode::SoftLight);
+        assert_eq!(grain.opacity, 0.5);
+
         let resolved = resolve_binds(&file, ColorMode::Dark);
         let wire = serde_json::to_value(&resolved).unwrap();
-        assert_eq!(
-            wire["wallpaper_shader_params"]["aurora"]["curtain-count"],
-            3.0
-        );
-        assert_eq!(
-            wire["wallpaper_shader_params"]["aurora"]["center"]["x"],
-            0.3
-        );
-        assert_eq!(
-            wire["wallpaper_shader_params"]["strands"]["pin-edges"],
-            true
-        );
-        assert!(wire.get("wallpaper_seed").is_none());
+        let layers = &wire["wallpaper_shaders"];
+        assert_eq!(layers[0]["params"]["curtain-count"], 3.0);
+        assert_eq!(layers[0]["params"]["center"]["x"], 0.3);
+        assert_eq!(layers[1]["blend-mode"], "soft-light");
+        assert_eq!(layers[1]["params"]["animated"], true);
+
+        // The wire format deserializes back as a session-only override.
         let mut overrides = ConfigUpdate::default();
-        let update: ConfigUpdate = serde_json::from_value(serde_json::json!({
-            "wallpaper_shader_params": { "aurora": { "speed": 4.0 } }
-        }))
-        .unwrap();
+        let mut edited = layers.clone();
+        edited[0]["params"]["speed"] = 4.0.into();
+        let update: ConfigUpdate =
+            serde_json::from_value(serde_json::json!({ "wallpaper_shaders": edited })).unwrap();
         overrides.merge(&update);
         overrides.merge(&ConfigUpdate {
             wallpaper_opacity: Some(0.4),
@@ -2607,30 +2735,85 @@ stops = [{ color = "#ff0000", position = 0 }, { color = "#0000ff", position = 1 
         });
         let preview = resolve_with_overrides(&file, &overrides, ColorMode::Dark);
         assert_eq!(
-            preview.wallpaper_shader_params["aurora"]["speed"],
+            preview.wallpaper_shaders[0].params["speed"],
             ShaderValue::Number(4.0)
         );
+        assert_eq!(preview.wallpaper_shaders[1], *grain);
         assert_eq!(
-            file.wallpaper_shader_params["aurora"]["speed"],
+            file.wallpaper_shaders[0].params["speed"],
             ShaderValue::Number(2.5)
         );
         overrides.merge(&ConfigUpdate {
-            wallpaper_shader_params: Some(BTreeMap::new()),
+            wallpaper_shaders: Some(ShaderLayers::default()),
             ..ConfigUpdate::default()
         });
-        assert!(resolve_with_overrides(&file, &overrides, ColorMode::Dark)
-            .wallpaper_shader_params
-            .is_empty());
+        let cleared = resolve_with_overrides(&file, &overrides, ColorMode::Dark);
+        assert!(cleared.wallpaper_shaders.is_empty());
         assert_eq!(
-            resolve_binds(&file, ColorMode::Dark).wallpaper_shader_params,
-            file.wallpaper_shader_params
+            resolve_binds(&file, ColorMode::Dark).wallpaper_shaders,
+            file.wallpaper_shaders
         );
+    }
+
+    #[test]
+    fn disabled_shader_layers_do_not_count_as_a_wallpaper() {
+        let file: FileConfig =
+            toml::from_str("[[wallpaper-shader]]\nshader = \"aurora\"\nenabled = false").unwrap();
+        assert_eq!(
+            resolve_binds(&file, ColorMode::Dark).wallpaper_opacity,
+            None
+        );
+        let file: FileConfig = toml::from_str("[[wallpaper-shader]]\nshader = \"aurora\"").unwrap();
+        assert_eq!(
+            resolve_binds(&file, ColorMode::Dark).wallpaper_opacity,
+            Some(DEFAULT_WALLPAPER_OPACITY)
+        );
+    }
+
+    #[test]
+    fn shader_layers_are_validated() {
+        let layer = |extra: &str| format!("[[wallpaper-shader]]\nshader = \"aurora\"\n{extra}");
+        for extra in [
+            "blend-mode = \"lineardodge\"",
+            "opacity = 1.5",
+            "opacity = -0.1",
+            "shader-params = {}",
+        ] {
+            assert!(
+                toml::from_str::<FileConfig>(&layer(extra)).is_err(),
+                "{extra}"
+            );
+        }
+        assert!(toml::from_str::<FileConfig>("[[wallpaper-shader]]\nopacity = 1").is_err());
+        let file: FileConfig = toml::from_str(&layer("blend-mode = \"linear-dodge\"")).unwrap();
+        assert_eq!(
+            file.wallpaper_shaders[0].blend_mode,
+            ShaderBlendMode::LinearDodge
+        );
+
+        let stack = |count: usize| layer("").repeat(count);
+        assert!(toml::from_str::<FileConfig>(&stack(MAX_WALLPAPER_SHADER_LAYERS)).is_ok());
+        assert!(toml::from_str::<FileConfig>(&stack(MAX_WALLPAPER_SHADER_LAYERS + 1)).is_err());
+        let too_many =
+            vec![serde_json::json!({ "shader": "aurora" }); MAX_WALLPAPER_SHADER_LAYERS + 1];
+        assert!(serde_json::from_value::<ConfigUpdate>(
+            serde_json::json!({ "wallpaper_shaders": too_many })
+        )
+        .is_err());
+        assert!(serde_json::from_value::<ConfigUpdate>(
+            serde_json::json!({ "wallpaper_shaders": null })
+        )
+        .unwrap()
+        .wallpaper_shaders
+        .is_none());
     }
 
     #[test]
     fn shader_parameters_reject_non_finite_numbers() {
         for number in ["nan", "inf", "-inf"] {
-            let input = format!("[wallpaper-shader-params.aurora]\nspeed = {number}");
+            let input = format!(
+                "[[wallpaper-shader]]\nshader = \"aurora\"\nparams = {{ speed = {number} }}"
+            );
             assert!(toml::from_str::<FileConfig>(&input).is_err());
         }
     }

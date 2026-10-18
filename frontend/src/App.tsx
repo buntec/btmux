@@ -31,7 +31,7 @@ import {
   getWallpaperFollowsMouse,
   getWallpaperOpacity,
   getWallpaperSaturate,
-  getWallpaperShader,
+  getWallpaperShaders,
   getWallpaperFps,
   getWallpaperResolution,
   getWallpaperSpeed,
@@ -40,6 +40,7 @@ import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
 import { useModalBackdrop } from './hooks/useModalBackdrop';
 import { pageBackground } from './lib/desktopTransparency';
+import { activeShaderLayers } from './lib/wallpaperCatalog';
 import { desktopVersionMismatch } from './lib/desktopApp';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
 
@@ -155,7 +156,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
   useModalBackdrop(effectiveConfig);
   const wallpaper = effectiveConfig?.wallpaper ?? null;
-  const wallpaperShader = getWallpaperShader(effectiveConfig);
+  const wallpaperShaders = getWallpaperShaders(effectiveConfig);
   const wallpaperOpacity = getWallpaperOpacity(effectiveConfig);
   const wallpaperBlur = getWallpaperBlur(effectiveConfig);
   const wallpaperSaturate = getWallpaperSaturate(effectiveConfig);
@@ -173,10 +174,9 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   // the keep-alive pool persists across session switches.
   return (
     <WorkspaceShell send={send}>
-      {wallpaperShader ? (
+      {activeShaderLayers(wallpaperShaders).length > 0 ? (
         <ShaderWallpaper
-          shaderId={wallpaperShader}
-          params={effectiveConfig?.wallpaper_shader_params ?? {}}
+          layers={wallpaperShaders}
           opacity={wallpaperOpacity}
           blur={wallpaperBlur}
           saturate={wallpaperSaturate}

@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import type { ShaderLayer } from '../generated/protocol';
-import { findWallpaperShader } from '../lib/wallpaperCatalog';
+import { activeShaderLayers, findWallpaperShader } from '../lib/wallpaperCatalog';
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
 import type { WallpaperRenderer, WallpaperRuntimeOptions } from '../lib/wallpaperRenderer';
 
@@ -25,6 +25,10 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
   const latest = useRef(props);
   latest.current = props;
   const showToast = useStore((s) => s.showToast);
+  // Layers that made the renderer unavailable; changing them retries.
+  const failed = useRef<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const active = activeShaderLayers(props.layers).length > 0;
 
   const unknown = props.layers
     .filter((layer) => layer.enabled && !findWallpaperShader(layer.shader))
@@ -41,6 +45,10 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (!active) {
+      canvas.style.visibility = 'hidden';
+      return;
+    }
     let disposed = false;
     let instance: WallpaperRenderer | null = null;
     const unavailable = () => {
@@ -49,6 +57,7 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
       canvas.style.visibility = 'hidden';
       instance?.dispose();
       rendererRef.current = null;
+      failed.current = JSON.stringify(latest.current.layers);
     };
     canvas.dataset.shaderState = 'loading';
     canvas.style.visibility = '';
@@ -66,7 +75,7 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
       instance?.dispose();
       if (rendererRef.current === instance) rendererRef.current = null;
     };
-  }, []);
+  }, [attempt, active]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -77,7 +86,10 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
     canvas.style.inset = `${-props.blur * 2}px`;
     canvas.style.width = `calc(100vw + ${props.blur * 4}px)`;
     canvas.style.height = `calc(100vh + ${props.blur * 4}px)`;
-    rendererRef.current?.update(runtime());
+    if (failed.current !== null && failed.current !== JSON.stringify(props.layers)) {
+      failed.current = null;
+      setAttempt((attempt) => attempt + 1);
+    } else rendererRef.current?.update(runtime());
   }, [props]);
 
   useEffect(() => {

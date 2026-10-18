@@ -59,6 +59,9 @@ fn generated_protocol_is_current() {
             .join("\n");
         output.push_str(&format!("// prettier-ignore\nexport {declaration}\n\n"));
     }
+    output.push_str(&format!(
+        "export const MAX_WALLPAPER_SHADER_LAYERS = {MAX_WALLPAPER_SHADER_LAYERS};\n\n"
+    ));
     output.pop(); // exactly one trailing newline, matching prettier
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("frontend/src/generated/protocol.ts");

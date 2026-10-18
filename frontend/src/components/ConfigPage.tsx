@@ -7,7 +7,7 @@ import { APPEARANCES } from '../lib/appearance';
 import { systemColorMode } from '../state/startupTheme';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import type { ShaderLayer } from '../generated/protocol';
-import { wallpaperLayersToml } from '../lib/wallpaperCatalog';
+import { hasShaderWallpaper, wallpaperLayersToml } from '../lib/wallpaperCatalog';
 import { ShaderLayerStack } from './ShaderLayerStack';
 import {
   getDesktopBackgroundOpacity,
@@ -127,8 +127,7 @@ function initialDraft(config: ClientConfig): Draft {
     cursorBlink: config.terminal.cursorBlink ?? true,
     scrollback: config.terminal.scrollback ?? 100_000,
     allowTransparency:
-      config.terminal.allowTransparency ??
-      (config.wallpaper != null || config.wallpaper_shaders.some((layer) => layer.enabled)),
+      config.terminal.allowTransparency ?? (config.wallpaper != null || hasShaderWallpaper(config.wallpaper_shaders)),
     disableStdin: config.terminal.disableStdin ?? false,
     smoothScrollDuration: config.terminal.smoothScrollDuration ?? 120,
     cellBackgroundOpacity: config.terminal.cellBackgroundOpacity ?? 1,
@@ -233,7 +232,7 @@ function toToml(draft: Draft): string {
 
   // `allow-transparency` has no fixed default: an unset value inherits
   // whichever behavior a wallpaper being present would already imply.
-  const defaultAllowTransparency = draft.wallpaper !== '' || draft.wallpaperShaders.some((layer) => layer.enabled);
+  const defaultAllowTransparency = draft.wallpaper !== '' || hasShaderWallpaper(draft.wallpaperShaders);
 
   const topLines = [
     strLine('prefix', draft.prefix, TOML_DEFAULTS.prefix),

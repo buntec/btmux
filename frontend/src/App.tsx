@@ -40,7 +40,7 @@ import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
 import { useModalBackdrop } from './hooks/useModalBackdrop';
 import { pageBackground } from './lib/desktopTransparency';
-import { activeShaderLayers } from './lib/wallpaperCatalog';
+import { hasShaderWallpaper } from './lib/wallpaperCatalog';
 import { desktopVersionMismatch } from './lib/desktopApp';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
 
@@ -174,7 +174,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   // the keep-alive pool persists across session switches.
   return (
     <WorkspaceShell send={send}>
-      {activeShaderLayers(wallpaperShaders).length > 0 ? (
+      {hasShaderWallpaper(wallpaperShaders) ? (
         <ShaderWallpaper
           layers={wallpaperShaders}
           opacity={wallpaperOpacity}

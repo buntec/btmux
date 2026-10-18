@@ -400,7 +400,11 @@ try {
   assert.deepEqual((await preview())[0].params, {}, 'changing a layer shader must reset its parameters');
   if (available) await showing(['grid', 'chroma-flow']);
   const grid = dialog.getByRole('group', { name: 'Layer 1: Grid', exact: true });
-  await grid.getByRole('button', { name: 'Grid settings' }).click();
+  assert.equal(
+    await grid.getByRole('button', { name: 'Grid settings' }).getAttribute('aria-expanded'),
+    'true',
+    'changing a layer shader must keep its settings open',
+  );
   const beforeGrid = available ? await capture() : null;
   await grid.getByRole('button', { name: 'Randomize parameters', exact: true }).click();
   await page.waitForFunction(

@@ -458,13 +458,13 @@ on playShaders(prefixSpec)
 	pace(1)
 	mouseTour(4000)
 
-	chooseShader(prefixSpec, "ink")
+	switchShaderLayers(prefixSpec)
 	-- Focus comes back to the terminal late; click the active, left pane
 	set {cx, cy, cw, ch} to contentBounds()
 	mouse("click " & int(cx + cw * 0.25) & " " & int(cy + ch * 0.6) & " " & int(600 * delayScale))
 	park()
 	pace(0.8)
-	typeSlowly("echo \"shader layer 1 = ink-flow, applied from the settings\"")
+	typeSlowly("echo \"shader layer 2 = ink-flow, enabled from the settings\"")
 	enter()
 	pace(1)
 	chordKey(prefixSpec, 124) -- right
@@ -488,10 +488,10 @@ on mouseTour(swirlMs)
 	pace(1)
 end mouseTour
 
--- Picks a wallpaper shader in Settings by typing the start of its name, shows
--- the generated TOML, and applies it, which also closes Settings; the
--- terminal needs a click to get the keyboard back
-on chooseShader(prefixSpec, typed)
+-- Turns shader layer 1 off and layer 2 on in Settings, shows the generated
+-- TOML, and applies it, which also closes Settings; the terminal needs a click
+-- to get the keyboard back
+on switchShaderLayers(prefixSpec)
 	chord(prefixSpec, ":")
 	pace(0.8)
 	typeSlowly("set")
@@ -507,13 +507,14 @@ on chooseShader(prefixSpec, typed)
 	end repeat
 	enter()
 	pace(1)
-	-- Past the wallpaper URL, six sliders, and two switches to the layer 1 shader
-	tabs(10)
-	enter()
-	pace(0.6)
-	typeSlowly(typed)
-	pace(0.5)
-	enter()
+	-- Past the wallpaper URL, six sliders, two switches, and the layer 1 shader
+	-- to its switch
+	tabs(11)
+	keyCode(49) -- space
+	pace(0.8)
+	-- Past layer 1's move down, remove, and settings, and layer 2's shader
+	tabs(5)
+	keyCode(49)
 	pace(1.2)
 	-- The dialog is centered and 90% of the content's height; Show TOML
 	-- widens it, which moves Apply
@@ -524,7 +525,7 @@ on chooseShader(prefixSpec, typed)
 	pace(2.5)
 	mouse("click " & int(midX - 47) & " " & int(dialogBottom - 32) & " " & int(800 * delayScale)) -- Apply
 	pace(1)
-end chooseShader
+end switchShaderLayers
 
 -- The primary screen's area outside the menu bar and Dock, in the top-left
 -- origin coordinates System Events uses.

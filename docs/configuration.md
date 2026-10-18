@@ -35,7 +35,8 @@ GUI, and code-like UI text such as paths, session and window names, and key
 hints. Other UI text uses Geist Sans.
 
 Wallpapers are disabled by default. Set `wallpaper` to an image URL or path,
-or `wallpaper-shader` to a shader ID to enable one (see [Shader wallpapers](shaders.md)).
+or add `[[wallpaper-shader]]` layers to stack shaders and effects (see
+[Shader wallpapers](shaders.md)).
 
 btmux checks GitHub for newer releases about once a day and shows a toast when
 one is available. It never downloads or installs anything; upgrade with whatever

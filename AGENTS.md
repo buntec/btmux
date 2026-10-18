@@ -421,13 +421,18 @@ captures keys in the capture phase, and on the second keystroke either sends a
 overlay is open the keybinding hook early-returns so typing goes to the overlay,
 not the terminal.
 
-**Shader wallpapers:** `shaders` provides native WebGPU generators. `wallpaperCatalog.ts`
-resolves IDs and kebab-case parameters; `wallpaperRenderer.ts` wraps the core renderer
-with runtime FPS, resolution, pause, seed, and cursor controls. No terminal post-processing.
-`just sync-shaders` regenerates parameter metadata and lazy loaders from the pinned package;
-`just test-frontend` checks that metadata is current. Config parameters live in
-`[wallpaper-shader-params.<id>]` and the session-only `wallpaper_shader_params` override.
-GPU failure leaves the theme background visible. Core rendering has no telemetry collector.
+**Shader wallpapers:** `shaders` provides native WebGPU generators and effects. The
+wallpaper is an ordered stack of `[[wallpaper-shader]]` layers (`ShaderLayer`: shader,
+enabled, blend mode, opacity, interactive, params; at most `MAX_WALLPAPER_SHADER_LAYERS`).
+`wallpaperRenderer.ts` registers enabled layers as sibling nodes under one core renderer,
+so an effect processes every layer beneath it, and reconciles edits in place (unchanged
+layers keep their simulation state). It adds runtime FPS, resolution, pause, seed, and
+cursor controls. No terminal post-processing. `wallpaperCatalog.ts` resolves IDs and
+kebab-case parameters. `just sync-shaders` regenerates parameter metadata and lazy loaders
+from the pinned package (the `generators`/`effects` lists in `scripts/sync-shaders.mjs`);
+`just test-frontend` checks that metadata is current. The session-only override replaces
+the whole `wallpaper_shaders` stack. GPU failure leaves the theme background visible.
+Core rendering has no telemetry collector.
 
 `PANE_BORDER_STYLES` in `lib/paneSwitchBorder.ts` is a CSS-masked one-shot border
 draw on the pane you switch to, controlled by `pane-switch-border` and

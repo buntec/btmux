@@ -464,7 +464,7 @@ on playShaders(prefixSpec)
 	mouse("click " & int(cx + cw * 0.25) & " " & int(cy + ch * 0.6) & " " & int(600 * delayScale))
 	park()
 	pace(0.8)
-	typeSlowly("echo \"wallpaper-shader = ink-flow, applied from the settings\"")
+	typeSlowly("echo \"shader layer 1 = ink-flow, applied from the settings\"")
 	enter()
 	pace(1)
 	chordKey(prefixSpec, 124) -- right
@@ -507,7 +507,8 @@ on chooseShader(prefixSpec, typed)
 	end repeat
 	enter()
 	pace(1)
-	tabs(1) -- the procedural shader selector
+	-- Past the wallpaper URL, six sliders, and two switches to the layer 1 shader
+	tabs(10)
 	enter()
 	pace(0.6)
 	typeSlowly(typed)

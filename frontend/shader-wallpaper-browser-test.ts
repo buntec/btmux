@@ -87,26 +87,41 @@ try {
       `wallpaper lifetime changed: ${JSON.stringify(lifetime)}`,
     );
   };
+  const layer = (shader: string, extra: Record<string, unknown> = {}) => ({
+    shader,
+    enabled: true,
+    'blend-mode': 'normal',
+    opacity: 1,
+    interactive: true,
+    params: {},
+    ...extra,
+  });
   await send({
     type: 'update_config',
     update: {
-      wallpaper_shader: 'aurora',
+      wallpaper_shaders: [layer('aurora', { params: { 'color-a': '#123456', 'curtain-count': 2 } })],
       wallpaper_opacity: 0.7,
       wallpaper_resolution: 0.4,
       wallpaper_fps: 20,
       wallpaper_shader_follows_mouse_cursor: false,
-      wallpaper_shader_params: { aurora: { 'color-a': '#123456', 'curtain-count': 2 } },
     },
   });
   const canvas = page.locator('canvas[data-shader-state]');
+  const capture = () => canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   /** Wait for a redraw; software WebGPU (as on CI) can take a while. */
   const redrawn = async (before: string, message: string) => {
     const deadline = Date.now() + 10_000;
-    while ((await canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())) === before) {
+    while ((await capture()) === before) {
       assert(Date.now() < deadline, message);
       await page.waitForTimeout(100);
     }
   };
+  /** Wait until the renderer shows exactly these layers. */
+  const showing = (ids: string[]) =>
+    page.waitForFunction((ids) => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]');
+      return canvas?.dataset.shaderState === 'ready' && canvas.dataset.shaderLayers === ids.join(' ');
+    }, ids);
   await page.waitForFunction(() =>
     ['ready', 'unavailable'].includes(
       document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderState ?? '',
@@ -121,15 +136,16 @@ try {
       dpr: devicePixelRatio,
     }));
     assert(Math.abs(geometry.width - geometry.cssWidth * geometry.dpr * 0.4) <= 1);
-    const capture = () => canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
     const initial = await capture();
     await send({
       type: 'update_config',
       update: {
         animations: false,
-        wallpaper_shader_params: {
-          aurora: { 'color-a': '#ff0000', 'color-b': '#00ff00', 'color-c': '#0000ff', 'curtain-count': 3 },
-        },
+        wallpaper_shaders: [
+          layer('aurora', {
+            params: { 'color-a': '#ff0000', 'color-b': '#00ff00', 'color-c': '#0000ff', 'curtain-count': 3 },
+          }),
+        ],
       },
     });
     await page.waitForFunction(() => !(window as any).shaderStore.getState().config.animations);
@@ -138,21 +154,49 @@ try {
     await page.waitForTimeout(250);
     assert((await capture()) === frozen, 'disabled animations must preserve the last frame');
     console.log('PASS WebGPU rendering, resolution, live parameters, and frozen animation');
-    const generators = await page.evaluate(async () => {
-      const { WALLPAPER_SHADERS } = await import('/src/lib/wallpaperCatalog.ts' as string);
-      const { loadWallpaperRenderer } = await import('/src/lib/wallpaperRenderer.ts' as string);
-      const { randomizeWallpaperParams } = await import('/src/lib/wallpaperRandomize.ts' as string);
+
+    const configure = async (update: Record<string, unknown>) => {
+      await send({ type: 'update_config', update });
+      await page.waitForFunction(
+        (update) =>
+          Object.entries(update).every(
+            ([key, value]) =>
+              JSON.stringify((window as any).shaderStore.getState().config[key]) === JSON.stringify(value),
+          ),
+        update,
+      );
+      await page.waitForTimeout(150);
+    };
+    const base = (await page.evaluate(() => (window as any).shaderStore.getState().config.wallpaper_shaders))[0];
+    await configure({ wallpaper_shaders: [base, layer('invert')] });
+    await showing(['aurora', 'invert']);
+    await redrawn(frozen, 'an effect layer must process the layers beneath it');
+    const inverted = await capture();
+    await configure({ wallpaper_shaders: [base, layer('invert', { opacity: 0.5, 'blend-mode': 'multiply' })] });
+    await redrawn(inverted, 'layer opacity and blend mode must change rendered pixels');
+    await configure({ wallpaper_shaders: [base, layer('invert', { enabled: false })] });
+    await showing(['aurora']);
+    await configure({ wallpaper_shaders: [layer('invert'), base] });
+    await showing(['invert', 'aurora']);
+    console.log('PASS effect layers, opacity, blend modes, disabling, and reordering');
+
+    const unavailable = await page.evaluate(async () => {
+      const { WALLPAPER_SHADERS, createShaderLayer } = await import('/src/lib/wallpaperCatalog.ts' as string);
+      const { createWallpaperRenderer } = await import('/src/lib/wallpaperRenderer.ts' as string);
+      const { randomizeShaderParams } = await import('/src/lib/wallpaperRandomize.ts' as string);
       const unavailable: string[] = [];
       for (const shader of WALLPAPER_SHADERS) {
-        for (const params of [{}, randomizeWallpaperParams(shader, {})]) {
+        for (const params of [{}, randomizeShaderParams(shader, {})]) {
           const canvas = document.createElement('canvas');
           canvas.style.cssText = 'position:fixed;width:120px;height:80px;opacity:0;pointer-events:none';
           document.body.append(canvas);
-          const create = await loadWallpaperRenderer(shader.id);
-          const renderer = create!(
+          const layers = [{ ...createShaderLayer(shader.id), params }];
+          // Effects need content beneath them.
+          if (shader.kind === 'effect') layers.unshift(createShaderLayer('aurora'));
+          const renderer = createWallpaperRenderer(
             canvas,
             {
-              params,
+              layers,
               speed: 1,
               fps: 10,
               resolution: 0.4,
@@ -173,21 +217,10 @@ try {
       }
       return unavailable;
     });
-    assert.deepEqual(generators, [], 'all native generators must initialize');
-    console.log('PASS all 22 native generators initialize with default and randomized parameters');
+    assert.deepEqual(unavailable, [], 'all native shaders must initialize');
+    console.log('PASS all native generators and effects initialize with default and randomized parameters');
+
     const interactive = ['chroma-flow', 'cursor-trail', 'ink-flow', 'boids'];
-    const configure = async (update: Record<string, unknown>) => {
-      await send({ type: 'update_config', update });
-      await page.waitForFunction(
-        (update) =>
-          Object.entries(update).every(
-            ([key, value]) =>
-              JSON.stringify((window as any).shaderStore.getState().config[key]) === JSON.stringify(value),
-          ),
-        update,
-      );
-      await page.waitForTimeout(150);
-    };
     const move = async (keyboard = false) => {
       for (let step = 0; step <= 12; step++) {
         const x = 150 + step * 50;
@@ -204,21 +237,29 @@ try {
     };
     for (const id of interactive) {
       await configure({
-        wallpaper_shader: id,
+        wallpaper_shaders: [layer(id)],
         animations: true,
         wallpaper_speed: 1,
         wallpaper_shader_follows_mouse_cursor: false,
         wallpaper_shader_follows_keyboard_input: false,
       });
-      await page.waitForFunction((id) => {
-        const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]');
-        return canvas?.dataset.shaderId === id && canvas.dataset.shaderState === 'ready';
-      }, id);
+      await showing([id]);
       const idle = await capture();
       await move();
-      if (id !== 'boids') assert((await capture()) === idle, `${id} must ignore disabled pointer input`);
-      else await redrawn(idle, 'Boids must animate without pointer input');
-      await configure({ wallpaper_shader_follows_mouse_cursor: true });
+      if (id !== 'boids') {
+        assert((await capture()) === idle, `${id} must ignore disabled pointer input`);
+        // Simulations keep moving after input, so check this while still idle.
+        await configure({
+          wallpaper_shaders: [layer(id, { interactive: false })],
+          wallpaper_shader_follows_mouse_cursor: true,
+        });
+        await move();
+        assert((await capture()) === idle, `${id} must ignore input when the layer is not interactive`);
+        await configure({ wallpaper_shaders: [layer(id)] });
+      } else {
+        await redrawn(idle, 'Boids must animate without pointer input');
+        await configure({ wallpaper_shader_follows_mouse_cursor: true });
+      }
       const before = await capture();
       await move();
       await redrawn(before, `${id} must respond to pointer movement`);
@@ -239,122 +280,142 @@ try {
       await move(true);
       await redrawn(keyboard, `${id} must respond to terminal cursor movement`);
       await sameTerminal();
-      console.log(`PASS ${id} pointer input, terminal cursor, animation pause, and zero speed`);
+      console.log(`PASS ${id} pointer input, layer interactivity, terminal cursor, animation pause, and zero speed`);
     }
     await configure({
-      wallpaper_shader: 'aurora',
+      wallpaper_shaders: [layer('ink-flow'), layer('pixelate')],
+      animations: true,
+      wallpaper_speed: 1,
+      wallpaper_shader_follows_mouse_cursor: true,
+      wallpaper_shader_follows_keyboard_input: false,
+    });
+    await showing(['ink-flow', 'pixelate']);
+    const stacked = await capture();
+    await move();
+    await redrawn(stacked, 'an interactive generator must respond to input beneath an effect');
+    console.log('PASS interactive generator beneath an effect');
+    await configure({
       animations: false,
       wallpaper_shader_follows_mouse_cursor: false,
       wallpaper_shader_follows_keyboard_input: false,
     });
-    await page.waitForFunction(
-      () => document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderState === 'ready',
-    );
   } else console.log('SKIP WebGPU pixel checks: the test browser has no usable adapter');
+
   await send({
     type: 'update_config',
     update: {
-      wallpaper_shader_params: { aurora: { seed: 17 }, 'chroma-flow': { radius: 2 } },
+      wallpaper_shaders: [layer('aurora', { params: { seed: 17 } }), layer('chroma-flow', { params: { radius: 2 } })],
     },
   });
   await page.waitForFunction(
-    () => (window as any).shaderStore.getState().config.wallpaper_shader_params.aurora.seed === 17,
+    () => (window as any).shaderStore.getState().config.wallpaper_shaders[0]?.params.seed === 17,
   );
+  const preview = () => page.evaluate(() => (window as any).shaderStore.getState().configPreview.wallpaper_shaders);
+  const previewHas = (ids: string[]) =>
+    page.waitForFunction(
+      (ids) =>
+        JSON.stringify(
+          (window as any).shaderStore.getState().configPreview.wallpaper_shaders.map((layer: any) => layer.shader),
+        ) === JSON.stringify(ids),
+      ids,
+    );
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await dialog.getByRole('tab', { name: 'Wallpaper', exact: true }).click();
-  assert.equal(await dialog.getByRole('textbox', { name: 'Wallpaper seed', exact: true }).count(), 0);
-  await dialog.getByRole('button', { name: 'Reset shader parameters', exact: true }).click();
+  const first = dialog.getByRole('group', { name: 'Layer 1: Aurora', exact: true });
+  await first.getByRole('button', { name: 'Aurora settings' }).click();
+  await first.getByRole('button', { name: 'Reset parameters', exact: true }).click();
   await page.waitForFunction(
-    () => !(window as any).shaderStore.getState().configPreview.wallpaper_shader_params.aurora,
+    () => Object.keys((window as any).shaderStore.getState().configPreview.wallpaper_shaders[0].params).length === 0,
   );
   const defaultSeed = await page.evaluate(async () => {
     const { findWallpaperShader } = await import('/src/lib/wallpaperCatalog.ts' as string);
     return findWallpaperShader('aurora')!.params.find((param) => param.name === 'seed')!.default;
   });
   assert.equal(
-    Number(await dialog.getByRole('slider', { name: 'Seed', exact: true }).getAttribute('aria-valuenow')),
+    Number(await first.getByRole('slider', { name: 'Seed', exact: true }).getAttribute('aria-valuenow')),
     defaultSeed,
   );
-  await dialog.getByRole('textbox', { name: 'Color A', exact: true }).fill('#abcdef');
-  const randomize = dialog.getByRole('button', { name: 'Randomize parameters', exact: true });
+  await first.getByRole('textbox', { name: 'Color A', exact: true }).fill('#abcdef');
   assert(
-    await dialog.getByRole('slider', { name: 'Seed', exact: true }).evaluate((seed) => {
-      const button = [...seed.closest('[role="tabpanel"]')!.querySelectorAll('button')].find(
+    await first.getByRole('slider', { name: 'Seed', exact: true }).evaluate((seed) => {
+      const button = [...seed.closest('[role="group"]')!.querySelectorAll('button')].find(
         (button) => button.textContent === 'Randomize parameters',
       );
       return !!button && !!(seed.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING);
     }),
     'Randomize must follow the shader parameter controls',
   );
-  await randomize.click();
+  await first.getByRole('button', { name: 'Randomize parameters', exact: true }).click();
   await page.waitForFunction(
-    () => (window as any).shaderStore.getState().configPreview.wallpaper_shader_params.aurora.seed !== 17,
+    () => (window as any).shaderStore.getState().configPreview.wallpaper_shaders[0].params.seed !== undefined,
   );
-  assert.notEqual(await dialog.getByRole('textbox', { name: 'Color A', exact: true }).inputValue(), '#abcdef');
+  assert.notEqual(await first.getByRole('textbox', { name: 'Color A', exact: true }).inputValue(), '#abcdef');
   assert.equal(
-    await page.evaluate(() => (window as any).shaderStore.getState().config.wallpaper_shader_params.aurora.seed),
+    await page.evaluate(() => (window as any).shaderStore.getState().config.wallpaper_shaders[0].params.seed),
     17,
     'Randomize must stay in the local preview until Apply',
   );
-  assert.deepEqual(
-    await page.evaluate(
-      () => (window as any).shaderStore.getState().configPreview.wallpaper_shader_params['chroma-flow'],
-    ),
-    { radius: 2 },
-  );
-  const select = async (label: string, id: string) => {
-    await dialog.getByRole('combobox', { name: 'Procedural shader', exact: true }).click();
-    await page.getByRole('option', { name: label, exact: true }).click();
-    await page.waitForFunction(
-      (id) => (window as any).shaderStore.getState().configPreview.wallpaper_shader === id,
-      id,
-    );
-    if (available)
-      await page.waitForFunction((id) => {
-        const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]');
-        return canvas?.dataset.shaderId === id && canvas.dataset.shaderState === 'ready';
-      }, id);
+  assert.deepEqual((await preview())[1].params, { radius: 2 }, 'Randomize must only change its own layer');
+
+  // Searchable selectors render as buttons.
+  const pick = async (selector: string, option: string) => {
+    await dialog.getByRole('button', { name: selector, exact: true }).click();
+    await page.getByRole('option', { name: option, exact: true }).click();
   };
-  await select('Chroma Flow', 'chroma-flow');
-  await randomize.click();
-  const chroma = await page.evaluate(
-    () => (window as any).shaderStore.getState().configPreview.wallpaper_shader_params['chroma-flow'],
-  );
-  assert.equal(Object.keys(chroma).length, 8);
-  assert.notEqual(chroma.radius, 2);
-  assert.notEqual(chroma['base-color'], '#0066ff');
-  await select('Grid', 'grid');
-  const beforeGrid = available ? await canvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL()) : null;
-  await randomize.click();
+  await pick('Layer 1', 'Grid');
+  await previewHas(['grid', 'chroma-flow']);
+  assert.deepEqual((await preview())[0].params, {}, 'changing a layer shader must reset its parameters');
+  if (available) await showing(['grid', 'chroma-flow']);
+  const grid = dialog.getByRole('group', { name: 'Layer 1: Grid', exact: true });
+  await grid.getByRole('button', { name: 'Grid settings' }).click();
+  const beforeGrid = available ? await capture() : null;
+  await grid.getByRole('button', { name: 'Randomize parameters', exact: true }).click();
   await page.waitForFunction(
-    () =>
-      Object.keys((window as any).shaderStore.getState().configPreview.wallpaper_shader_params.grid ?? {}).length === 8,
+    () => Object.keys((window as any).shaderStore.getState().configPreview.wallpaper_shaders[0].params).length === 8,
   );
-  if (available) {
-    await redrawn(beforeGrid!, 'static shaders must redraw after randomization');
-  }
-  const preview = await page.evaluate(() => (window as any).shaderStore.getState().configPreview);
+  if (available) await redrawn(beforeGrid!, 'static shaders must redraw after randomization');
+
+  await pick('Add shader layer', 'Film Grain');
+  await previewHas(['grid', 'chroma-flow', 'film-grain']);
+  if (available) await showing(['grid', 'chroma-flow', 'film-grain']);
+  await dialog.getByRole('button', { name: 'Move layer 3 up', exact: true }).click();
+  await previewHas(['grid', 'film-grain', 'chroma-flow']);
+  await dialog.getByRole('button', { name: 'Remove layer 3', exact: true }).click();
+  await previewHas(['grid', 'film-grain']);
+  const grain = dialog.getByRole('group', { name: 'Layer 2: Film Grain', exact: true });
+  await grain.getByRole('button', { name: 'Film Grain settings' }).click();
+  await grain.getByRole('combobox', { name: 'Blend mode', exact: true }).click();
+  await page.getByRole('option', { name: 'Soft light', exact: true }).click();
+  await grain.getByRole('switch', { name: 'Layer 2 enabled', exact: true }).click();
+  await page.waitForFunction(() => {
+    const grain = (window as any).shaderStore.getState().configPreview.wallpaper_shaders[1];
+    return grain['blend-mode'] === 'soft-light' && !grain.enabled;
+  });
+  if (available) await showing(['grid']);
+  for (let count = 2; count < 8; count++) await pick('Add shader layer', 'Vignette');
+  assert(
+    await dialog.getByRole('button', { name: 'Add shader layer', exact: true }).isDisabled(),
+    'the stack must stop at 8 layers',
+  );
+
+  const layers = await preview();
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await dialog.getByRole('button', { name: 'Copy TOML', exact: true }).click();
   const toml = await page.evaluate(() => navigator.clipboard.readText());
-  const exported = Bun.TOML.parse(toml) as any;
-  assert.deepEqual(exported['wallpaper-shader-params'], preview.wallpaper_shader_params);
+  const exported = (Bun.TOML.parse(toml) as any)['wallpaper-shader'].map((entry: any) => layer(entry.shader, entry));
+  assert.deepEqual(exported, layers);
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
-  await page.waitForFunction((params) => {
-    const actual = (window as any).shaderStore.getState().config.wallpaper_shader_params;
-    return (
-      Object.keys(actual).length === Object.keys(params).length &&
-      Object.entries(params).every(
-        ([id, values]) =>
-          actual[id] &&
-          Object.keys(actual[id]).length === Object.keys(values as object).length &&
-          Object.entries(values as object).every(
-            ([key, value]) => JSON.stringify(actual[id][key]) === JSON.stringify(value),
-          ),
-      )
-    );
-  }, preview.wallpaper_shader_params);
+  await page.waitForFunction((layers) => {
+    // The server sorts parameter keys.
+    const canonical = (value: unknown) =>
+      JSON.stringify(value, (_, value) =>
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+          : value,
+      );
+    return canonical((window as any).shaderStore.getState().config.wallpaper_shaders) === canonical(layers);
+  }, layers);
   await sameTerminal();
   assert.equal(await page.locator('iframe[src*="shaders"]').count(), 0);
   assert(
@@ -363,7 +424,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    'PASS Randomize placement, seed overrides, seedless and static shaders, previews, TOML export, and terminal/socket lifetime',
+    'PASS layer editing, Randomize placement, seed overrides, previews, TOML export, and terminal/socket lifetime',
   );
   const fallback = await browser.newContext();
   await fallback.addInitScript(() =>

@@ -9,13 +9,13 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import type { ShaderValue } from '../generated/protocol';
-import { randomizeWallpaperParams } from '../lib/wallpaperRandomize';
+import { randomizeShaderParams } from '../lib/wallpaperRandomize';
 import {
-  findWallpaperShader,
   parameterValue,
   wallpaperUniformValues,
+  type ShaderParams,
   type WallpaperParameter,
-  type WallpaperShaderParams,
+  type WallpaperShader,
 } from '../lib/wallpaperCatalog';
 
 function ParameterText({
@@ -62,39 +62,19 @@ function ParameterText({
 }
 
 export function ShaderParameterFields({
-  shaderId,
+  shader,
   params,
   onChange,
 }: {
-  shaderId: string;
-  params: WallpaperShaderParams;
-  onChange: (params: WallpaperShaderParams) => void;
+  shader: WallpaperShader;
+  params: ShaderParams;
+  onChange: (params: ShaderParams) => void;
 }) {
-  const shader = findWallpaperShader(shaderId);
-  if (!shader) return null;
   const values = wallpaperUniformValues(shader, params, 1);
-  const set = (key: string, value: ShaderValue) =>
-    onChange({
-      ...params,
-      [shader.id]: { ...params[shader.id], [key]: value },
-    });
+  const set = (key: string, value: ShaderValue) => onChange({ ...params, [key]: value });
   return (
     <VStack gap={4}>
-      <HStack hAlign="between" vAlign="center">
-        <Text weight="medium">{shader.label} parameters</Text>
-        <Button
-          label="Reset shader parameters"
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            const next = { ...params };
-            delete next[shader.id];
-            onChange(next);
-          }}
-        >
-          Reset parameters
-        </Button>
-      </HStack>
+      {shader.params.length === 0 && <Text color="secondary">{shader.label} has no parameters.</Text>}
       {shader.params.map((param) => {
         const value = values[param.name];
         const paramKey = `${shader.id}:${param.key}`;
@@ -174,9 +154,12 @@ export function ShaderParameterFields({
         }
         return <ParameterText key={paramKey} param={param} value={value} onChange={(value) => set(param.key, value)} />;
       })}
-      <HStack>
-        <Button label="Randomize parameters" onClick={() => onChange(randomizeWallpaperParams(shader, params))} />
-      </HStack>
+      {shader.params.length > 0 && (
+        <HStack gap={2}>
+          <Button label="Randomize parameters" onClick={() => onChange(randomizeShaderParams(shader, params))} />
+          <Button label="Reset parameters" variant="ghost" onClick={() => onChange({})} />
+        </HStack>
+      )}
     </VStack>
   );
 }

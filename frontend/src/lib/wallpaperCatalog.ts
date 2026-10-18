@@ -1,5 +1,5 @@
 import { WALLPAPER_SHADER_DEFINITIONS } from '../generated/wallpaperShaders';
-import type { ClientConfig, ShaderValue } from '../generated/protocol';
+import type { ShaderBlendMode, ShaderLayer, ShaderValue } from '../generated/protocol';
 
 export interface WallpaperParameter {
   name: string;
@@ -20,14 +20,72 @@ export interface WallpaperShader {
   component: string;
   label: string;
   description: string;
+  category: string;
+  /** Generators draw new content; effects process every layer beneath them. */
+  kind: 'generator' | 'effect';
+  usesPointer: boolean;
   params: WallpaperParameter[];
 }
 
 export const WALLPAPER_SHADERS = WALLPAPER_SHADER_DEFINITIONS as WallpaperShader[];
-export type WallpaperShaderParams = ClientConfig['wallpaper_shader_params'];
+export type ShaderParams = ShaderLayer['params'];
+
+/** Mirrors `MAX_WALLPAPER_SHADER_LAYERS` in `src/config.rs`. */
+export const MAX_WALLPAPER_SHADER_LAYERS = 8;
+
+export const SHADER_BLEND_MODES: { value: ShaderBlendMode; label: string }[] = (
+  [
+    'normal',
+    'normal-oklch',
+    'normal-oklab',
+    'multiply',
+    'screen',
+    'linear-dodge',
+    'overlay',
+    'difference',
+    'color-dodge',
+    'exclusion',
+    'color',
+    'luminosity',
+    'darken',
+    'lighten',
+    'color-burn',
+    'linear-burn',
+    'soft-light',
+    'hard-light',
+    'hue',
+    'saturation',
+  ] as const
+).map((value) => ({
+  value,
+  label:
+    { 'normal-oklch': 'Normal (OKLCH)', 'normal-oklab': 'Normal (Oklab)', 'linear-dodge': 'Linear dodge (add)' }[
+      value as string
+    ] ?? value[0].toUpperCase() + value.slice(1).replace(/-/g, ' '),
+}));
 
 export function findWallpaperShader(id: string): WallpaperShader | null {
   return WALLPAPER_SHADERS.find((shader) => shader.id === id) ?? null;
+}
+
+/** A new layer with native parameter defaults. */
+export function createShaderLayer(shader: string): ShaderLayer {
+  return { shader, enabled: true, 'blend-mode': 'normal', opacity: 1, interactive: true, params: {} };
+}
+
+/** The parameter that follows the cursor, if any. */
+export function positionParameter(shader: WallpaperShader): WallpaperParameter | null {
+  return shader.params.find((param) => ['center', 'position', 'lightPosition'].includes(param.name)) ?? null;
+}
+
+/** Whether pointer or terminal-cursor input can affect the shader. */
+export function shaderAcceptsInput(shader: WallpaperShader): boolean {
+  return shader.usesPointer || positionParameter(shader) !== null;
+}
+
+/** Enabled layers with known shaders, bottom first. */
+export function activeShaderLayers(layers: readonly ShaderLayer[] | null | undefined): ShaderLayer[] {
+  return (layers ?? []).filter((layer) => layer.enabled && findWallpaperShader(layer.shader));
 }
 
 function validJson(value: ShaderValue): boolean {
@@ -90,12 +148,12 @@ export function parameterValue(param: WallpaperParameter, value: ShaderValue | u
 
 export function wallpaperUniformValues(
   shader: WallpaperShader,
-  params: WallpaperShaderParams,
+  params: ShaderParams,
   speed: number,
 ): Record<string, ShaderValue> {
   return Object.fromEntries(
     shader.params.map((param) => {
-      let value = parameterValue(param, params[shader.id]?.[param.key]);
+      let value = parameterValue(param, params[param.key]);
       if (/speed$/i.test(param.name) && typeof value === 'number') value *= speed;
       return [param.name, value];
     }),
@@ -114,14 +172,25 @@ export function shaderValueToml(value: ShaderValue): string {
   return String(value);
 }
 
-export function wallpaperParamsToml(params: WallpaperShaderParams): string[] {
-  return Object.entries(params).flatMap(([id, values]) => {
-    const entries = Object.entries(values).filter(([, value]) => value !== null);
-    return entries.length
-      ? [
-          `[wallpaper-shader-params.${JSON.stringify(id)}]`,
-          ...entries.map(([key, value]) => `${JSON.stringify(key)} = ${shaderValueToml(value)}`),
-        ]
-      : [];
+function tomlKey(key: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
+}
+
+/** `[[wallpaper-shader]]` tables for config.toml, omitting defaults. */
+export function wallpaperLayersToml(layers: readonly ShaderLayer[]): string[] {
+  return layers.flatMap((layer, index) => {
+    const params = Object.entries(layer.params).filter(([, value]) => value !== null);
+    return [
+      ...(index ? [''] : []),
+      '[[wallpaper-shader]]',
+      `shader = ${JSON.stringify(layer.shader)}`,
+      ...(layer.enabled ? [] : ['enabled = false']),
+      ...(layer['blend-mode'] === 'normal' ? [] : [`blend-mode = ${JSON.stringify(layer['blend-mode'])}`]),
+      ...(layer.opacity === 1 ? [] : [`opacity = ${Number(layer.opacity.toFixed(4))}`]),
+      ...(layer.interactive ? [] : ['interactive = false']),
+      ...(params.length
+        ? ['[wallpaper-shader.params]', ...params.map(([key, value]) => `${tomlKey(key)} = ${shaderValueToml(value)}`)]
+        : []),
+    ];
   });
 }

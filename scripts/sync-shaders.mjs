@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
 const require = createRequire(resolve(root, "frontend/package.json"));
-const components = [
+const generators = [
   "Aurora",
   "Boids",
   "Checkerboard",
@@ -29,10 +29,62 @@ const components = [
   "Truchet",
   "Voronoi",
 ];
+const effects = [
+  // Stylize
+  "Ascii",
+  "Chalkboard",
+  "ChromaticAberration",
+  "CompressionArtifacts",
+  "ContourLines",
+  "CRTScreen",
+  "DataMosh",
+  "Dither",
+  "DropShadow",
+  "Engraving",
+  "FilmGrain",
+  "Glitch",
+  "Glow",
+  "GradientMap",
+  "Halftone",
+  "KeyFrames",
+  "LensDistortion",
+  "LensFlare",
+  "LightLeak",
+  "ObjectTracker",
+  "Paper",
+  "ParticleField",
+  "Pixelate",
+  "ReflectivePlane",
+  "Sparkle",
+  "Stone",
+  "TimeTrail",
+  "VHS",
+  "Vignette",
+  "Watercolor",
+  "Wool",
+  // Adjustments
+  "BrightnessContrast",
+  "Duotone",
+  "Exposure",
+  "FilmStock",
+  "Grayscale",
+  "HueShift",
+  "Invert",
+  "Posterize",
+  "Saturation",
+  "Sharpness",
+  "Solarize",
+  "Tint",
+  "Tritone",
+  "Vibrance",
+];
 const kebab = (name) =>
-  name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+  name
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase();
 const catalog = [];
-for (const name of components) {
+for (const name of [...generators, ...effects]) {
   const { componentDefinition: definition } = await import(
     pathToFileURL(require.resolve(`shaders/core/${name}`))
   );
@@ -70,8 +122,13 @@ for (const name of components) {
   catalog.push({
     id: kebab(name),
     component: name,
-    label: name.replace(/([a-z])([A-Z])/g, "$1 $2"),
+    label: name
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .replace(/([a-z])([A-Z])/g, "$1 $2"),
     description: definition.description,
+    category: definition.category,
+    kind: definition.requiresChild ? "effect" : "generator",
+    usesPointer: definition.usesPointer ?? false,
     params,
   });
 }

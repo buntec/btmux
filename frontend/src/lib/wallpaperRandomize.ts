@@ -3,7 +3,7 @@ import {
   wallpaperUniformValues,
   type WallpaperParameter,
   type WallpaperShader,
-  type WallpaperShaderParams,
+  type ShaderParams,
 } from './wallpaperCatalog';
 
 function colorHex(hue: number, saturation: number, lightness: number): string {
@@ -30,11 +30,11 @@ const VISIBLE_NUMBERS = new Set([
   'force',
 ]);
 
-export function randomizeWallpaperParams(
+export function randomizeShaderParams(
   shader: WallpaperShader,
-  params: WallpaperShaderParams,
+  params: ShaderParams,
   random: () => number = Math.random,
-): WallpaperShaderParams {
+): ShaderParams {
   const sample = (min: number, max: number) => min + random() * (max - min);
   const current = wallpaperUniformValues(shader, params, 1);
   const hue = sample(0, 360);
@@ -113,5 +113,5 @@ export function randomizeWallpaperParams(
     }
     return param.default;
   };
-  return { ...params, [shader.id]: Object.fromEntries(shader.params.map((param) => [param.key, value(param)])) };
+  return Object.fromEntries(shader.params.map((param) => [param.key, value(param)]));
 }

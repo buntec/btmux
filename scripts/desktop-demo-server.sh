@@ -222,7 +222,6 @@ write_config() {
         # the mouse; more opaque than the default 0.1 to show up in the video.
         if [[ "$1" == shaders ]]; then
             cat <<'EOF'
-wallpaper-shader = "cursor-trail"
 wallpaper-opacity = 0.25
 wallpaper-fps = 60
 wallpaper-speed = 1.0
@@ -230,11 +229,8 @@ wallpaper-saturate = 1.0
 wallpaper-shader-follows-keyboard-input = true
 wallpaper-shader-follows-mouse-cursor = true
 
-[wallpaper-shader-params.ink-flow]
-curl = 0
-decay = 2
-momentum = 0.5
-radius = 0.25
+[[wallpaper-shader]]
+shader = "cursor-trail"
 EOF
         fi
     } >"$run_dir/config/btmux/config.toml"

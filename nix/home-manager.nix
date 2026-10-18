@@ -313,7 +313,9 @@ in
           Crashed = true;
           SuccessfulExit = false;
         };
-        ProcessType = "Background";
+        # Like `btmux install`: shells inherit this, and Background clamps
+        # them to background QoS on a few throttled cores.
+        ProcessType = "Interactive";
         RunAtLoad = true;
         StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/btmux.error.log";
         StandardOutPath = "${config.home.homeDirectory}/Library/Logs/btmux.log";

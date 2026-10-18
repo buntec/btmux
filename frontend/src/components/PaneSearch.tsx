@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Terminal } from 'ghostty-web';
+import { useEffect, useRef, useState } from 'react';
+import type { SearchState } from '@wterm/dom';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
-import { findMatches, snapshotRows, viewportYFor } from '../lib/terminalSearch';
+import type { PaneTerminal } from '../lib/paneTerminal';
 import type { Theme } from '../state/types';
 
+const MAX_SEARCH_LENGTH = 1024;
+
 interface Props {
-  term: Terminal;
+  term: PaneTerminal;
   theme: Theme | null;
   termFont: number;
   onClose: () => void;
@@ -13,36 +15,34 @@ interface Props {
 
 /**
  * Scrollback search for one pane (prefix + /). Enter jumps to the next older
- * match, Shift+Enter to a newer one. Searches a snapshot taken on open.
+ * match, Shift+Enter to a newer one.
  */
 export function PaneSearch({ term, theme, termFont, onClose }: Props) {
   const c = chromePalette(theme);
-  const rows = useMemo(() => snapshotRows(term), [term]);
   const [query, setQuery] = useState('');
-  const [current, setCurrent] = useState(0);
-  const matches = useMemo(() => findMatches(rows, query), [rows, query]);
+  const [state, setState] = useState<SearchState | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Start from the most recent match.
-  useEffect(() => setCurrent(Math.max(0, matches.length - 1)), [matches]);
+  useEffect(() => {
+    term.onSearchChange(setState);
+    return () => {
+      term.onSearchChange(null);
+      term.search('');
+    };
+  }, [term]);
 
   useEffect(() => {
-    const base = withAlpha(theme?.yellow ?? c.warn, 0.3);
-    const active = withAlpha(theme?.yellow ?? c.warn, 0.75);
-    term.setDecorations(matches.map((m, i) => ({ ...m, background: i === current ? active : base })));
-    const match = matches[current];
-    if (match) term.scrollToLine(viewportYFor(match.line, term.buffer.active.length, term.rows));
-  }, [term, matches, current, theme, c.warn]);
+    const yellow = theme?.yellow ?? c.warn;
+    term.element.style.setProperty('--term-search-match', withAlpha(yellow, 0.3));
+    term.element.style.setProperty('--term-search-active', withAlpha(yellow, 0.75));
+    term.element.style.setProperty('--term-search-border', yellow);
+  }, [term, theme, c.warn]);
 
-  useEffect(
-    () => () => {
-      term.clearDecorations();
-    },
-    [term],
-  );
+  useEffect(() => term.search(query), [term, query]);
 
   const step = (delta: number) => {
-    if (matches.length > 0) setCurrent((i) => (i + delta + matches.length) % matches.length);
+    if (delta < 0) term.findPrevious();
+    else term.findNext();
   };
   const close = () => {
     onClose();
@@ -73,6 +73,7 @@ export function PaneSearch({ term, theme, termFont, onClose }: Props) {
         autoFocus
         aria-label="Search scrollback"
         placeholder="search"
+        maxLength={MAX_SEARCH_LENGTH}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
@@ -83,7 +84,7 @@ export function PaneSearch({ term, theme, termFont, onClose }: Props) {
         style={{ width: '16em', background: 'transparent', outline: 'none', color: c.fg }}
       />
       <span style={{ color: c.fgMuted, minWidth: '5em', textAlign: 'right' }}>
-        {query ? (matches.length ? `${current + 1}/${matches.length}` : 'no match') : ''}
+        {query && state ? (state.count ? `${state.activeIndex + 1}/${state.count}` : 'no match') : ''}
       </span>
       <button type="button" aria-label="Close search" onClick={close} style={{ color: c.fgMuted, cursor: 'pointer' }}>
         ×

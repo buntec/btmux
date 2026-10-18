@@ -83,13 +83,11 @@ export type Theme = { foreground: string, background: string, cursor: string, cu
 export type BaseTheme = { base00: string, base01: string, base02: string, base03: string, base04: string, base05: string, base06: string, base07: string, base08: string, base09: string, base0A: string, base0B: string, base0C: string, base0D: string, base0E: string, base0F: string, base10: string | null, base11: string | null, base12: string | null, base13: string | null, base14: string | null, base15: string | null, base16: string | null, base17: string | null, };
 
 // prettier-ignore
-export type TerminalOptions = { renderer: "canvas" | "webgl" | null, cursorBlink: boolean | null, cursorStyle: "block" | "underline" | "bar" | null, scrollback: number | null, fontSize: number | null, fontFamily: string | null, fontWeight: number | null, allowTransparency: boolean | null, convertEol: boolean | null, disableStdin: boolean | null, smoothScrollDuration: number | null,
+export type TerminalOptions = { cursorBlink: boolean | null, scrollback: number | null, fontSize: number | null, fontFamily: string | null, fontWeight: number | null, allowTransparency: boolean | null, disableStdin: boolean | null,
 /**
- * Wheel/trackpad scroll-speed multiplier for scrollback (1.0 = ghostty-web
- * default). Higher moves more lines per wheel notch / gesture. Applied by
- * the patched ghostty-web `handleWheel`; not part of upstream ITerminalOptions.
+ * Neovim and file preview scroll animations, in ms.
  */
-scrollSensitivity: number | null,
+smoothScrollDuration: number | null,
 /**
  * Opacity, 0–1, of explicitly colored cell backgrounds (Visual,
  * CursorLine, …) when transparency is on. btmux-specific; Neovim only.
@@ -271,7 +269,7 @@ pid: number, };
 export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "state": "error", message: string, };
 
 // prettier-ignore
-export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, renderer?: string, cursor_blink?: boolean, cursor_style?: string, scrollback?: number, allow_transparency?: boolean, convert_eol?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, scroll_sensitivity?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_shader_params?: { [key in string]: { [key in string]: ShaderValue } }, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
+export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shader?: string, wallpaper_shader_params?: { [key in string]: { [key in string]: ShaderValue } }, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
 /**
  * Border-draw style name; `"none"` (or the empty string) disables it.
  */

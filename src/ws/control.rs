@@ -848,7 +848,7 @@ pub(crate) enum ClientMessage {
         split_id: Uuid,
         ratio: f32,
     },
-    /// Open a pane's scrollback (clean text read from the browser's ghostty-web
+    /// Open a pane's scrollback (clean text read from the browser's terminal
     /// buffer) in `$EDITOR` inside that pane's own shell. Content is captured
     /// client-side because only the emulator holds the de-escaped, wrapped
     /// scrollback.

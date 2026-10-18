@@ -840,10 +840,10 @@ impl SessionManager {
     }
 
     /// Write a pane's captured scrollback (clean text supplied by the frontend,
-    /// read from the ghostty-web buffer) to a temp file, then open it in the
+    /// read from the browser emulator) to a temp file, then open it in the
     /// user's editor *inside the captured pane's own shell* by injecting the
     /// command into its PTY input — like `tmux send-keys`. Reusing the live PTY
-    /// (and the already-mounted ghostty-web terminal) avoids spinning up a new
+    /// (and the already-mounted browser terminal) avoids spinning up a new
     /// pane/terminal just to view the capture.
     ///
     /// The editor is resolved on the backend (`$VISUAL`/`$EDITOR`, else `vi`)
@@ -880,7 +880,7 @@ impl SessionManager {
 
         // Leading space keeps it out of history in shells honouring that (bash
         // HISTCONTROL, zsh HIST_IGNORE_SPACE, fish); trailing CR submits the line
-        // — `\r` is the exact byte the Enter key sends (ghostty-web's onData emits
+        // — `\r` is the exact byte the Enter key sends (the browser emulator emits
         // it), so an interactive shell's line editor treats it as "run this".
         let line = format!(
             " {editor} {}\r",

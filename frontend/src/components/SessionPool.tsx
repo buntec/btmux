@@ -12,9 +12,9 @@ interface Props {
  * The cross-session keep-alive pool. SessionPool is mounted once in AppInner,
  * *above* <Routes>, so it never unmounts on navigation — that's what lets a
  * session's terminals survive route changes that unmount SessionView. It keeps the last POOL_LIMIT sessions
- * warm: each pooled session gets a SessionPane (keyed by sessionId) whose ghostty
+ * warm: each pooled session gets a SessionPane (keyed by sessionId) whose
  * terminals and pane sockets stay mounted; only the active session's is shown,
- * the rest are display:none + suspend()ed but still streaming. Switching back to
+ * the rest are display:none + paused but still streaming. Switching back to
  * a pooled session is then instant — no teardown, no reconnect, no scrollback
  * replay — exactly the keep-mounted pattern SessionPane uses for the windows
  * within one session, lifted one level up to sessions.
@@ -42,25 +42,15 @@ export function SessionPool({ send }: Props) {
   const [pool, setPool] = useState<string[]>(() => (activeSessionId ? [activeSessionId] : []));
 
   // Promote the active session to the front and evict beyond the cap. This is
-  // the only place the pool grows. A never-seen session joins on the next frame:
-  // App has already told the wallpaper to pause in this commit, and yielding a
-  // frame lets the wallpaper pause before TerminalPane synchronously
-  // creates the new WebGL contexts. Already-warm sessions promote immediately.
-  // Navigating to "/" leaves activeSessionId null and so leaves the pool as-is.
-  // Evicting an id drops its SessionPane, disposing terminals and sockets.
+  // the only place the pool grows. Navigating to "/" leaves activeSessionId
+  // null and so leaves the pool as-is. Evicting an id drops its SessionPane,
+  // disposing terminals and sockets.
   useEffect(() => {
     if (!activeSessionId) return;
-    const promote = (prev: string[]) => {
+    setPool((prev) => {
       if (prev[0] === activeSessionId) return prev;
       return [activeSessionId, ...prev.filter((id) => id !== activeSessionId)].slice(0, POOL_LIMIT);
-    };
-    if (pool.includes(activeSessionId)) {
-      setPool(promote);
-      return;
-    }
-
-    const mountRaf = requestAnimationFrame(() => setPool(promote));
-    return () => cancelAnimationFrame(mountRaf);
+    });
   }, [activeSessionId]);
 
   // Drop pool entries for sessions the server has killed, so a dead session

@@ -41,7 +41,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ['ghostty-web'],
+    exclude: ['@wterm/ghostty'],
   },
   build: {
     chunkSizeWarningLimit: Infinity,

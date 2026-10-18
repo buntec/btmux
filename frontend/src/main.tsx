@@ -1,5 +1,4 @@
 import { createRoot } from 'react-dom/client';
-import { init } from 'ghostty-web';
 import { App } from './App';
 import { BtmuxTheme } from './components/BtmuxTheme';
 import { AuthGate } from './components/AuthGate';
@@ -68,12 +67,7 @@ document.documentElement.style.setProperty('--btmux-font-weight', String(CONFIG_
 
 document.body.style.background = pageBackground(STARTUP_THEME.background, CONFIG_DEFAULTS.desktopBackgroundOpacity);
 
-async function main() {
-  try {
-    await init();
-  } catch (e) {
-    console.error('Failed to initialize ghostty-web:', e);
-  }
+function main() {
   const root = createRoot(document.getElementById('root')!);
   root.render(
     <BtmuxTheme>

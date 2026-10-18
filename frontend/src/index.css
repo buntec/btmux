@@ -381,3 +381,26 @@ dialog::backdrop {
   background: transparent !important;
   backdrop-filter: none !important;
 }
+
+/* wterm host: fills the pane; btmux draws the chrome. */
+.wterm.btm-wterm {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+  scrollbar-width: none;
+}
+.wterm.btm-wterm-transparent {
+  background: transparent;
+}
+.btm-wterm-decorations {
+  position: absolute;
+  inset: 0 auto auto 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.btm-wterm-cursor-hidden .term-grid {
+  --term-cursor: transparent;
+  --term-app-cursor: transparent;
+}

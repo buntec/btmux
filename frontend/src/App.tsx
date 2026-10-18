@@ -43,34 +43,6 @@ import { pageBackground } from './lib/desktopTransparency';
 import { desktopVersionMismatch } from './lib/desktopApp';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
 
-/**
- * Keep decorative GPU work stopped while a route change mounts a session's
- * terminals. The changed id makes this true during the transition render, so
- * ShaderWallpaper can pause in a layout effect before TerminalPane's passive
- * mount effects synchronously create their WebGL contexts. Two animation
- * frames give those mounts and their first paint a chance to finish before the
- * wallpaper resumes; a main-thread stall naturally delays both frames.
- */
-function useSessionTransitionPause(activeSessionId: string | null): boolean {
-  const [settledSessionId, setSettledSessionId] = useState(activeSessionId);
-  const transitioning = activeSessionId !== settledSessionId;
-
-  useEffect(() => {
-    if (!transitioning) return;
-
-    let resumeRaf = 0;
-    const settleRaf = requestAnimationFrame(() => {
-      resumeRaf = requestAnimationFrame(() => setSettledSessionId(activeSessionId));
-    });
-    return () => {
-      cancelAnimationFrame(settleRaf);
-      cancelAnimationFrame(resumeRaf);
-    };
-  }, [activeSessionId, transitioning]);
-
-  return transitioning;
-}
-
 function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
@@ -139,7 +111,6 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   const activeSessionId = currentSessionName
     ? (allSessions.find((s) => s.name === currentSessionName)?.id ?? null)
     : null;
-  const sessionTransitionActive = useSessionTransitionPause(activeSessionId);
   const activeSession = activeSessionId ? allSessions.find((session) => session.id === activeSessionId) : null;
   const activeWindow = activeSession?.windows[activeSession.active_window];
 
@@ -216,7 +187,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           // Modal animations and first-time session mounts both compete with
           // the wallpaper for GPU time. Keep it stopped until that foreground
           // work has completed and the newly-visible terminals have painted.
-          paused={modalOverlayActive || sessionTransitionActive}
+          paused={modalOverlayActive}
           followsMouseCursor={wallpaperFollowsMouse}
           followsKeyboardInput={wallpaperFollowsKeyboard}
         />

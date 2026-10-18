@@ -16,7 +16,14 @@ const aurora = findWallpaperShader('aurora')!;
 
 test('catalog contains native generators and effects and rejects unknown IDs', () => {
   expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'generator').length).toBe(23);
-  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'effect').length).toBe(44);
+  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'effect').length).toBe(71);
+  // Every effect appears in one of the layer picker's sections.
+  expect(
+    WALLPAPER_SHADERS.filter(
+      (shader) =>
+        shader.kind === 'effect' && !['Stylize', 'Adjustments', 'Distortions', 'Interactive'].includes(shader.category),
+    ),
+  ).toEqual([]);
   expect(Object.keys(WALLPAPER_SHADER_LOADERS).sort()).toEqual(WALLPAPER_SHADERS.map((shader) => shader.id).sort());
   expect(aurora.component).toBe('Aurora');
   expect(aurora.kind).toBe('generator');
@@ -29,6 +36,8 @@ test('catalog contains native generators and effects and rejects unknown IDs', (
     ['crt-screen', 'CRTScreen'],
     ['vhs', 'VHS'],
     ['hue-shift', 'HueShift'],
+    ['form-3d', 'Form3D'],
+    ['cursor-ripples', 'CursorRipples'],
   ]) {
     expect(findWallpaperShader(id)?.component).toBe(component);
   }
@@ -41,6 +50,7 @@ test('catalog contains native generators and effects and rejects unknown IDs', (
 test('pointer input reaches interactive shaders and cursor-following positions', () => {
   expect(shaderAcceptsInput(findWallpaperShader('ink-flow')!)).toBe(true);
   expect(shaderAcceptsInput(aurora)).toBe(true);
+  expect(shaderAcceptsInput(findWallpaperShader('liquify')!)).toBe(true);
   expect(shaderAcceptsInput(findWallpaperShader('film-grain')!)).toBe(false);
 });
 

@@ -77,11 +77,40 @@ const effects = [
   "Tint",
   "Tritone",
   "Vibrance",
+  // Distortions
+  "BarShift",
+  "Bend",
+  "Bulge",
+  "ConcentricSpin",
+  "CornerPin",
+  "Flip",
+  "FlowField",
+  "FlutedGlass",
+  "Form3D",
+  "GlassTiles",
+  "Kaleidoscope",
+  "Mirror",
+  "Perspective",
+  "PolarCoordinates",
+  "RectangularCoordinates",
+  "Repeater",
+  "Spherize",
+  "Stretch",
+  "Surface3D",
+  "Twirl",
+  "WaveDistortion",
+  // Interactive
+  "CursorRipples",
+  "GridDistortion",
+  "Liquify",
+  "PixelSort",
+  "PixelThrow",
+  "Shatter",
 ];
 const kebab = (name) =>
   name
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([a-z])([A-Z\d])/g, "$1-$2")
     .toLowerCase();
 const catalog = [];
 for (const name of [...generators, ...effects]) {
@@ -124,7 +153,7 @@ for (const name of [...generators, ...effects]) {
     component: name,
     label: name
       .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-      .replace(/([a-z])([A-Z])/g, "$1 $2"),
+      .replace(/([a-z])([A-Z\d])/g, "$1 $2"),
     description: definition.description,
     category: definition.category,
     kind: definition.requiresChild ? "effect" : "generator",

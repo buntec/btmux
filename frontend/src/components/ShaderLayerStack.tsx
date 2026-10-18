@@ -19,15 +19,17 @@ import {
 import { ShaderParameterFields } from './ShaderParameterFields';
 
 const SHADER_OPTIONS = [
-  { title: 'Generators', match: (kind: string) => kind === 'generator', category: null },
-  { title: 'Stylize effects', match: (kind: string) => kind === 'effect', category: 'Stylize' },
-  { title: 'Adjustment effects', match: (kind: string) => kind === 'effect', category: 'Adjustments' },
-].map(({ title, match, category }) => ({
+  { title: 'Generators', kind: 'generator', category: null },
+  { title: 'Stylize effects', kind: 'effect', category: 'Stylize' },
+  { title: 'Adjustment effects', kind: 'effect', category: 'Adjustments' },
+  { title: 'Distortion effects', kind: 'effect', category: 'Distortions' },
+  { title: 'Interactive effects', kind: 'effect', category: 'Interactive' },
+].map(({ title, kind, category }) => ({
   type: 'section' as const,
   title,
-  options: WALLPAPER_SHADERS.filter((shader) => match(shader.kind) && (!category || shader.category === category)).map(
-    (shader) => ({ value: shader.id, label: shader.label }),
-  ),
+  options: WALLPAPER_SHADERS.filter(
+    (shader) => shader.kind === kind && (!category || shader.category === category),
+  ).map((shader) => ({ value: shader.id, label: shader.label })),
 }));
 
 function ShaderLayerCard({

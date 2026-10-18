@@ -116,6 +116,18 @@ try {
       await page.waitForTimeout(100);
     }
   };
+  /** Wait for simulations to settle and return the still frame. */
+  const still = async (message: string) => {
+    const deadline = Date.now() + 10_000;
+    let previous = await capture();
+    for (;;) {
+      await page.waitForTimeout(300);
+      const next = await capture();
+      if (next === previous) return next;
+      assert(Date.now() < deadline, message);
+      previous = next;
+    }
+  };
   /** Wait until the renderer shows exactly these layers. */
   const showing = (ids: string[]) =>
     page.waitForFunction((ids) => {
@@ -281,6 +293,24 @@ try {
       await redrawn(keyboard, `${id} must respond to terminal cursor movement`);
       await sameTerminal();
       console.log(`PASS ${id} pointer input, layer interactivity, terminal cursor, animation pause, and zero speed`);
+    }
+    for (const id of ['cursor-ripples', 'grid-distortion', 'liquify', 'pixel-sort', 'pixel-throw', 'shatter']) {
+      // A static generator, so only input changes the pixels.
+      await configure({
+        wallpaper_shaders: [layer('checkerboard'), layer(id)],
+        animations: true,
+        wallpaper_speed: 1,
+        wallpaper_shader_follows_mouse_cursor: false,
+        wallpaper_shader_follows_keyboard_input: false,
+      });
+      await showing(['checkerboard', id]);
+      const idle = await still(`${id} must settle without input`);
+      await move();
+      assert((await capture()) === idle, `${id} must ignore disabled pointer input`);
+      await configure({ wallpaper_shader_follows_mouse_cursor: true });
+      await move();
+      await redrawn(idle, `${id} must distort the layers beneath it in response to the pointer`);
+      console.log(`PASS ${id} effect pointer input`);
     }
     await configure({
       wallpaper_shaders: [layer('ink-flow'), layer('pixelate')],

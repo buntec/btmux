@@ -37,8 +37,12 @@ Generators include gradients, noise fields, `aurora`, `plasma`, `strands`, and t
 interactive `chroma-flow`, `cursor-trail`, `ink-flow`, and `boids`, plus a
 `lens-flare` overlay. Effects include every Shaders Stylize effect (for example
 `ascii`, `crt-screen`, `dither`, `film-grain`, `glitch`, `halftone`, `pixelate`,
-`vhs`, `vignette`, and `watercolor`) and the color adjustments (`brightness-contrast`,
-`duotone`, `hue-shift`, `saturation`, `tint`, and others). Settings lists them all.
+`vhs`, `vignette`, and `watercolor`), the color adjustments (`brightness-contrast`,
+`duotone`, `hue-shift`, `saturation`, `tint`, and others), the distortions (`bulge`,
+`kaleidoscope`, `twirl`, `wave-distortion`, `fluted-glass`, `form-3d`, `surface-3d`,
+and others), and the interactive effects `cursor-ripples`, `grid-distortion`,
+`liquify`, `pixel-sort`, `pixel-throw`, and `shatter`, which bend the layers beneath
+them around the cursor. Settings lists them all.
 
 Blend modes are `normal`, `normal-oklch`, `normal-oklab`, `multiply`, `screen`,
 `linear-dodge`, `overlay`, `difference`, `color-dodge`, `exclusion`, `color`,

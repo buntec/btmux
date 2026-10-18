@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import { Bot } from 'lucide-react';
-import { SideNavItem } from '@astryxdesign/core/SideNav';
 import { Icon } from '@astryxdesign/core/Icon';
 import { HStack } from '@astryxdesign/core/Layout';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { useStore } from '../state/store';
+import { RailNavItem } from './RailNavItem';
 import { getAnimations } from '../state/configDefaults';
 import type { AgentState } from '../state/types';
 
@@ -42,7 +42,7 @@ export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onCli
   const summary = counts.map(([group, count]) => `${count} ${group}`).join(', ');
 
   return (
-    <SideNavItem
+    <RailNavItem
       // The collapsed rail's tooltip shows the label, so it carries the counts.
       label={collapsed && summary ? `Agents · ${summary}` : 'Agents'}
       aria-label={summary ? `Agents, ${summary}` : undefined}

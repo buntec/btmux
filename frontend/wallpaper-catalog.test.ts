@@ -15,13 +15,13 @@ import { WALLPAPER_SHADER_LOADERS } from './src/generated/wallpaperShaderLoaders
 const aurora = findWallpaperShader('aurora')!;
 
 test('catalog contains native generators and effects and rejects unknown IDs', () => {
-  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'generator').length).toBe(23);
-  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'effect').length).toBe(71);
+  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'generator').length).toBe(29);
+  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'effect').length).toBe(80);
   // Every effect appears in one of the layer picker's sections.
   expect(
     WALLPAPER_SHADERS.filter(
       (shader) =>
-        shader.kind === 'effect' && !['Stylize', 'Adjustments', 'Distortions', 'Interactive'].includes(shader.category),
+        shader.kind === 'effect' && !['Stylize', 'Adjustments', 'Distortions', 'Blurs', 'Interactive'].includes(shader.category),
     ),
   ).toEqual([]);
   expect(Object.keys(WALLPAPER_SHADER_LOADERS).sort()).toEqual(WALLPAPER_SHADERS.map((shader) => shader.id).sort());
@@ -32,12 +32,14 @@ test('catalog contains native generators and effects and rejects unknown IDs', (
     ['cursor-trail', 'CursorTrail'],
     ['ink-flow', 'InkFlow'],
     ['boids', 'Boids'],
+    ['reaction-diffusion', 'ReactionDiffusion'],
     ['film-grain', 'FilmGrain'],
     ['crt-screen', 'CRTScreen'],
     ['vhs', 'VHS'],
     ['hue-shift', 'HueShift'],
     ['form-3d', 'Form3D'],
     ['cursor-ripples', 'CursorRipples'],
+    ['tilt-shift', 'TiltShift'],
   ]) {
     expect(findWallpaperShader(id)?.component).toBe(component);
   }

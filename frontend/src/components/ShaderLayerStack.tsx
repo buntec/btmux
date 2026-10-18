@@ -23,6 +23,7 @@ const SHADER_OPTIONS = [
   { title: 'Stylize effects', kind: 'effect', category: 'Stylize' },
   { title: 'Adjustment effects', kind: 'effect', category: 'Adjustments' },
   { title: 'Distortion effects', kind: 'effect', category: 'Distortions' },
+  { title: 'Blur effects', kind: 'effect', category: 'Blurs' },
   { title: 'Interactive effects', kind: 'effect', category: 'Interactive' },
 ].map(({ title, kind, category }) => ({
   type: 'section' as const,

@@ -232,7 +232,9 @@ try {
     assert.deepEqual(unavailable, [], 'all native shaders must initialize');
     console.log('PASS all native generators and effects initialize with default and randomized parameters');
 
-    const interactive = ['chroma-flow', 'cursor-trail', 'ink-flow', 'boids'];
+    // These animate without input.
+    const autonomous = ['boids', 'fog', 'magnetic-filings', 'particle-flow', 'reaction-diffusion', 'smoke'];
+    const interactive = ['chroma-flow', 'cursor-trail', 'ink-flow', 'smoke-flow', ...autonomous];
     const move = async (keyboard = false) => {
       for (let step = 0; step <= 12; step++) {
         const x = 150 + step * 50;
@@ -256,9 +258,9 @@ try {
         wallpaper_shader_follows_keyboard_input: false,
       });
       await showing([id]);
-      const idle = await capture();
+      const idle = autonomous.includes(id) ? await capture() : await still(`${id} must settle without input`);
       await move();
-      if (id !== 'boids') {
+      if (!autonomous.includes(id)) {
         assert((await capture()) === idle, `${id} must ignore disabled pointer input`);
         // Simulations keep moving after input, so check this while still idle.
         await configure({
@@ -269,7 +271,7 @@ try {
         assert((await capture()) === idle, `${id} must ignore input when the layer is not interactive`);
         await configure({ wallpaper_shaders: [layer(id)] });
       } else {
-        await redrawn(idle, 'Boids must animate without pointer input');
+        await redrawn(idle, `${id} must animate without pointer input`);
         await configure({ wallpaper_shader_follows_mouse_cursor: true });
       }
       const before = await capture();

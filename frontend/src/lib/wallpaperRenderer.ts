@@ -79,7 +79,9 @@ function animates(source: GpuShaderDefinition): boolean {
     !!source.extraAnimatedTimes ||
     !!source.usesPointer ||
     'speed' in source.props ||
-    'animated' in source.props
+    'animated' in source.props ||
+    // Some effects advance their own clock in onBeforeRender.
+    Object.keys(source.extraFields ?? {}).some((field) => /time$/i.test(field))
   );
 }
 
@@ -102,6 +104,7 @@ export function createWallpaperRenderer(
   // The core API has no telemetry collector and gives us direct runtime controls.
   const renderer = shaderRendererGPU();
   let disposed = false;
+  let initialized = false;
   let current = options;
   let nodes: LayerNode[] = [];
   let serial = 0;
@@ -268,7 +271,8 @@ export function createWallpaperRenderer(
 
   const update = (next: WallpaperRuntimeOptions) => {
     current = next;
-    if (!disposed) void sync();
+    // Queued registrations cannot be removed until core initialization finishes.
+    if (initialized && !disposed) void sync();
   };
   const resize = () => {
     if (disposed || !renderer.isInitialized()) return;
@@ -294,6 +298,7 @@ export function createWallpaperRenderer(
         renderer.cleanup();
         return;
       }
+      initialized = true;
       await sync();
       if (!disposed) await paint(true);
     },

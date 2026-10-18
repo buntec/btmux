@@ -425,9 +425,9 @@ not the terminal.
 wallpaper is an ordered stack of `[[wallpaper-shader]]` layers (`ShaderLayer`: shader,
 enabled, blend mode, opacity, interactive, params; at most `MAX_WALLPAPER_SHADER_LAYERS`).
 `wallpaperRenderer.ts` registers enabled layers as sibling nodes under one core renderer,
-so an effect processes every layer beneath it, and reconciles edits in place (unchanged
-layers keep their simulation state). It adds runtime FPS, resolution, pause, seed, and
-cursor controls. No terminal post-processing. `wallpaperCatalog.ts` resolves IDs and
+so an effect processes every layer beneath it, and reconciles edits in place. Stack and
+parameter changes may restart simulations. It adds runtime FPS, resolution, pause, seed,
+and cursor controls. No terminal post-processing. `wallpaperCatalog.ts` resolves IDs and
 kebab-case parameters. `just sync-shaders` regenerates parameter metadata and lazy loaders
 from the pinned package (the `generators`/`effects` lists in `scripts/sync-shaders.mjs`);
 `just test-frontend` checks that metadata is current. The session-only override replaces

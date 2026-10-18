@@ -272,7 +272,7 @@ test-browser:
 
 # Shader wallpaper regressions (on demand; pixel checks need WebGPU).
 test-shader-browser:
-    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts shader-wallpaper-browser-test.ts
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts shader-wallpaper-lifecycle-browser-test.ts shader-wallpaper-browser-test.ts
 
 # Built-in Neovim regressions against a fresh, isolated stack (requires Neovim 0.12+).
 test-nvim-browser:

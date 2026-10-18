@@ -34,13 +34,16 @@ interactive = true         # whether pointer and terminal-cursor input reach it
 ```
 
 Generators include gradients, noise fields, `aurora`, `plasma`, `strands`, and the
-interactive `chroma-flow`, `cursor-trail`, `ink-flow`, and `boids`, plus a
+interactive `chroma-flow`, `cursor-trail`, `ink-flow`, `boids`, `fog`,
+`magnetic-filings`, `particle-flow`, `reaction-diffusion`, `smoke`, and `smoke-flow`,
+plus a
 `lens-flare` overlay. Effects include every Shaders Stylize effect (for example
 `ascii`, `crt-screen`, `dither`, `film-grain`, `glitch`, `halftone`, `pixelate`,
 `vhs`, `vignette`, and `watercolor`), the color adjustments (`brightness-contrast`,
 `duotone`, `hue-shift`, `saturation`, `tint`, and others), the distortions (`bulge`,
 `kaleidoscope`, `twirl`, `wave-distortion`, `fluted-glass`, `form-3d`, `surface-3d`,
-and others), and the interactive effects `cursor-ripples`, `grid-distortion`,
+and others), the blurs (`blur`, `bokeh-blur`, `tilt-shift`, `zoom-blur`, and others),
+and the interactive effects `cursor-ripples`, `grid-distortion`,
 `liquify`, `pixel-sort`, `pixel-throw`, and `shatter`, which bend the layers beneath
 them around the cursor. Settings lists them all.
 

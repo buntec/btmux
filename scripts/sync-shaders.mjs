@@ -28,6 +28,13 @@ const generators = [
   "Swirl",
   "Truchet",
   "Voronoi",
+  // Interactive
+  "Fog",
+  "MagneticFilings",
+  "ParticleFlow",
+  "ReactionDiffusion",
+  "Smoke",
+  "SmokeFlow",
 ];
 const effects = [
   // Stylize
@@ -99,6 +106,16 @@ const effects = [
   "Surface3D",
   "Twirl",
   "WaveDistortion",
+  // Blurs
+  "AngularBlur",
+  "Blur",
+  "BokehBlur",
+  "ChannelBlur",
+  "DiffuseBlur",
+  "LinearBlur",
+  "ProgressiveBlur",
+  "TiltShift",
+  "ZoomBlur",
   // Interactive
   "CursorRipples",
   "GridDistortion",

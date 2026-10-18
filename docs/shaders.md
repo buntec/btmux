@@ -70,8 +70,8 @@ manual edits.
 WebGPU is required; unsupported browsers and GPU failures leave the theme
 background visible. Frame rates are capped to 10–60 FPS, and background tabs,
 modal transitions, and disabled animations pause continuous rendering. Wallpaper
-changes preserve terminal instances and pane sockets, and layer edits keep the
-simulation state of unchanged layers. No hosted presets or runtime shader downloads
+changes preserve terminal instances and pane sockets. Changing the stack or shader
+settings can restart simulations. No hosted presets or runtime shader downloads
 are used, and shader telemetry is disabled by using the core renderer without a
 telemetry collector.
 

@@ -3,6 +3,7 @@ import {
   activeShaderLayers,
   createShaderLayer,
   findWallpaperShader,
+  hasShaderWallpaper,
   parameterValue,
   SHADER_BLEND_MODES,
   shaderAcceptsInput,
@@ -65,6 +66,12 @@ test('only enabled layers with known shaders are active', () => {
   ];
   expect(activeShaderLayers(layers).map((layer) => layer.shader)).toEqual(['aurora', 'vignette']);
   expect(activeShaderLayers(null)).toEqual([]);
+});
+
+test('any enabled layer is a wallpaper, as the server decides', () => {
+  expect(hasShaderWallpaper([createShaderLayer('missing')])).toBe(true);
+  expect(hasShaderWallpaper([{ ...createShaderLayer('aurora'), enabled: false }])).toBe(false);
+  expect(hasShaderWallpaper(null)).toBe(false);
 });
 
 test('blend modes cover the wire enum with readable labels', () => {

@@ -1,3 +1,4 @@
+import type { BlendMode } from 'shaders/core';
 import { WALLPAPER_SHADER_DEFINITIONS } from '../generated/wallpaperShaders';
 import type { ShaderBlendMode, ShaderLayer, ShaderValue } from '../generated/protocol';
 
@@ -30,33 +31,33 @@ export interface WallpaperShader {
 export const WALLPAPER_SHADERS = WALLPAPER_SHADER_DEFINITIONS as WallpaperShader[];
 export type ShaderParams = ShaderLayer['params'];
 
-/** Mirrors `MAX_WALLPAPER_SHADER_LAYERS` in `src/config.rs`. */
-export const MAX_WALLPAPER_SHADER_LAYERS = 8;
+export { MAX_WALLPAPER_SHADER_LAYERS } from '../generated/protocol';
 
-export const SHADER_BLEND_MODES: { value: ShaderBlendMode; label: string }[] = (
-  [
-    'normal',
-    'normal-oklch',
-    'normal-oklab',
-    'multiply',
-    'screen',
-    'linear-dodge',
-    'overlay',
-    'difference',
-    'color-dodge',
-    'exclusion',
-    'color',
-    'luminosity',
-    'darken',
-    'lighten',
-    'color-burn',
-    'linear-burn',
-    'soft-light',
-    'hard-light',
-    'hue',
-    'saturation',
-  ] as const
-).map((value) => ({
+/** Core blend modes by config name; the type keeps it in step with the generated protocol. */
+export const BLEND_MODES: Record<ShaderBlendMode, BlendMode> = {
+  normal: 'normal',
+  'normal-oklch': 'normal-oklch',
+  'normal-oklab': 'normal-oklab',
+  multiply: 'multiply',
+  screen: 'screen',
+  'linear-dodge': 'linearDodge',
+  overlay: 'overlay',
+  difference: 'difference',
+  'color-dodge': 'colorDodge',
+  exclusion: 'exclusion',
+  color: 'color',
+  luminosity: 'luminosity',
+  darken: 'darken',
+  lighten: 'lighten',
+  'color-burn': 'colorBurn',
+  'linear-burn': 'linearBurn',
+  'soft-light': 'softLight',
+  'hard-light': 'hardLight',
+  hue: 'hue',
+  saturation: 'saturation',
+};
+
+export const SHADER_BLEND_MODES = (Object.keys(BLEND_MODES) as ShaderBlendMode[]).map((value) => ({
   value,
   label:
     { 'normal-oklch': 'Normal (OKLCH)', 'normal-oklab': 'Normal (Oklab)', 'linear-dodge': 'Linear dodge (add)' }[
@@ -81,6 +82,11 @@ export function positionParameter(shader: WallpaperShader): WallpaperParameter |
 /** Whether pointer or terminal-cursor input can affect the shader. */
 export function shaderAcceptsInput(shader: WallpaperShader): boolean {
   return shader.usesPointer || positionParameter(shader) !== null;
+}
+
+/** Whether any layer is enabled, known or not, as `has_wallpaper` in `src/config.rs` decides. */
+export function hasShaderWallpaper(layers: readonly ShaderLayer[] | null | undefined): boolean {
+  return (layers ?? []).some((layer) => layer.enabled);
 }
 
 /** Enabled layers with known shaders, bottom first. */

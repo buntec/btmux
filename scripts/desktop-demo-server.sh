@@ -231,6 +231,16 @@ wallpaper-shader-follows-mouse-cursor = true
 
 [[wallpaper-shader]]
 shader = "cursor-trail"
+
+[[wallpaper-shader]]
+shader = "ink-flow"
+enabled = false
+
+[wallpaper-shader.params]
+curl = 0
+decay = 2
+momentum = 0.5
+radius = 0.25
 EOF
         fi
     } >"$run_dir/config/btmux/config.toml"

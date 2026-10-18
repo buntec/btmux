@@ -2,14 +2,14 @@ import {
   createGpuUniformsMap,
   rootPassthrough,
   shaderRendererGPU,
-  type BlendMode,
   type GpuShaderDefinition,
   type NodeMetadata,
 } from 'shaders/core';
-import type { ShaderBlendMode, ShaderLayer } from '../generated/protocol';
+import type { ShaderLayer } from '../generated/protocol';
 import { WALLPAPER_SHADER_LOADERS } from '../generated/wallpaperShaderLoaders';
 import {
   activeShaderLayers,
+  BLEND_MODES,
   findWallpaperShader,
   positionParameter,
   wallpaperUniformValues,
@@ -34,29 +34,6 @@ type FrameParams = Omit<NativeFrameParams, 'pointer'> & {
   pointer: NativeFrameParams['pointer'] & { seen?: boolean };
 };
 
-const BLEND_MODES: Record<ShaderBlendMode, BlendMode> = {
-  normal: 'normal',
-  'normal-oklch': 'normal-oklch',
-  'normal-oklab': 'normal-oklab',
-  multiply: 'multiply',
-  screen: 'screen',
-  'linear-dodge': 'linearDodge',
-  overlay: 'overlay',
-  difference: 'difference',
-  'color-dodge': 'colorDodge',
-  exclusion: 'exclusion',
-  color: 'color',
-  luminosity: 'luminosity',
-  darken: 'darken',
-  lighten: 'lighten',
-  'color-burn': 'colorBurn',
-  'linear-burn': 'linearBurn',
-  'soft-light': 'softLight',
-  'hard-light': 'hardLight',
-  hue: 'hue',
-  saturation: 'saturation',
-};
-
 // These read the pointer position even while it is inactive.
 const IDLE_POINTER_OFFSCREEN = new Set(['Boids', 'PixelSort']);
 
@@ -67,6 +44,8 @@ function loadDefinition(id: string): Promise<GpuShaderDefinition> {
   if (!definition) {
     const load = WALLPAPER_SHADER_LOADERS[id as keyof typeof WALLPAPER_SHADER_LOADERS];
     definition = load().then(({ componentDefinition }) => componentDefinition as GpuShaderDefinition);
+    // Retry a failed chunk load on the next sync.
+    definition.catch(() => definitions.delete(id));
     definitions.set(id, definition);
   }
   return definition;
@@ -270,6 +249,8 @@ export function createWallpaperRenderer(
   };
 
   const update = (next: WallpaperRuntimeOptions) => {
+    const keys = Object.keys(next) as (keyof WallpaperRuntimeOptions)[];
+    if (keys.every((key) => next[key] === current[key])) return;
     current = next;
     // Queued registrations cannot be removed until core initialization finishes.
     if (initialized && !disposed) void sync();
@@ -299,6 +280,8 @@ export function createWallpaperRenderer(
         return;
       }
       initialized = true;
+      // The paint below covers the initial resolution.
+      resolution = current.resolution;
       await sync();
       if (!disposed) await paint(true);
     },

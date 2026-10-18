@@ -7,6 +7,7 @@ import { Slider } from '@astryxdesign/core/Slider';
 import { Switch } from '@astryxdesign/core/Switch';
 import { Text } from '@astryxdesign/core/Text';
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
+import { useRef } from 'react';
 import type { ShaderLayer } from '../generated/protocol';
 import {
   MAX_WALLPAPER_SHADER_LAYERS,
@@ -142,10 +143,20 @@ export function ShaderLayerStack({
   layers: ShaderLayer[];
   onChange: (layers: ShaderLayer[]) => void;
 }) {
+  // Card keys that follow their layers through moves and removals.
+  const ids = useRef<number[]>([]);
+  const nextId = useRef(0);
+  while (ids.current.length < layers.length) ids.current.push(nextId.current++);
+  ids.current.length = layers.length;
   const move = (index: number, delta: number) => {
     const next = [...layers];
     [next[index], next[index + delta]] = [next[index + delta], next[index]];
+    [ids.current[index], ids.current[index + delta]] = [ids.current[index + delta], ids.current[index]];
     onChange(next);
+  };
+  const remove = (index: number) => {
+    ids.current.splice(index, 1);
+    onChange(layers.filter((_, i) => i !== index));
   };
   const full = layers.length >= MAX_WALLPAPER_SHADER_LAYERS;
   return (
@@ -159,13 +170,13 @@ export function ShaderLayerStack({
       </VStack>
       {layers.map((layer, index) => (
         <ShaderLayerCard
-          key={`${index}:${layer.shader}`}
+          key={ids.current[index]}
           layer={layer}
           index={index}
           count={layers.length}
           onChange={(layer) => onChange(layers.map((current, i) => (i === index ? layer : current)))}
           onMove={(delta) => move(index, delta)}
-          onRemove={() => onChange(layers.filter((_, i) => i !== index))}
+          onRemove={() => remove(index)}
         />
       ))}
       <Selector

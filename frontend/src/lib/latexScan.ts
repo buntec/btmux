@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import type { Terminal, ITerminalDecoration } from 'ghostty-web';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { PaneTerminal } from './paneTerminal';
 import { detectLatex, type LatexKind, type ScanLine } from './latexDetect';
 
 export interface PaneLatexMatch {
@@ -8,7 +8,7 @@ export interface PaneLatexMatch {
   display: boolean;
   html: string;
   /** Source cells in absolute buffer coordinates. */
-  cells: Pick<ITerminalDecoration, 'line' | 'column' | 'length'>[];
+  cells: { line: number; column: number; length: number }[];
 }
 
 const DEBOUNCE_MS = 200;
@@ -29,26 +29,12 @@ interface Row extends ScanLine {
   cols: number[];
 }
 
-function readRows(term: Terminal): { rows: Row[]; first: number; top: number } {
-  const buf = term.buffer.active;
-  const top = buf.length - term.rows - Math.floor(term.getViewportY());
+function readRows(term: PaneTerminal): { rows: Row[]; first: number; top: number } {
+  const top = term.viewportTop();
   const first = Math.max(0, top - MARGIN_ROWS);
-  const last = Math.min(buf.length, top + term.rows + MARGIN_ROWS);
+  const last = Math.min(term.rowCount, top + term.rows + MARGIN_ROWS);
   const rows: Row[] = [];
-  for (let y = first; y < last; y++) {
-    const line = buf.getLine(y);
-    let text = '';
-    const cols: number[] = [];
-    for (let x = 0; line && x < line.length; x++) {
-      const cell = line.getCell(x);
-      // Width 0 is the spacer half of a wide character.
-      if (!cell || cell.getWidth() === 0) continue;
-      const ch = cell.getChars() || ' ';
-      text += ch;
-      for (let i = 0; i < ch.length; i++) cols.push(x);
-    }
-    rows.push({ text, cols, wrapped: line?.isWrapped ?? false });
-  }
+  for (let y = first; y < last; y++) rows.push(term.readRow(y));
   // A row that wraps onto the next keeps its trailing spaces.
   rows.forEach((row, i) => {
     if (!rows[i + 1]?.wrapped) row.text = row.text.trimEnd();
@@ -57,15 +43,14 @@ function readRows(term: Terminal): { rows: Row[]; first: number; top: number } {
 }
 
 /**
- * Scan a pane's emulator buffer for LaTeX. ghostty-web has no output event, so
- * the pane calls `poke` after each write; scroll and resize poke on their own.
+ * Scan a pane's emulator buffer for LaTeX. The pane calls `poke` after each
+ * write; scroll and resize poke on their own.
  */
-export function useLatexScan(termRef: RefObject<Terminal | null>, rebuildKey: unknown, enabled: boolean) {
+export function useLatexScan(term: PaneTerminal | null, enabled: boolean) {
   const [matches, setMatches] = useState<PaneLatexMatch[]>([]);
   const pokeRef = useRef<() => void>(() => {});
 
   useEffect(() => {
-    const term = termRef.current;
     if (!term || !enabled) return;
     let disposed = false;
     let timer = 0;
@@ -135,10 +120,10 @@ export function useLatexScan(termRef: RefObject<Terminal | null>, rebuildKey: un
       disposed = true;
       clearTimeout(timer);
       pokeRef.current = () => {};
-      offScroll.dispose();
-      offResize.dispose();
+      offScroll();
+      offResize();
     };
-  }, [termRef, rebuildKey, enabled]);
+  }, [term, enabled]);
 
   const poke = useCallback(() => pokeRef.current(), []);
   return { matches: enabled ? matches : [], poke };

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Terminal } from 'ghostty-web';
+import { PaneTerminal } from '../lib/paneTerminal';
 import { useStore } from '../state/store';
 import { terminalTransparency, useTerminalOptions } from './TerminalPane';
 import type { ClientConfig } from '../state/types';
@@ -12,8 +12,8 @@ interface Props {
   config?: ClientConfig | null;
   /**
    * Whether the thumbnail is on-screen (the window-grid is open). A mirror stays
-   * mounted and streaming while hidden so reopening is instant, but suspend()s
-   * its render loop (~0 CPU) — the same warm pattern as TerminalPane. On the way
+   * mounted and streaming while hidden so reopening is instant, but pauses
+   * painting (~0 CPU) — the same warm pattern as TerminalPane. On the way
    * back in we resume and recompute the fit-scale (offsetWidth is 0 while hidden).
    */
   visible: boolean;
@@ -28,13 +28,13 @@ interface Props {
  * shared size, so a thumbnail must adopt the pane's *real* cols×rows (pushed by
  * the backend via `{type:"size"}` frames over `?mirror=1`) and then shrink purely
  * with CSS `transform: scale(...)`. Sizing the emulator small instead would reflow
- * the live shell and clear its scrollback. The canvas downscales cleanly, so TUIs
- * stay pixel-faithful.
+ * the live shell and clear its scrollback. DOM text re-renders at the scaled size,
+ * so TUIs stay faithful.
  */
 export function MirrorPane({ paneId, config: configOverride, visible, onNaturalSize }: Props) {
   const cellRef = useRef<HTMLDivElement>(null);
   const scalerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
+  const [term, setTerm] = useState<PaneTerminal | null>(null);
   const replayReadyRef = useRef(false);
   const revealRef = useRef<(() => void) | null>(null);
   const revealRafRef = useRef(0);
@@ -43,7 +43,6 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
   const storeConfig = useStore((s) => s.config);
   const config = configOverride ?? storeConfig;
   const termOptions = useTerminalOptions(config);
-  const renderer = configOverride?.terminal.renderer ?? 'canvas';
 
   // Read visibility inside closures without re-running the mount effect (which
   // would dispose+rebuild the terminal and reconnect the socket).
@@ -52,144 +51,132 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
   const onNaturalSizeRef = useRef(onNaturalSize);
   onNaturalSizeRef.current = onNaturalSize;
 
-  // Recompute the CSS scale that fits the natural (full-size) canvas into the
-  // grid cell, preserving aspect ratio and anchoring top-left like a terminal.
-  // Reads the canvas's *untransformed* offset size (ancestor transforms don't
-  // affect it).
-  const refit = () => {
-    const cell = cellRef.current;
-    const scaler = scalerRef.current;
-    if (!cell || !scaler) return;
-    const canvas = scaler.querySelector('canvas');
-    const naturalW = (canvas as HTMLCanvasElement | null)?.offsetWidth ?? scaler.offsetWidth;
-    const naturalH = (canvas as HTMLCanvasElement | null)?.offsetHeight ?? scaler.offsetHeight;
-    if (!naturalW || !naturalH) return;
-    onNaturalSizeRef.current?.(naturalW, naturalH);
-    const scale = Math.min(cell.clientWidth / naturalW, cell.clientHeight / naturalH);
-    scaler.style.transform = `scale(${scale})`;
-  };
-
   useEffect(() => {
     const scaler = scalerRef.current;
-    if (!scaler) return;
-
-    // Mirror is read-only: stdin disabled, no onData/onResize wiring, no focus
-    // registry, no store registration. It only ever displays.
-    const term = new Terminal({
-      ...termOptions,
-      disableStdin: true,
-      renderer,
-    });
-    term.open(scaler);
-    termRef.current = term;
-    // Writes still update the WASM terminal while suspended. Keeping rendering
-    // stopped until the replay's `ready` marker avoids both intermediate paints
-    // and their CPU/GPU cost for large journals.
-    term.suspend();
-    setInitialReplayRendered(false);
-    replayReadyRef.current = false;
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // cols/rows in the query only matter if this mirror is the very first attach
-    // to a never-spawned pane (spawns the shell at this size); a real viewer will
-    // resize it on switch. The backend never resizes the PTY for a mirror.
-    const url = `${protocol}//${window.location.host}/ws/pane/${paneId}?mirror=1&cols=${DEFAULT_PTY_COLS}&rows=${DEFAULT_PTY_ROWS}`;
-    let ws: WebSocket;
+    if (!scaler || !termOptions) return;
     let disposed = false;
-    let timer = 0;
-    const revealWhenReady = () => {
-      if (disposed || !replayReadyRef.current || !visibleRef.current) return;
-      term.resume();
-      term.requestRender();
-      cancelAnimationFrame(revealRafRef.current);
-      // resume() queues the completed terminal render first. Reveal the scaler
-      // in the following callback, after that frame has reached the canvas.
-      revealRafRef.current = requestAnimationFrame(() => {
-        if (disposed || !visibleRef.current) return;
-        setInitialReplayRendered(true);
-        refit();
-      });
-    };
-    revealRef.current = revealWhenReady;
-    const connect = () => {
-      if (disposed) return;
-      replayReadyRef.current = false;
+    let cleanup = () => {};
+    void PaneTerminal.open(scaler, { ...termOptions, disableStdin: true }).then((term) => {
+      if (disposed) return term.dispose();
+      cleanup = mount(term);
+    });
+
+    const mount = (term: PaneTerminal) => {
+      // Size the emulator to its grid, then scale that natural size into the
+      // grid cell, preserving aspect ratio and anchoring top-left.
+      const refit = () => {
+        const cell = cellRef.current;
+        const size = term.measureCell();
+        if (!cell || !size) return;
+        const naturalW = term.cols * size.width;
+        const naturalH = term.rows * size.height;
+        term.element.style.width = `${naturalW}px`;
+        term.element.style.height = `${naturalH}px`;
+        onNaturalSizeRef.current?.(naturalW, naturalH);
+        scaler.style.transform = `scale(${Math.min(cell.clientWidth / naturalW, cell.clientHeight / naturalH)})`;
+      };
+      // Keep painting stopped until the replay's `ready` marker.
+      term.setPaused(true);
+      setTerm(term);
       setInitialReplayRendered(false);
-      term.suspend();
-      ws = new WebSocket(url);
-      ws.onclose = () => {
-        if (!disposed) timer = window.setTimeout(connect, 2000);
-      };
-      ws.onerror = () => ws.close();
-      ws.binaryType = 'arraybuffer';
+      replayReadyRef.current = false;
 
-      ws.onmessage = (ev) => {
-        if (ev.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(ev.data));
-        } else if (typeof ev.data === 'string') {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.type === 'ready') {
-              replayReadyRef.current = true;
-              revealWhenReady();
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      // cols/rows in the query only matter if this mirror is the very first attach
+      // to a never-spawned pane (spawns the shell at this size); a real viewer will
+      // resize it on switch. The backend never resizes the PTY for a mirror.
+      const url = `${protocol}//${window.location.host}/ws/pane/${paneId}?mirror=1&cols=${DEFAULT_PTY_COLS}&rows=${DEFAULT_PTY_ROWS}`;
+      let ws: WebSocket;
+      let timer = 0;
+      const revealWhenReady = () => {
+        if (disposed || !replayReadyRef.current || !visibleRef.current) return;
+        term.setPaused(false);
+        refit();
+        cancelAnimationFrame(revealRafRef.current);
+        revealRafRef.current = requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            if (disposed || !visibleRef.current) return;
+            term.scrollToBottom();
+            setInitialReplayRendered(true);
+          }),
+        );
+      };
+      revealRef.current = revealWhenReady;
+      const connect = () => {
+        if (disposed) return;
+        replayReadyRef.current = false;
+        setInitialReplayRendered(false);
+        term.setPaused(true);
+        ws = new WebSocket(url);
+        ws.onclose = () => {
+          if (!disposed) timer = window.setTimeout(connect, 2000);
+        };
+        ws.onerror = () => ws.close();
+        ws.binaryType = 'arraybuffer';
+        ws.onmessage = (ev) => {
+          if (ev.data instanceof ArrayBuffer) {
+            term.write(new Uint8Array(ev.data));
+          } else if (typeof ev.data === 'string') {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === 'ready') {
+                replayReadyRef.current = true;
+                revealWhenReady();
+              }
+              if (msg.type === 'size' && msg.cols > 0 && msg.rows > 0) {
+                term.resize(msg.cols, msg.rows);
+                refit();
+              }
+            } catch {
+              term.write(ev.data);
             }
-            if (msg.type === 'size' && msg.cols > 0 && msg.rows > 0) {
-              term.resize(msg.cols, msg.rows);
-              // Canvas resizes during the next render; refit after it commits.
-              requestAnimationFrame(refit);
-            }
-          } catch {
-            // Non-JSON text (shouldn't happen on a mirror) — treat as output.
-            term.write(ev.data);
           }
-        }
+        };
+      };
+      connect();
+
+      const observer = new ResizeObserver(() => refit());
+      if (cellRef.current) observer.observe(cellRef.current);
+
+      return () => {
+        clearTimeout(timer);
+        cancelAnimationFrame(revealRafRef.current);
+        if (revealRef.current === revealWhenReady) revealRef.current = null;
+        replayReadyRef.current = false;
+        observer.disconnect();
+        ws.close();
+        term.dispose();
+        setTerm(null);
       };
     };
-    connect();
-
-    // Refit when the emulator repaints (covers the initial render and any reflow)
-    // and when the cell changes size (grid resize / window-count change).
-    const offRender = term.onRender(() => refit());
-    const observer = new ResizeObserver(() => refit());
-    if (cellRef.current) observer.observe(cellRef.current);
 
     return () => {
       disposed = true;
-      clearTimeout(timer);
-      cancelAnimationFrame(revealRafRef.current);
-      if (revealRef.current === revealWhenReady) revealRef.current = null;
-      replayReadyRef.current = false;
-      offRender.dispose();
-      observer.disconnect();
-      ws.close();
-      term.dispose();
-      termRef.current = null;
+      cleanup();
     };
-    // Rebuild on config/font change so a live theme reload re-themes thumbnails,
-    // matching TerminalPane. paneId is stable for the component's lifetime.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneId, termOptions, renderer]);
+    // Rebuild on config/font change, matching TerminalPane. paneId is stable
+    // for the component's lifetime.
+  }, [paneId, termOptions]);
 
   const allowTransparency = terminalTransparency(config);
   useEffect(() => {
-    if (termRef.current) termRef.current.options.allowTransparency = allowTransparency;
-  }, [allowTransparency, termOptions, renderer]);
+    term?.setTransparent(allowTransparency);
+  }, [allowTransparency, term]);
 
   useEffect(() => {
-    termRef.current?.renderer?.setTheme(config?.theme ?? STARTUP_THEME);
-  }, [config?.theme, termOptions]);
+    term?.setTheme(config?.theme ?? STARTUP_THEME);
+  }, [config?.theme, term]);
 
   // Park / wake with the grid's visibility (sockets keep streaming either way).
   useEffect(() => {
-    const term = termRef.current;
     if (!term) return;
     if (visible) {
       revealRef.current?.();
     } else {
       cancelAnimationFrame(revealRafRef.current);
-      term.suspend();
+      term.setPaused(true);
     }
-  }, [visible, termOptions]);
+  }, [visible, term]);
 
   return (
     <div ref={cellRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>

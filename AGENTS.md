@@ -5,8 +5,9 @@ This file provides guidance to AI agents when working with code in this reposito
 ## What this is
 
 btmux is a browser-based tmux. A Rust/axum backend owns real PTYs and the
-session/window/pane tree; a React + TypeScript frontend renders panes with the
-`ghostty-web` WASM terminal emulator. The same authenticated server also
+session/window/pane tree; a React + TypeScript frontend renders panes with
+wterm (`@wterm/dom`, a DOM renderer) on libghostty compiled to WASM
+(`@wterm/ghostty`). The same authenticated server also
 provides a file/Git browser, REST API, and MCP server for automation.
 
 ## Commands
@@ -101,7 +102,7 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   `waitpid`. Readers poll the master and a per-pane stop pipe.
   PTY writes use a dedicated blocking thread and a bounded queue. Pane disposal
   signals the foreground group and kills the shell; a waiter reaps the child.
-- **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. `ghostty-web` _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder. The canned bytes mirror `ghostty-web`'s exact DA replies for the pinned build — re-probe if `ghostty-web` is bumped. Don't remove this without a replacement.
+- **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. The emulator _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder, so its canned replies are what programs see, whatever the emulator would answer. Don't remove this without a replacement.
   Color queries (OSC 4/10/11/12, `CSI ? 996 n`) are answered the same way from the
   shared `pty/colors.rs` palette, overlaid with colors the program set in that
   pane (OSC 104/110–112 and RIS reset them; mixed set/query OSCs are split);
@@ -190,6 +191,30 @@ The file browser has a separate `fileStore` for directory/search/Git selection
 state. It can mutate files, so changes to its WebSocket protocol or path
 handling must be reviewed with `ws/files.rs`, `fs_ops.rs`, and
 `frontend/src/protocol/file-messages.ts` together.
+
+### Terminal emulator
+
+`lib/paneTerminal.ts` (`PaneTerminal`) is the only module that touches wterm.
+`TerminalPane`, `MirrorPane`, search, LaTeX scanning, capture-pane, and the
+browser tests use its API. `open()` is async (core load and `init()`), so mount effects check for disposal
+after each await. It also undoes `init()`'s side effects: the focus it takes
+(panes focus themselves once their replay is shown) and the element height it
+locks. Its input stays `visibility: visible`, so a pane can take focus while
+its replay is hidden; tests find it by wterm's default label, "Terminal". The
+host sets wterm's row height (`--term-row-height`, 17px by default): `open()`
+sets it from the font's ascent and descent before `init()` measures it.
+wterm's `onData` stays non-null (null makes wterm echo input locally);
+`disable-stdin` drops input in `PaneTerminal`. `paste()` dispatches a
+paste event so wterm's paste path (bracketed paste, ESC stripping) applies.
+wterm keeps cell measurement private, so `measureCell()` reads its CSS cell
+dimensions; the decoration overlay uses the same geometry. `open()` waits for
+fonts before measuring, including for mirrors. Recheck measurement when bumping
+`@wterm/*`.
+Scrollback scrolls natively (`scrollTop` on the element); `PaneTerminal` throttles
+application wheel input, delegates mouse encoding to wterm, and emits arrow keys
+for alternate-screen programs without mouse tracking. Text and raw mouse input
+share a byte callback. Theme, font, and
+transparency are CSS variables and classes on the element.
 
 ### Built-in Neovim
 
@@ -338,19 +363,18 @@ Config is a TOML file at `$XDG_CONFIG_HOME/btmux/config.toml` (falling back to
 optional: `prefix` (tmux-style, e.g. `"C-a"`), `shell` (CLI `--shell` still wins),
 a `[keys]` table mapping **action name → key** to override defaults, appearance
 settings (wallpapers, shaders, sorting, animations, pane titles, and window-grid
-count), a `[terminal]` table of ghostty-web options, an optional `[log]` table,
+count), a `[terminal]` table of emulator options, an optional `[log]` table,
 and `appearance` with dark and light color schemes. `deny_unknown_fields` makes typos a
 config error, so update `generate_config_toml` and tests when adding fields.
 
-`[terminal]` mirrors ghostty-web's `ITerminalOptions` minus the runtime fields
-(`cols`/`rows`/`ghostty`): `renderer`, `cursor-blink`, `cursor-style`, `scrollback`,
-`font-size`, `font-family`, `font-weight`, `allow-transparency`, `convert-eol`,
-`disable-stdin`, `smooth-scroll-duration`, and the btmux-specific
-`scroll-sensitivity` and `cell-background-opacity` (the Neovim surface's
-colored cell backgrounds over a transparent background). Keys are **kebab-case in TOML but camelCase on the wire**
+`[terminal]` holds `cursor-blink`, `scrollback` (lines; libghostty's limit is
+bytes, so `lib/paneTerminal.ts` converts it), `font-size`, `font-family`,
+`font-weight`, `allow-transparency`, `disable-stdin`, `smooth-scroll-duration` (Neovim and file preview scrolling), and
+`cell-background-opacity` (the Neovim surface's colored cell backgrounds over a
+transparent background). Keys are **kebab-case in TOML but camelCase on the wire**
 — `TerminalOptions` uses `rename_all(serialize = "camelCase", deserialize = "kebab-case")`
-so the same struct round-trips both ways. Unset fields serialize as `null`;
-`TerminalPane.tsx` omits them so ghostty-web's own default applies.
+so the same struct round-trips both ways. Unset fields serialize as `null`, and
+the frontend applies its `CONFIG_DEFAULTS` (`state/configDefaults.ts`).
 
 There are dark and light schemes. `appearance` (`auto`, `dark`, `light`)
 picks the shown one; `auto` uses the system color mode browsers report
@@ -370,13 +394,13 @@ colors-directory file of the same name wins. Unset, the server uses
 `FALLBACK_DARK_THEME`/`FALLBACK_LIGHT_THEME` (`state/startupTheme.ts`) mirror
 them for first paint and are checked by a Rust test.
 `BaseTheme::to_theme`
-translates it to ghostty-web's `ITheme` (fg/bg/cursor/
+translates it to a `Theme` (fg/bg/cursor/
 selection + 16 ANSI colors) using the canonical tinted-theming ANSI mapping. **base24
 is auto-detected by the presence of all of `base10`–`base17`** (all-or-nothing; a
 partial set falls back to base16); base24 then uses the dedicated bright slots
 `base12`–`base17` instead of reusing the normal accents. The translation happens on
-the **backend** — the browser receives a finished `ITheme`. Live reload updates renderer themes in place. Only construction-option changes
-(fonts, renderer, scrollback, etc.) rebuild terminals; unrelated config changes
+the **backend** — the browser receives a finished `Theme`. Live reload updates themes and transparency in place. Only construction-option changes
+(fonts, scrollback, etc.) rebuild terminals; unrelated config changes
 and shader updates keep emulator instances and sockets alive.
 
 `config.rs` is the **single source of truth for keybindings**: `DEFAULT_BINDS`
@@ -421,11 +445,11 @@ heuristic detector (explicit delimiters → bare `[`/`]` blocks → `$…$` → 
 `( … )`) tested by `frontend/latex-detect.test.ts`; add fixtures there when
 tuning it. `lib/latexScan.ts` (`useLatexScan`) reads the viewport ± a margin from
 the emulator buffer, debounced, and validates candidates with KaTeX, which is
-lazy-loaded via `lib/katexRender.ts` on the first candidate. ghostty-web has no
-output event (`onRender` never fires), so `TerminalPane` pokes the scanner after
-each `term.write`. `toggle-latex` flips per-pane local UI state (`latexPanes` in
+lazy-loaded via `lib/katexRender.ts` on the first candidate. wterm has no
+render event, so `TerminalPane` pokes the scanner after each `term.write`. `toggle-latex` flips per-pane local UI state (`latexPanes` in
 the store, not server state); `LatexOverlay.tsx` highlights source cells with
-`term.setDecorations`, whose absolute buffer lines go stale on every rescan.
+`term.setDecorations` (positioned divs over the rows), whose absolute buffer
+lines go stale on every rescan.
 
 **Live config reload:** `main.rs` watches the config file's _parent dir_ with
 `notify` (to catch editors' atomic rename-on-save), debounces, re-resolves, and

@@ -1,6 +1,6 @@
 # btmux
 
-A tmux-style terminal manager for the browser and desktop, powered by [ghostty-web](https://github.com/rcarmo/ghostty-web).
+A tmux-style terminal manager for the browser and desktop, powered by [wterm](https://github.com/vercel-labs/wterm) and [libghostty](https://github.com/ghostty-org/ghostty).
 
 ## Highlights
 

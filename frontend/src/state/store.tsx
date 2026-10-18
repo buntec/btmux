@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { showNotification } from '../lib/notifications';
-import type { Terminal } from 'ghostty-web';
+import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
@@ -21,7 +21,7 @@ interface AppStore {
   overlay: Overlay | null;
   // Window-grid (prefix + w) visibility. `windowGridMounted` flips true on first
   // open and stays true (sticky) so the grid's live thumbnail mirrors keep
-  // streaming + suspend()ed in the background — reopening is then instant, the
+  // streaming + paused in the background — reopening is then instant, the
   // same lazy-but-sticky warmth SessionPane uses for windows. `windowGridOpen`
   // toggles which is shown vs display:none.
   windowGridOpen: boolean;
@@ -57,7 +57,7 @@ interface AppStore {
   // State of the /ws/control socket. The frontend holds no canonical state, so
   // while this isn't 'connected' the UI is showing stale data.
   controlConnectionState: ConnectionState;
-  // Live ghostty-web Terminal per mounted pane, registered by TerminalPane.
+  // Live emulator per mounted pane, registered by TerminalPane.
   // Non-reactive (mutated in place, nothing subscribes): it exists so actions
   // that run outside the pane tree — e.g. capture-pane in useKeybindings — can
   // read a pane's emulator buffer. SessionPane's registryRef is for focus only.

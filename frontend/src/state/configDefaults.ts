@@ -28,18 +28,14 @@ export const CONFIG_DEFAULTS = {
   windowSort: 'alphabetical' as const,
   windowGridCount: 4,
   terminal: {
-    renderer: 'webgl' as const,
     cursorBlink: true,
-    cursorStyle: 'bar' as const,
     scrollback: 100_000,
     fontSize: 18,
     fontFamily: 'Geist Mono',
     fontWeight: 300,
     allowTransparency: null,
-    convertEol: null,
     disableStdin: null,
     smoothScrollDuration: 120,
-    scrollSensitivity: 5,
     cellBackgroundOpacity: null,
   },
 } as const;

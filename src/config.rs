@@ -40,13 +40,10 @@ pub const DEFAULT_PANE_SWITCH_BORDER_SPEED: f32 = 0.15;
 pub const DEFAULT_WINDOW_GRID_COUNT: u32 = 4;
 
 pub const DEFAULT_SCROLLBACK_LINES: u32 = 100_000;
-pub const DEFAULT_RENDERER: &str = "webgl";
 pub const DEFAULT_CURSOR_BLINK: bool = true;
-pub const DEFAULT_CURSOR_STYLE: &str = "bar";
 pub const DEFAULT_FONT_SIZE: f32 = 18.0;
 pub const DEFAULT_FONT_FAMILY: &str = "Geist Mono";
 pub const DEFAULT_FONT_WEIGHT: u16 = 300;
-pub const DEFAULT_SCROLL_SENSITIVITY: f32 = 5.0;
 pub const MIN_FONT_SIZE: f32 = 6.0;
 pub const MAX_FONT_SIZE: f32 = 72.0;
 
@@ -535,7 +532,7 @@ pub struct FileConfig {
     pub window_grid_count: Option<u32>,
     /// Per-action key overrides: action name (kebab-case) -> key string.
     pub keys: BTreeMap<String, String>,
-    /// ghostty-web terminal options (cursor, fonts, scrollback, …).
+    /// Terminal emulator options (cursor, fonts, scrollback, …).
     pub terminal: TerminalOptions,
     /// Whether the dark or light color scheme is shown; `auto` follows the
     /// browser's system setting.
@@ -610,11 +607,9 @@ impl Default for FileConfig {
     }
 }
 
-/// Mirror of ghostty-web's `ITerminalOptions`, minus the runtime/internal fields
-/// (`cols`, `rows`, `ghostty`) which the frontend owns. All optional: an absent
-/// field means "use the ghostty-web default" (serialized as `null`, omitted by
-/// the frontend when constructing the `Terminal`). Field names are kebab-cased
-/// in TOML and camelCased on the wire to match the TS interface.
+/// Terminal emulator options; the frontend owns the grid size. All optional: an
+/// absent field means "use the frontend default" (serialized as `null`). Field
+/// names are kebab-cased in TOML and camelCased on the wire.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[serde(
     default,
@@ -624,23 +619,15 @@ impl Default for FileConfig {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(rename_all = "camelCase"))]
 pub struct TerminalOptions {
-    #[cfg_attr(test, ts(type = "\"canvas\" | \"webgl\" | null"))]
-    pub renderer: Option<String>,
     pub cursor_blink: Option<bool>,
-    #[cfg_attr(test, ts(type = "\"block\" | \"underline\" | \"bar\" | null"))]
-    pub cursor_style: Option<String>,
     pub scrollback: Option<u32>,
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
     pub font_weight: Option<u16>,
     pub allow_transparency: Option<bool>,
-    pub convert_eol: Option<bool>,
     pub disable_stdin: Option<bool>,
+    /// Neovim and file preview scroll animations, in ms.
     pub smooth_scroll_duration: Option<f32>,
-    /// Wheel/trackpad scroll-speed multiplier for scrollback (1.0 = ghostty-web
-    /// default). Higher moves more lines per wheel notch / gesture. Applied by
-    /// the patched ghostty-web `handleWheel`; not part of upstream ITerminalOptions.
-    pub scroll_sensitivity: Option<f32>,
     /// Opacity, 0–1, of explicitly colored cell backgrounds (Visual,
     /// CursorLine, …) when transparency is on. btmux-specific; Neovim only.
     pub cell_background_opacity: Option<f32>,
@@ -649,18 +636,14 @@ pub struct TerminalOptions {
 impl Default for TerminalOptions {
     fn default() -> Self {
         Self {
-            renderer: Some(DEFAULT_RENDERER.to_string()),
             cursor_blink: Some(DEFAULT_CURSOR_BLINK),
-            cursor_style: Some(DEFAULT_CURSOR_STYLE.to_string()),
             scrollback: Some(DEFAULT_SCROLLBACK_LINES),
             font_size: Some(DEFAULT_FONT_SIZE),
             font_family: Some(DEFAULT_FONT_FAMILY.to_string()),
             font_weight: Some(DEFAULT_FONT_WEIGHT),
             allow_transparency: None,
-            convert_eol: None,
             disable_stdin: None,
             smooth_scroll_duration: None,
-            scroll_sensitivity: Some(DEFAULT_SCROLL_SENSITIVITY),
             cell_background_opacity: None,
         }
     }
@@ -707,8 +690,8 @@ pub struct BaseTheme {
     pub base17: Option<String>,
 }
 
-/// The terminal color theme sent to the browser, matching ghostty-web's
-/// `ITheme`: default fg/bg/cursor/selection plus the 16 named ANSI colors.
+/// The terminal color theme sent to the browser: default
+/// fg/bg/cursor/selection plus the 16 named ANSI colors.
 #[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -935,7 +918,7 @@ pub struct FontEntry {
 }
 
 /// Fully resolved config the frontend needs: the active prefix, the second-key
-/// bind table, ghostty-web terminal options, and the resolved color theme. This
+/// bind table, terminal options, and the resolved color theme. This
 /// is the single source of truth — the browser renders it directly.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -1495,12 +1478,10 @@ pub fn generate_config_toml() -> String {
 # Per-action key overrides. Uncomment a line to rebind that action.
 # [keys]
 {keys_lines}
-# ghostty-web terminal options. All are optional; absent fields use btmux's
-# built-in defaults shown below.
+# Terminal options. All are optional; absent fields use btmux's built-in
+# defaults shown below.
 # [terminal]
-# renderer = "{DEFAULT_RENDERER}"        # "canvas" | "webgl" (default; falls back to canvas)
 # cursor-blink = {DEFAULT_CURSOR_BLINK}
-# cursor-style = "{DEFAULT_CURSOR_STYLE}"      # "block" | "underline" | "bar"
 # scrollback = {DEFAULT_SCROLLBACK_LINES}
 # font-size = {DEFAULT_FONT_SIZE:.1}
 # font-family = "{DEFAULT_FONT_FAMILY}"        # bundled: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", "Geist Mono", "Departure Mono"
@@ -1510,10 +1491,8 @@ pub fn generate_config_toml() -> String {
 #                              # font-family and font-weight also style code-like UI text
 #                              # (paths, names, key hints); other UI text uses Geist Sans.
 # allow-transparency = false
-# convert-eol = false
 # disable-stdin = false
-# smooth-scroll-duration = 120.0   # ms, also used by Neovim and file previews; 0 = instant
-# scroll-sensitivity = {DEFAULT_SCROLL_SENSITIVITY:.1}   # wheel/trackpad scroll-speed multiplier (>1 = faster)
+# smooth-scroll-duration = 120.0   # ms, Neovim and file preview scrolling; 0 = instant
 # cell-background-opacity = 1.0   # 0-1, colored cell backgrounds over a transparent background (Neovim)
 
 # Logging configuration. Both levels accept standard tracing directives:
@@ -1838,15 +1817,11 @@ pub struct ConfigUpdate {
     pub font_family: Option<String>,
     pub font_weight: Option<u16>,
     pub font_size: Option<f32>,
-    pub renderer: Option<String>,
     pub cursor_blink: Option<bool>,
-    pub cursor_style: Option<String>,
     pub scrollback: Option<u32>,
     pub allow_transparency: Option<bool>,
-    pub convert_eol: Option<bool>,
     pub disable_stdin: Option<bool>,
     pub smooth_scroll_duration: Option<f32>,
-    pub scroll_sensitivity: Option<f32>,
     pub cell_background_opacity: Option<f32>,
     pub animations: Option<bool>,
     pub console_level: Option<String>,
@@ -1922,14 +1897,8 @@ impl ConfigUpdate {
         if other.font_size.is_some() {
             self.font_size = other.font_size;
         }
-        if other.renderer.is_some() {
-            self.renderer = other.renderer.clone();
-        }
         if other.cursor_blink.is_some() {
             self.cursor_blink = other.cursor_blink;
-        }
-        if other.cursor_style.is_some() {
-            self.cursor_style = other.cursor_style.clone();
         }
         if other.scrollback.is_some() {
             self.scrollback = other.scrollback;
@@ -1937,17 +1906,11 @@ impl ConfigUpdate {
         if other.allow_transparency.is_some() {
             self.allow_transparency = other.allow_transparency;
         }
-        if other.convert_eol.is_some() {
-            self.convert_eol = other.convert_eol;
-        }
         if other.disable_stdin.is_some() {
             self.disable_stdin = other.disable_stdin;
         }
         if other.smooth_scroll_duration.is_some() {
             self.smooth_scroll_duration = other.smooth_scroll_duration;
-        }
-        if other.scroll_sensitivity.is_some() {
-            self.scroll_sensitivity = other.scroll_sensitivity;
         }
         if other.cell_background_opacity.is_some() {
             self.cell_background_opacity = other.cell_background_opacity;
@@ -2078,14 +2041,8 @@ pub fn resolve_with_overrides(
     if let Some(size) = overrides.font_size {
         file.terminal.font_size = Some(size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE));
     }
-    if let Some(renderer) = &overrides.renderer {
-        file.terminal.renderer = Some(renderer.clone());
-    }
     if let Some(cursor_blink) = overrides.cursor_blink {
         file.terminal.cursor_blink = Some(cursor_blink);
-    }
-    if let Some(cursor_style) = &overrides.cursor_style {
-        file.terminal.cursor_style = Some(cursor_style.clone());
     }
     if let Some(scrollback) = overrides.scrollback {
         file.terminal.scrollback = Some(scrollback.max(1));
@@ -2093,17 +2050,11 @@ pub fn resolve_with_overrides(
     if let Some(allow_transparency) = overrides.allow_transparency {
         file.terminal.allow_transparency = Some(allow_transparency);
     }
-    if let Some(convert_eol) = overrides.convert_eol {
-        file.terminal.convert_eol = Some(convert_eol);
-    }
     if let Some(disable_stdin) = overrides.disable_stdin {
         file.terminal.disable_stdin = Some(disable_stdin);
     }
     if let Some(smooth_scroll_duration) = overrides.smooth_scroll_duration {
         file.terminal.smooth_scroll_duration = Some(smooth_scroll_duration.max(0.0));
-    }
-    if let Some(scroll_sensitivity) = overrides.scroll_sensitivity {
-        file.terminal.scroll_sensitivity = Some(scroll_sensitivity.clamp(0.1, 20.0));
     }
     if let Some(opacity) = overrides.cell_background_opacity {
         file.terminal.cell_background_opacity = Some(opacity.clamp(0.0, 1.0));
@@ -2501,15 +2452,11 @@ palette:
                 window_sort: Some(WindowSort::Created),
                 editor: Some(Editor::Pane),
                 window_grid_count: Some(9),
-                renderer: Some("canvas".to_string()),
                 cursor_blink: Some(false),
-                cursor_style: Some("underline".to_string()),
                 scrollback: Some(42),
                 allow_transparency: Some(true),
-                convert_eol: Some(true),
                 disable_stdin: Some(true),
                 smooth_scroll_duration: Some(0.4),
-                scroll_sensitivity: Some(2.0),
                 cell_background_opacity: Some(1.5),
                 console_level: Some("debug".to_string()),
                 file_level: Some("trace".to_string()),
@@ -2531,15 +2478,11 @@ palette:
         assert_eq!(resolved.window_sort, WindowSort::Created);
         assert_eq!(resolved.editor, Editor::Pane);
         assert_eq!(resolved.window_grid_count, 9);
-        assert_eq!(resolved.terminal.renderer.as_deref(), Some("canvas"));
         assert_eq!(resolved.terminal.cursor_blink, Some(false));
-        assert_eq!(resolved.terminal.cursor_style.as_deref(), Some("underline"));
         assert_eq!(resolved.terminal.scrollback, Some(42));
         assert_eq!(resolved.terminal.allow_transparency, Some(true));
-        assert_eq!(resolved.terminal.convert_eol, Some(true));
         assert_eq!(resolved.terminal.disable_stdin, Some(true));
         assert_eq!(resolved.terminal.smooth_scroll_duration, Some(0.4));
-        assert_eq!(resolved.terminal.scroll_sensitivity, Some(2.0));
         assert_eq!(resolved.terminal.cell_background_opacity, Some(1.0));
         assert_eq!(resolved.log.console_level, "debug");
         assert_eq!(resolved.log.file_level, "trace");

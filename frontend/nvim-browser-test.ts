@@ -248,14 +248,14 @@ try {
       const pane = session && state.getActivePaneId(session.id);
       return (
         location.pathname.startsWith(`/s/${encodeURIComponent(name)}/`) &&
-        state.terminals.get(pane)?.element?.style.visibility === 'visible'
+        state.terminals.get(pane)?.element.parentElement?.style.visibility === 'visible'
       );
     }, name);
     await page.waitForTimeout(500);
   };
   await showSession(sessions[1].name);
   assert.equal(await input.isVisible(), false, 'Neovim hides with its pane');
-  assert.equal(await focusedLabel(), 'Terminal input', 'the shown terminal owns focus');
+  assert.equal(await focusedLabel(), 'Terminal', 'the shown terminal owns focus');
   await showSession(sessions[0].name);
   assert.equal(await nvimFocused(), true, 'Neovim regains focus with its pane');
   await page.keyboard.type('iFOCUS_PROBE');
@@ -286,7 +286,7 @@ try {
         return (
           other &&
           state.getActivePaneId(session) === pane &&
-          state.terminals.get(other).element?.style.visibility === 'visible' &&
+          state.terminals.get(other).element.parentElement?.style.visibility === 'visible' &&
           other
         );
       },
@@ -325,7 +325,7 @@ try {
     { session: sessions[0].id, other: otherPaneId },
   );
   await page.waitForTimeout(300);
-  assert.equal(await focusedLabel(), 'Terminal input', 'selecting another pane focuses its terminal');
+  assert.equal(await focusedLabel(), 'Terminal', 'selecting another pane focuses its terminal');
   assert.equal(await input.isVisible(), true, 'Neovim stays visible over its pane');
   const surfaceBox = (await input.evaluate((el) => {
     const r = el.parentElement!.getBoundingClientRect();
@@ -366,7 +366,7 @@ try {
   await page.keyboard.press('e');
   await page.waitForFunction(() => !(window as any).nvimStore.getState().nvimOpen);
   await prompt.waitFor({ state: 'hidden' });
-  assert.equal(await focusedLabel(), 'Terminal input');
+  assert.equal(await focusedLabel(), 'Terminal');
   await page.keyboard.press('Control+a');
   await page.keyboard.press('e');
   await prompt.waitFor({ state: 'visible' });
@@ -411,7 +411,7 @@ try {
     }, size);
     await page.waitForFunction((pane) => {
       const term = (window as any).nvimStore.getState().terminals.get(pane);
-      return term && term !== (window as any).nvimOldTerminal && term.element?.style.visibility === 'visible';
+      return term && term !== (window as any).nvimOldTerminal && term.element.parentElement?.style.visibility === 'visible';
     }, pane);
     assert.equal(
       await input.evaluate((el) => document.activeElement === el),
@@ -738,14 +738,14 @@ try {
     useStore.getState().setNvimOpen(false);
   });
   await page.waitForTimeout(250);
-  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Terminal input');
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Terminal');
   await page.evaluate(() => (window as any).nvimStore.getState().setSettingsOpen(true));
   await page.waitForTimeout(100);
   await page.evaluate(() => (window as any).nvimStore.getState().setSettingsOpen(false));
   await page.waitForTimeout(100);
   assert.equal(
     await page.evaluate(() => document.activeElement?.getAttribute('aria-label')),
-    'Terminal input',
+    'Terminal',
     'the hidden editor cannot reclaim focus when settings close',
   );
   assert.deepEqual(errors, [], 'session switches and resize must not throw');

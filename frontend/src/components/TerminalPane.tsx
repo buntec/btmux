@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Terminal, FitAddon } from 'ghostty-web';
+import { PaneTerminal, type PaneTerminalOptions } from '../lib/paneTerminal';
 import { useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
@@ -42,8 +42,8 @@ interface Props {
    * Whether this pane is shown right now — i.e. it's in the active window of the
    * active session. Panes of inactive windows (or of pooled-but-inactive
    * sessions) stay mounted (the keep-alive pool) but are hidden with
-   * `display:none` and `suspend()`ed so switches don't tear down and rebuild
-   * ghostty-web instances. See SessionPane for the pool rationale.
+   * `display:none` and paused so switches don't tear down and rebuild
+   * emulators. See SessionPane for the pool rationale.
    */
   visible: boolean;
   /** True when this pane is the sole, fullscreen-zoomed pane of its window. */
@@ -55,65 +55,47 @@ interface Props {
    * Terminal here so SessionPane can authoritatively focus the active pane after
    * a window switch (see the focus race note in SessionPane).
    */
-  registry?: Map<string, Terminal>;
+  registry?: Map<string, PaneTerminal>;
   send: (msg: ClientMessage) => void;
 }
 
 const FONT_FALLBACK = 'Symbols Nerd Font Mono, Menlo, Monaco, monospace';
-// ghostty-web's `scrollback` option feeds the WASM core's `max_scrollback`,
-// which is a BYTE budget (see the conversion in buildTerminalOptions). This is
-// the assumed average bytes-per-line used to turn the configured line count
-// into that budget; upstream Ghostty defaults to ~1 KB/line (10 MB / 10000).
-const SCROLLBACK_BYTES_PER_LINE = 1000;
 
 export function buildFontFamily(configured: string): string {
   return `${configured}, ${FONT_FALLBACK}`;
 }
 
-export function buildTerminalOptions(config: ClientConfig | null): ConstructorParameters<typeof Terminal>[0] | null {
+export function buildTerminalOptions(config: ClientConfig | null): PaneTerminalOptions | null {
   if (!config) return null;
   const t = config.terminal;
-  const opts: ConstructorParameters<typeof Terminal>[0] = {
+  return {
     fontSize: getTerminalFontSize(config),
     fontFamily: buildFontFamily(getTerminalFontFamily(config)),
+    fontWeight: t?.fontWeight ?? CONFIG_DEFAULTS.terminal.fontWeight,
     theme: config?.theme ?? STARTUP_THEME,
     cursorBlink: t?.cursorBlink ?? CONFIG_DEFAULTS.terminal.cursorBlink,
+    scrollback: t?.scrollback ?? CONFIG_DEFAULTS.terminal.scrollback,
+    disableStdin: t?.disableStdin ?? undefined,
   };
-  // Experimental WebGL backend (ghostty-web fork); falls back to Canvas2D if
-  // WebGL2 init fails. Omitted when unset so ghostty-web's canvas default applies.
-  if (t?.renderer != null) opts.renderer = t.renderer;
-  if (t?.cursorStyle != null) opts.cursorStyle = t.cursorStyle;
-  // ghostty-web's `scrollback` option is documented (and configured here) as a
-  // LINE count, but it's written verbatim into the WASM core's `max_scrollback`
-  // field, which Ghostty interprets in BYTES. Passing `10000` therefore yields
-  // only ~10 KB of scrollback (~800 lines of plain text). Convert the configured
-  // line count into a byte budget so the emulator retains roughly the requested
-  // number of lines even for wide/colored output (10000 lines → 10 MB, matching
-  // upstream Ghostty's default).
-  if (t?.scrollback != null) opts.scrollback = t.scrollback * SCROLLBACK_BYTES_PER_LINE;
-  // Let wallpapers and the desktop backdrop show through the terminal.
-  const hasWallpaper = config?.wallpaper != null || config?.wallpaper_shader != null;
-  const allowTransparency = t?.allowTransparency ?? (hasWallpaper || desktopTransparency ? true : null);
-  opts.allowTransparency = allowTransparency ?? false;
-  if (t?.convertEol != null) opts.convertEol = t.convertEol;
-  if (t?.disableStdin != null) opts.disableStdin = t.disableStdin;
-  opts.smoothScrollDuration = t?.smoothScrollDuration ?? CONFIG_DEFAULTS.terminal.smoothScrollDuration;
-  // Non-upstream option consumed by our ghostty-web patch (see patches/).
-  if (t?.scrollSensitivity != null) opts.scrollSensitivity = t.scrollSensitivity;
-  if (t?.fontWeight != null) opts.fontWeight = t.fontWeight;
-  return opts;
 }
 
 export function terminalTransparency(config: ClientConfig | null): boolean {
-  return buildTerminalOptions(config)?.allowTransparency ?? false;
+  if (!config) return false;
+  // Let wallpapers and the desktop backdrop show through the terminal.
+  const hasWallpaper = config.wallpaper != null || config.wallpaper_shader != null;
+  return config.terminal?.allowTransparency ?? (hasWallpaper || desktopTransparency);
 }
 
-// Allocate alpha-capable canvases once; wallpaper visibility changes in place.
 // Only construction options belong in the emulator lifetime key.
 export function useTerminalOptions(config: ClientConfig | null) {
   const options = buildTerminalOptions(config);
-  const key = JSON.stringify(options ? { ...options, theme: undefined, allowTransparency: true } : null);
-  return useMemo(() => JSON.parse(key) as ReturnType<typeof buildTerminalOptions>, [key]);
+  const key = JSON.stringify(options ? { ...options, theme: undefined } : null);
+  return useMemo(
+    () => options,
+    // The theme is applied in place; only the key rebuilds.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key],
+  );
 }
 
 export function TerminalPane({
@@ -133,8 +115,9 @@ export function TerminalPane({
 }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const termRef = useRef<PaneTerminal | null>(null);
+  // Mirrors termRef for render-time consumers (search, LaTeX scan).
+  const [term, setTerm] = useState<PaneTerminal | null>(null);
   const fitRef = useRef<(() => void) | null>(null);
   // Live terminal dimensions, shown as "cols×rows" in the title bar. Updated from
   // the fit/resize path so the bar tracks the pane's real grid.
@@ -158,8 +141,6 @@ export function TerminalPane({
     (s) => (s.nvimOpen && s.nvimPaneId === paneId) || (s.vscodeOpen && s.vscodePaneId === paneId),
   );
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
-  const settingsOpenRef = useRef(settingsOpen);
-  settingsOpenRef.current = settingsOpen;
   const termOptions = useTerminalOptions(config);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connection, setConnection] = useState<ConnectionState>('connecting');
@@ -177,348 +158,211 @@ export function TerminalPane({
     setConnection('connecting');
     setInitialReplayRendered(false);
 
-    const term = new Terminal(termOptions);
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    const focusedBeforeOpen = container.ownerDocument.activeElement;
-    term.open(container);
-    // ghostty-web's open() auto-focuses (and schedules a deferred setTimeout(0)
-    // focus); undo both if another surface owns the keyboard. This also covers a
-    // terminal mounted by a server state update while a modal or the settings
-    // overlay is open.
-    const shouldBlurOnOpen = () => {
-      const s = useStore.getState();
-      return (
-        settingsOpenRef.current ||
-        !!s.overlay ||
-        s.windowGridOpen ||
-        s.agentGridOpen ||
-        s.switcherOpen ||
-        (s.nvimOpen && s.nvimPaneId === paneId) ||
-        (s.vscodeOpen && s.vscodePaneId === paneId) ||
-        (s.fileBrowserOpen && s.fileBrowserPaneId === paneId)
-      );
-    };
-    if (shouldBlurOnOpen()) {
-      const restoreFocus = () => {
-        if (!shouldBlurOnOpen()) return;
-        term.blur();
-        if (focusedBeforeOpen instanceof HTMLElement && focusedBeforeOpen.isConnected) focusedBeforeOpen.focus();
-      };
-      restoreFocus();
-      setTimeout(restoreFocus, 0);
-    }
-
-    // Explicitly load the configured font at the requested weight so the browser
-    // fetches the woff2 before we measure/rasterize. Without this, Canvas2D
-    // measureText doesn't trigger @font-face downloads — the font only loads when
-    // DOM text is rendered, causing the first Terminal to use a fallback/synthesized
-    // weight until a config change forces a rebuild.
-    let fontAbort = false;
-    const weight = termOptions.fontWeight ?? CONFIG_DEFAULTS.terminal.fontWeight;
-    const boldWeight = Math.min(weight + 200, 900);
-    const size = termOptions.fontSize!;
-    const family = termOptions.fontFamily!;
-    const primaryFamily = family
-      .split(',')[0]
-      .trim()
-      .replace(/^["']|["']$/g, '');
-    Promise.all([
-      document.fonts.load(`${weight} ${size}px "${primaryFamily}"`),
-      document.fonts.load(`${boldWeight} ${size}px "${primaryFamily}"`),
-    ]).then(() => {
-      if (fontAbort) return;
-      term.remeasureFont();
-      if (visibleRef.current) fit();
-    });
-
-    // Replace ghostty-web's built-in wheel handler for alt-screen applications
-    // (e.g. Claude Code) and mouse-tracking-enabled apps. The built-in handler
-    // fires raw arrow keys for alt-screen mode — one WheelEvent can emit up to
-    // 5 arrows, and trackpads fire many events per gesture, making scrolling
-    // uncontrollably fast. We accumulate pixel delta and emit exactly one scroll
-    // action per cell-height of travel, normalizing trackpad and mouse-wheel to
-    // the same rate.
-    //
-    // Decision tree:
-    //   • alt screen + mouse tracking → SGR mouse scroll sequences (most precise)
-    //   • alt screen + no tracking   → arrow keys, but accumulator-throttled
-    //   • normal screen              → return false; ghostty-web scrolls viewport
-    let scrollAccumPx = 0;
-    term.attachCustomWheelEventHandler((event: WheelEvent) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN || !ready) return false;
-
-      const hasMouseTracking = term.hasMouseTracking();
-      // Mode 1049 is the DEC private mode used by Ink.js/ncurses/etc. to
-      // switch to the alternate screen buffer.
-      const isAltScreen = term.getMode(1049, false);
-
-      if (!hasMouseTracking && !isAltScreen) return false; // let ghostty-web scroll viewport
-
-      const rect = container.getBoundingClientRect();
-      const lineHeight = rect.height / term.rows;
-
-      // Normalize deltaY to pixels regardless of deltaMode.
-      let deltaPx: number;
-      if (event.deltaMode === 0 /* DOM_DELTA_PIXEL */) {
-        deltaPx = event.deltaY;
-      } else if (event.deltaMode === 1 /* DOM_DELTA_LINE */) {
-        deltaPx = event.deltaY * lineHeight;
-      } else /* DOM_DELTA_PAGE */ {
-        deltaPx = event.deltaY * rect.height;
-      }
-
-      scrollAccumPx += deltaPx;
-      const ticks = Math.trunc(scrollAccumPx / lineHeight);
-      if (ticks === 0) return true; // consumed the event, wait for more travel
-      scrollAccumPx -= ticks * lineHeight;
-
-      if (hasMouseTracking) {
-        // Send SGR (or X10) mouse scroll sequences. button 64 = up, 65 = down.
-        const button = ticks > 0 ? 65 : 64;
-        const col = Math.max(
-          1,
-          Math.min(term.cols, Math.floor((event.clientX - rect.left) / (rect.width / term.cols)) + 1),
-        );
-        const row = Math.max(
-          1,
-          Math.min(term.rows, Math.floor((event.clientY - rect.top) / (rect.height / term.rows)) + 1),
-        );
-        const seq = term.getMode(1006, false)
-          ? `\x1b[<${button};${col};${row}M`
-          : `\x1b[M${String.fromCharCode(button + 32, Math.min(col + 32, 255), Math.min(row + 32, 255))}`;
-        for (let i = 0; i < Math.abs(ticks); i++) ws.send(seq);
-      } else {
-        // Alt screen, no mouse tracking: throttled arrow keys.
-        const arrow = ticks > 0 ? '\x1b[B' : '\x1b[A';
-        for (let i = 0; i < Math.abs(ticks); i++) ws.send(arrow);
-      }
-      return true;
-    });
-
-    termRef.current = term;
-    registry?.set(paneId, term);
-    // Also register in the store so actions outside the pane tree (capture-pane
-    // in useKeybindings) can read this pane's emulator buffer.
-    useStore.getState().registerTerminal(paneId, term);
-
-    let ws: WebSocket | null = null;
-    let ready = false;
-
-    // Connect only after the container has settled at its final CSS-computed size.
-    // ResizeObserver can fire multiple times during a split: first at a tiny
-    // intermediate size (e.g. 29×9) before percentage-based layout resolves, then
-    // again at the correct size. Opening the WebSocket too early means the backend
-    // replays scrollback at the wrong cols, producing garbled output. We defer the
-    // initial connection with rAF so the browser has committed the final layout.
-    // Push the terminal's current grid size to the title bar, skipping no-op
-    // updates so we don't re-render on every ResizeObserver tick.
-    const syncDims = () =>
-      setDims((prev) =>
-        prev?.cols === term.cols && prev?.rows === term.rows ? prev : { cols: term.cols, rows: term.rows },
-      );
-
-    // Size ownership: the owner's container size drives the PTY. Followers
-    // report their size (applied when they claim) but keep the server's grid:
-    // a local resize reflows and clears the prompt, and the shell never
-    // redraws because the PTY size did not change.
-    let owner = true;
-    let claimed = false;
-    let serverSize: { cols: number; rows: number } | null = null;
-    let reported = '';
-    const report = (cols: number, rows: number) => {
-      const key = `${cols}x${rows}`;
-      if (ws?.readyState !== WebSocket.OPEN || !visibleRef.current || key === reported) return;
-      reported = key;
-      ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-    };
-    const adoptServerSize = () => {
-      if (serverSize && (serverSize.cols !== term.cols || serverSize.rows !== term.rows)) {
-        term.resize(serverSize.cols, serverSize.rows);
-      }
-    };
-    // FitAddon.fit() drops calls for 50 ms after a resize and caches its last
-    // proposal, which can strand the grid mid-animation; resize directly.
-    const fit = () => {
-      const size = fitAddon.proposeDimensions();
-      if (!size) return;
-      if (!owner) adoptServerSize();
-      else if (size.cols !== term.cols || size.rows !== term.rows) term.resize(size.cols, size.rows);
-      report(size.cols, size.rows);
-    };
-    fitRef.current = fit;
-    const claim = () => {
-      if (owner || claimed || ws?.readyState !== WebSocket.OPEN) return;
-      claimed = true;
-      fit();
-      ws.send(JSON.stringify({ type: 'claim' }));
-    };
-    container.addEventListener('keydown', claim, true);
-    container.addEventListener('paste', claim, true);
-    container.addEventListener('mousedown', claim, true);
-
     let disposed = false;
-    let reconnectTimer = 0;
-    let attempts = 0;
-    let connectRaf = 0;
-    let revealRaf = 0;
-    const connect = () => {
-      if (disposed || ws) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const size = fitAddon.proposeDimensions() ?? { cols: term.cols, rows: term.rows };
-      reported = `${size.cols}x${size.rows}`;
-      claimed = false;
-      const socket = new WebSocket(
-        `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${size.cols}&rows=${size.rows}`,
-      );
-      ws = socket;
-      wsRef.current = socket;
-      socket.binaryType = 'arraybuffer';
-      socket.onopen = () => {
-        if (disposed || ws !== socket) return;
-        attempts = 0;
-        // Server replay starts with a reset and a canonical screen snapshot.
-        setConnectionError(null);
+    let cleanup = () => {};
+    const start = async () => {
+      let term: PaneTerminal;
+      try {
+        term = await PaneTerminal.open(container, termOptions);
+      } catch (e) {
+        if (!disposed) setConnectionError(String(e));
+        return;
+      }
+      if (disposed) {
+        term.dispose();
+        return;
+      }
+      cleanup = mount(term);
+    };
+
+    const mount = (term: PaneTerminal) => {
+      termRef.current = term;
+      setTerm(term);
+      registry?.set(paneId, term);
+      // Also register in the store so actions outside the pane tree (capture-pane
+      // in useKeybindings) can read this pane's emulator buffer.
+      useStore.getState().registerTerminal(paneId, term);
+
+      let ws: WebSocket | null = null;
+      let ready = false;
+
+      const syncDims = () =>
+        setDims((prev) =>
+          prev?.cols === term.cols && prev?.rows === term.rows ? prev : { cols: term.cols, rows: term.rows },
+        );
+
+      // Size ownership: the owner's container size drives the PTY. Followers
+      // report their size (applied when they claim) but keep the server's grid:
+      // a local resize reflows and clears the prompt, and the shell never
+      // redraws because the PTY size did not change.
+      let owner = true;
+      let claimed = false;
+      let serverSize: { cols: number; rows: number } | null = null;
+      let reported = '';
+      const report = (cols: number, rows: number) => {
+        const key = `${cols}x${rows}`;
+        if (ws?.readyState !== WebSocket.OPEN || !visibleRef.current || key === reported) return;
+        reported = key;
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       };
-      socket.onmessage = (ev) => {
-        if (disposed || ws !== socket) return;
-        if (ev.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(ev.data));
-          latexPokeRef.current();
-        } else {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.type === 'ready') {
-              ready = true;
-              // All replay bytes have now been parsed. Terminal writes normally
-              // coalesce behind one queued render; schedule our reveal after it
-              // so the first visible canvas contains the completed screen.
-              term.requestRender();
-              cancelAnimationFrame(revealRaf);
-              revealRaf = requestAnimationFrame(() => {
-                if (disposed || ws !== socket) return;
-                setInitialReplayRendered(true);
-                setConnection('connected');
-              });
+      const adoptServerSize = () => {
+        if (serverSize) term.resize(serverSize.cols, serverSize.rows);
+      };
+      const fit = () => {
+        const size = term.proposeDimensions();
+        if (!size) return;
+        if (!owner) adoptServerSize();
+        else term.resize(size.cols, size.rows);
+        report(size.cols, size.rows);
+      };
+      fitRef.current = fit;
+      const claim = () => {
+        if (owner || claimed || ws?.readyState !== WebSocket.OPEN) return;
+        claimed = true;
+        fit();
+        ws.send(JSON.stringify({ type: 'claim' }));
+      };
+      container.addEventListener('keydown', claim, true);
+      container.addEventListener('paste', claim, true);
+      container.addEventListener('mousedown', claim, true);
+
+      let reconnectTimer = 0;
+      let attempts = 0;
+      let connectRaf = 0;
+      let revealRaf = 0;
+      const connect = () => {
+        if (disposed || ws) return;
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const size = term.proposeDimensions() ?? { cols: term.cols, rows: term.rows };
+        reported = `${size.cols}x${size.rows}`;
+        claimed = false;
+        const socket = new WebSocket(
+          `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${size.cols}&rows=${size.rows}`,
+        );
+        ws = socket;
+        socket.binaryType = 'arraybuffer';
+        socket.onopen = () => {
+          if (disposed || ws !== socket) return;
+          attempts = 0;
+          setConnectionError(null);
+        };
+        socket.onmessage = (ev) => {
+          if (disposed || ws !== socket) return;
+          if (ev.data instanceof ArrayBuffer) {
+            term.write(new Uint8Array(ev.data));
+            latexPokeRef.current();
+          } else {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === 'ready') {
+                ready = true;
+                // wterm paints on the next frame; reveal after it.
+                cancelAnimationFrame(revealRaf);
+                revealRaf = requestAnimationFrame(() =>
+                  requestAnimationFrame(() => {
+                    if (disposed || ws !== socket) return;
+                    term.scrollToBottom();
+                    setInitialReplayRendered(true);
+                    setConnection('connected');
+                  }),
+                );
+              }
+              if (msg.type === 'error') setConnectionError(msg.message);
+              if (msg.type === 'size') {
+                // Applied in stream order, so output is parsed at the size it was
+                // produced for. The owner's own echo is a no-op.
+                serverSize = { cols: msg.cols, rows: msg.rows };
+                term.resize(msg.cols, msg.rows);
+              }
+              if (msg.type === 'owner') {
+                owner = msg.owner;
+                claimed = false;
+                if (owner) fit();
+                else adoptServerSize();
+              }
+            } catch {
+              /* Unknown protocol frames are not terminal input. */
             }
-            if (msg.type === 'error') setConnectionError(msg.message);
-            if (msg.type === 'size') {
-              // Applied in stream order, so output is parsed at the size it was
-              // produced for. The owner's own echo is a no-op.
-              serverSize = { cols: msg.cols, rows: msg.rows };
-              term.resize(msg.cols, msg.rows);
-            }
-            if (msg.type === 'owner') {
-              owner = msg.owner;
-              claimed = false;
-              if (owner) fit();
-              else adoptServerSize();
-            }
-          } catch {
-            /* Unknown protocol frames are not terminal input. */
           }
+        };
+        socket.onclose = () => {
+          if (disposed || ws !== socket) return;
+          ws = null;
+          ready = false;
+          setConnection('reconnecting');
+          reconnectTimer = window.setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000));
+        };
+        socket.onerror = () => socket.close();
+      };
+      const offData = term.onData((bytes) => {
+        if (ws?.readyState === WebSocket.OPEN && ready) {
+          for (let i = 0; i < bytes.length; i += 16384) ws.send(bytes.slice(i, i + 16384));
         }
-      };
-      socket.onclose = () => {
-        if (disposed || ws !== socket) return;
-        ws = null;
-        ready = false;
-        wsRef.current = null;
-        setConnection('reconnecting');
-        reconnectTimer = window.setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000));
-      };
-      socket.onerror = () => socket.close();
-    };
-    const onData = term.onData((data: string) => {
-      if (ws?.readyState === WebSocket.OPEN && ready) {
-        const bytes = new TextEncoder().encode(data);
-        for (let i = 0; i < bytes.length; i += 16384) ws.send(bytes.slice(i, i + 16384));
-      }
-      if (term.viewportY !== 0) term.scrollToBottom();
-      const rect = container.getBoundingClientRect();
-      const cursor = term.buffer.active;
-      announceWallpaperKeyboardCursor(
-        rect.left + ((cursor.cursorX + 0.5) / Math.max(1, term.cols)) * rect.width,
-        rect.top + ((cursor.cursorY + 0.5) / Math.max(1, term.rows)) * rect.height,
-      );
-    });
-    const onResize = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-      setDims({ cols, rows });
-    });
-    const observer = new ResizeObserver(() => {
-      if (!visibleRef.current) return;
-      fit();
-      syncDims();
-      if (!ws && !reconnectTimer) {
+        const rect = container.getBoundingClientRect();
+        const cursor = term.cursor();
+        announceWallpaperKeyboardCursor(
+          rect.left + ((cursor.col + 0.5) / Math.max(1, term.cols)) * rect.width,
+          rect.top + ((cursor.row + 0.5) / Math.max(1, term.rows)) * rect.height,
+        );
+      });
+      const offResize = term.onResize((cols, rows) => setDims({ cols, rows }));
+      const observer = new ResizeObserver(() => {
+        if (!visibleRef.current) return;
+        fit();
+        syncDims();
+        if (!ws && !reconnectTimer) {
+          cancelAnimationFrame(connectRaf);
+          connectRaf = requestAnimationFrame(() => {
+            if (!visibleRef.current) return;
+            fit();
+            syncDims();
+            connect();
+          });
+        }
+      });
+      observer.observe(container);
+      // Refit after wterm remeasures cells; its observer runs first.
+      term.observeCellSize(observer);
+
+      return () => {
+        clearTimeout(reconnectTimer);
+        offData();
+        offResize();
+        container.removeEventListener('keydown', claim, true);
+        container.removeEventListener('paste', claim, true);
+        container.removeEventListener('mousedown', claim, true);
         cancelAnimationFrame(connectRaf);
-        connectRaf = requestAnimationFrame(() => {
-          if (!visibleRef.current) return;
-          fit();
-          syncDims();
-          connect();
-        });
-      }
-    });
-
-    observer.observe(container);
-
-    // ghostty-web's WebGL render() adopts a new devicePixelRatio (e.g. window
-    // moved to another screen) without resetting the glyph atlas, so glyphs stay
-    // rasterized at the old scale and overlap. Reset it explicitly.
-    let dprQuery: MediaQueryList | null = null;
-    const onDprChange = () => {
-      const r = term.renderer as unknown as {
-        vendored?: { setDevicePixelRatio?: (dpr: number) => void };
-      } | null;
-      if (r?.vendored?.setDevicePixelRatio) r.vendored.setDevicePixelRatio(window.devicePixelRatio);
-      else term.remeasureFont();
-      if (visibleRef.current) fit();
-      watchDpr();
+        cancelAnimationFrame(revealRaf);
+        observer.disconnect();
+        ws?.close();
+        term.dispose();
+        if (registry && registry.get(paneId) === term) registry.delete(paneId);
+        useStore.getState().unregisterTerminal(paneId, term);
+        termRef.current = null;
+        setTerm(null);
+        fitRef.current = null;
+      };
     };
-    const watchDpr = () => {
-      dprQuery?.removeEventListener('change', onDprChange);
-      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-      dprQuery.addEventListener('change', onDprChange, { once: true });
-    };
-    watchDpr();
+
+    void start();
 
     return () => {
       disposed = true;
-      dprQuery?.removeEventListener('change', onDprChange);
-      clearTimeout(reconnectTimer);
-      onData.dispose();
-      onResize.dispose();
-      container.removeEventListener('keydown', claim, true);
-      container.removeEventListener('paste', claim, true);
-      container.removeEventListener('mousedown', claim, true);
-      fontAbort = true;
-      cancelAnimationFrame(connectRaf);
-      cancelAnimationFrame(revealRaf);
-      observer.disconnect();
-      ws?.close();
-      term.dispose();
-      if (registry && registry.get(paneId) === term) registry.delete(paneId);
-      useStore.getState().unregisterTerminal(paneId, term);
-      termRef.current = null;
-      wsRef.current = null;
-      fitRef.current = null;
+      cleanup();
     };
     // Rebuilding on termOptions re-themes existing panes after a live config
     // reload; the pane socket replays scrollback on reconnect so content is kept.
   }, [paneId, termOptions, registry]);
 
-  // LaTeX detection (lib/latexDetect.ts). Declared after the mount effect so
-  // termRef is populated when the scan effect runs.
+  // LaTeX detection (lib/latexDetect.ts).
   // A pane under the built-in Neovim keeps its geometry but needn't render.
   const rendering = visible && !nvimOpen;
-  const { matches: latexMatches, poke: latexPoke } = useLatexScan(termRef, termOptions, rendering);
+  const { matches: latexMatches, poke: latexPoke } = useLatexScan(term, rendering);
   latexPokeRef.current = latexPoke;
   const latexOpen = useStore((s) => s.latexPanes.has(paneId));
   const searchOpen = useStore((s) => s.searchPaneId === paneId);
   const toggleLatex = () => useStore.getState().toggleLatex(paneId);
   const highlightLatex = (match: PaneLatexMatch | null) => {
-    const term = termRef.current;
     if (!term) return;
     if (!match) return term.clearDecorations();
     const background = withAlpha(config?.theme?.yellow ?? STARTUP_THEME.yellow, 0.35);
@@ -526,30 +370,25 @@ export function TerminalPane({
   };
   // Highlights hold absolute buffer lines, which go stale on any rescan.
   useEffect(() => {
-    termRef.current?.clearDecorations();
-  }, [latexOpen, latexMatches]);
+    term?.clearDecorations();
+  }, [term, latexOpen, latexMatches]);
 
   // Park / wake the terminal as it leaves / enters the active window. Hidden
   // panes stay mounted (their socket keeps streaming into the WASM terminal) but
-  // suspend() stops the render loop so they cost ~0 CPU. On the way back in we
+  // pausing stops painting so they cost ~0 CPU. On the way back in we
   // resume and fit: the container regained its real size, and if the pane was
   // first created while hidden it may still be unconnected — fit() drives the
   // ResizeObserver, which then opens the socket at the correct cols/rows.
   useEffect(() => {
-    const term = termRef.current;
     if (!term) return;
-    if (rendering) {
-      term.resume();
-      fitRef.current?.();
-    } else {
-      term.suspend();
-    }
-  }, [rendering, termOptions]);
+    term.setPaused(!rendering);
+    if (rendering) fitRef.current?.();
+  }, [rendering, term]);
 
   const allowTransparency = terminalTransparency(config);
   useEffect(() => {
-    if (termRef.current) termRef.current.options.allowTransparency = allowTransparency;
-  }, [allowTransparency, termOptions]);
+    term?.setTransparent(allowTransparency);
+  }, [allowTransparency, term]);
 
   // One-shot border-draw effect on the pane you switch to (`pane-switch-border`,
   // style-selectable, `wipe` by default; null = disabled). Pure CSS, keyed
@@ -573,19 +412,13 @@ export function TerminalPane({
     return () => clearTimeout(done);
   }, [isActive, visible, config?.animations, paneSwitchBorderStyleId, paneSwitchBorderSpeed]);
 
-  // Hide cursor on inactive panes with transparency. Blending it into the
-  // terminal background leaves a visible bar when transparency shows the
-  // wallpaper behind the canvas.
-  // term.options.theme is unsupported after open(); go directly to the renderer.
+  // Themes apply in place.
   useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
-    const cursor = config?.theme?.cursor ?? STARTUP_THEME.cursor;
-    term.renderer?.setTheme({
-      ...(config?.theme ?? STARTUP_THEME),
-      cursor: isActive ? cursor : 'rgba(0, 0, 0, 0)',
-    });
-  }, [isActive, config?.theme, termOptions]);
+    term?.setTheme(config?.theme ?? STARTUP_THEME);
+  }, [config?.theme, term]);
+  useEffect(() => {
+    term?.setCursorHidden(!isActive);
+  }, [isActive, term]);
 
   // Focus when this pane becomes active (false→true transition, including mount),
   // when its initial replay finishes, or when an overlay closes while this pane
@@ -593,10 +426,6 @@ export function TerminalPane({
   // modal surface owns the keyboard.
   // Tracking the previous value prevents the old active pane from re-stealing
   // focus while a select_pane command is still in flight to the server.
-  // Note: ghostty-web's open() auto-focuses every terminal as it mounts (and
-  // schedules a deferred setTimeout(0) focus), so on a window switch the
-  // last-mounted pane would otherwise win. The blur here plus SessionPane's
-  // deferred re-focus of the active pane resolve that race.
   const prevIsActive = useRef(false);
   const prevOverlay = useRef(overlay);
   const prevFileBrowser = useRef(fileBrowserOpen);
@@ -675,7 +504,7 @@ export function TerminalPane({
       style={{
         // Panes of inactive windows stay mounted but hidden (the keep-alive
         // pool). display:none detaches them from layout so they don't paint or
-        // intercept clicks; the suspend() effect stops their render loop.
+        // intercept clicks; the pause effect stops their painting.
         display: visible ? 'flex' : 'none',
         // Preserve terminal geometry and sockets beneath the transparent editor.
         opacity: nvimOpen ? 0 : undefined,
@@ -766,7 +595,7 @@ export function TerminalPane({
           ref={containerRef}
           className="absolute inset-3"
           style={{
-            // `visibility` preserves layout, so FitAddon and ResizeObserver can
+            // `visibility` preserves layout, so the ResizeObserver can
             // establish the correct grid while replay remains off-screen.
             visibility: initialReplayRendered ? 'visible' : 'hidden',
           }}
@@ -795,9 +624,9 @@ export function TerminalPane({
             ∑ {latexMatches.length}
           </button>
         )}
-        {searchOpen && termRef.current && (
+        {searchOpen && term && (
           <PaneSearch
-            term={termRef.current}
+            term={term}
             theme={config?.theme ?? null}
             termFont={termFont}
             onClose={() => useStore.getState().setSearchPaneId(null)}

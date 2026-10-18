@@ -68,20 +68,15 @@ try {
   const readTerminal = async () =>
     page.evaluate(async (id) => {
       const { useStore } = await import('/src/state/store.tsx' as string);
-      const term = useStore.getState().terminals.get(id);
-      const buf = term.buffer.active;
-      return Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '').join('\n');
+      return useStore.getState().terminals.get(id).readLines().join('\n');
     }, pane);
   await waitForAsync(
     page,
     async (id) => {
       const { useStore } = await import('/src/state/store.tsx' as string);
       // A config update can rebuild the terminal, briefly unregistering it.
-      const buf = useStore.getState().terminals.get(id)?.buffer.active;
-      if (!buf) return false;
-      return Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '')
-        .join('\n')
-        .includes('\nREPLAY_🙂_OK\n');
+      const term = useStore.getState().terminals.get(id);
+      return !!term && term.readLines().join('\n').includes('\nREPLAY_🙂_OK\n');
     },
     pane,
   );
@@ -185,6 +180,52 @@ try {
     await banner.waitFor({ state: 'detached' });
     await details.waitFor({ state: 'detached' });
     console.log('PASS rejected config shows a warning until it loads');
+
+    const rebuilt = async () => {
+      const previous = await page.evaluateHandle(async (id) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        return useStore.getState().terminals.get(id);
+      }, pane);
+      return () =>
+        waitForAsync(
+          page,
+          async ([id, previous]) => {
+            const { useStore } = await import('/src/state/store.tsx' as string);
+            const term = useStore.getState().terminals.get(id);
+            return !!term && term !== previous && term.element.parentElement?.style.visibility === 'visible';
+          },
+          [pane, previous] as const,
+        );
+    };
+    let ready = await rebuilt();
+    writeFileSync(configFile, '[terminal]\nfont-size = 36\ndisable-stdin = true\n');
+    await ready();
+    const terminal = await page.evaluate(async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const term = useStore.getState().terminals.get(id);
+      const line = document.createElement('div');
+      line.textContent = 'Wg';
+      line.style.cssText = 'position:absolute;line-height:normal';
+      term.element.appendChild(line);
+      const fontHeight = line.getBoundingClientRect().height;
+      line.remove();
+      return { rowHeight: term.measureCell().height, fontHeight };
+    }, pane);
+    assert(terminal.rowHeight >= terminal.fontHeight, JSON.stringify(terminal));
+    await page.locator('textarea[aria-label="Terminal"]').first().focus();
+    await page.keyboard.type('echo TYPED_$((6*7))\n');
+    await page.evaluate(async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      useStore.getState().terminals.get(id).paste('echo PASTED_$((6*7))\n');
+    }, pane);
+    await page.waitForTimeout(500);
+    const output = await (await fetch(`${url}/api/panes/${pane}/output`, { headers })).text();
+    assert(!/TYPED|PASTED/.test(await readTerminal()), 'disabled input must not echo locally');
+    assert(!/TYPED_42|PASTED_42/.test(output), 'disabled input must not reach the PTY');
+    ready = await rebuilt();
+    writeFileSync(configFile, original);
+    await ready();
+    console.log('PASS rows fit the font and disable-stdin blocks input');
   }
   await page.evaluate(() => {
     (window as any).testSockets
@@ -263,12 +304,12 @@ try {
       },
       { id: pane, size, equal },
     );
-  await second.locator('[aria-label="Terminal input"]').first().press('Shift');
+  await second.locator('textarea[aria-label="Terminal"]').first().press('Shift');
   await waitForSize(second, ownerSize, false);
   const claimedSize = await termSize(second);
   await waitForSize(page, claimedSize, true);
   console.log('PASS keyboard input claims dimension ownership');
-  await page.locator('[aria-label="Terminal input"]').first().press('Shift');
+  await page.locator('textarea[aria-label="Terminal"]').first().press('Shift');
   await waitForSize(second, ownerSize, true);
   await page.close();
   await waitForAsync(

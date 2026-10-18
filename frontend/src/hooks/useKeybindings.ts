@@ -290,22 +290,16 @@ export function runAction(
       if (paneId) send({ type: 'zoom_pane', session_id: sessionId, pane_id: paneId });
       break;
     case 'capture-pane': {
-      // Read the active pane's scrollback straight from its ghostty-web buffer
+      // Read the active pane's scrollback straight from its emulator buffer
       // (the only place de-escaped, wrapped text exists) and hand it to the
       // backend, which writes it to a temp file and opens it in $EDITOR *inside
       // this pane's own shell* — reusing the live terminal rather than mounting
-      // a new one. buffer.active is the alternate screen when a full-screen app
-      // is running, so this captures whatever is on the pane's current screen —
-      // matching `tmux capture-pane` without `-a`.
+      // a new one. The screen is the alternate one when a full-screen app is
+      // running, matching `tmux capture-pane` without `-a`.
       if (!paneId) break;
       const term = store.terminals.get(paneId);
       if (!term) break;
-      const buf = term.buffer.active;
-      const lines: string[] = [];
-      for (let y = 0; y < buf.length; y++) {
-        lines.push(buf.getLine(y)?.translateToString(true) ?? '');
-      }
-      const content = lines.join('\n').replace(/\n+$/, '') + '\n';
+      const content = term.readLines().join('\n').replace(/\n+$/, '') + '\n';
       send({ type: 'capture_pane', pane_id: paneId, content });
       break;
     }

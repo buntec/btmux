@@ -63,20 +63,18 @@ try {
   const readTerminal = () =>
     page.evaluate(async (id) => {
       const { useStore } = await import('/src/state/store.tsx' as string);
-      const buf = useStore.getState().terminals.get(id)?.buffer.active;
-      if (!buf) return '';
-      return Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '').join('\n');
+      const term = useStore.getState().terminals.get(id);
+      if (!term) return '';
+      return term.readLines().join('\n');
     }, pane);
   const waitForText = (pattern: RegExp) =>
     waitForAsync(
       page,
       async ({ id, source }) => {
         const { useStore } = await import('/src/state/store.tsx' as string);
-        const buf = useStore.getState().terminals.get(id)?.buffer.active;
-        if (!buf) return null;
-        const text = Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString(true) ?? '').join(
-          '\n',
-        );
+        const term = useStore.getState().terminals.get(id);
+        if (!term) return null;
+        const text = term.readLines().join('\n');
         return text.match(new RegExp(source))?.[1] ?? null;
       },
       { id: pane, source: pattern.source },

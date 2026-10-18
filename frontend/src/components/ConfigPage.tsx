@@ -80,15 +80,11 @@ type Draft = {
   windowGridCount: number;
   binds: Record<string, string>;
   keyOverrides: Record<string, string>;
-  renderer: NonNullable<ClientConfig['terminal']['renderer']>;
   cursorBlink: boolean;
-  cursorStyle: NonNullable<ClientConfig['terminal']['cursorStyle']>;
   scrollback: number;
   allowTransparency: boolean;
-  convertEol: boolean;
   disableStdin: boolean;
   smoothScrollDuration: number;
-  scrollSensitivity: number;
   cellBackgroundOpacity: number;
   consoleLevel: string;
   fileLevel: string;
@@ -133,16 +129,12 @@ function initialDraft(config: ClientConfig): Draft {
     windowGridCount: config.window_grid_count,
     binds: Object.fromEntries(config.binds.map((bind) => [bind.action, bind.key])),
     keyOverrides: config.keys,
-    renderer: config.terminal.renderer ?? 'webgl',
     cursorBlink: config.terminal.cursorBlink ?? true,
-    cursorStyle: config.terminal.cursorStyle ?? 'bar',
     scrollback: config.terminal.scrollback ?? 100_000,
     allowTransparency:
       config.terminal.allowTransparency ?? (config.wallpaper != null || config.wallpaper_shader != null),
-    convertEol: config.terminal.convertEol ?? false,
     disableStdin: config.terminal.disableStdin ?? false,
     smoothScrollDuration: config.terminal.smoothScrollDuration ?? 120,
-    scrollSensitivity: config.terminal.scrollSensitivity ?? 5,
     cellBackgroundOpacity: config.terminal.cellBackgroundOpacity ?? 1,
     consoleLevel: config.log['console-level'],
     fileLevel: config.log['file-level'],
@@ -205,17 +197,13 @@ const TOML_DEFAULTS = {
   backdropDim: 0.5,
   paneSwitchBorderStyle: 'wipe',
   paneSwitchBorderSpeed: 0.15,
-  renderer: 'webgl',
   cursorBlink: true,
-  cursorStyle: 'bar',
   scrollback: 100_000,
   fontFamily: 'Geist Mono',
   fontSize: 18,
   fontWeight: 300,
-  convertEol: false,
   disableStdin: false,
   smoothScrollDuration: 120,
-  scrollSensitivity: 5,
   cellBackgroundOpacity: 1,
   consoleLevel: 'warn',
   fileLevel: 'info',
@@ -287,18 +275,14 @@ function toToml(draft: Draft): string {
   ].filter((line): line is string => line !== null);
 
   const terminalLines = [
-    strLine('renderer', draft.renderer, TOML_DEFAULTS.renderer),
     boolLine('cursor-blink', draft.cursorBlink, TOML_DEFAULTS.cursorBlink),
-    strLine('cursor-style', draft.cursorStyle, TOML_DEFAULTS.cursorStyle),
     intLine('scrollback', draft.scrollback, TOML_DEFAULTS.scrollback),
     strLine('font-family', draft.fontFamily, TOML_DEFAULTS.fontFamily),
     numLine('font-size', draft.fontSize, TOML_DEFAULTS.fontSize, 1),
     intLine('font-weight', draft.fontWeight, TOML_DEFAULTS.fontWeight),
     boolLine('allow-transparency', draft.allowTransparency, defaultAllowTransparency),
-    boolLine('convert-eol', draft.convertEol, TOML_DEFAULTS.convertEol),
     boolLine('disable-stdin', draft.disableStdin, TOML_DEFAULTS.disableStdin),
     numLine('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 1),
-    numLine('scroll-sensitivity', draft.scrollSensitivity, TOML_DEFAULTS.scrollSensitivity, 2),
     numLine('cell-background-opacity', draft.cellBackgroundOpacity, TOML_DEFAULTS.cellBackgroundOpacity, 2),
   ].filter((line): line is string => line !== null);
 
@@ -340,15 +324,11 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('fontFamily')) update.font_family = draft.fontFamily;
   if (dirty.has('fontWeight')) update.font_weight = draft.fontWeight;
   if (dirty.has('fontSize')) update.font_size = draft.fontSize;
-  if (dirty.has('renderer')) update.renderer = draft.renderer;
   if (dirty.has('cursorBlink')) update.cursor_blink = draft.cursorBlink;
-  if (dirty.has('cursorStyle')) update.cursor_style = draft.cursorStyle;
   if (dirty.has('scrollback')) update.scrollback = draft.scrollback;
   if (dirty.has('allowTransparency')) update.allow_transparency = draft.allowTransparency;
-  if (dirty.has('convertEol')) update.convert_eol = draft.convertEol;
   if (dirty.has('disableStdin')) update.disable_stdin = draft.disableStdin;
   if (dirty.has('smoothScrollDuration')) update.smooth_scroll_duration = draft.smoothScrollDuration;
-  if (dirty.has('scrollSensitivity')) update.scroll_sensitivity = draft.scrollSensitivity;
   if (dirty.has('cellBackgroundOpacity')) update.cell_background_opacity = draft.cellBackgroundOpacity;
   if (dirty.has('animations')) update.animations = draft.animations;
   if (dirty.has('consoleLevel')) update.console_level = draft.consoleLevel;
@@ -456,9 +436,7 @@ export function ConfigPage({ config, send }: Props) {
       show_pane_titles: draft.showPaneTitles,
       terminal: {
         ...config.terminal,
-        renderer: draft.renderer,
         cursorBlink: draft.cursorBlink,
-        cursorStyle: draft.cursorStyle,
         scrollback: draft.scrollback,
         fontFamily: draft.fontFamily,
         fontSize: draft.fontSize,
@@ -466,12 +444,10 @@ export function ConfigPage({ config, send }: Props) {
         // Keep null until the user changes this control so a wallpaper can
         // still enable terminal transparency through its normal default.
         allowTransparency: dirty.has('allowTransparency') ? draft.allowTransparency : config.terminal.allowTransparency,
-        convertEol: dirty.has('convertEol') ? draft.convertEol : config.terminal.convertEol,
         disableStdin: dirty.has('disableStdin') ? draft.disableStdin : config.terminal.disableStdin,
         smoothScrollDuration: dirty.has('smoothScrollDuration')
           ? draft.smoothScrollDuration
           : config.terminal.smoothScrollDuration,
-        scrollSensitivity: draft.scrollSensitivity,
         cellBackgroundOpacity: draft.cellBackgroundOpacity,
       },
       wallpaper: draft.wallpaper || null,
@@ -798,15 +774,6 @@ export function ConfigPage({ config, send }: Props) {
                       <FormLayout>
                         {range('fontSize', 'Terminal font size', 8, 36)}
                         {range('fontWeight', 'Terminal font weight', weightMin, weightMax, 100)}
-                        {choose('renderer', 'Renderer', [
-                          { value: 'webgl', label: 'WebGL' },
-                          { value: 'canvas', label: 'Canvas' },
-                        ])}
-                        {choose('cursorStyle', 'Cursor style', [
-                          { value: 'bar', label: 'Bar' },
-                          { value: 'block', label: 'Block' },
-                          { value: 'underline', label: 'Underline' },
-                        ])}
                         {toggle('cursorBlink', 'Blinking cursor')}
                         <NumberInput
                           label="Scrollback lines"
@@ -817,10 +784,8 @@ export function ConfigPage({ config, send }: Props) {
                           onChange={(value) => update('scrollback', value)}
                         />
                         {toggle('allowTransparency', 'Allow transparency')}
-                        {toggle('convertEol', 'Convert line endings')}
                         {toggle('disableStdin', 'Disable terminal input')}
                         {range('smoothScrollDuration', 'Smooth scroll duration (ms)', 0, 500, 10)}
-                        {range('scrollSensitivity', 'Scroll sensitivity', 0.1, 20, 0.1)}
                         {range('cellBackgroundOpacity', 'Cell background opacity', 0, 1, 0.05)}
                       </FormLayout>
                     </VStack>

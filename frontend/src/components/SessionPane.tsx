@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { Terminal } from 'ghostty-web';
+import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { Dialog } from '@astryxdesign/core/Dialog';
 import { TerminalPane } from './TerminalPane';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
@@ -19,7 +19,7 @@ interface Props {
    * TerminalPane for *every* pane across *all* windows of its session (the
    * keep-alive pool) and shows them only while this is the active session *and*
    * the pane is in its active window; everything else stays mounted-but-hidden
-   * so switches don't tear down and rebuild ghostty-web instances.
+   * so switches don't tear down and rebuild emulators.
    *
    * SessionPool mounts one SessionPane per pooled session (keyed by sessionId)
    * and keeps it mounted across session switches, so the keep-alive pool now
@@ -68,7 +68,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   // Lazy-but-sticky pool membership. We don't mount *every* window's panes the
   // instant a session is entered — that would just move the mount-cost burst to
   // session entry. Instead a window joins the pool the first time it becomes
-  // active and then stays (its panes keep streaming, suspend()ed, off-screen).
+  // active and then stays (its panes keep streaming, paused, off-screen).
   // So the first switch to a never-seen window costs the same as today; every
   // switch back is instant. Keyed by window id (stable across reorders).
   const [mountedWindowIds, setMountedWindowIds] = useState<Set<string>>(
@@ -92,25 +92,18 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const registryRef = useRef<Map<string, Terminal>>(new Map());
 
   // Authoritatively focus the active pane after the active pane / layout
-  // changes. ghostty-web's open() auto-focuses each terminal as it mounts and
-  // also schedules a deferred setTimeout(0) focus, so on a window switch all
-  // panes of the target window mount and the last one to settle would steal
-  // keyboard focus from the active pane (border highlight stays correct, but
-  // keystrokes go to the wrong pane). This effect runs after all child
-  // TerminalPane effects, and its setTimeout(0) is therefore enqueued after
-  // every pane's auto-focus — so the active pane wins the race. Re-asserting
-  // here also fixes the same drift for splits and pane-navigation.
+  // changes, after all child TerminalPane effects (splits, pane navigation,
+  // window switches). A pane that is still opening focuses itself once its
+  // replay is shown (TerminalPane's focus effect).
   // While a pane is zoomed it is the one shown and must hold focus, even though
   // the covered panes stay mounted — focus it instead of the active pane.
   // Gated on isActiveSession: with the pool now spanning several sessions, N
   // SessionPanes coexist and only the visible one may grab keyboard focus —
   // otherwise a background session's panes would steal it on every server push.
   // Switching sessions flips isActiveSession→true here, re-running this effect
-  // so the newly-shown session re-asserts focus (same race-fix as window switch).
+  // so the newly-shown session re-asserts focus.
   // A config update also rebuilds every Terminal (see TerminalPane's termOptions
-  // effect). Re-run for that replacement even when activePaneId is unchanged:
-  // each replacement auto-focuses during open(), so otherwise the last pane to
-  // reopen can own keyboard input while the server-selected pane stays highlighted.
+  // effect), so re-run for it even when activePaneId is unchanged.
   // While the window-grid is open it owns the keyboard, so don't focus a pane;
   // focus is returned by WindowGrid's own close path (it can't be done here:
   // closing the grid leaves activePaneId unchanged, and a setTimeout(0) refocus
@@ -139,10 +132,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     if (attended && (focusedUnread || focusedAgentState === 'done')) {
       send({ type: 'acknowledge_pane', pane_id: focusId });
     }
-    const id = window.setTimeout(() => {
-      registryRef.current.get(focusId)?.focus();
-    }, 0);
-    return () => window.clearTimeout(id);
+    registryRef.current.get(focusId)?.focus();
   }, [
     activePaneId,
     zoomedPaneId,
@@ -244,15 +234,15 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   // The keep-alive pool: one TerminalPane per pane across *every* window of the
   // session, keyed by paneId so the instance survives window switches (same key
   // → React reuses it, no unmount/remount). Only the active window's panes are
-  // visible; the rest are display:none + suspend()ed by TerminalPane. Switching
-  // windows is then just suspend/resume + reposition — no ghostty-web teardown,
+  // visible; the rest are display:none + paused by TerminalPane. Switching
+  // windows is then just pause/resume + reposition — no emulator teardown,
   // no pane-socket reconnect, no scrollback replay.
 
   // Zoom is rendered by overlaying the zoomed pane at full size on top of the
   // others rather than swapping the tree to a single pane. Keeping every pane
   // mounted makes zoom toggle instant: no Terminal teardown, no pane-socket
   // reconnect, no scrollback replay. The zoomed pane's container grows to fill
-  // the grid, so its ResizeObserver/FitAddon resizes the PTY exactly as a
+  // the grid, so its ResizeObserver resizes the PTY exactly as a
   // mounted-from-scratch zoomed pane would. Dividers are dropped while zoomed —
   // they'd sit under the overlay and resizing a hidden split makes no sense.
 
@@ -263,7 +253,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         // Every pooled SessionPane overlays the same region (absolute inset:0);
         // only the active session's is shown. display:none on the whole root
         // hides an inactive session's panes and dividers at once, while its
-        // TerminalPanes stay mounted + suspend()ed (see the per-pane visible flag).
+        // TerminalPanes stay mounted + paused (see the per-pane visible flag).
         display: isActiveSession ? undefined : 'none',
         position: 'absolute',
         inset: 0,
@@ -276,7 +266,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
             const rect = rectByPane.get(pane.id);
             // Visible only when this is the shown session AND the pane is in its
             // active window. A background session keeps all panes hidden +
-            // suspend()ed (sockets still streaming), so switch-back is instant.
+            // paused (sockets still streaming), so switch-back is instant.
             const inActiveWindow = rect !== undefined;
             const isZoomed = isActiveSession && inActiveWindow && pane.id === zoomedPaneId;
             // When a pane is zoomed, hide all other active-window panes so their

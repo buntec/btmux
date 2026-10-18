@@ -341,7 +341,7 @@ pub struct PtyHandle {
     port: u16,
     /// Maximum backend replay buffer size in bytes, derived from the config's
     /// scrollback line count. Controls how much PTY output is kept for replay
-    /// on reconnect; ghostty-web's in-memory scrollback uses the line count directly.
+    /// on reconnect; the browser emulator's scrollback uses the line count directly.
     scrollback_bytes: usize,
     palette: colors::SharedPalette,
     /// Mode 2031, set by the program in the PTY.

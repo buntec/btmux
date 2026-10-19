@@ -139,13 +139,18 @@ waits 300 ms (agent input boxes can drop an Enter that arrives with the text),
 and presses Enter. With `wait` (the default), it waits up to 15 s for the turn
 to start and then for the agent to settle, and returns `{status, started,
 timed_out, screen}`, where `screen` is the rendered screen once output has
-paused (hooks report before the agent finishes drawing). With `wait: false`, it
+paused (hooks report before the agent finishes drawing), or null if the pane
+closed. With `wait: false`, it
 returns `{submitted: true}` once Enter is sent. It refuses while
 the agent is `blocked`: typed text would answer the dialog, which `send_keys`
 can do deliberately. With `wait`, it also refuses while the agent is
 `working`, since the turn that ends next would not be this prompt's.
-Prompts to one pane are submitted one at a time; a waited prompt holds the
-pane until its turn starts, so a second waited prompt then finds it `working`.
+Prompts to one pane are submitted one at a time, and a waited prompt first
+waits (up to 15 s) for earlier prompts' turns to start, so it then finds the
+agent `working` instead of claiming another prompt's turn. It can't tell its
+turn from one started by a prompt typed in a browser, or by one queued with
+`wait: false` while the agent was working, which may run after the current
+turn.
 
 `wait_for_agent` reports the current state, so right after a `wait: false`
 prompt it can return before the turn starts. Wait for `working` first, or use

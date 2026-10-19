@@ -18,27 +18,27 @@ A tmux-style terminal manager for the browser and desktop, powered by [wterm](ht
 
 ### Sessions, windows, and panes
 
-https://github.com/user-attachments/assets/f120a4d9-7736-4415-9677-b3a33695be70
+https://github.com/user-attachments/assets/6d91655d-d595-480b-91d2-f08e491b78c4
 
 ### File browser, Git mode, and process viewer
 
-https://github.com/user-attachments/assets/ac87f6ac-3484-4f20-973f-73ef6d1d6b6f
+https://github.com/user-attachments/assets/c8a18d1d-022c-46dd-95b8-26c2ef60e20e
 
 ### Neovim GUI
 
-https://github.com/user-attachments/assets/eb5a2e6f-e1fa-4693-aedc-826e3cc078ab
+https://github.com/user-attachments/assets/c97c4cd8-cbc8-45f8-a8d0-ed8b048b9e09
 
 ### Coding agents
 
-https://github.com/user-attachments/assets/c7ed8b36-b9b2-4a5c-8f92-3fa410e52e65
+https://github.com/user-attachments/assets/4333793e-220f-42a6-9a81-8bf48242d358
 
 ### LaTeX overlay
 
-https://github.com/user-attachments/assets/a5eb0d69-40dc-4394-b75b-3b435f5c2ab5
+https://github.com/user-attachments/assets/bf0965ef-af31-4090-8b14-f14ae55dd710
 
 ### Shader wallpapers
 
-https://github.com/user-attachments/assets/45419669-7e95-4e4b-9eb4-74b6746887f4
+https://github.com/user-attachments/assets/a26bbac8-c9fe-434a-9fbc-5063048c9d10
 
 ## Install
 

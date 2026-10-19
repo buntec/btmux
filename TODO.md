@@ -42,81 +42,21 @@ Options:
 
 Once fixed upstream, replace `RailNavItem` with `SideNavItem` and bump Astryx.
 
-## Blank pane until clicked
+## wterm textarea position after clear
 
-Sometimes a pane's shell goes invisible (the wallpaper shows through) until the
-pane is clicked. Not reproducible on demand. Ruled out: the initial-replay cover
-(it paints the theme background, not the wallpaper), the Neovim/VS Code
-`opacity: 0` (a click doesn't close the surface), and stuck wterm painting
-(pause and synchronized-output hold recover on their own).
+wterm 0.5.4 moves its input textarea to the cursor only on focus and while
+composing (`syncInputPosition`). Its absolute offset is in scroll-content
+coordinates, so after focusing with deep scrollback, `clear` (`ESC[3J`) leaves
+it far below the rows: it keeps the scroll height, and `_doRender` scrolls to
+the bottom, showing an empty pane until the next focus. `trackInputPosition`
+in `frontend/src/lib/paneTerminal.ts` repositions it after every render;
+`terminal-browser-test.ts` covers it. Recheck it on every `@wterm/*` bump.
 
-Candidates:
+Options:
 
-- The emulator screen is empty: a local resize without a PTY size change clears
-  the prompt, and nothing redraws it. A click can fix it by claiming size
-  ownership (PTY resize, SIGWINCH) or sending a focus-in report.
-- The rows exist but are scrolled away: wterm mounts scrollback rows around
-  `scrollTop`, so a scroll change without a scroll event leaves only spacers in
-  view.
-- An ancestor hides the terminal with `opacity` or `visibility`.
+- Report it upstream with a repro: write 300 lines, focus, write
+  `\x1b[3J\x1b[H\x1b[2J$ `; `scrollTop` stays near the old bottom.
+- Fix upstream by positioning the textarea in `syncInputPosition` always, or
+  before `_scrollToBottom` reads `scrollHeight`.
 
-Next time, before clicking, run this in devtools. `liveTextLen` 0 means an empty
-screen, text with `inViewTextLen` 0 means scrolled away, and a non-empty
-`hidden` means CSS:
-
-```js
-copy(
-  JSON.stringify(
-    [...document.querySelectorAll("[data-pane-id]")]
-      .filter((p) => getComputedStyle(p).display !== "none")
-      .map((p) => {
-        const t = p.querySelector(".btm-wterm");
-        if (!t) return { pane: p.dataset.paneId, noTerm: true };
-        const b = t.getBoundingClientRect(),
-          rows = [...t.querySelectorAll(".term-row")];
-        const live = rows.filter(
-          (r) => !r.classList.contains("term-scrollback-row"),
-        );
-        const inView = rows.filter((r) => {
-          const x = r.getBoundingClientRect();
-          return x.bottom > b.top && x.top < b.bottom;
-        });
-        const hidden = [];
-        for (let e = t; e && e !== document.body; e = e.parentElement) {
-          const s = getComputedStyle(e);
-          if (s.visibility !== "visible" || +s.opacity < 1)
-            hidden.push([e.className || e.tagName, s.visibility, s.opacity]);
-        }
-        return {
-          pane: p.dataset.paneId,
-          status: p.querySelector("[role=status]")?.textContent,
-          cls: t.className,
-          scrollTop: t.scrollTop,
-          scrollHeight: t.scrollHeight,
-          clientHeight: t.clientHeight,
-          size: [b.width, b.height],
-          rows: rows.length,
-          liveRows: live.length,
-          liveTextLen: live
-            .map((r) => r.textContent)
-            .join("")
-            .trim().length,
-          inViewRows: inView.length,
-          inViewTextLen: inView
-            .map((r) => r.textContent)
-            .join("")
-            .trim().length,
-          hidden,
-        };
-      }),
-    null,
-    2,
-  ),
-);
-```
-
-Also note whether typing or a window switch fixes it, whether the pane was
-active, other viewers of the session, what ran in the pane, and the action just
-before. If that isn't enough, add a debug helper that also dumps wterm internals
-(`_renderingPaused`, `_synchronizedOutputState`, `_pendingResizeScrollTop`) and
-the pane's size ownership.
+Once fixed upstream, remove `trackInputPosition` and bump `@wterm/*`.

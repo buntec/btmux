@@ -124,6 +124,38 @@ try {
   assert.deepEqual(result.paste, [bytes('\x1b[200~a[201~b\x1b[201~')], 'paste must not end bracketed paste early');
   console.log('PASS cold fonts, binary mouse input, wheel throttling, mouse encodings and paste');
 
+  // Focus with deep scrollback, then `clear`: the rows must stay in view.
+  const cleared = await page.evaluate(async () => {
+    const { PaneTerminal } = await import('/src/lib/paneTerminal.ts' as string);
+    const { buildTerminalOptions } = await import('/src/components/TerminalPane.tsx' as string);
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:300px;z-index:9999';
+    document.body.appendChild(host);
+    const term = await PaneTerminal.open(host, buildTerminalOptions(useStore.getState().config), {
+      cols: 80,
+      rows: 10,
+    });
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    try {
+      term.write(Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\r\n'));
+      await frame();
+      term.focus();
+      term.write('\x1b[3J\x1b[H\x1b[2J$ ');
+      await frame();
+      await frame();
+      const el = term.element;
+      const row = el.querySelector('.term-row:not(.term-scrollback-row)')!.getBoundingClientRect();
+      const view = el.getBoundingClientRect();
+      return { scrollTop: el.scrollTop, inView: row.top >= view.top && row.bottom <= view.bottom };
+    } finally {
+      term.dispose();
+      host.remove();
+    }
+  });
+  assert(cleared.inView, `rows scrolled away after clear: ${JSON.stringify(cleared)}`);
+  console.log('PASS clear after focusing deep scrollback keeps the rows in view');
+
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const store = useStore.getState();

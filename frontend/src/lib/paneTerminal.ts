@@ -88,6 +88,21 @@ function unscaleMeasurement(wterm: WTerm, element: HTMLElement) {
   };
 }
 
+interface WTermInput {
+  syncInputPosition(): void;
+  positionTextarea(): void;
+}
+
+/**
+ * Move wterm's textarea to the cursor after every render, not only while
+ * composing. It keeps the offset from its last focus, so after `clear` it
+ * holds the scroll height and wterm scrolls the rows out of view.
+ */
+function trackInputPosition(wterm: WTerm) {
+  const input = (wterm as unknown as { input: WTermInput | null }).input;
+  if (input) input.syncInputPosition = () => input.positionTextarea();
+}
+
 /** Row height from the font's ascent and descent, as ghostty-web measured it. */
 const fontRowHeight = (family: string, size: number, weight: number) => {
   const ctx = document.createElement('canvas').getContext('2d');
@@ -166,6 +181,7 @@ export class PaneTerminal {
       element.remove();
       throw e;
     }
+    trackInputPosition(wterm);
     // init() locks the element's height; btmux sizes it.
     element.style.height = '';
     // Stay focusable while the pane hides its replay.

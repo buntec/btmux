@@ -7,7 +7,9 @@ use tokio::sync::broadcast;
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use crate::pty::replay::Output;
 use crate::pty::screen::{self, MAX_CAPTURE_HISTORY};
+use crate::session::manager::{PaneStatuses, SessionManager};
 use crate::session::{AgentState, AgentStatus};
 use crate::{config, AppState};
 
@@ -67,8 +69,8 @@ pub fn parse_states<S: AsRef<str>>(names: &[S]) -> Result<Vec<AgentState>, Strin
         .collect()
 }
 
-/// The pane's rendered screen, with up to `lines` lines (or all retained
-/// history) above it when `history` is set, then cut to the last `lines`.
+/// The pane's rendered screen, with retained history above it when `history`
+/// is set, cut to the last `lines`.
 pub async fn capture_pane(
     state: &AppState,
     pane_id: Uuid,
@@ -84,18 +86,19 @@ pub async fn capture_pane(
             .ensure_spawned(config::DEFAULT_PTY_COLS, config::DEFAULT_PTY_ROWS)?;
         pane.pty.journal()
     };
-    let rows = if history {
-        lines.unwrap_or(MAX_CAPTURE_HISTORY)
-    } else {
-        0
-    };
-    let text = tokio::task::spawn_blocking(move || screen::capture(&events, rows).text)
+    tokio::task::spawn_blocking(move || render(&events, history, lines))
         .await
-        .map_err(|e| Error::Failed(e.to_string()))?;
-    Ok(match lines {
+        .map_err(|e| Error::Failed(e.to_string()))
+}
+
+fn render(events: &[Output], history: bool, lines: Option<usize>) -> String {
+    // History counts rows, `lines` joined lines, so keep all history first.
+    let rows = if history { MAX_CAPTURE_HISTORY } else { 0 };
+    let text = screen::capture(events, rows).text;
+    match lines {
         Some(lines) => last_lines(&text, lines),
         None => text,
-    })
+    }
 }
 
 fn last_lines(text: &str, count: usize) -> String {
@@ -122,10 +125,14 @@ pub async fn wait_for_agent(
     states: &[AgentState],
     timeout: Duration,
 ) -> Result<AgentWait, Error> {
-    let mut events = state.read().await.events().subscribe();
+    let (status, mut events) = {
+        let mgr = state.read().await;
+        (status_of(&mgr, pane_id)?, mgr.statuses().subscribe())
+    };
     wait_until(
         state,
         pane_id,
+        status,
         &mut events,
         |s| states.contains(s),
         Instant::now() + timeout,
@@ -133,23 +140,18 @@ pub async fn wait_for_agent(
     .await
 }
 
-/// Rechecks on every state broadcast, since each agent status change sends one.
+/// Checks `status`, then each later status broadcast in order, so brief
+/// states count and a known agent's absence is an exit.
 async fn wait_until(
     state: &AppState,
     pane_id: Uuid,
-    events: &mut broadcast::Receiver<String>,
+    mut status: Option<AgentStatus>,
+    events: &mut broadcast::Receiver<PaneStatuses>,
     done: impl Fn(&AgentState) -> bool,
     deadline: Instant,
 ) -> Result<AgentWait, Error> {
     let mut seen = false;
     loop {
-        let status = {
-            let mgr = state.read().await;
-            if mgr.find_pane(pane_id).is_none() {
-                return Err(Error::PaneNotFound(pane_id));
-            }
-            mgr.agent_status(pane_id).cloned()
-        };
         match &status {
             Some(current) if done(&current.state) => {
                 return Ok(AgentWait {
@@ -166,16 +168,27 @@ async fn wait_until(
             }
             None => {}
         }
-        tokio::select! {
+        status = tokio::select! {
             event = events.recv() => match event {
-                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Ok(statuses) => statuses
+                    .get(&pane_id)
+                    .cloned()
+                    .ok_or(Error::PaneNotFound(pane_id))?,
+                Err(broadcast::error::RecvError::Lagged(_)) => status_of(&*state.read().await, pane_id)?,
                 Err(broadcast::error::RecvError::Closed) => return Err("server is shutting down".into()),
             },
             _ = tokio::time::sleep_until(deadline) => {
                 return Ok(AgentWait { status, timed_out: true });
             }
-        }
+        };
     }
+}
+
+fn status_of(mgr: &SessionManager, pane_id: Uuid) -> Result<Option<AgentStatus>, Error> {
+    if mgr.find_pane(pane_id).is_none() {
+        return Err(Error::PaneNotFound(pane_id));
+    }
+    Ok(mgr.agent_status(pane_id).cloned())
 }
 
 #[derive(Serialize)]
@@ -199,7 +212,16 @@ pub async fn send_prompt(
     wait: bool,
     timeout: Duration,
 ) -> Result<Option<PromptOutcome>, Error> {
-    let (input, journal) = {
+    let lock = state
+        .read()
+        .await
+        .find_pane(pane_id)
+        .ok_or(Error::PaneNotFound(pane_id))?
+        .prompt
+        .clone();
+    // Keeps a paste with its Enter, and a waited prompt with the turn it starts.
+    let submitting = lock.lock().await;
+    let (status, input, journal, mut events) = {
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
         let status = mgr
@@ -219,7 +241,13 @@ pub async fn send_prompt(
                     .into(),
             );
         }
-        (pane.pty.input_tx.clone(), pane.pty.journal())
+        // Subscribed with the check, so no earlier turn is seen as this one.
+        (
+            Some(status.clone()),
+            pane.pty.input_tx.clone(),
+            pane.pty.journal(),
+            mgr.statuses().subscribe(),
+        )
     };
     let bracketed =
         tokio::task::spawn_blocking(move || screen::capture(&journal, 0).bracketed_paste)
@@ -234,7 +262,6 @@ pub async fn send_prompt(
         text.to_owned()
     };
 
-    let mut events = state.read().await.events().subscribe();
     let deadline = Instant::now() + timeout;
     input.send_wait(paste.into_bytes()).await?;
     tokio::time::sleep(SUBMIT_DELAY).await;
@@ -247,16 +274,19 @@ pub async fn send_prompt(
     let mut outcome = wait_until(
         state,
         pane_id,
+        status,
         &mut events,
         |s| matches!(s, AgentState::Working | AgentState::Blocked),
         start,
     )
     .await?;
+    drop(submitting);
     let started = !outcome.timed_out && outcome.status.is_some();
     if started {
         outcome = wait_until(
             state,
             pane_id,
+            outcome.status,
             &mut events,
             |s| SETTLED.contains(s),
             deadline,
@@ -481,6 +511,102 @@ mod tests {
             .ok()
             .unwrap();
         assert!(screen.contains("btmux-42"), "{screen}");
+    }
+
+    #[tokio::test]
+    async fn send_prompt_sees_brief_turns_and_exits() {
+        let (state, pane_id) = pane().await;
+        set(&state, pane_id, AgentState::Idle).await;
+        let prompt = tokio::spawn({
+            let state = state.clone();
+            async move { send_prompt(&state, pane_id, "true", true, DEFAULT_WAIT).await }
+        });
+        tokio::time::sleep(SUBMIT_DELAY / 2).await;
+        {
+            // The whole turn passes before the waiter rereads.
+            let mut mgr = state.write().await;
+            for agent_state in [AgentState::Working, AgentState::Done] {
+                mgr.set_agent_status(
+                    pane_id,
+                    AgentStatus {
+                        state: agent_state,
+                        ..AgentStatus::default()
+                    },
+                );
+                broadcast_state(&mgr);
+            }
+        }
+        let outcome = prompt.await.unwrap().ok().unwrap().unwrap();
+        assert!(outcome.started);
+        assert!(!outcome.timed_out);
+        assert_eq!(outcome.status.unwrap().state, AgentState::Done);
+
+        let prompt = tokio::spawn({
+            let state = state.clone();
+            async move { send_prompt(&state, pane_id, "true", true, DEFAULT_WAIT).await }
+        });
+        tokio::time::sleep(SUBMIT_DELAY / 2).await;
+        set(&state, pane_id, AgentState::Unknown).await;
+        let outcome = tokio::time::timeout(Duration::from_secs(5), prompt)
+            .await
+            .unwrap()
+            .unwrap()
+            .ok()
+            .unwrap()
+            .unwrap();
+        assert!(!outcome.started);
+        assert!(!outcome.timed_out);
+        assert!(outcome.status.is_none());
+    }
+
+    #[tokio::test]
+    async fn concurrent_prompts_stay_whole() {
+        let (state, pane_id) = pane().await;
+        set(&state, pane_id, AgentState::Idle).await;
+        let send = |prompt: &'static str, wait| {
+            let state = state.clone();
+            tokio::spawn(
+                async move { send_prompt(&state, pane_id, prompt, wait, DEFAULT_WAIT).await },
+            )
+        };
+        let (left, right) = (send("echo LEFT", false), send("echo RIGHT", false));
+        assert!(left.await.unwrap().ok().unwrap().is_none());
+        assert!(right.await.unwrap().ok().unwrap().is_none());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let screen = capture_pane(&state, pane_id, true, None)
+                .await
+                .ok()
+                .unwrap();
+            if screen.lines().any(|l| l == "LEFT") && screen.lines().any(|l| l == "RIGHT") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{screen}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        // A second waited prompt can't claim the first one's turn.
+        let first = send("true", true);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let second = send("true", true);
+        tokio::time::sleep(SUBMIT_DELAY * 2).await;
+        set(&state, pane_id, AgentState::Working).await;
+        let error = second.await.unwrap();
+        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("busy")));
+        set(&state, pane_id, AgentState::Idle).await;
+        assert!(first.await.unwrap().ok().unwrap().unwrap().started);
+    }
+
+    #[test]
+    fn line_limit_counts_joined_lines() {
+        let events = [
+            Output::Size(4, 2),
+            Output::Data(b"aaaaaaaa\r\nbbbbbbbb\r\ncccccccc\r\ndddddddd\r\n"[..].into()),
+        ];
+        assert_eq!(
+            render(&events, true, Some(3)),
+            "bbbbbbbb\ncccccccc\ndddddddd\n"
+        );
     }
 
     #[test]

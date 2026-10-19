@@ -14,6 +14,9 @@ use crate::git::RepoLayout;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
 
+/// Every pane's agent status, sent with each state broadcast.
+pub type PaneStatuses = std::sync::Arc<HashMap<Uuid, Option<AgentStatus>>>;
+
 /// A live shell handed to an upgraded server: pane, PTY master, and state.
 pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
 
@@ -34,6 +37,8 @@ pub struct SessionManager {
     /// `file_config` + `overrides`, resolved — this is what the browser sees.
     config: ClientConfig,
     events: broadcast::Sender<String>,
+    /// Lets automation see each agent transition, not just the latest.
+    statuses: broadcast::Sender<PaneStatuses>,
     /// Live agent state is runtime-only and is never included in persistence.
     agents: HashMap<Uuid, AgentLifecycle>,
     pty_env: PtyEnv,
@@ -72,6 +77,7 @@ impl SessionManager {
         cli_shell: Option<String>,
     ) -> Self {
         let (events, _) = broadcast::channel::<String>(64);
+        let (statuses, _) = broadcast::channel(64);
         let config = crate::config::resolve_binds(&file_config, ColorMode::default());
         let pty_env = PtyEnv {
             exit_tx,
@@ -91,6 +97,7 @@ impl SessionManager {
             config_error: None,
             config,
             events,
+            statuses,
             agents: HashMap::new(),
             next_client: 0,
             alert_client: None,
@@ -100,6 +107,23 @@ impl SessionManager {
 
     pub fn events(&self) -> &broadcast::Sender<String> {
         &self.events
+    }
+
+    pub fn statuses(&self) -> &broadcast::Sender<PaneStatuses> {
+        &self.statuses
+    }
+
+    pub fn pane_statuses(&self) -> PaneStatuses {
+        let panes = self
+            .sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes);
+        std::sync::Arc::new(
+            panes
+                .map(|pane| (pane.id, self.agent_status(pane.id).cloned()))
+                .collect(),
+        )
     }
 
     /// The grid and status badges read the same lifecycle record.

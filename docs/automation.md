@@ -144,6 +144,8 @@ returns `{submitted: true}` once Enter is sent. It refuses while
 the agent is `blocked`: typed text would answer the dialog, which `send_keys`
 can do deliberately. With `wait`, it also refuses while the agent is
 `working`, since the turn that ends next would not be this prompt's.
+Prompts to one pane are submitted one at a time; a waited prompt holds the
+pane until its turn starts, so a second waited prompt then finds it `working`.
 
 `wait_for_agent` reports the current state, so right after a `wait: false`
 prompt it can return before the turn starts. Wait for `working` first, or use

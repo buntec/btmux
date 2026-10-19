@@ -13,6 +13,12 @@ pub const DEFAULT_PORT: u16 = 8004;
 pub const DEFAULT_SHELL: &str = "/bin/bash";
 #[cfg(windows)]
 pub const DEFAULT_SHELL: &str = "powershell.exe";
+#[cfg(unix)]
+const SHELL_DEFAULT_HELP: &str = "Defaults to $SHELL / /bin/bash.";
+#[cfg(windows)]
+const SHELL_DEFAULT_HELP: &str = "Defaults to powershell.exe. btmux types
+# PowerShell commands into panes (file browser cd, open-editor, capture-pane),
+# so those don't work in other shells.";
 pub const DEFAULT_PTY_COLS: u16 = 80;
 pub const DEFAULT_PTY_ROWS: u16 = 24;
 
@@ -135,6 +141,7 @@ fn prefix_key<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Strin
 }
 
 /// Resolve the shell used for newly-created panes when no CLI override exists.
+/// Windows ignores `$SHELL`: Git Bash and MSYS set it to paths Windows can't run.
 pub fn resolve_shell(configured: Option<&str>) -> String {
     configured
         .filter(|shell| !shell.trim().is_empty())
@@ -142,7 +149,7 @@ pub fn resolve_shell(configured: Option<&str>) -> String {
         .or_else(|| {
             std::env::var("SHELL")
                 .ok()
-                .filter(|shell| !shell.is_empty())
+                .filter(|shell| cfg!(unix) && !shell.is_empty())
         })
         .unwrap_or_else(|| DEFAULT_SHELL.to_string())
 }
@@ -1501,7 +1508,7 @@ pub fn generate_config_toml() -> String {
 # character or a key name such as Space, Enter, Tab, Escape, or F1-F12.
 # prefix = "{DEFAULT_PREFIX}"
 
-# Shell to spawn in new panes. Defaults to $SHELL / {DEFAULT_SHELL}.
+# Shell to spawn in new panes. {SHELL_DEFAULT_HELP}
 # shell = "{DEFAULT_SHELL}"
 
 # Milliseconds after a pane navigation or resize key during which another one

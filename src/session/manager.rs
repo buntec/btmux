@@ -1428,11 +1428,9 @@ fn unique_name_in(existing: &[&str], base: &str) -> String {
     }
 }
 
-/// POSIX single-quote a string for safe interpolation into a shell command line:
-/// wrap in `'…'` and replace each embedded `'` with `'\''`. Works for bash, zsh,
-/// and fish alike (all treat single quotes literally). Used to inject the capture
-/// file path into a pane's shell.
-/// Quote `s` for the pane's shell: POSIX, or PowerShell on Windows.
+/// Single-quote a string for safe interpolation into the pane's shell command
+/// line: wrap in `'…'` and replace each embedded `'` with `'\''` (bash, zsh,
+/// fish), or with `''` on Windows (PowerShell).
 pub(crate) fn shell_single_quote(s: &str) -> String {
     let escaped = if cfg!(windows) { "''" } else { "'\\''" };
     let mut out = String::with_capacity(s.len() + 2);

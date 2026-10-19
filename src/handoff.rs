@@ -94,7 +94,6 @@ pub struct Inherited {
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
 }
 
-/// Take over the previous server's state, if this process is an upgrade.
 impl Inherited {
     pub fn take_lock(&mut self) -> Option<crate::persistence::ProfileLock> {
         self.lock.take().map(crate::persistence::ProfileLock::adopt)
@@ -109,6 +108,7 @@ impl Inherited {
     }
 }
 
+/// Take over the previous server's state, if this process is an upgrade.
 pub fn take() -> Result<Option<Inherited>, String> {
     let Some(value) = std::env::var_os(ENV) else {
         return Ok(None);

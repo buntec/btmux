@@ -40,9 +40,26 @@ pub fn valid_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
 }
 
-/// Windows: `FILE_FLAG_OPEN_REPARSE_POINT`, so links aren't followed.
-#[cfg(windows)]
-const NOFOLLOW: u32 = 0x0020_0000;
+/// Create `path`, which must not exist, readable and writable only by this user.
+pub fn create_private_file(path: &Path) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    #[cfg(windows)]
+    options.access_mode(
+        windows_sys::Win32::Foundation::GENERIC_WRITE
+            | windows_sys::Win32::Storage::FileSystem::WRITE_DAC,
+    );
+    let file = options.open(path)?;
+    #[cfg(windows)]
+    if let Err(error) = acl::restrict(&file) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(file)
+}
 
 pub fn read_private_file(path: &Path) -> std::io::Result<String> {
     let mut options = OpenOptions::new();
@@ -50,14 +67,13 @@ pub fn read_private_file(path: &Path) -> std::io::Result<String> {
     #[cfg(unix)]
     options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     #[cfg(windows)]
-    options.custom_flags(NOFOLLOW);
+    options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
     let file = options.open(path)?;
     let metadata = file.metadata()?;
-    // Windows: files under %LOCALAPPDATA% inherit its owner-only ACL.
     #[cfg(unix)]
     let private = metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0;
     #[cfg(windows)]
-    let private = true;
+    let private = acl::is_private(&file);
     if !metadata.is_file() || !private || metadata.len() > 16 * 1024 {
         return Err(std::io::Error::other("expected an owner-only regular file"));
     }
@@ -115,11 +131,7 @@ impl Registration {
         let path = state_file.with_extension("server");
         let temporary = path.with_extension(format!("server.{}.tmp", uuid::Uuid::new_v4()));
         let result = (|| {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            options.mode(0o600);
-            let mut file: File = options.open(&temporary)?;
+            let mut file = create_private_file(&temporary)?;
             let contents = serde_json::to_vec(&server)?;
             file.write_all(&contents)?;
             file.sync_all()?;
@@ -136,6 +148,156 @@ impl Registration {
 impl Drop for Registration {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// File ACLs, the Windows counterpart of mode 0600.
+#[cfg(windows)]
+pub mod acl {
+    use std::fs::File;
+    use std::os::windows::io::AsRawHandle;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE};
+    use windows_sys::Win32::Security::Authorization::{
+        GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        AclSizeInformation, AddAccessAllowedAce, EqualSid, GetAce, GetAclInformation, GetLengthSid,
+        GetTokenInformation, InitializeAcl, IsWellKnownSid, TokenUser, WinBuiltinAdministratorsSid,
+        WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION,
+        DACL_SECURITY_INFORMATION, INHERIT_ONLY_ACE, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSID, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+    use windows_sys::Win32::System::SystemServices::{
+        ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// This process's `TOKEN_USER`, whose SID points into the buffer.
+    struct User(Vec<u64>);
+
+    impl User {
+        fn current() -> std::io::Result<Self> {
+            unsafe {
+                let mut token: HANDLE = null_mut();
+                if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut len = 0;
+                GetTokenInformation(token, TokenUser, null_mut(), 0, &mut len);
+                let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+                let ok =
+                    GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len);
+                let error = std::io::Error::last_os_error();
+                CloseHandle(token);
+                if ok == 0 {
+                    return Err(error);
+                }
+                Ok(Self(buf))
+            }
+        }
+
+        fn sid(&self) -> PSID {
+            unsafe { (*self.0.as_ptr().cast::<TOKEN_USER>()).User.Sid }
+        }
+    }
+
+    /// Whether only this user (and SYSTEM and Administrators, like root) can
+    /// open `file`, which must have been opened with read access.
+    pub fn is_private(file: &File) -> bool {
+        let Ok(user) = User::current() else {
+            return false;
+        };
+        unsafe {
+            let trusted = |sid: PSID| {
+                EqualSid(sid, user.sid()) != 0
+                    || IsWellKnownSid(sid, WinLocalSystemSid) != 0
+                    || IsWellKnownSid(sid, WinBuiltinAdministratorsSid) != 0
+            };
+            let (mut owner, mut dacl, mut descriptor) = (null_mut(), null_mut(), null_mut());
+            if GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut owner,
+                null_mut(),
+                &mut dacl,
+                null_mut(),
+                &mut descriptor,
+            ) != ERROR_SUCCESS
+            {
+                return false;
+            }
+            // A null DACL grants everyone access.
+            let private = !dacl.is_null() && trusted(owner) && aces_trusted(dacl, trusted);
+            LocalFree(descriptor);
+            private
+        }
+    }
+
+    /// Whether every allow entry in `dacl` that applies to the file is trusted.
+    unsafe fn aces_trusted(dacl: *const ACL, trusted: impl Fn(PSID) -> bool) -> bool {
+        unsafe {
+            let mut info: ACL_SIZE_INFORMATION = std::mem::zeroed();
+            if GetAclInformation(
+                dacl,
+                (&raw mut info).cast(),
+                size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            ) == 0
+            {
+                return false;
+            }
+            (0..info.AceCount).all(|index| {
+                let mut ace = null_mut();
+                if GetAce(dacl, index, &mut ace) == 0 {
+                    return false;
+                }
+                let header = &*ace.cast::<ACE_HEADER>();
+                match u32::from(header.AceType) {
+                    _ if u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0 => true,
+                    ACCESS_DENIED_ACE_TYPE => true,
+                    ACCESS_ALLOWED_ACE_TYPE => trusted(
+                        (&raw const (*ace.cast::<ACCESS_ALLOWED_ACE>()).SidStart)
+                            .cast_mut()
+                            .cast(),
+                    ),
+                    // Object and callback entries: not written by btmux.
+                    _ => false,
+                }
+            })
+        }
+    }
+
+    /// Grant only this user access to `file`, which must have been opened with
+    /// `WRITE_DAC`, dropping inherited entries.
+    pub fn restrict(file: &File) -> std::io::Result<()> {
+        let user = User::current()?;
+        unsafe {
+            let len = size_of::<ACL>()
+                + size_of::<ACCESS_ALLOWED_ACE>()
+                + GetLengthSid(user.sid()) as usize;
+            let mut buf = vec![0u64; len.div_ceil(8)];
+            let acl = buf.as_mut_ptr().cast::<ACL>();
+            if InitializeAcl(acl, (buf.len() * 8) as u32, ACL_REVISION) == 0
+                || AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, user.sid()) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            match SetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                acl,
+                null(),
+            ) {
+                ERROR_SUCCESS => Ok(()),
+                error => Err(std::io::Error::from_raw_os_error(error as i32)),
+            }
+        }
     }
 }
 

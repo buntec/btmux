@@ -151,12 +151,16 @@ mod tests {
 
     #[test]
     fn no_file_runs_bare_editor() {
+        let fallback = if cfg!(windows) { "notepad" } else { "vi" };
         assert_eq!(editor_argv("nvim -p", None, Some(3)), ["nvim", "-p"]);
-        assert_eq!(editor_argv("", None, None), ["vi"]);
+        assert_eq!(editor_argv("", None, None), [fallback]);
     }
 
     #[test]
-    fn empty_editor_falls_back_to_vi() {
+    fn empty_editor_falls_back_to_platform_editor() {
+        #[cfg(not(windows))]
         assert_eq!(argv("", Some(2)), ["vi", "+2", "/a b/f.rs"]);
+        #[cfg(windows)]
+        assert_eq!(argv("", Some(2)), ["notepad", "/a b/f.rs"]);
     }
 }

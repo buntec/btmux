@@ -415,6 +415,11 @@ impl PtyHandle {
         self.scrollback.lock().unwrap().screen_snapshot()
     }
 
+    /// The checkpoint and journal, as replayed to a new viewer.
+    pub fn journal(&self) -> Vec<Output> {
+        self.scrollback.lock().unwrap().snapshot()
+    }
+
     pub fn track_screen(&self, enabled: bool) {
         self.scrollback.lock().unwrap().track_screen(enabled);
     }

@@ -1,6 +1,8 @@
+mod agent_cli;
 mod agent_hooks;
 mod api;
 mod auth;
+mod automation;
 mod config;
 // The desktop launcher also compiles this shared module.
 #[allow(dead_code)]
@@ -90,6 +92,20 @@ async fn main() {
         let code =
             send_notification::run(args.profile.as_deref(), *level, title, body.as_deref()).await;
         std::process::exit(code);
+    }
+
+    match args.command.as_ref() {
+        Some(config::SubCommand::Agents) => {
+            std::process::exit(agent_cli::agents(args.profile.as_deref()).await)
+        }
+        Some(config::SubCommand::Wait {
+            pane,
+            states,
+            timeout,
+        }) => std::process::exit(
+            agent_cli::wait(args.profile.as_deref(), pane, states, *timeout).await,
+        ),
+        _ => {}
     }
 
     // Parse config early (before full startup) so we can configure logging from

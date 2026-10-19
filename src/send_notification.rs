@@ -22,7 +22,7 @@ pub async fn run(
 
 /// The server's URL and token: this pane's server, unless `--profile` names
 /// one, else the profile's registration.
-fn server(profile: Option<&str>) -> Result<(String, String), String> {
+pub fn server(profile: Option<&str>) -> Result<(String, String), String> {
     let env = |name| std::env::var(name).ok().filter(|v| !v.is_empty());
     if profile.is_none() {
         if let (Some(url), Some(token)) = (env("BTMUX_API_URL"), env("BTMUX_AUTH_TOKEN")) {

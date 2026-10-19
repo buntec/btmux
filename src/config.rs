@@ -337,6 +337,22 @@ pub enum SubCommand {
         #[arg(long, value_enum, default_value_t = NotificationLevel::Info)]
         level: NotificationLevel,
     },
+    /// Print the panes running a coding agent, with their states, as JSON.
+    /// Inside a btmux pane this targets that pane's server; otherwise the
+    /// `--profile` server.
+    Agents,
+    /// Wait until the agent in PANE is idle, done, or blocked (or a `--state`),
+    /// then print its status as JSON. Exits 2 on timeout.
+    Wait {
+        /// Pane ID, as `btmux agents` lists it.
+        pane: String,
+        /// Agent state to wait for: idle, working, blocked, done, or unknown. Repeatable.
+        #[arg(long = "state")]
+        states: Vec<String>,
+        /// Seconds to wait, at most 3600.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
     /// Print shell completions to stdout.
     Completions {
         /// Shell to generate completions for.

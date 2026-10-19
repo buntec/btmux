@@ -138,9 +138,16 @@ hour).
 waits 300 ms (agent input boxes can drop an Enter that arrives with the text),
 and presses Enter. With `wait` (the default), it waits up to 15 s for the turn
 to start and then for the agent to settle, and returns `{status, started,
-timed_out, screen}`, where `screen` is the rendered screen. It refuses while
+timed_out, screen}`, where `screen` is the rendered screen once output has
+paused (hooks report before the agent finishes drawing). With `wait: false`, it
+returns `{submitted: true}` once Enter is sent. It refuses while
 the agent is `blocked`: typed text would answer the dialog, which `send_keys`
-can do deliberately.
+can do deliberately. With `wait`, it also refuses while the agent is
+`working`, since the turn that ends next would not be this prompt's.
+
+`wait_for_agent` reports the current state, so right after a `wait: false`
+prompt it can return before the turn starts. Wait for `working` first, or use
+`send_prompt` with `wait`.
 
 ```sh
 curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST "$BTMUX_API_URL/api/panes/<pane-id>/prompt" \

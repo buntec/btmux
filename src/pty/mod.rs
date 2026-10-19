@@ -1019,6 +1019,10 @@ impl PtyHandle {
         (self.output_tx.subscribe(), snapshot)
     }
 
+    pub fn subscribe_output(&self) -> broadcast::Receiver<Output> {
+        self.output_tx.subscribe()
+    }
+
     pub fn subscribe_replay(&self) -> (broadcast::Receiver<Output>, Vec<Output>) {
         let replay = self.scrollback.lock().unwrap();
         (self.output_tx.subscribe(), replay.snapshot())

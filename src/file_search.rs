@@ -80,7 +80,7 @@ impl FileIndex {
         }
 
         let state = guard.as_mut().unwrap();
-        let root_str = state.root.to_string_lossy().to_string();
+        let root_str = crate::fs_ops::client_path(&state.root);
 
         state
             .nucleo
@@ -134,6 +134,8 @@ fn spawn_file_lister(root: &Path) -> Result<tokio::process::Child, String> {
             "--color",
             "never",
         ]);
+        #[cfg(windows)]
+        fd.args(["--path-separator", "/"]);
         match spawn_lister(fd, root) {
             Ok(child) => return Ok(child),
             Err(error) if error.kind() == ErrorKind::NotFound => {}
@@ -141,25 +143,31 @@ fn spawn_file_lister(root: &Path) -> Result<tokio::process::Child, String> {
         }
     }
 
-    let mut find = Command::new("find");
-    find.args([
-        ".",
-        "-type",
-        "f",
-        "-not",
-        "-path",
-        "./.git/*",
-        "-not",
-        "-path",
-        "*/node_modules/*",
-        "-not",
-        "-path",
-        "./target/*",
-        "-not",
-        "-path",
-        "*/dist/*",
-    ]);
-    spawn_lister(find, root).map_err(|error| format!("Failed to run fd or find: {}", error))
+    // Windows' `find` searches text.
+    #[cfg(windows)]
+    return Err("File search needs fd (`winget install sharkdp.fd`)".into());
+    #[cfg(unix)]
+    {
+        let mut find = Command::new("find");
+        find.args([
+            ".",
+            "-type",
+            "f",
+            "-not",
+            "-path",
+            "./.git/*",
+            "-not",
+            "-path",
+            "*/node_modules/*",
+            "-not",
+            "-path",
+            "./target/*",
+            "-not",
+            "-path",
+            "*/dist/*",
+        ]);
+        spawn_lister(find, root).map_err(|error| format!("Failed to run fd or find: {}", error))
+    }
 }
 
 fn spawn_lister(mut command: Command, root: &Path) -> std::io::Result<tokio::process::Child> {
@@ -185,14 +193,16 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
         "1M",
         "--max-columns",
         "200",
-        "--",
-    ])
-    .arg(query)
-    .arg(".")
-    .current_dir(root)
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null());
+    ]);
+    #[cfg(windows)]
+    rg.args(["--path-separator", "/"]);
+    rg.arg("--")
+        .arg(query)
+        .arg(".")
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
 
     match rg.spawn() {
         Ok(child) => return collect_rg_results(child, root).await,
@@ -316,9 +326,7 @@ async fn collect_grep_results(
 }
 
 fn search_path(root: &Path, relative: &str) -> String {
-    root.join(relative.trim_start_matches("./"))
-        .to_string_lossy()
-        .into_owned()
+    crate::fs_ops::client_path(&root.join(relative.trim_start_matches("./")))
 }
 
 fn parse_grep_result(line: &str, root: &Path) -> Option<SearchResult> {

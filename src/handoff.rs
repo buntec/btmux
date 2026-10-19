@@ -95,6 +95,20 @@ pub struct Inherited {
 }
 
 /// Take over the previous server's state, if this process is an upgrade.
+impl Inherited {
+    pub fn take_lock(&mut self) -> Option<crate::persistence::ProfileLock> {
+        self.lock.take().map(crate::persistence::ProfileLock::adopt)
+    }
+
+    /// Restore the sessions and panes; the listener is returned.
+    pub async fn restore(self, state: &AppState) -> std::net::TcpListener {
+        let mut mgr = state.write().await;
+        let restored = mgr.restore_handoff(self.sessions, self.panes);
+        tracing::info!("upgraded in place with {} session(s)", restored);
+        self.listener
+    }
+}
+
 pub fn take() -> Result<Option<Inherited>, String> {
     let Some(value) = std::env::var_os(ENV) else {
         return Ok(None);

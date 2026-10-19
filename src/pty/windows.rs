@@ -1,0 +1,203 @@
+// Windows PTYs: a ConPTY pseudoconsole with blocking pipe I/O. Closing the
+// pseudoconsole ends the reader and the programs attached to it.
+
+use super::*;
+use portable_pty::{ChildKiller, MasterPty};
+use std::io::{Read, Write};
+
+pub struct Master {
+    /// Taken (closing the pseudoconsole) once the shell exits.
+    pty: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+}
+
+/// The shell's pid: its newest child stands in for the foreground group.
+pub type Probe = Pid;
+
+pub fn foreground(shell: Probe) -> Option<Pid> {
+    crate::process::foreground(shell)
+}
+
+/// Report PowerShell's location with OSC 7 before each prompt, wrapping the
+/// prompt from the user's profile.
+const POWERSHELL_CWD: &str = r#"$global:__btmux_prompt = $function:prompt
+function global:prompt {
+  $l = $ExecutionContext.SessionState.Path.CurrentLocation
+  if ($l.Provider.Name -eq 'FileSystem') {
+    $p = $l.ProviderPath.Replace('\', '/').Replace('%', '%25').Replace(' ', '%20')
+    [Console]::Write("$([char]27)]7;file://localhost/$p$([char]7)")
+  }
+  & $global:__btmux_prompt
+}"#;
+
+/// Shell integration for `shell`; new shells start in the home directory
+/// rather than the server's.
+pub fn integrate_shell(cmd: &mut CommandBuilder, shell: &str, home: bool) {
+    let name = Path::new(shell)
+        .file_stem()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase());
+    if matches!(name.as_deref(), Some("powershell" | "pwsh")) {
+        cmd.args(["-NoExit", "-Command", POWERSHELL_CWD]);
+    }
+    if let Some(home) = dirs::home_dir().filter(|_| home) {
+        cmd.cwd(home);
+    }
+}
+
+pub fn resize_master(master: &Master, cols: u16, rows: u16) {
+    if let Some(pty) = master.pty.lock().unwrap().as_ref() {
+        let _ = pty.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+    }
+}
+
+impl PtyHandle {
+    pub(super) fn spawn(
+        &mut self,
+        cmd: CommandBuilder,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), String> {
+        let pair = NativePtySystem::default()
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("failed to open PTY: {e}"))?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| format!("failed to start PTY: {e}"))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| format!("failed to start PTY: {e}"))?;
+        let mut child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| format!("failed to spawn shell: {e}"))?;
+        drop(pair.slave);
+        let pid = child
+            .process_id()
+            .and_then(|pid| pid.try_into().ok())
+            .ok_or("spawned shell has no pid")?;
+        let pty = Arc::new(Mutex::new(Some(pair.master)));
+
+        self.shell_pid = Some(pid);
+        *self.child.lock().unwrap() = Some(pid);
+        let child_slot = self.child.clone();
+        let child_pty = pty.clone();
+        let exit_tx = self.exit_tx.clone();
+        let pane_id = self.pane_id;
+        let killer = child.clone_killer();
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            child_slot.lock().unwrap().take();
+            // Ends the reader: ConPTY keeps its output open until closed.
+            drop(child_pty.lock().unwrap().take());
+            let _ = exit_tx.send(pane_id);
+        });
+
+        *self.probe.lock().unwrap() = Some(pid);
+        self.master = Some(Master {
+            pty,
+            killer: Mutex::new(killer),
+        });
+        *self.scrollback.lock().unwrap() = Replay::new(cols, rows, self.scrollback_bytes);
+        let interceptor = vt_query::VtQueryInterceptor::with_colors(
+            self.palette.clone(),
+            self.color_reports.clone(),
+        );
+        self.run_io(reader, writer, interceptor);
+        *self.size.lock().unwrap() = (cols, rows);
+        *self.spawned.lock().unwrap() = true;
+        Ok(())
+    }
+
+    /// Start the reader and writer threads.
+    fn run_io(
+        &mut self,
+        mut reader: Box<dyn Read + Send>,
+        mut writer: Box<dyn Write + Send>,
+        interceptor: vt_query::VtQueryInterceptor,
+    ) {
+        let (input_tx, mut input_rx) = mpsc::channel::<PtyInput>(32);
+        let mut output = self.output_pipeline(interceptor, input_tx.clone());
+        let exit_tx = self.exit_tx.clone();
+        let pane_id = self.pane_id;
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if output.feed(&buf[..n]).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = exit_tx.send(pane_id);
+        });
+
+        // Dedicated writer — serializes input and backend replies, filtering
+        // stale CPR responses from emulator input.
+        let pending_cpr_pgrps = self.pending_cpr_pgrps.clone();
+        let probe = self.probe.clone();
+        std::thread::spawn(move || {
+            while let Some(input) = input_rx.blocking_recv() {
+                let result = match input {
+                    PtyInput::Raw(data) => {
+                        writer.write_all(&Self::filter_stale_cpr(&data, &pending_cpr_pgrps, &probe))
+                    }
+                    PtyInput::ShellCommand {
+                        data,
+                        shell_pid,
+                        reply,
+                    } => {
+                        if probe.lock().unwrap().and_then(foreground) != Some(shell_pid) {
+                            let _ = reply.send(Err(
+                                "Cannot open file: the pane is not at a shell prompt".into(),
+                            ));
+                            continue;
+                        }
+                        let result = writer.write_all(&data);
+                        let _ = reply.send(
+                            result
+                                .as_ref()
+                                .map(|_| ())
+                                .map_err(|e| format!("PTY input unavailable: {e}")),
+                        );
+                        result
+                    }
+                };
+                if result.and_then(|()| writer.flush()).is_err() {
+                    return;
+                }
+            }
+        });
+
+        self.input_tx = InputSender(input_tx);
+    }
+}
+
+impl Drop for PtyHandle {
+    fn drop(&mut self) {
+        self.probe.lock().unwrap().take();
+        if let Some(master) = &self.master {
+            if self.child.lock().unwrap().is_some() {
+                let _ = master.killer.lock().unwrap().kill();
+            }
+            // Closing the pseudoconsole ends the programs attached to it.
+            drop(master.pty.lock().unwrap().take());
+        }
+    }
+}

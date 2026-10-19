@@ -466,13 +466,15 @@ fn validate_command(
 /// which keeps the typed line short. The leading space keeps it out of history
 /// in shells that honor it.
 fn shell_editor_open_command(bin: &str, path: Option<&str>, line: Option<u32>) -> String {
+    // PSReadLine reads LF as "add a line".
+    let enter = if cfg!(windows) { '\r' } else { '\n' };
     let Some(path) = path else {
-        return format!(" {bin} open-editor\n");
+        return format!(" {bin} open-editor{enter}");
     };
     let quoted = crate::session::manager::shell_single_quote(path);
     match line.filter(|&l| l >= 1) {
-        Some(line) => format!(" {bin} open-editor {quoted} {line}\n"),
-        None => format!(" {bin} open-editor {quoted}\n"),
+        Some(line) => format!(" {bin} open-editor {quoted} {line}{enter}"),
+        None => format!(" {bin} open-editor {quoted}{enter}"),
     }
 }
 
@@ -572,7 +574,12 @@ fn editor_open_expr(path: &str, line: Option<u32>) -> String {
     }
 }
 
-async fn foreground_neovim_pids(pgrp: libc::pid_t) -> Vec<u32> {
+fn is_nvim(process: &sysinfo::Process) -> bool {
+    let name = process.name().to_string_lossy();
+    name == "nvim" || (cfg!(windows) && name.eq_ignore_ascii_case("nvim.exe"))
+}
+
+async fn foreground_neovim_pids(pgrp: crate::process::Pid) -> Vec<u32> {
     tokio::task::spawn_blocking(move || {
         let mut system = System::new();
         system.refresh_processes_specifics(
@@ -583,13 +590,14 @@ async fn foreground_neovim_pids(pgrp: libc::pid_t) -> Vec<u32> {
         let processes = system.processes();
         let mut editors = Vec::new();
         for tui in processes.values().filter(|process| {
-            process.name().to_string_lossy() == "nvim"
-                && unsafe { libc::getpgid(process.pid().as_u32() as libc::pid_t) } == pgrp
+            is_nvim(process)
+                && crate::process::group(process.pid().as_u32() as crate::process::Pid)
+                    == Some(pgrp)
         }) {
             // Current Neovim runs the editor as a child server of the TUI.
             for child in processes.values().filter(|process| {
                 process.parent() == Some(tui.pid())
-                    && process.name().to_string_lossy() == "nvim"
+                    && is_nvim(process)
                     && process
                         .cmd()
                         .iter()
@@ -605,6 +613,13 @@ async fn foreground_neovim_pids(pgrp: libc::pid_t) -> Vec<u32> {
     .unwrap_or_default()
 }
 
+/// Neovim's default server address on Windows.
+#[cfg(windows)]
+async fn neovim_socket_paths(pid: u32) -> Vec<String> {
+    vec![format!(r"\\.\pipe\nvim.{pid}.0")]
+}
+
+#[cfg(unix)]
 async fn neovim_socket_paths(pid: u32) -> Vec<String> {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(2),
@@ -664,6 +679,7 @@ fn linux_socket_paths(pid: u32) -> Vec<String> {
         .collect()
 }
 
+#[cfg(unix)]
 fn parse_lsof_socket_paths(output: &[u8]) -> Vec<String> {
     String::from_utf8_lossy(output)
         .lines()
@@ -991,7 +1007,7 @@ mod tests {
         command.env("TERM", "xterm-256color");
         let mut tui = pair.slave.spawn_command(command).unwrap();
         let tui_pid = tui.process_id().unwrap();
-        let pgrp = unsafe { libc::getpgid(tui_pid as libc::pid_t) };
+        let pgrp = crate::process::group(tui_pid as crate::process::Pid).unwrap();
         let detected = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 for pid in foreground_neovim_pids(pgrp).await {
@@ -1036,6 +1052,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn lsof_socket_paths_only_include_local_socket_names() {
         let output = b"p123\nf4u\nn/var/folders/tmp/nvim/socket\nf5u\nn/other -> /target\nf6u\nn127.0.0.1:1234\n";
         assert_eq!(

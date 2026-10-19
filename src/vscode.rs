@@ -7,6 +7,9 @@
 //! extensions and connects back over a second private socket
 //! (`BTMUX_VSCODE_SOCKET`), which carries newline-delimited JSON: the color
 //! palette and terminal font, and files to open.
+//!
+//! Not yet supported on Windows.
+#![cfg_attr(windows, allow(dead_code))]
 
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -23,7 +26,11 @@ use axum::{
 use hyper_util::rt::TokioIo;
 use rust_embed::Embed;
 use serde::Serialize;
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::NamedPipeClient as UnixStream;
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, watch, Mutex};
@@ -83,10 +90,13 @@ impl Drop for Server {
     /// The binary may be a wrapper script, so kill its whole process group.
     fn drop(&mut self) {
         self.extension_listener.abort();
+        #[cfg(unix)]
         if let Some(pid) = self.child.id() {
             // SAFETY: killpg has no memory-safety preconditions.
             unsafe { libc::killpg(pid as libc::pid_t, libc::SIGTERM) };
         }
+        #[cfg(windows)]
+        let _ = self.child.start_kill();
     }
 }
 
@@ -193,6 +203,7 @@ fn install_extension(extensions: &Path) -> Result<(), String> {
 }
 
 /// Accept connections from the bundled extension.
+#[cfg(unix)]
 fn listen_for_extension(path: &Path) -> Result<JoinHandle<()>, String> {
     let listener = UnixListener::bind(path).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(tokio::spawn(async move {
@@ -204,6 +215,7 @@ fn listen_for_extension(path: &Path) -> Result<JoinHandle<()>, String> {
 
 /// Send the style, a pending or recent open, and then every change, until it
 /// disconnects.
+#[cfg(unix)]
 async fn serve_extension(stream: UnixStream) {
     let (mut reader, mut writer) = stream.into_split();
     let mut style = STYLE.subscribe();
@@ -319,6 +331,12 @@ fn server_command(kind: Kind, data: &Path) -> Result<Command, String> {
     })
 }
 
+#[cfg(windows)]
+fn spawn(_kind: Kind) -> Result<Server, String> {
+    Err("The VS Code surface isn't supported on Windows yet.".into())
+}
+
+#[cfg(unix)]
 fn spawn(kind: Kind) -> Result<Server, String> {
     let directory = PrivateDir::new()?;
     let data = match DATA_DIR.get() {
@@ -409,6 +427,13 @@ impl std::fmt::Display for StartError {
     }
 }
 
+async fn connect_socket(path: &Path) -> std::io::Result<UnixStream> {
+    #[cfg(unix)]
+    return UnixStream::connect(path).await;
+    #[cfg(windows)]
+    tokio::net::windows::named_pipe::ClientOptions::new().open(path)
+}
+
 /// Start the server if it isn't running, then connect to it.
 async fn connect() -> Result<UnixStream, StartError> {
     let mut server = SERVER.lock().await;
@@ -416,7 +441,7 @@ async fn connect() -> Result<UnixStream, StartError> {
         .as_mut()
         .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)));
     if running {
-        if let Ok(stream) = UnixStream::connect(server.as_ref().unwrap().socket()).await {
+        if let Ok(stream) = connect_socket(&server.as_ref().unwrap().socket()).await {
             return Ok(stream);
         }
     } else {
@@ -429,7 +454,7 @@ async fn connect() -> Result<UnixStream, StartError> {
     let running = server.as_mut().unwrap();
     // Node takes a moment to start listening.
     for _ in 0..300 {
-        if let Ok(stream) = UnixStream::connect(running.socket()).await {
+        if let Ok(stream) = connect_socket(&running.socket()).await {
             return Ok(stream);
         }
         if let Ok(Some(status)) = running.child.try_wait() {

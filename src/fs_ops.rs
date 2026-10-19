@@ -34,6 +34,15 @@ pub struct FileMetadata {
     pub permissions: String,
 }
 
+/// A path as the browser handles it: `/`-separated (`C:/Users/…` on Windows).
+pub fn client_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    return path.replace('\\', "/");
+    #[cfg(not(windows))]
+    path.into_owned()
+}
+
 pub fn validate_path(root: &Path, requested: &str) -> Result<PathBuf, String> {
     let candidate = if requested == "~" {
         dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?
@@ -41,14 +50,17 @@ pub fn validate_path(root: &Path, requested: &str) -> Result<PathBuf, String> {
         dirs::home_dir()
             .ok_or_else(|| "Cannot determine home directory".to_string())?
             .join(rest)
-    } else if requested.starts_with('/') {
+    } else if requested.starts_with('/') || Path::new(requested).is_absolute() {
         PathBuf::from(requested)
     } else {
         root.join(requested)
     };
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+    #[cfg(unix)]
+    let canonical = candidate.canonicalize();
+    // Without the `\\?\` prefix where possible.
+    #[cfg(windows)]
+    let canonical = dunce::canonicalize(&candidate);
+    let canonical = canonical.map_err(|e| format!("Cannot resolve path: {}", e))?;
 
     Ok(canonical)
 }
@@ -60,7 +72,7 @@ pub async fn list_dir(root: &Path, path: &str) -> Result<(Vec<FileEntry>, String
         validate_path(root, path)?
     };
 
-    let resolved_path = dir_path.to_string_lossy().to_string();
+    let resolved_path = client_path(&dir_path);
 
     let mut entries = Vec::new();
     let mut read_dir = tokio::fs::read_dir(&dir_path)
@@ -248,7 +260,7 @@ pub async fn list_tree(
     let name = dir_path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| dir_path.to_string_lossy().to_string());
+        .unwrap_or_else(|| client_path(&dir_path));
 
     build_tree_node(&dir_path, &name, max_depth, max_items).await
 }

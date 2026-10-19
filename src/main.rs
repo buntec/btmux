@@ -14,9 +14,14 @@ mod file_search;
 mod fish_theme;
 mod fs_ops;
 mod git;
+#[cfg(unix)]
+mod handoff;
+#[cfg(windows)]
+#[path = "handoff_windows.rs"]
 mod handoff;
 mod mcp;
 mod persistence;
+mod process;
 #[cfg(test)]
 mod protocol;
 mod pty;
@@ -305,9 +310,10 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    let inherited_lock = inherited.as_mut().and_then(|i| i.lock.take());
-    let profile_lock = match inherited_lock {
-        Some(fd) => Some(persistence::ProfileLock::adopt(fd)),
+    // Held until exit.
+    #[cfg_attr(windows, allow(unused_variables))]
+    let profile_lock = match inherited.as_mut().and_then(handoff::Inherited::take_lock) {
+        Some(lock) => Some(lock),
         None => state_file.as_ref().map(|path| {
             persistence::ProfileLock::acquire(path).unwrap_or_else(|error| {
                 eprintln!("btmux: {error}");
@@ -326,10 +332,7 @@ async fn main() {
         vscode::set_data_dir(dir.join("vscode"));
     }
     let inherited_listener = if let Some(inherited) = inherited {
-        let mut mgr = state.write().await;
-        let restored = mgr.restore_handoff(inherited.sessions, inherited.panes);
-        tracing::info!("upgraded in place with {} session(s)", restored);
-        Some(inherited.listener)
+        Some(inherited.restore(&state).await)
     } else {
         let mut mgr = state.write().await;
         let restored = state_file
@@ -408,6 +411,7 @@ async fn main() {
         }
         std::process::exit(1);
     });
+    #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
         handoff::configure(
@@ -481,12 +485,17 @@ async fn shutdown_signal(parent_pid: Option<u32>) {
             _ = desktop_parent_exit(parent_pid) => {},
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = parent_pid;
-        tokio::signal::ctrl_c()
-            .await
-            .expect("install Ctrl-C handler");
+        let mut close = tokio::signal::windows::ctrl_close().expect("install Ctrl-Close handler");
+        let mut shutdown =
+            tokio::signal::windows::ctrl_shutdown().expect("install Ctrl-Shutdown handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = close.recv() => {},
+            _ = shutdown.recv() => {},
+            _ = desktop_parent_exit(parent_pid) => {},
+        }
     }
 }
 
@@ -502,6 +511,16 @@ async fn desktop_parent_exit(parent_pid: Option<u32>) {
             return;
         }
     }
+}
+
+#[cfg(windows)]
+async fn desktop_parent_exit(parent_pid: Option<u32>) {
+    let Some(parent_pid) = parent_pid else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    let _ =
+        tokio::task::spawn_blocking(move || process::wait_exit(parent_pid as process::Pid)).await;
 }
 
 /// Watch the config file's parent directory (so editor atomic rename-on-save is
@@ -710,9 +729,9 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
                                 process_group: None,
                             };
                             if agent_name(&pane_process).is_some() {
-                                let group =
-                                    unsafe { libc::getpgid(pane_process.pid as libc::pid_t) };
-                                pane_process.process_group = (group > 0).then_some(group as u32);
+                                pane_process.process_group =
+                                    crate::process::group(pane_process.pid as crate::process::Pid)
+                                        .map(|group| group as u32);
                             }
                             pane_process
                         })
@@ -805,6 +824,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn screen_detection_and_ctrl_c_exit_work_without_hooks_or_viewers() {
         use super::*;
         use crate::session::AgentState;

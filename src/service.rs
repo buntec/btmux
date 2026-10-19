@@ -534,7 +534,11 @@ fn home() -> Option<PathBuf> {
 /// The per-user GUI launchd domain, e.g. `gui/501`.
 fn gui_domain() -> String {
     // Safe: getuid() always succeeds and has no error mode.
+    #[cfg(unix)]
     let uid = unsafe { libc::getuid() };
+    // launchd is macOS-only.
+    #[cfg(not(unix))]
+    let uid = 0;
     format!("gui/{uid}")
 }
 

@@ -3,7 +3,10 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -17,11 +20,16 @@ pub struct RunningServer {
 }
 
 pub fn state_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("btmux"))
+    let env = |name| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+    };
+    #[cfg(windows)]
+    let home = env("LOCALAPPDATA");
+    #[cfg(not(windows))]
+    let home = env("HOME").map(|h| h.join(".local/state"));
+    Some(env("XDG_STATE_HOME").or(home)?.join("btmux"))
 }
 
 /// The server's credential rule, shared with `auth.rs`.
@@ -32,17 +40,25 @@ pub fn valid_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
 }
 
+/// Windows: `FILE_FLAG_OPEN_REPARSE_POINT`, so links aren't followed.
+#[cfg(windows)]
+const NOFOLLOW: u32 = 0x0020_0000;
+
 pub fn read_private_file(path: &Path) -> std::io::Result<String> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    #[cfg(windows)]
+    options.custom_flags(NOFOLLOW);
+    let file = options.open(path)?;
     let metadata = file.metadata()?;
-    if !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.mode() & 0o077 != 0
-        || metadata.len() > 16 * 1024
-    {
+    // Windows: files under %LOCALAPPDATA% inherit its owner-only ACL.
+    #[cfg(unix)]
+    let private = metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0;
+    #[cfg(windows)]
+    let private = true;
+    if !metadata.is_file() || !private || metadata.len() > 16 * 1024 {
         return Err(std::io::Error::other("expected an owner-only regular file"));
     }
     let mut contents = String::new();
@@ -99,11 +115,11 @@ impl Registration {
         let path = state_file.with_extension("server");
         let temporary = path.with_extension(format!("server.{}.tmp", uuid::Uuid::new_v4()));
         let result = (|| {
-            let mut file: File = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)?;
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut file: File = options.open(&temporary)?;
             let contents = serde_json::to_vec(&server)?;
             file.write_all(&contents)?;
             file.sync_all()?;
@@ -123,7 +139,7 @@ impl Drop for Registration {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::{symlink, PermissionsExt};

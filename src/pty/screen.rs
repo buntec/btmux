@@ -62,14 +62,8 @@ impl LiveScreen {
 
     pub fn snapshot(&self) -> ScreenSnapshot {
         let screen = self.parser.screen();
-        let (_, cols) = screen.size();
         let mut text = String::new();
-        for (row, contents) in screen.rows(0, cols).enumerate() {
-            text.push_str(&contents);
-            if !screen.row_wrapped(row as u16) {
-                text.push('\n');
-            }
-        }
+        push_rows(screen, usize::MAX, &mut text);
         let signals = self.parser.callbacks();
         ScreenSnapshot {
             text,
@@ -78,6 +72,19 @@ impl LiveScreen {
             revision: self.revision,
             title_revision: signals.title_revision,
             progress_revision: signals.progress_revision,
+        }
+    }
+}
+
+/// Appends the first `take` visible rows, joining wrapped ones. A wrapped
+/// row ends in a non-blank cell (erasing that cell unwraps it), so `rows`
+/// dropping trailing blanks loses nothing.
+fn push_rows(screen: &vt100::Screen, take: usize, text: &mut String) {
+    let cols = screen.size().1;
+    for (row, contents) in screen.rows(0, cols).take(take).enumerate() {
+        text.push_str(&contents);
+        if !screen.row_wrapped(row as u16) {
+            text.push('\n');
         }
     }
 }
@@ -105,8 +112,7 @@ pub fn capture(events: &[Output], history: usize) -> Capture {
         }
     }
     let screen = parser.screen_mut();
-    let (rows, cols) = screen.size();
-    let rows = usize::from(rows);
+    let rows = usize::from(screen.size().0);
     screen.set_scrollback(usize::MAX);
     let mut offset = screen.scrollback();
     let mut text = String::new();
@@ -114,12 +120,7 @@ pub fn capture(events: &[Output], history: usize) -> Capture {
         screen.set_scrollback(offset);
         // Above the screen, only the first `offset` visible rows are scrollback.
         let take = if offset == 0 { rows } else { offset.min(rows) };
-        for (row, contents) in screen.rows(0, cols).take(take).enumerate() {
-            text.push_str(&contents);
-            if !screen.row_wrapped(row as u16) {
-                text.push('\n');
-            }
-        }
+        push_rows(screen, take, &mut text);
         if offset == 0 {
             break;
         }
@@ -158,6 +159,13 @@ mod tests {
         assert_eq!(all.lines().count(), 31);
         assert!(all.ends_with("line 30\nabcdefghijklmnop\n"));
         assert_eq!(capture(&events, 3).text.lines().next(), Some("line 25"));
+
+        // A gap at the wrap point survives the join.
+        let events = [
+            Output::Size(8, 3),
+            Output::Data(Bytes::from_static(b"foo\x1b[9Cbar")),
+        ];
+        assert_eq!(capture(&events, 0).text, "foo    bar\n");
     }
 
     #[test]

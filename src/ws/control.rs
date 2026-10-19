@@ -55,6 +55,9 @@ pub(crate) fn broadcast_state(mgr: &crate::session::manager::SessionManager) {
         agent_panes: mgr.running_agent_panes(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    if mgr.statuses().receiver_count() > 0 {
+        let _ = mgr.statuses().send(mgr.pane_statuses());
+    }
 }
 
 fn initial_messages(mgr: &crate::session::manager::SessionManager) -> [String; 2] {

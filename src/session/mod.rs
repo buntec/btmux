@@ -4,6 +4,7 @@ pub mod layout;
 pub mod manager;
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::pty::PtyHandle;
@@ -73,6 +74,8 @@ pub struct Pane {
     pub pty: PtyHandle,
     /// The most severe notification since the pane was last viewed.
     pub unread: Option<PaneAlert>,
+    /// Held while automation submits a prompt.
+    pub prompt: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Pane {
@@ -81,6 +84,7 @@ impl Pane {
             id,
             pty,
             unread: None,
+            prompt: Arc::default(),
         }
     }
 

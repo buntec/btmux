@@ -20,7 +20,6 @@ usage: $0 <command> [args]
   release [TAG]   install a release binary (default: latest) and (re)start btmux
   info            print the URL and access token
   shell           open a shell in the VM
-  demo            record the Playwright demo against the VM
   desktop-demo [ARGS]
                   record the desktop app demos with the server in the VM
                   (ARGS as for scripts/record-desktop-demo.sh)
@@ -122,28 +121,12 @@ info() {
     echo "token:    $(token)"
 }
 
-# Fresh session tree, then drive the host's Playwright against the VM.
-demo() {
-    vsh "systemctl --user stop btmux && rm -f $STATE_DIR/state.json && systemctl --user start btmux"
-    local tok
-    tok="$(token)"
-    for _ in $(seq 50); do
-        curl -fs -o /dev/null -H "Authorization: Bearer $tok" "http://$(vm_ip):$PORT/api/sessions" && break
-        sleep 0.2
-    done
-    cd "$ROOT/frontend"
-    bunx playwright install chromium
-    BTMUX_URL="http://$(vm_ip):$PORT" BTMUX_AUTH_TOKEN="$tok" BTMUX_CWD=/home/ubuntu/btmux \
-        bun run record-demo.ts
-}
-
 case "${1:-}" in
     up) up ;;
     deploy) deploy ;;
     release) release "${2:-}" ;;
     info) info ;;
     shell) multipass shell "$VM" ;;
-    demo) demo ;;
     desktop-demo)
         shift
         up

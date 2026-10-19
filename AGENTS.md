@@ -22,7 +22,7 @@ The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 - `just build` — production build: frontend → `frontend/dist`, then `cargo build --release`.
 - `just run` — release binary serving the built frontend.
 - `just install` — production build + `cargo install --path .`
-- `just vm <cmd>` — Ubuntu VM via Multipass (`scripts/vm.sh`, `scripts/vm-cloud-init.yaml`) for Linux testing and clean demos. `up` creates it; `deploy` builds this working tree in the VM, `release [TAG]` installs a release binary, and both (re)start btmux as a systemd user service on `0.0.0.0:8004` (in-place `btmux upgrade` when running); `info` prints the host-reachable URL and token; `demo` records `record-demo.ts` against it; `shell`, `stop`, `delete`.
+- `just vm <cmd>` — Ubuntu VM via Multipass (`scripts/vm.sh`, `scripts/vm-cloud-init.yaml`) for Linux testing and clean demos. `up` creates it; `deploy` builds this working tree in the VM, `release [TAG]` installs a release binary, and both (re)start btmux as a systemd user service on `0.0.0.0:8004` (in-place `btmux upgrade` when running); `info` prints the host-reachable URL and token; `desktop-demo` records the desktop app demos with the server in it; `shell`, `stop`, `delete`.
 - `just fmt` (alias `just format`) — format the whole codebase (`cargo fmt` + prettier). **Always run this before committing.**
 
 `just test` runs the Rust regression suite. `just protocol` regenerates the frontend
@@ -38,7 +38,7 @@ gives each file a fresh stack (debug backend and Vite on free ports, a random to
 repo state don't affect it; failures keep the stack logs. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
 returned Promise as truthy and doesn't wait.
-`just test-frontend` runs the frontend unit tests (`bun test`, the LaTeX detector and theme mapping). `just record-demo` drives the production UI with Playwright.
+`just test-frontend` runs the frontend unit tests (`bun test`, the LaTeX detector and theme mapping).
 
 The CLI also accepts `--host`, `--port`, `--profile`, `--shell`, `--public-url`,
 and `--no-browser`; `install`, `uninstall`, and `restart` manage a per-user

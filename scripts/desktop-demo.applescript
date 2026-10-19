@@ -143,7 +143,7 @@ on playPanes(prefixSpec)
 	typeSlowly("ls")
 	enter()
 	pace(1)
-	typeSlowly("cd ghostty-web")
+	typeSlowly("cd wterm")
 	enter()
 	pace(0.6)
 	typeSlowly("git status")
@@ -162,7 +162,7 @@ on playPanes(prefixSpec)
 	enter()
 	pace(1.5)
 
-	-- Session picker: unfold both sessions and switch to ghostty-web
+	-- Session picker: unfold both sessions and switch to wterm
 	chord(prefixSpec, "s")
 	pace(1.2)
 	press("l")

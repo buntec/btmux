@@ -7,7 +7,7 @@
 #   desktop-demo-server.sh stop
 #   desktop-demo-server.sh authorize <public key file>
 #
-# `setup` recreates ~/btmux-demo with fresh clones of btmux and ghostty-web as
+# `setup` recreates ~/btmux-demo with fresh clones of btmux and wterm as
 # the demos' playground and the demo shells' HOME, so new windows open beside
 # the repos, and an isolated config: the default btmux config (plus an
 # opaque window, the color scheme, and a wallpaper shader for the shaders
@@ -68,10 +68,10 @@ setup() {
     fi
     mkdir -p "$demo_root"
     touch "$demo_root/.btmux-demo"
-    for repo in btmux ghostty-web; do
+    for repo in buntec/btmux vercel-labs/wterm; do
         echo "Cloning ${repo}…" >&2
         env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-            git clone --quiet "https://github.com/buntec/$repo.git" "$demo_root/$repo"
+            git clone --quiet "https://github.com/$repo.git" "$demo_root/${repo#*/}"
     done
     # Uncommitted changes give the Git UI something to show.
     printf '\nEdited during the btmux demo.\n' >>"$demo_cwd/README.md"
@@ -119,6 +119,8 @@ EOF
 vim.o.number = true
 vim.o.signcolumn = "yes"
 vim.o.completeopt = "menuone,noselect,popup"
+vim.o.pumblend = 20
+vim.o.winblend = 20
 vim.lsp.config("rust_analyzer", {
   cmd = { "rust-analyzer" },
   cmd_env = cmd_env,
@@ -208,7 +210,7 @@ start() {
     api --output /dev/null --request POST --header "Content-Type: application/json" \
         --data '{"name":"btmux"}' "$demo_url/api/sessions/$first_session/rename"
     api --output /dev/null --request POST --header "Content-Type: application/json" \
-        --data "{\"name\":\"ghostty-web\",\"cwd\":\"$demo_root/ghostty-web\"}" "$demo_url/api/sessions"
+        --data "{\"name\":\"wterm\",\"cwd\":\"$demo_root/wterm\"}" "$demo_url/api/sessions"
 
     printf '%s\n' "$token" "$first_pane" "$demo_cwd" "$sync_dir"
 }

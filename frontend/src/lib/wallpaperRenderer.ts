@@ -57,6 +57,20 @@ function loadDefinition(id: string): Promise<GpuShaderDefinition> {
   return definition;
 }
 
+/**
+ * The URL the image loader gets. Shaders rasterizes SVG only for URLs ending in
+ * `.svg` (`isSvgUrl`) and otherwise can't decode it, so mark SVG by its type.
+ */
+async function loaderUrl(url: string): Promise<string> {
+  const type = url.startsWith('data:')
+    ? url.slice(5).split(/[;,]/)[0]
+    : await fetch(url, { method: 'HEAD' }).then(
+        (response) => response.headers.get('content-type'),
+        () => null,
+      );
+  return type?.split(';')[0].trim().toLowerCase() === 'image/svg+xml' ? `${url}#.svg` : url;
+}
+
 /** Whether the layer changes over time without new input. */
 function animates(source: GpuShaderDefinition): boolean {
   return (
@@ -81,8 +95,15 @@ interface LayerNode {
 }
 
 interface ImageNode {
-  id: string;
+  readonly id: string;
+  readonly url: string;
+}
+
+interface ImageSource {
   url: string;
+  /** What the loader fetches. */
+  src: string;
+  source: GpuShaderDefinition;
 }
 
 /**
@@ -102,6 +123,7 @@ export function createWallpaperRenderer(
   let current = options;
   let nodes: LayerNode[] = [];
   let image: ImageNode | null = null;
+  let probe: { url: string; src: Promise<string> } | null = null;
   let serial = 0;
   let resolution = 0;
   let synced = Promise.resolve();
@@ -168,22 +190,19 @@ export function createWallpaperRenderer(
     renderOrder: renderOrder + 1,
   });
 
-  /** Brings the image node in line with `url`. */
-  const reconcileImage = (url: string | null, source: GpuShaderDefinition | undefined) => {
-    if (image && (!url || !source)) {
+  /**
+   * Brings the image node in line with `next`. A new image gets a new node: the
+   * loader ignores URL changes while a load is pending.
+   */
+  const reconcileImage = (next: ImageSource | null) => {
+    if (image?.url === next?.url) return false;
+    if (image) {
       renderer.removeNode(image.id);
       image = null;
       onImage(null);
-      return { changed: true, structural: true };
     }
-    if (!url || !source) return { changed: false, structural: false };
-    if (image) {
-      if (image.url === url) return { changed: false, structural: false };
-      image.url = url;
-      onImage(null);
-      renderer.updateUniformValue(image.id, 'url', url);
-      return { changed: true, structural: false };
-    }
+    if (!next) return true;
+    const { url, src, source } = next;
     const node: ImageNode = { id: `image-${++serial}`, url };
     image = node;
     // Core never repaints when media loads, so hook the texture upload.
@@ -206,7 +225,7 @@ export function createWallpaperRenderer(
           },
         }),
     };
-    const values = { url, objectFit: 'cover' };
+    const values = { url: src, objectFit: 'cover' };
     renderer.registerNode(
       node.id,
       definition.fragment,
@@ -215,7 +234,7 @@ export function createWallpaperRenderer(
       createGpuUniformsMap(definition, values, node.id),
       definition,
     );
-    return { changed: true, structural: true };
+    return true;
   };
 
   /** Brings the node list in line with the enabled layers. */
@@ -291,19 +310,24 @@ export function createWallpaperRenderer(
       if (changed) void paint().catch(onUnavailable);
     }
   };
+  const imageSource = async (url: string): Promise<ImageSource> => {
+    if (probe?.url !== url) probe = { url, src: loaderUrl(url) };
+    const [source, src] = await Promise.all([loadDefinition(IMAGE), probe.src]);
+    return { url, src, source };
+  };
   /** Loads the layers' shaders, then reconciles unless a newer update arrived. */
   const sync = () => {
     const options = current;
     const layers = activeShaderLayers(options.layers);
     synced = Promise.all([
-      options.image ? loadDefinition(IMAGE) : undefined,
+      options.image ? imageSource(options.image) : null,
       ...layers.map((layer) => loadDefinition(layer.shader)),
-    ]).then(async ([imageSource, ...sources]) => {
+    ]).then(async ([next, ...sources]) => {
       if (disposed || options !== current) return;
-      const drawn = reconcileImage(options.image, imageSource);
+      const drawn = reconcileImage(next as ImageSource | null);
       let { changed, structural } = reconcile(layers, sources as GpuShaderDefinition[]);
-      changed ||= drawn.changed;
-      structural ||= drawn.structural;
+      changed ||= drawn;
+      structural ||= drawn;
       if (renderer.isInitialized()) {
         changed ||= resolution !== options.resolution;
         resolution = options.resolution;

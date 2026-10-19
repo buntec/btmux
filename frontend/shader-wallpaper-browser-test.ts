@@ -1,5 +1,8 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
+import { rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { chromium } from 'playwright';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
@@ -17,18 +20,30 @@ const snapshot = await (await fetch(`${url}/api/sessions/${session.id}`, { heade
 const pane = snapshot.windows[0].panes[0].id;
 // Red and blue PNGs from a host without CORS headers; the server must proxy them.
 const png = (base64: string) => Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-const images: Record<string, Uint8Array> = {
-  '/red.png': png(
-    'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=',
-  ),
-  '/blue.png': png('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFUlEQVR4nGNgYPhPIhrVMKph2GoAAJLb/wFh5Z4RAAAAAElFTkSuQmCC'),
+const svg = (fill: string) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="${fill}"/></svg>`;
+const redPng = png(
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=',
+);
+const images: Record<string, [Uint8Array | string, string]> = {
+  '/red.png': [redPng, 'image/png'],
+  '/blue.png': [
+    png('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFUlEQVR4nGNgYPhPIhrVMKph2GoAAJLb/wFh5Z4RAAAAAElFTkSuQmCC'),
+    'image/png',
+  ],
+  // SVG is rasterized by its type, whatever its name.
+  '/red.svg': [svg('#f00'), 'image/svg+xml'],
+  '/blue-svg': [svg('#00f'), 'image/svg+xml'],
 };
 const imageHost = Bun.serve({
   port: 0,
-  fetch: (request) =>
-    new Response(images[new URL(request.url).pathname], { headers: { 'Content-Type': 'image/png' } }),
+  fetch: (request) => {
+    const [body, type] = images[new URL(request.url).pathname];
+    return new Response(body, { headers: { 'Content-Type': type } });
+  },
 });
-const imageUrl = `http://127.0.0.1:${imageHost.port}/red.png`;
+const imageHostUrl = `http://127.0.0.1:${imageHost.port}`;
+const imageUrl = `${imageHostUrl}/red.png`;
 const browser = await chromium.launch({
   headless: true,
   channel: process.env.BTMUX_TEST_BROWSER,
@@ -206,33 +221,136 @@ try {
     await showing(['invert', 'aurora']);
     console.log('PASS effect layers, opacity, blend modes, disabling, and reordering');
 
-    /** The canvas pixel at its center. */
-    const center = () =>
-      canvas.evaluate(async (canvas: HTMLCanvasElement) => {
-        const image = new Image();
-        image.src = canvas.toDataURL();
-        await image.decode();
-        const copy = new OffscreenCanvas(image.width, image.height).getContext('2d')!;
-        copy.drawImage(image, 0, 0);
-        return [...copy.getImageData(image.width >> 1, image.height >> 1, 1, 1).data.slice(0, 3)];
-      });
-    const inverts = async (wallpaper: string, expected: number[]) => {
-      await configure({ wallpaper, wallpaper_shaders: [layer('invert')] });
-      await page.waitForFunction(
-        () =>
-          !!document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderImage &&
-          !document.querySelector('[data-wallpaper-image]'),
-      );
+    /** Wait until the pixel at the center of `target` is `expected`. */
+    const centerIs = async (expected: number[], message: string, target = canvas) => {
+      const center = () =>
+        target.evaluate(async (canvas: HTMLCanvasElement) => {
+          const image = new Image();
+          image.src = canvas.toDataURL();
+          await image.decode();
+          const copy = new OffscreenCanvas(image.width, image.height).getContext('2d')!;
+          copy.drawImage(image, 0, 0);
+          return [...copy.getImageData(image.width >> 1, image.height >> 1, 1, 1).data.slice(0, 3)];
+        });
       const deadline = Date.now() + 10_000;
       let pixel = await center();
       while (!pixel.every((value, index) => Math.abs(value - expected[index]) < 40)) {
-        assert(Date.now() < deadline, `effects must process ${wallpaper}, got ${pixel}`);
+        assert(Date.now() < deadline, `${message}, got ${pixel}`);
         await page.waitForTimeout(100);
         pixel = await center();
       }
     };
+    /** Wait until the canvas, not the DOM fallback, shows the image `source` resolves to. */
+    const drawsImage = (source: string) =>
+      page.waitForFunction((source) => {
+        const image = document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderImage;
+        if (!image || document.querySelector('[data-wallpaper-image]')) return false;
+        return image.startsWith('/wallpaper?') ? new URL(image, location.href).searchParams.get('source') === source : image === source;
+      }, source);
+    const inverts = async (wallpaper: string, expected: number[]) => {
+      await configure({ wallpaper, wallpaper_shaders: [layer('invert')] });
+      await drawsImage(wallpaper);
+      await centerIs(expected, `effects must process ${wallpaper}`);
+    };
     await inverts(imageUrl, [0, 255, 255]);
     await inverts(imageUrl.replace('red', 'blue'), [255, 255, 0]);
+    await inverts(`${imageHostUrl}/red.svg`, [0, 255, 255]);
+    await inverts(`${imageHostUrl}/blue-svg`, [255, 255, 0]);
+    await inverts(`data:image/svg+xml,${encodeURIComponent(svg('#f00'))}`, [0, 255, 255]);
+    console.log('PASS proxied and inline SVG images beneath the shader stack');
+
+    // An image that changes while the previous one loads must still be drawn, without animation.
+    const proxied = (source: string) => `/wallpaper?source=${encodeURIComponent(source)}`;
+    const isProxied = (url: string, source: string) => {
+      const parsed = new URL(url);
+      return parsed.pathname === '/wallpaper' && parsed.searchParams.get('source') === source;
+    };
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const slow = (url: URL) => isProxied(url.href, imageUrl);
+    await page.route(slow, async (route) => {
+      if (route.request().method() === 'GET') await released;
+      await route.continue();
+    });
+    const pending = page.waitForRequest((request) => request.method() === 'GET' && isProxied(request.url(), imageUrl));
+    await page.evaluate(async (image) => {
+      const { createShaderLayer } = await import('/src/lib/wallpaperCatalog.ts' as string);
+      const { createWallpaperRenderer } = await import('/src/lib/wallpaperRenderer.ts' as string);
+      const canvas = document.createElement('canvas');
+      canvas.id = 'pending-image';
+      canvas.style.cssText = 'position:fixed;width:120px;height:80px;opacity:0;pointer-events:none';
+      document.body.append(canvas);
+      const options = {
+        image,
+        layers: [createShaderLayer('invert')],
+        speed: 1,
+        fps: 10,
+        resolution: 1,
+        animated: false,
+        paused: false,
+        followsMouseCursor: false,
+        followsKeyboardInput: false,
+      };
+      const drawn: (string | null)[] = [];
+      const renderer = createWallpaperRenderer(
+        canvas,
+        options,
+        () => drawn.push('unavailable'),
+        (url: string | null) => drawn.push(url),
+      );
+      (window as any).pendingImage = { canvas, renderer, options, drawn };
+      await renderer.initialize();
+    }, proxied(imageUrl));
+    await pending;
+    const blue = proxied(imageUrl.replace('red', 'blue'));
+    await page.evaluate((image) => {
+      const { renderer, options } = (window as any).pendingImage;
+      renderer.update({ ...options, image });
+    }, blue);
+    await page.waitForTimeout(500);
+    release();
+    const target = page.locator('#pending-image');
+    await centerIs([255, 255, 0], 'an image changed during a pending load must be drawn', target);
+    await page.waitForTimeout(1000);
+    await centerIs([255, 255, 0], 'an earlier load must not replace the newer image', target);
+    const outcome = await page.evaluate(() => {
+      const { canvas, renderer, drawn } = (window as any).pendingImage;
+      renderer.dispose();
+      canvas.remove();
+      return { image: canvas.dataset.shaderImage, drawn: drawn.filter(Boolean) };
+    });
+    assert.equal(outcome.image, blue);
+    assert.equal(outcome.drawn.at(-1), blue, `drawn images: ${outcome.drawn}`);
+    assert(!outcome.drawn.includes('unavailable'));
+    await page.unroute(slow);
+    console.log('PASS image change during a pending load');
+
+    // Unapplied drafts preview through the proxy, so hosts need no CORS headers.
+    const localPng = path.join(tmpdir(), `btmux-wallpaper-${Date.now()}.png`);
+    writeFileSync(localPng, redPng);
+    try {
+      const dialog = page.locator('dialog[open]');
+      await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+      await dialog.getByRole('tab', { name: 'Wallpaper', exact: true }).click();
+      const field = dialog.getByRole('textbox', { name: 'Wallpaper URL or path', exact: true });
+      const previews = async (source: string, expected: number[]) => {
+        await field.fill(source);
+        await field.locator('xpath=parent::*[@data-status="success"]').waitFor();
+        await drawsImage(source);
+        await centerIs(expected, `the settings preview must process ${source}`);
+      };
+      await previews(imageUrl.replace('red', 'blue'), [255, 255, 0]);
+      await previews(localPng, [0, 255, 255]);
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'hidden' });
+    } finally {
+      rmSync(localPng, { force: true });
+    }
+    assert(
+      !requests.some((request) => request.startsWith(imageHostUrl)),
+      'the browser must load remote wallpapers through the proxy',
+    );
+    console.log('PASS proxied wallpaper previews in settings');
     await configure({ wallpaper_shaders: [] });
     await page.locator('[data-wallpaper-image]').waitFor();
     assert.equal(await canvas.count(), 0, 'an image alone must not start the renderer');

@@ -137,6 +137,28 @@ try {
   assert(await page.locator('[data-pane-id]').count(), 'long search must retain the app');
   assert.deepEqual(errors, []);
   console.log('PASS oversized scrollback search stays bounded and leaves the app usable');
+
+  // Closing a mounted dialog returns focus to the active pane.
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('%');
+  await page.waitForFunction(() => document.querySelectorAll('[data-pane-id]').length === 2);
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Terminal');
+  const activePane = await page.evaluate(() =>
+    document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id'),
+  );
+  assert(activePane);
+  for (const key of ['s', 'w', 'a']) {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press(key);
+    await page.waitForFunction(() => document.activeElement?.closest('dialog[open]'));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('dialog[open]'));
+    await page.waitForFunction(
+      (pane) => document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id') === pane,
+      activePane,
+    );
+  }
+  console.log('PASS session switcher, window grid, and agent grid return focus to the active pane');
 } finally {
   await browser.close();
 }

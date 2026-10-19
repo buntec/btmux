@@ -189,7 +189,7 @@ export function AgentGrid({ send }: Props) {
 
   const clampedIdx = Math.min(selectedIdx, Math.max(0, entries.length - 1));
 
-  // The native dialog restores focus to the pane on close.
+  // SessionPane refocuses the active pane on close.
   const cancel = () => setOpen(false);
 
   const select = (entry: AgentPaneEntry | undefined) => {

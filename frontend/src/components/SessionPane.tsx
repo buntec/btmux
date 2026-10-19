@@ -104,12 +104,15 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   // so the newly-shown session re-asserts focus.
   // A config update also rebuilds every Terminal (see TerminalPane's termOptions
   // effect), so re-run for it even when activePaneId is unchanged.
-  // While the window-grid is open it owns the keyboard, so don't focus a pane;
-  // focus is returned by WindowGrid's own close path (it can't be done here:
-  // closing the grid leaves activePaneId unchanged, and a setTimeout(0) refocus
-  // would lose the race to the browser dropping focus to <body> as the
-  // display:none'd grid unmounts from the focus path).
+  // While a modal is open it owns the keyboard, so don't focus a pane. The
+  // window grid, agent grid, and switcher dialogs stay mounted and close in
+  // their own effect, which keeps the pane inert here and then restores focus
+  // to <body> (TerminalPane blurred before they opened), so focus after it.
+  const dialogOpen = windowGridOpen || agentGridOpen || switcherOpen;
+  const prevDialogOpen = useRef(dialogOpen);
   useEffect(() => {
+    const dialogClosed = prevDialogOpen.current && !dialogOpen;
+    prevDialogOpen.current = dialogOpen;
     const focusId = zoomedPaneId ?? activePaneId;
     // Don't steal focus into the terminal while the file browser occupies that pane.
     const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
@@ -133,6 +136,10 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
       send({ type: 'acknowledge_pane', pane_id: focusId });
     }
     registryRef.current.get(focusId)?.focus();
+    if (dialogClosed) {
+      const id = window.setTimeout(() => registryRef.current.get(focusId)?.focus(), 0);
+      return () => window.clearTimeout(id);
+    }
   }, [
     activePaneId,
     zoomedPaneId,

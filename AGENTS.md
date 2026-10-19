@@ -48,6 +48,8 @@ launchd/systemd service.
 
 Keep code comments and git commit messages extremely concise.
 Use American English consistently.
+This repository is public: never put agent session links (e.g. a `Claude-Session:`
+trailer or `claude.ai/code/session_…` URL) in commit messages or PR descriptions.
 
 ## Compatibility
 

@@ -1,7 +1,6 @@
-//! Serves the configured wallpaper image from `/wallpaper`: a local file, or a
+//! Serves wallpaper images from `/wallpaper?source=`: a local file, or a
 //! remote image the server fetches, so WebGPU can sample it without CORS.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -19,33 +18,43 @@ const REMOTE_TIMEOUT: Duration = Duration::from_secs(15);
 const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Source {
+enum Source {
     File(PathBuf),
     Remote(String),
 }
 
-/// Resolves a configured wallpaper to the URL browsers load and what
-/// `/wallpaper` serves. Other values (e.g. `data:` URLs) load directly.
-pub fn resolve(raw: &str) -> (String, Option<Source>) {
-    let source = if raw.starts_with("http://") || raw.starts_with("https://") {
-        Source::Remote(raw.to_string())
+/// What `/wallpaper` serves for a configured value, if anything.
+fn source(raw: &str) -> Option<Source> {
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        Some(Source::Remote(raw.to_string()))
     } else if raw.starts_with('/') {
-        Source::File(PathBuf::from(raw))
-    } else if let Some(rest) = raw.strip_prefix('~') {
-        Source::File(match std::env::var("HOME") {
-            Ok(home) => PathBuf::from(home).join(rest.strip_prefix('/').unwrap_or(rest)),
-            Err(_) => PathBuf::from(raw),
-        })
+        Some(Source::File(PathBuf::from(raw)))
     } else {
-        return (raw.to_string(), None);
-    };
-    // A new source gets a new URL, so browsers and the renderer reload it.
-    let mut hasher = DefaultHasher::new();
-    raw.hash(&mut hasher);
-    (
-        format!("/wallpaper?v={:016x}", hasher.finish()),
-        Some(source),
-    )
+        raw.strip_prefix('~').map(|rest| {
+            Source::File(match std::env::var("HOME") {
+                Ok(home) => PathBuf::from(home).join(rest.strip_prefix('/').unwrap_or(rest)),
+                Err(_) => PathBuf::from(raw),
+            })
+        })
+    }
+}
+
+/// The URL browsers load for a configured wallpaper. Other values (e.g.
+/// `data:` URLs) load directly.
+pub fn url(raw: &str) -> String {
+    if source(raw).is_none() {
+        return raw.to_string();
+    }
+    let encoded: String = raw
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect();
+    format!("/wallpaper?source={encoded}")
 }
 
 #[derive(Clone, Debug)]
@@ -57,9 +66,13 @@ struct Image {
 /// The last remote image, so tabs and reloads don't refetch it.
 static REMOTE: Mutex<Option<(String, Image)>> = Mutex::const_new(None);
 
-pub async fn serve(source: Option<Source>) -> Response {
-    let image = match source {
+pub async fn serve(raw: &str) -> Response {
+    let image = match source(raw) {
         None => return StatusCode::NOT_FOUND.into_response(),
+        // Only images, though `/api/file` serves any file.
+        Some(Source::File(path)) if check_file(&path).await.is_err() => {
+            return StatusCode::NOT_FOUND.into_response()
+        }
         Some(Source::File(path)) => match tokio::fs::read(&path).await {
             Ok(data) => Image {
                 content_type: mime_guess::from_path(&path)
@@ -97,10 +110,12 @@ pub async fn serve(source: Option<Source>) -> Response {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct WallpaperCheck {
     pub error: Option<String>,
+    /// What browsers load for a valid value, e.g. to preview it.
+    pub url: Option<String>,
 }
 
 pub async fn check(raw: &str) -> WallpaperCheck {
-    let error = match resolve(raw).1 {
+    let error = match source(raw) {
         None if raw.starts_with("data:image/") => None,
         None => Some("Use an http(s) URL, an absolute or ~/ path, or a data:image URL".into()),
         Some(Source::File(path)) => check_file(&path).await.err(),
@@ -117,7 +132,10 @@ pub async fn check(raw: &str) -> WallpaperCheck {
             },
         },
     };
-    WallpaperCheck { error }
+    WallpaperCheck {
+        url: error.is_none().then(|| url(raw)),
+        error,
+    }
 }
 
 async fn check_file(path: &std::path::Path) -> Result<(), String> {
@@ -209,21 +227,23 @@ mod tests {
 
     #[test]
     fn resolves_served_and_direct_wallpapers() {
-        let (url, source) = resolve("https://example.com/a.png");
-        assert!(url.starts_with("/wallpaper?v="));
         assert_eq!(
-            source,
+            url("https://example.com/a b.png?x=1&y"),
+            "/wallpaper?source=https%3A%2F%2Fexample.com%2Fa%20b.png%3Fx%3D1%26y"
+        );
+        assert_eq!(
+            source("https://example.com/a.png"),
             Some(Source::Remote("https://example.com/a.png".into()))
         );
-        let (other, _) = resolve("https://example.com/b.png");
-        assert_ne!(url, other, "a new source must get a new URL");
-
-        let (url, source) = resolve("/srv/bg.jpg");
-        assert!(url.starts_with("/wallpaper?v="));
-        assert_eq!(source, Some(Source::File("/srv/bg.jpg".into())));
+        assert_eq!(url("/srv/bg.jpg"), "/wallpaper?source=%2Fsrv%2Fbg.jpg");
+        assert_eq!(
+            source("/srv/bg.jpg"),
+            Some(Source::File("/srv/bg.jpg".into()))
+        );
 
         let data = "data:image/png;base64,AAAA";
-        assert_eq!(resolve(data), (data.to_string(), None));
+        assert_eq!(url(data), data);
+        assert_eq!(source(data), None);
     }
 
     /// Serves one response from a local listener and returns its URL.
@@ -274,7 +294,9 @@ mod tests {
         std::fs::write(&image, b"PNG!").unwrap();
         std::fs::write(&text, b"hi").unwrap();
         let error = |raw: String| async move { check(&raw).await.error };
-        assert_eq!(error(image.display().to_string()).await, None);
+        let checked = check(&image.display().to_string()).await;
+        assert_eq!(checked.error, None);
+        assert_eq!(checked.url, Some(url(&image.display().to_string())));
         assert_eq!(
             error(dir.join("missing.png").display().to_string()).await,
             Some("File not found".into())
@@ -282,6 +304,13 @@ mod tests {
         assert_eq!(
             error(text.display().to_string()).await,
             Some("Not an image file".into())
+        );
+        assert_eq!(check(&text.display().to_string()).await.url, None);
+        let served = serve(&text.display().to_string()).await;
+        assert_eq!(
+            served.status(),
+            StatusCode::NOT_FOUND,
+            "only images are served"
         );
         assert_eq!(
             error(dir.display().to_string()).await,
@@ -305,7 +334,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("btmux-wallpaper-{}.svg", uuid::Uuid::new_v4()));
         std::fs::write(&path, "<svg xmlns='http://www.w3.org/2000/svg'/>").unwrap();
-        let response = serve(Some(Source::File(path.clone()))).await;
+        let response = serve(&path.display().to_string()).await;
         std::fs::remove_file(path).unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let headers = response.headers();
@@ -315,6 +344,6 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("sandbox"));
-        assert_eq!(serve(None).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(serve("bg.svg").await.status(), StatusCode::NOT_FOUND);
     }
 }

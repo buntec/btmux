@@ -1056,13 +1056,10 @@ pub struct ClientConfig {
     /// the bottom wallpaper layer, beneath any shader layers.
     pub wallpaper: Option<String>,
     /// What browsers load for `wallpaper`: local files and remote images are
-    /// served from `/wallpaper`.
+    /// served from `/wallpaper?source=`.
     pub wallpaper_url: Option<String>,
     /// Procedural WebGPU wallpaper layers rendered by the frontend, bottom first.
     pub wallpaper_shaders: ShaderLayers,
-    /// What the `/wallpaper` route serves. Not sent to the browser.
-    #[serde(skip)]
-    pub wallpaper_source: Option<crate::wallpaper::Source>,
     /// Opacity of the wallpaper: 0.0 = invisible, 1.0 = fully visible.
     /// Always `Some` when a wallpaper is configured (defaults to 0.10).
     pub wallpaper_opacity: Option<f32>,
@@ -1791,11 +1788,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
     };
     let theme = color_palette.to_theme();
 
-    let (wallpaper_url, wallpaper_source) =
-        match file.wallpaper.as_deref().map(crate::wallpaper::resolve) {
-            Some((url, source)) => (Some(url), source),
-            None => (None, None),
-        };
+    let wallpaper_url = file.wallpaper.as_deref().map(crate::wallpaper::url);
 
     // Configured URLs and paths are listed too, so pickers can preview them.
     let mut color_schemes = list_color_schemes();
@@ -1851,7 +1844,6 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         wallpaper: file.wallpaper.clone(),
         wallpaper_url,
         wallpaper_shaders: file.wallpaper_shaders.clone(),
-        wallpaper_source,
         wallpaper_opacity,
         desktop_background_opacity: file
             .desktop_background_opacity
@@ -2662,7 +2654,7 @@ palette:
         assert!(resolved
             .wallpaper_url
             .as_deref()
-            .is_some_and(|url| url.starts_with("/wallpaper?v=")));
+            .is_some_and(|url| url.starts_with("/wallpaper?source=")));
         assert!(resolved.wallpaper_shaders.is_empty());
         assert_eq!(resolved.wallpaper_opacity, Some(0.65));
         assert_eq!(resolved.wallpaper_blur, Some(8.0));

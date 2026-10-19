@@ -3,13 +3,19 @@ import type { WallpaperCheck } from '../generated/protocol';
 
 export type WallpaperStatus = { type: 'error' | 'success'; message?: string };
 
+export interface WallpaperCheckResult {
+  status?: WallpaperStatus;
+  /** What browsers load for a valid source. */
+  url: string | null;
+}
+
 const DEBOUNCE_MS = 500;
 
 /** Asks the server, after typing pauses, whether `source` can be a wallpaper. */
-export function useWallpaperCheck(source: string): WallpaperStatus | undefined {
-  const [status, setStatus] = useState<WallpaperStatus>();
+export function useWallpaperCheck(source: string): WallpaperCheckResult {
+  const [result, setResult] = useState<WallpaperCheckResult>({ url: null });
   useEffect(() => {
-    setStatus(undefined);
+    setResult({ url: null });
     if (!source.trim()) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -21,9 +27,13 @@ export function useWallpaperCheck(source: string): WallpaperStatus | undefined {
           if (!response.ok) throw new Error(`Could not check the wallpaper (HTTP ${response.status})`);
           return response.json() as Promise<WallpaperCheck>;
         })
-        .then(({ error }) => setStatus(error ? { type: 'error', message: error } : { type: 'success' }))
+        .then(({ error, url }) =>
+          setResult(
+            error ? { status: { type: 'error', message: error }, url: null } : { status: { type: 'success' }, url },
+          ),
+        )
         .catch((error: Error) => {
-          if (!controller.signal.aborted) setStatus({ type: 'error', message: error.message });
+          if (!controller.signal.aborted) setResult({ status: { type: 'error', message: error.message }, url: null });
         });
     }, DEBOUNCE_MS);
     return () => {
@@ -31,5 +41,5 @@ export function useWallpaperCheck(source: string): WallpaperStatus | undefined {
       controller.abort();
     };
   }, [source]);
-  return status;
+  return result;
 }

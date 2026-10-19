@@ -414,7 +414,7 @@ export function ConfigPage({ config, send }: Props) {
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const toast = useToast();
   const [draft, setDraft] = useState(() => initialDraft(config));
-  const wallpaperStatus = useWallpaperCheck(draft.wallpaper);
+  const wallpaperCheck = useWallpaperCheck(draft.wallpaper);
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
   const [copied, setCopied] = useState(false);
   const [showToml, setShowToml] = useState(false);
@@ -444,13 +444,8 @@ export function ConfigPage({ config, send }: Props) {
         cellBackgroundOpacity: draft.cellBackgroundOpacity,
       },
       wallpaper: draft.wallpaper || null,
-      // The server serves the applied wallpaper; an edited URL previews directly.
-      wallpaper_url:
-        draft.wallpaper === (config.wallpaper ?? '')
-          ? config.wallpaper_url
-          : /^(https?|data):/.test(draft.wallpaper)
-            ? draft.wallpaper
-            : null,
+      // An edited wallpaper previews once checked, through the same proxy as applied ones.
+      wallpaper_url: draft.wallpaper === (config.wallpaper ?? '') ? config.wallpaper_url : wallpaperCheck.url,
       wallpaper_shaders: draft.wallpaperShaders,
       wallpaper_opacity: draft.wallpaperOpacity,
       desktop_background_opacity: draft.desktopBackgroundOpacity,
@@ -466,7 +461,7 @@ export function ConfigPage({ config, send }: Props) {
       pane_switch_border: draft.paneSwitchBorderStyle || null,
       pane_switch_border_speed: draft.paneSwitchBorderSpeed,
     }),
-    [config, draft, dirty],
+    [config, draft, dirty, wallpaperCheck.url],
   );
 
   // The active session consumes this local layer directly, so draft changes
@@ -797,7 +792,7 @@ export function ConfigPage({ config, send }: Props) {
                           'wallpaper',
                           'Wallpaper URL or path',
                           'Drawn beneath the shader layers.',
-                          wallpaperStatus,
+                          wallpaperCheck.status,
                         )}
                         {range('wallpaperOpacity', 'Wallpaper opacity', 0, 1, 0.01)}
                         {range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5)}

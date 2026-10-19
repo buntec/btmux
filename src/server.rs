@@ -1310,19 +1310,18 @@ async fn serve_raw_file(
 }
 
 #[derive(Deserialize)]
-struct WallpaperCheckQuery {
+struct WallpaperQuery {
     source: String,
 }
 
 async fn api_wallpaper_check(
-    Query(query): Query<WallpaperCheckQuery>,
+    Query(query): Query<WallpaperQuery>,
 ) -> Json<crate::wallpaper::WallpaperCheck> {
     Json(crate::wallpaper::check(&query.source).await)
 }
 
-async fn serve_wallpaper(State(state): State<AppState>) -> Response {
-    let source = state.read().await.config().wallpaper_source.clone();
-    crate::wallpaper::serve(source).await
+async fn serve_wallpaper(Query(query): Query<WallpaperQuery>) -> Response {
+    crate::wallpaper::serve(&query.source).await
 }
 
 fn serve(path: &str) -> Response {

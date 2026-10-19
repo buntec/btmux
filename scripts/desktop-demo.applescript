@@ -433,7 +433,7 @@ on playLatex(prefixSpec)
 end playLatex
 
 -- Cursor Trail (from config.toml) follows the terminal cursor across panes,
--- then the mouse; then Ink Flow, picked in Settings, does the same
+-- then the mouse; then a Pixelate effect, added in Settings, pixelates it
 on playShaders(prefixSpec)
 	typeSlowly("echo \"wallpaper-shader-follows-keyboard-input = true makes the shader effect follow the keyboard cursor\"")
 	enter()
@@ -458,13 +458,13 @@ on playShaders(prefixSpec)
 	pace(1)
 	mouseTour(4000)
 
-	switchShaderLayers(prefixSpec)
+	addPixelateLayer(prefixSpec)
 	-- Focus comes back to the terminal late; click the active, left pane
 	set {cx, cy, cw, ch} to contentBounds()
 	mouse("click " & int(cx + cw * 0.25) & " " & int(cy + ch * 0.6) & " " & int(600 * delayScale))
 	park()
 	pace(0.8)
-	typeSlowly("echo \"shader layer 2 = ink-flow, enabled from the settings\"")
+	typeSlowly("echo \"shader layer 2 = pixelate, an effect over the layers below it\"")
 	enter()
 	pace(1)
 	chordKey(prefixSpec, 124) -- right
@@ -488,10 +488,10 @@ on mouseTour(swirlMs)
 	pace(1)
 end mouseTour
 
--- Turns shader layer 1 off and layer 2 on in Settings, shows the generated
--- TOML, and applies it, which also closes Settings; the terminal needs a click
--- to get the keyboard back
-on switchShaderLayers(prefixSpec)
+-- Adds a Pixelate layer in Settings, shows the generated TOML, and applies
+-- it, which also closes Settings; the terminal needs a click to get the
+-- keyboard back
+on addPixelateLayer(prefixSpec)
 	chord(prefixSpec, ":")
 	pace(0.8)
 	typeSlowly("set")
@@ -507,14 +507,18 @@ on switchShaderLayers(prefixSpec)
 	end repeat
 	enter()
 	pace(1)
-	-- Past the wallpaper URL, six sliders, two switches, and the layer 1 shader
-	-- to its switch
-	tabs(11)
+	-- Past the wallpaper URL, six sliders, two switches, and layer 1 (shader,
+	-- switch, remove, and its settings, open for a single layer: the trigger,
+	-- blend mode, opacity, interactive, eight parameters, randomize, and
+	-- reset) to Add shader layer
+	tabs(27)
 	keyCode(49) -- space
 	pace(0.8)
-	-- Past layer 1's move down, remove, and settings, and layer 2's shader
-	tabs(5)
-	keyCode(49)
+	typeSlowly("pixel")
+	pace(0.6)
+	keyCode(125) -- down
+	sleepFor(0.25)
+	enter()
 	pace(1.2)
 	-- The dialog is centered and 90% of the content's height; Show TOML
 	-- widens it, which moves Apply
@@ -525,7 +529,7 @@ on switchShaderLayers(prefixSpec)
 	pace(2.5)
 	mouse("click " & int(midX - 47) & " " & int(dialogBottom - 32) & " " & int(800 * delayScale)) -- Apply
 	pace(1)
-end switchShaderLayers
+end addPixelateLayer
 
 -- The primary screen's area outside the menu bar and Dock, in the top-left
 -- origin coordinates System Events uses.

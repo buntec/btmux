@@ -220,8 +220,9 @@ write_config() {
         # An opaque window keeps the desktop out of the recording.
         echo "desktop-background-opacity = 1.0"
         echo "appearance = \"$(<"$run_dir/mode")\""
-        # Cursor Trail, then Ink Flow in the demo, following the keyboard and
-        # the mouse; more opaque than the default 0.1 to show up in the video.
+        # Cursor Trail, following the keyboard and the mouse; the demo adds
+        # Pixelate over it. More opaque than the default 0.1 to show up in the
+        # video.
         if [[ "$1" == shaders ]]; then
             cat <<'EOF'
 wallpaper-opacity = 0.25
@@ -233,16 +234,6 @@ wallpaper-shader-follows-mouse-cursor = true
 
 [[wallpaper-shader]]
 shader = "cursor-trail"
-
-[[wallpaper-shader]]
-shader = "ink-flow"
-enabled = false
-
-[wallpaper-shader.params]
-curl = 0
-decay = 2
-momentum = 0.5
-radius = 0.25
 EOF
         fi
     } >"$run_dir/config/btmux/config.toml"

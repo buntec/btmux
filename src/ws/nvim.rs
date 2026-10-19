@@ -2,6 +2,7 @@
 //! each socket is a separate msgpack-RPC connection that attaches its own UI.
 
 use std::io::ErrorKind;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -18,9 +19,41 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use rust_embed::Embed;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{oneshot, watch, Mutex};
+
+#[cfg(unix)]
+type Stream = tokio::net::UnixStream;
+#[cfg(windows)]
+type Stream = tokio::net::windows::named_pipe::NamedPipeClient;
+
+async fn connect_to(path: &Path) -> std::io::Result<Stream> {
+    #[cfg(unix)]
+    return Stream::connect(path).await;
+    #[cfg(windows)]
+    tokio::net::windows::named_pipe::ClientOptions::new().open(path)
+}
+
+/// Neovim's `--listen` address for a server in `dir`.
+fn socket_path(dir: &Path) -> PathBuf {
+    #[cfg(unix)]
+    return dir.join("nvim.sock");
+    #[cfg(windows)]
+    PathBuf::from(format!(
+        r"\\.\pipe\{}-nvim",
+        dir.file_name().unwrap_or_default().to_string_lossy()
+    ))
+}
+
+/// Whether `meta` is a directory only this user can access. Windows: the temp
+/// directory is per-user.
+fn private_dir(meta: &std::fs::Metadata) -> bool {
+    // SAFETY: geteuid has no preconditions.
+    #[cfg(unix)]
+    return meta.is_dir() && meta.uid() == unsafe { libc::geteuid() } && meta.mode() & 0o077 == 0;
+    #[cfg(windows)]
+    meta.is_dir()
+}
 
 static SERVER: LazyLock<Mutex<Option<NvimServer>>> = LazyLock::new(|| Mutex::new(None));
 
@@ -46,7 +79,7 @@ impl NvimServer {
     }
 
     fn socket(&self) -> PathBuf {
-        self.directory.0.join("nvim.sock")
+        socket_path(&self.directory.0)
     }
 
     /// Listen on the socket again after something (e.g. a tmp cleaner)
@@ -55,11 +88,7 @@ impl NvimServer {
         let dir = &self.directory.0;
         match std::fs::symlink_metadata(dir) {
             Err(e) if e.kind() == ErrorKind::NotFound => create_private_dir(dir)?,
-            // SAFETY: geteuid has no preconditions.
-            Ok(meta)
-                if meta.is_dir()
-                    && meta.uid() == unsafe { libc::geteuid() }
-                    && meta.mode() & 0o077 == 0 => {}
+            Ok(meta) if private_dir(&meta) => {}
             _ => return Err(format!("{} is no longer private", dir.display())),
         }
         install_plugin(&dir.join("plugin"))?;
@@ -102,8 +131,11 @@ fn rpc_request(method: &str, first: &str, arg: &str) -> Vec<u8> {
 
 /// Atomic creation rejects existing directories and symlinks.
 fn create_private_dir(path: &Path) -> Result<(), String> {
-    std::fs::DirBuilder::new()
-        .mode(0o700)
+    #[cfg_attr(windows, allow(unused_mut))]
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder
         .create(path)
         .map_err(|e| format!("create {}: {e}", path.display()))
 }
@@ -174,10 +206,10 @@ fn parse_version(output: &str) -> Option<(u32, u32)> {
 }
 
 /// Spawn the shared Neovim if it isn't running, then connect to it.
-async fn connect() -> Result<(UnixStream, PathBuf, watch::Receiver<State>), String> {
+async fn connect() -> Result<(Stream, PathBuf, watch::Receiver<State>), String> {
     let mut server = SERVER.lock().await;
     match server.as_mut().filter(|server| server.running()) {
-        Some(running) => match UnixStream::connect(running.socket()).await {
+        Some(running) => match connect_to(&running.socket()).await {
             Ok(stream) => return Ok((stream, running.socket(), running.state.clone())),
             Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) => {
                 running.relisten().await?;
@@ -194,7 +226,7 @@ async fn connect() -> Result<(UnixStream, PathBuf, watch::Receiver<State>), Stri
 
     let mut last_error = String::new();
     for _ in 0..50 {
-        match UnixStream::connect(&path).await {
+        match connect_to(&path).await {
             Ok(stream) => return Ok((stream, path, state)),
             Err(e) => last_error = e.to_string(),
         }
@@ -205,7 +237,7 @@ async fn connect() -> Result<(UnixStream, PathBuf, watch::Receiver<State>), Stri
 
 fn spawn() -> Result<NvimServer, String> {
     let directory = PrivateDir::new()?;
-    let path = directory.0.join("nvim.sock");
+    let path = socket_path(&directory.0);
     let plugin = directory.0.join("plugin");
     install_plugin(&plugin)?;
     // A JSON string is a valid Lua string literal for any path.
@@ -309,6 +341,7 @@ async fn modified_buffers(addr: &Path) -> Result<String, String> {
 }
 
 /// Fail if the built-in Neovim has unsaved changes.
+#[cfg(unix)]
 pub async fn check_saved() -> Result<(), String> {
     let addr = {
         let server = SERVER.lock().await;
@@ -381,7 +414,7 @@ async fn handle_socket(socket: WebSocket) {
             return;
         }
     };
-    let (mut rd, mut wr) = stream.into_split();
+    let (mut rd, mut wr) = tokio::io::split(stream);
 
     let up = async {
         while let Some(Ok(msg)) = ws_rx.next().await {
@@ -452,7 +485,7 @@ fn close_frame(state: State) -> CloseFrame {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::{symlink, PermissionsExt};

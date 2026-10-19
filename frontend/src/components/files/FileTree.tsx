@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Folder, File, ChevronRight } from 'lucide-react';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
-import { cn } from '@/lib/utils';
+import { cn, joinPath } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
 import type { FileEntry, GitStatusResult, ServerFileMessage } from '@/protocol/file-messages';
 import { Placeholder } from './Placeholder';
@@ -55,7 +55,7 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
       .filter((entry) => entry.is_dir)
       .map((entry) => ({
         name: entry.name,
-        path: currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`,
+        path: joinPath(currentPath, entry.name),
       }));
 
     const loadStatuses = async () => {
@@ -98,7 +98,7 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
     <ScrollableArea label="Files" axis="block" data-preview-viewport className="flex-1 overflow-auto">
       <div ref={listRef}>
         {visible.map((entry, i) => {
-          const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+          const fullPath = joinPath(currentPath, entry.name);
           return (
             <FileRow
               key={entry.name}
@@ -141,7 +141,7 @@ function FileRow({
   onNavigate: (path: string) => void;
   onSelect: (path: string, isDir: boolean) => void;
 }) {
-  const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+  const fullPath = joinPath(currentPath, entry.name);
 
   return (
     <div

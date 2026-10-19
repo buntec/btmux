@@ -4,7 +4,6 @@
 //! Also injected into a pane's shell by `OpenFile` so the typed line stays
 //! short and shell-agnostic; the editor-specific argument handling lives here.
 
-use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -100,11 +99,20 @@ async fn open_in_server(file: Option<&str>, line: Option<u32>) -> Result<bool, S
     Ok(reply["opened"].as_bool() == Some(true))
 }
 
-/// Replace this process with `$EDITOR`. Returns the exit code on failure.
+/// Replace this process with `$EDITOR` (on Windows, run it and return its
+/// exit code). Returns the exit code on failure.
 fn exec_editor(file: Option<&str>, line: Option<u32>) -> i32 {
     let editor = std::env::var("EDITOR").unwrap_or_default();
     let argv = editor_argv(&editor, file, line);
-    let error = std::process::Command::new(&argv[0]).args(&argv[1..]).exec();
+    let mut command = std::process::Command::new(&argv[0]);
+    command.args(&argv[1..]);
+    #[cfg(unix)]
+    let error = std::os::unix::process::CommandExt::exec(&mut command);
+    #[cfg(windows)]
+    let error = match command.status() {
+        Ok(status) => return status.code().unwrap_or(1),
+        Err(error) => error,
+    };
     eprintln!("btmux: cannot run {}: {error}", argv[0]);
     127
 }

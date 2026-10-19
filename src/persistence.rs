@@ -177,30 +177,29 @@ pub struct ProfileLock(std::fs::File);
 
 impl ProfileLock {
     pub fn acquire(path: &Path) -> Result<Self, String> {
-        use std::os::fd::AsRawFd;
-        use std::os::unix::fs::OpenOptionsExt;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let file = options
             .open(path.with_extension("lock"))
             .map_err(|e| e.to_string())?;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err(format!("session profile {} is already in use (or cannot be locked): {}. Use --profile with a different name", path.display(), std::io::Error::last_os_error()));
+        if let Err(error) = file.try_lock() {
+            return Err(format!("session profile {} is already in use (or cannot be locked): {error}. Use --profile with a different name", path.display()));
         }
         Ok(Self(file))
     }
 
     /// A lock held by the server this one re-executed from.
+    #[cfg(unix)]
     pub fn adopt(fd: std::os::fd::OwnedFd) -> Self {
         Self(fd.into())
     }
 
+    #[cfg(unix)]
     pub fn raw_fd(&self) -> std::os::fd::RawFd {
         use std::os::fd::AsRawFd;
         self.0.as_raw_fd()
@@ -209,10 +208,7 @@ impl ProfileLock {
 
 impl Drop for ProfileLock {
     fn drop(&mut self) {
-        use std::os::fd::AsRawFd;
-        unsafe {
-            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
-        }
+        let _ = self.0.unlock();
     }
 }
 

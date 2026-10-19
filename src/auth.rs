@@ -181,10 +181,7 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
 /// Persist a per-profile random credential with owner-only permissions. Never
 /// print the credential or put it in URLs, browser history, or access logs.
 pub fn load_token(state_path: Option<&Path>) -> Result<String, String> {
-    use std::{
-        io::Write,
-        os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    };
+    use std::io::Write;
     let token = if let Ok(token) = std::env::var("BTMUX_AUTH_TOKEN") {
         token
     } else {
@@ -194,12 +191,11 @@ pub fn load_token(state_path: Option<&Path>) -> Result<String, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        match options.open(&path) {
             Ok(mut file) => {
                 let token = format!(
                     "{}{}",
@@ -214,7 +210,12 @@ pub fn load_token(state_path: Option<&Path>) -> Result<String, String> {
             Err(e) => return Err(e.to_string()),
         }
         let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-        if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
+        // Windows: files under %LOCALAPPDATA% inherit its owner-only ACL.
+        #[cfg(unix)]
+        let private = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o077 == 0;
+        #[cfg(windows)]
+        let private = true;
+        if !metadata.is_file() || !private {
             return Err(format!(
                 "{} must be a regular owner-only file (chmod 600)",
                 path.display()

@@ -51,6 +51,7 @@ impl Replay {
     }
 
     /// Rebuilds a journal from `snapshot()` events.
+    #[cfg(unix)]
     pub fn restore(cols: u16, rows: u16, cap: usize, events: Vec<Output>) -> Self {
         let mut replay = Self::new(cols, rows, cap);
         let mut events = events.into_iter();
@@ -228,6 +229,7 @@ mod tests {
         assert_eq!(parser.screen().size(), (30, 100));
     }
     #[test]
+    #[cfg(unix)]
     fn restoring_a_snapshot_keeps_one_checkpoint() {
         let mut replay = Replay::new(80, 24, 3);
         replay.push(Output::Data(Bytes::from_static(b"evicted ")));

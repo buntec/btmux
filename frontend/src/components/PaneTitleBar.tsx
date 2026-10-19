@@ -13,7 +13,7 @@ import { getAnimations } from '../state/configDefaults';
 /** Collapse a home-directory prefix to `~` so cwds read like the shell prompt. */
 function shortCwd(cwd: string | null | undefined): string | null {
   if (!cwd) return null;
-  const collapsed = cwd.replace(/^\/(?:Users|home)\/[^/]+/, '~');
+  const collapsed = cwd.replace(/^(?:\/(?:Users|home)|[A-Za-z]:\/Users)\/[^/]+/, '~');
   return collapsed || cwd;
 }
 

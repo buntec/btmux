@@ -22,7 +22,7 @@ import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
 import { KeyHint, type Hint } from './KeyHint';
-import { cn, getParent } from '@/lib/utils';
+import { cn, getParent, joinPath } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
 import { smoothScrollBy } from '@/lib/smoothScroll';
 import { DEFAULT_TYPE_SCALE, terminalTypeScale } from '@/lib/astryx-theme';
@@ -667,7 +667,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     });
     const entry = visible[focusedIndex];
     if (!entry) return;
-    const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    const fullPath = joinPath(currentPath, entry.name);
     if (entry.is_dir) {
       selectDir(fullPath, treeDepth);
     } else {
@@ -1098,7 +1098,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           });
           const entry = vis[focusedIndex];
           if (entry) {
-            const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+            const fullPath = joinPath(currentPath, entry.name);
             if (e.ctrlKey) {
               insertPath(fullPath);
             } else if (entry.is_dir) {
@@ -1145,11 +1145,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       });
 
       const focusedEntry = visible[focusedIndex];
-      const focusedFullPath = focusedEntry
-        ? currentPath === '/'
-          ? `/${focusedEntry.name}`
-          : `${currentPath}/${focusedEntry.name}`
-        : null;
+      const focusedFullPath = focusedEntry ? joinPath(currentPath, focusedEntry.name) : null;
 
       if (e.ctrlKey && e.key === 'n') {
         e.preventDefault();

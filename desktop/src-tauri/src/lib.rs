@@ -178,6 +178,7 @@ fn start_private_server(app: AppHandle, window: WebviewWindow) -> Result<(), Str
         uuid::Uuid::new_v4().simple(),
         uuid::Uuid::new_v4().simple()
     );
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut sidecar = app
         .shell()
         .sidecar("btmux")

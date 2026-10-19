@@ -21,7 +21,6 @@ tracing-appender = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 futures-util = "0.3"
-nix = { version = "0.29", features = ["term"] }
 libc = "0.2"
 toml = "0.8"
 notify = "6"
@@ -42,6 +41,20 @@ regex = "1"
 netstat2 = "0.11.2"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["term"] }
+
+[target.'cfg(windows)'.dependencies]
+dunce = "1"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

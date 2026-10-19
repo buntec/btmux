@@ -27,13 +27,13 @@ enum Source {
 fn source(raw: &str) -> Option<Source> {
     if raw.starts_with("http://") || raw.starts_with("https://") {
         Some(Source::Remote(raw.to_string()))
-    } else if raw.starts_with('/') {
+    } else if std::path::Path::new(raw).is_absolute() {
         Some(Source::File(PathBuf::from(raw)))
     } else {
         raw.strip_prefix('~').map(|rest| {
-            Source::File(match std::env::var("HOME") {
-                Ok(home) => PathBuf::from(home).join(rest.strip_prefix('/').unwrap_or(rest)),
-                Err(_) => PathBuf::from(raw),
+            Source::File(match dirs::home_dir() {
+                Some(home) => home.join(rest.strip_prefix('/').unwrap_or(rest)),
+                None => PathBuf::from(raw),
             })
         })
     }

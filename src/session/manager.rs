@@ -18,6 +18,7 @@ use crate::pty::{PtyEnv, PtyHandle};
 pub type PaneStatuses = std::sync::Arc<HashMap<Uuid, Option<AgentStatus>>>;
 
 /// A live shell handed to an upgraded server: pane, PTY master, and state.
+#[cfg(unix)]
 pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
 
 pub struct SessionManager {
@@ -260,9 +261,9 @@ impl SessionManager {
             let Some(process) = agent.observed_process().filter(|_| agent.is_active()) else {
                 continue;
             };
-            let group = unsafe { libc::getpgid(process.pid as libc::pid_t) };
+            let group = crate::process::group(process.pid as crate::process::Pid);
             let revision = pane.pty.screen_revision();
-            if group <= 0 || pane.pty.foreground_pgrp() != Some(group) {
+            if group.is_none() || pane.pty.foreground_pgrp() != group {
                 changed |= agent.observe_background(revision);
                 continue;
             }
@@ -300,8 +301,8 @@ impl SessionManager {
             let Some(shell) = pane.pty.shell_pid() else {
                 continue;
             };
-            let group = unsafe { libc::getpgid(shell as libc::pid_t) };
-            if group > 0 && pane.pty.foreground_pgrp() == Some(group) {
+            let group = crate::process::group(shell as crate::process::Pid);
+            if group.is_some() && pane.pty.foreground_pgrp() == group {
                 agent.end(now);
                 changed = true;
             }
@@ -923,7 +924,7 @@ impl SessionManager {
             .ok()
             .filter(|s| !s.is_empty())
             .or_else(|| std::env::var("EDITOR").ok().filter(|s| !s.is_empty()))
-            .unwrap_or_else(|| "vi".to_string());
+            .unwrap_or_else(|| if cfg!(windows) { "notepad" } else { "vi" }.to_string());
 
         // Leading space keeps it out of history in shells honouring that (bash
         // HISTCONTROL, zsh HIST_IGNORE_SPACE, fish); trailing CR submits the line
@@ -1257,6 +1258,7 @@ impl SessionManager {
         })
     }
 
+    #[cfg(unix)]
     /// Stop every PTY reader and writer and export the session tree and live shells for
     /// an in-place upgrade. If a pane doesn't stop in time, every shell resumes.
     pub fn export_handoff(
@@ -1297,6 +1299,7 @@ impl SessionManager {
         Ok((self.all_snapshots(), exported))
     }
 
+    #[cfg(unix)]
     /// Restart the shells `export_handoff` stopped, after a failed upgrade.
     pub fn resume_handoff(&mut self, panes: Vec<HandoffPane>) {
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1324,6 +1327,7 @@ impl SessionManager {
         }
     }
 
+    #[cfg(unix)]
     /// Rebuild the session tree from a handoff and adopt its running shells.
     pub fn restore_handoff(
         &mut self,
@@ -1428,12 +1432,14 @@ fn unique_name_in(existing: &[&str], base: &str) -> String {
 /// wrap in `'…'` and replace each embedded `'` with `'\''`. Works for bash, zsh,
 /// and fish alike (all treat single quotes literally). Used to inject the capture
 /// file path into a pane's shell.
+/// Quote `s` for the pane's shell: POSIX, or PowerShell on Windows.
 pub(crate) fn shell_single_quote(s: &str) -> String {
+    let escaped = if cfg!(windows) { "''" } else { "'\\''" };
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for ch in s.chars() {
         if ch == '\'' {
-            out.push_str("'\\''");
+            out.push_str(escaped);
         } else {
             out.push(ch);
         }

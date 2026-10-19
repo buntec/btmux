@@ -9,7 +9,10 @@ use crate::session::NotificationLevel;
 
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8004;
+#[cfg(unix)]
 pub const DEFAULT_SHELL: &str = "/bin/bash";
+#[cfg(windows)]
+pub const DEFAULT_SHELL: &str = "powershell.exe";
 pub const DEFAULT_PTY_COLS: u16 = 80;
 pub const DEFAULT_PTY_ROWS: u16 = 24;
 
@@ -1185,13 +1188,23 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling
-/// back to `$HOME/.config/btmux/config.toml`.
+/// back to `$HOME/.config/btmux/config.toml` (`%APPDATA%` on Windows).
 pub fn config_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("btmux").join("config.toml"))
+    let env = |name| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+    };
+    #[cfg(windows)]
+    let home = env("APPDATA");
+    #[cfg(not(windows))]
+    let home = env("HOME").map(|h| h.join(".config"));
+    Some(
+        env("XDG_CONFIG_HOME")
+            .or(home)?
+            .join("btmux")
+            .join("config.toml"),
+    )
 }
 
 /// Resolve the colors directory: `$XDG_CONFIG_HOME/btmux/colors/`, falling back
@@ -1211,8 +1224,7 @@ fn is_color_scheme_path(value: &str) -> bool {
 /// the original `~/` path so the read below emits a useful warning.
 fn expand_color_scheme_path(value: &str) -> PathBuf {
     if let Some(relative) = value.strip_prefix("~/") {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
+        dirs::home_dir()
             .map(|home| home.join(relative))
             .unwrap_or_else(|| PathBuf::from(value))
     } else {

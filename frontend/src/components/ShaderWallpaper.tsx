@@ -5,7 +5,34 @@ import { activeShaderLayers, findWallpaperShader } from '../lib/wallpaperCatalog
 import { WALLPAPER_KEYBOARD_CURSOR_EVENT, type WallpaperKeyboardCursorDetail } from '../lib/wallpaperInteraction';
 import type { WallpaperRenderer, WallpaperRuntimeOptions } from '../lib/wallpaperRenderer';
 
+interface WallpaperImageProps {
+  url: string;
+  opacity: number;
+  blur: number;
+  saturate: number;
+}
+
+/** The wallpaper image alone, or while the shader stack can't draw it. */
+export function WallpaperImage({ url, opacity, blur, saturate }: WallpaperImageProps) {
+  return (
+    <div
+      aria-hidden="true"
+      data-wallpaper-image=""
+      className="fixed inset-0 -z-10 pointer-events-none"
+      style={{
+        backgroundImage: `url(${JSON.stringify(url)})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        opacity,
+        filter: `blur(${blur}px) saturate(${saturate})`,
+      }}
+    />
+  );
+}
+
 interface ShaderWallpaperProps {
+  /** Drawn beneath the layers. */
+  image: string | null;
   layers: ShaderLayer[];
   opacity: number;
   blur: number;
@@ -28,6 +55,8 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
   // Layers that made the renderer unavailable; changing them retries.
   const failed = useRef<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // The image the canvas has drawn; until then the DOM image stands in.
+  const [drawnImage, setDrawnImage] = useState<string | null>(null);
   const active = activeShaderLayers(props.layers).length > 0;
 
   const unknown = props.layers
@@ -57,6 +86,7 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
       canvas.style.visibility = 'hidden';
       instance?.dispose();
       rendererRef.current = null;
+      setDrawnImage(null);
       failed.current = JSON.stringify(latest.current.layers);
     };
     canvas.dataset.shaderState = 'loading';
@@ -64,7 +94,9 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
     void import('../lib/wallpaperRenderer')
       .then(async ({ createWallpaperRenderer }) => {
         if (disposed) return;
-        instance = createWallpaperRenderer(canvas, runtime(), unavailable);
+        instance = createWallpaperRenderer(canvas, runtime(), unavailable, (url) => {
+          if (!disposed) setDrawnImage(url);
+        });
         rendererRef.current = instance;
         await instance.initialize();
         if (!disposed && canvas.dataset.shaderState !== 'unavailable') canvas.dataset.shaderState = 'ready';
@@ -74,6 +106,7 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
       disposed = true;
       instance?.dispose();
       if (rendererRef.current === instance) rendererRef.current = null;
+      setDrawnImage(null);
     };
   }, [attempt, active]);
 
@@ -109,5 +142,12 @@ export function ShaderWallpaper(props: ShaderWallpaperProps) {
     };
   }, []);
 
-  return <canvas ref={canvasRef} aria-hidden="true" className="fixed -z-10 pointer-events-none" />;
+  return (
+    <>
+      {props.image && drawnImage !== props.image && (
+        <WallpaperImage url={props.image} opacity={props.opacity} blur={props.blur} saturate={props.saturate} />
+      )}
+      <canvas ref={canvasRef} aria-hidden="true" className="fixed -z-10 pointer-events-none" />
+    </>
+  );
 }

@@ -18,6 +18,8 @@ import {
 } from './wallpaperCatalog';
 
 export interface WallpaperRuntimeOptions {
+  /** Image URL drawn beneath the layers. */
+  image: string | null;
   layers: ShaderLayer[];
   speed: number;
   fps: number;
@@ -37,13 +39,17 @@ type FrameParams = Omit<NativeFrameParams, 'pointer'> & {
 // These read the pointer position even while it is inactive.
 const IDLE_POINTER_OFFSCREEN = new Set(['Boids', 'PixelSort']);
 
+const IMAGE = 'image';
+const LOADERS: Record<string, () => Promise<{ componentDefinition: unknown }>> = {
+  ...WALLPAPER_SHADER_LOADERS,
+  [IMAGE]: () => import('shaders/core/ImageTexture'),
+};
 const definitions = new Map<string, Promise<GpuShaderDefinition>>();
 
 function loadDefinition(id: string): Promise<GpuShaderDefinition> {
   let definition = definitions.get(id);
   if (!definition) {
-    const load = WALLPAPER_SHADER_LOADERS[id as keyof typeof WALLPAPER_SHADER_LOADERS];
-    definition = load().then(({ componentDefinition }) => componentDefinition as GpuShaderDefinition);
+    definition = LOADERS[id]().then(({ componentDefinition }) => componentDefinition as GpuShaderDefinition);
     // Retry a failed chunk load on the next sync.
     definition.catch(() => definitions.delete(id));
     definitions.set(id, definition);
@@ -74,11 +80,20 @@ interface LayerNode {
   metadata: Pick<NodeMetadata, 'blendMode' | 'opacity' | 'renderOrder'>;
 }
 
-/** Renders a stack of shader layers; an effect layer processes every layer beneath it. */
+interface ImageNode {
+  id: string;
+  url: string;
+}
+
+/**
+ * Renders an optional image beneath a stack of shader layers; an effect layer
+ * processes every layer beneath it. `onImage` reports the image URL once drawn.
+ */
 export function createWallpaperRenderer(
   canvas: HTMLCanvasElement,
   options: WallpaperRuntimeOptions,
   onUnavailable: () => void,
+  onImage: (url: string | null) => void = () => {},
 ) {
   // The core API has no telemetry collector and gives us direct runtime controls.
   const renderer = shaderRendererGPU();
@@ -86,6 +101,7 @@ export function createWallpaperRenderer(
   let initialized = false;
   let current = options;
   let nodes: LayerNode[] = [];
+  let image: ImageNode | null = null;
   let serial = 0;
   let resolution = 0;
   let synced = Promise.resolve();
@@ -148,8 +164,59 @@ export function createWallpaperRenderer(
   const metadataOf = (layer: ShaderLayer, renderOrder: number) => ({
     blendMode: BLEND_MODES[layer['blend-mode']] ?? 'normal',
     opacity: layer.opacity,
-    renderOrder,
+    // The image stays beneath every layer.
+    renderOrder: renderOrder + 1,
   });
+
+  /** Brings the image node in line with `url`. */
+  const reconcileImage = (url: string | null, source: GpuShaderDefinition | undefined) => {
+    if (image && (!url || !source)) {
+      renderer.removeNode(image.id);
+      image = null;
+      onImage(null);
+      return { changed: true, structural: true };
+    }
+    if (!url || !source) return { changed: false, structural: false };
+    if (image) {
+      if (image.url === url) return { changed: false, structural: false };
+      image.url = url;
+      onImage(null);
+      renderer.updateUniformValue(image.id, 'url', url);
+      return { changed: true, structural: false };
+    }
+    const node: ImageNode = { id: `image-${++serial}`, url };
+    image = node;
+    // Core never repaints when media loads, so hook the texture upload.
+    const definition: GpuShaderDefinition = {
+      ...source,
+      fragment: (params) =>
+        source.fragment({
+          ...params,
+          createMediaTexture: (options) => {
+            const texture = params.createMediaTexture(options);
+            const write = texture.write.bind(texture);
+            texture.write = (pixels) => {
+              write(pixels);
+              if (disposed || image !== node) return;
+              canvas.dataset.shaderImage = node.url;
+              onImage(node.url);
+              schedule(true);
+            };
+            return texture;
+          },
+        }),
+    };
+    const values = { url, objectFit: 'cover' };
+    renderer.registerNode(
+      node.id,
+      definition.fragment,
+      'root',
+      { blendMode: 'normal', opacity: 1, renderOrder: 0, visible: true },
+      createGpuUniformsMap(definition, values, node.id),
+      definition,
+    );
+    return { changed: true, structural: true };
+  };
 
   /** Brings the node list in line with the enabled layers. */
   const reconcile = (layers: ShaderLayer[], sources: GpuShaderDefinition[]) => {
@@ -228,9 +295,15 @@ export function createWallpaperRenderer(
   const sync = () => {
     const options = current;
     const layers = activeShaderLayers(options.layers);
-    synced = Promise.all(layers.map((layer) => loadDefinition(layer.shader))).then(async (sources) => {
+    synced = Promise.all([
+      options.image ? loadDefinition(IMAGE) : undefined,
+      ...layers.map((layer) => loadDefinition(layer.shader)),
+    ]).then(async ([imageSource, ...sources]) => {
       if (disposed || options !== current) return;
-      let { changed, structural } = reconcile(layers, sources);
+      const drawn = reconcileImage(options.image, imageSource);
+      let { changed, structural } = reconcile(layers, sources as GpuShaderDefinition[]);
+      changed ||= drawn.changed;
+      structural ||= drawn.structural;
       if (renderer.isInitialized()) {
         changed ||= resolution !== options.resolution;
         resolution = options.resolution;
@@ -242,6 +315,7 @@ export function createWallpaperRenderer(
         changed &&= !structural;
       }
       canvas.dataset.shaderLayers = nodes.map((node) => node.shader.id).join(' ');
+      if (image?.url !== canvas.dataset.shaderImage) delete canvas.dataset.shaderImage;
       schedule(changed);
     });
     synced.catch(onUnavailable);

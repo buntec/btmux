@@ -1052,15 +1052,17 @@ pub struct ClientConfig {
     pub animations: bool,
     /// Whether panes render a per-pane title bar.
     pub show_pane_titles: bool,
-    /// URL of a background image displayed behind all terminal panes, or `null`.
-    /// When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
+    /// The configured background image (a URL or local path), or `null`. It is
+    /// the bottom wallpaper layer, beneath any shader layers.
     pub wallpaper: Option<String>,
+    /// What browsers load for `wallpaper`: local files and remote images are
+    /// served from `/wallpaper`.
+    pub wallpaper_url: Option<String>,
     /// Procedural WebGPU wallpaper layers rendered by the frontend, bottom first.
     pub wallpaper_shaders: ShaderLayers,
-    /// The resolved absolute path to a local wallpaper file, if any. Not sent to
-    /// the browser — used by the `/wallpaper` route to serve the file.
+    /// What the `/wallpaper` route serves. Not sent to the browser.
     #[serde(skip)]
-    pub wallpaper_path: Option<std::path::PathBuf>,
+    pub wallpaper_source: Option<crate::wallpaper::Source>,
     /// Opacity of the wallpaper: 0.0 = invisible, 1.0 = fully visible.
     /// Always `Some` when a wallpaper is configured (defaults to 0.10).
     pub wallpaper_opacity: Option<f32>,
@@ -1495,11 +1497,13 @@ pub fn generate_config_toml() -> String {
 
 # Background wallpaper image displayed behind all terminal panes.
 # No image or shader is enabled by default; the following are examples.
-# Accepts a URL or a local file path (absolute or ~/relative).
+# Accepts a URL or a local file path (absolute or ~/relative). The server
+# fetches remote images itself and serves them to the browser.
 # wallpaper = "https://example.com/bg.jpg"
 # wallpaper = "~/Pictures/bg.png"
-# Or stack procedural WebGPU shader layers (they take precedence over
-# `wallpaper`); see the [[wallpaper-shader]] example below.
+# Procedural WebGPU shader layers stack above the image, and effect layers
+# process it; see the [[wallpaper-shader]] example below. Combined with
+# shaders, the image renders at `wallpaper-resolution`.
 # How visible the wallpaper is: 0.0 = not visible, 1.0 = fully visible.
 # wallpaper-opacity = {DEFAULT_WALLPAPER_OPACITY:.2}
 # macOS desktop window theme tint: 0.0 = clear, 1.0 = opaque.
@@ -1787,21 +1791,11 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
     };
     let theme = color_palette.to_theme();
 
-    let (wallpaper_url, wallpaper_path) = match &file.wallpaper {
-        Some(raw) if raw.starts_with('/') => (
-            Some("/wallpaper".to_string()),
-            Some(std::path::PathBuf::from(raw)),
-        ),
-        Some(raw) if raw.starts_with('~') => {
-            let expanded = if let Ok(home) = std::env::var("HOME") {
-                std::path::PathBuf::from(home).join(raw.strip_prefix("~/").unwrap_or(&raw[1..]))
-            } else {
-                std::path::PathBuf::from(raw)
-            };
-            (Some("/wallpaper".to_string()), Some(expanded))
-        }
-        other => (other.clone(), None),
-    };
+    let (wallpaper_url, wallpaper_source) =
+        match file.wallpaper.as_deref().map(crate::wallpaper::resolve) {
+            Some((url, source)) => (Some(url), source),
+            None => (None, None),
+        };
 
     // Configured URLs and paths are listed too, so pickers can preview them.
     let mut color_schemes = list_color_schemes();
@@ -1854,9 +1848,10 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         repeat_time: file.repeat_time,
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
-        wallpaper: wallpaper_url,
+        wallpaper: file.wallpaper.clone(),
+        wallpaper_url,
         wallpaper_shaders: file.wallpaper_shaders.clone(),
-        wallpaper_path,
+        wallpaper_source,
         wallpaper_opacity,
         desktop_background_opacity: file
             .desktop_background_opacity
@@ -2664,6 +2659,10 @@ palette:
             resolved.wallpaper.as_deref(),
             Some("https://example.com/wallpaper.png")
         );
+        assert!(resolved
+            .wallpaper_url
+            .as_deref()
+            .is_some_and(|url| url.starts_with("/wallpaper?v=")));
         assert!(resolved.wallpaper_shaders.is_empty());
         assert_eq!(resolved.wallpaper_opacity, Some(0.65));
         assert_eq!(resolved.wallpaper_blur, Some(8.0));

@@ -98,6 +98,7 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/nvim/file", axum::routing::get(api_nvim_file))
         .route("/api/vscode", get(crate::vscode::status))
+        .route("/api/wallpaper/check", get(api_wallpaper_check))
         .route(
             "/api/vscode/license",
             axum::routing::post(crate::vscode::accept),
@@ -1308,23 +1309,20 @@ async fn serve_raw_file(
     response
 }
 
+#[derive(Deserialize)]
+struct WallpaperCheckQuery {
+    source: String,
+}
+
+async fn api_wallpaper_check(
+    Query(query): Query<WallpaperCheckQuery>,
+) -> Json<crate::wallpaper::WallpaperCheck> {
+    Json(crate::wallpaper::check(&query.source).await)
+}
+
 async fn serve_wallpaper(State(state): State<AppState>) -> Response {
-    let path = state.read().await.config().wallpaper_path.clone();
-    let Some(path) = path else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(data) = tokio::fs::read(&path).await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let mime = mime_guess::from_path(&path).first_or_octet_stream();
-    (
-        [
-            (header::CONTENT_TYPE, mime.as_ref().to_string()),
-            (header::CACHE_CONTROL, "no-cache".to_string()),
-        ],
-        Body::from(data),
-    )
-        .into_response()
+    let source = state.read().await.config().wallpaper_source.clone();
+    crate::wallpaper::serve(source).await
 }
 
 fn serve(path: &str) -> Response {

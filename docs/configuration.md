@@ -35,8 +35,9 @@ GUI, and code-like UI text such as paths, session and window names, and key
 hints. Other UI text uses Geist Sans.
 
 Wallpapers are disabled by default. Set `wallpaper` to an image URL or path,
-or add `[[wallpaper-shader]]` layers to stack shaders and effects (see
-[Shader wallpapers](shaders.md)).
+add `[[wallpaper-shader]]` layers to stack shaders and effects, or both: the image
+is the bottom layer, beneath the shaders (see [Shader wallpapers](shaders.md)).
+The server fetches remote images itself and serves them to the browser.
 
 btmux checks GitHub for newer releases about once a day and shows a toast when
 one is available. It never downloads or installs anything; upgrade with whatever

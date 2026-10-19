@@ -17,7 +17,7 @@ import { WindowGrid } from './components/WindowGrid';
 import { AgentGrid } from './components/AgentGrid';
 import { SessionSwitcher } from './components/SessionSwitcher';
 import { ConnectionBanner } from './components/ConnectionBanner';
-import { ShaderWallpaper } from './components/ShaderWallpaper';
+import { ShaderWallpaper, WallpaperImage } from './components/ShaderWallpaper';
 import { ConfigPage } from './components/ConfigPage';
 import { NotificationToasts } from './components/NotificationToasts';
 import { STARTUP_THEME } from './state/startupTheme';
@@ -155,7 +155,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
   useModalBackdrop(effectiveConfig);
-  const wallpaper = effectiveConfig?.wallpaper ?? null;
+  const wallpaper = effectiveConfig?.wallpaper_url ?? null;
   const wallpaperShaders = getWallpaperShaders(effectiveConfig);
   const wallpaperOpacity = getWallpaperOpacity(effectiveConfig);
   const wallpaperBlur = getWallpaperBlur(effectiveConfig);
@@ -176,6 +176,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
     <WorkspaceShell send={send}>
       {hasShaderWallpaper(wallpaperShaders) ? (
         <ShaderWallpaper
+          image={wallpaper}
           layers={wallpaperShaders}
           opacity={wallpaperOpacity}
           blur={wallpaperBlur}
@@ -192,19 +193,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
           followsKeyboardInput={wallpaperFollowsKeyboard}
         />
       ) : wallpaper ? (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundImage: `url(${wallpaper})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            opacity: wallpaperOpacity,
-            filter: `blur(${wallpaperBlur}px) saturate(${wallpaperSaturate})`,
-            zIndex: -1,
-            pointerEvents: 'none',
-          }}
-        />
+        <WallpaperImage url={wallpaper} opacity={wallpaperOpacity} blur={wallpaperBlur} saturate={wallpaperSaturate} />
       ) : null}
       <Layout
         header={config?.config_error ? <ConfigErrorBanner /> : undefined}

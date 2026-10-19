@@ -24,6 +24,7 @@ mod service;
 mod session;
 mod update_check;
 mod vscode;
+mod wallpaper;
 mod ws;
 
 use std::sync::Arc;

@@ -9,6 +9,7 @@ import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import type { ShaderLayer } from '../generated/protocol';
 import { hasShaderWallpaper, wallpaperLayersToml } from '../lib/wallpaperCatalog';
 import { ShaderLayerStack } from './ShaderLayerStack';
+import { useWallpaperCheck, type WallpaperStatus } from '../hooks/useWallpaperCheck';
 import {
   getDesktopBackgroundOpacity,
   getFontWeightRange,
@@ -413,6 +414,7 @@ export function ConfigPage({ config, send }: Props) {
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const toast = useToast();
   const [draft, setDraft] = useState(() => initialDraft(config));
+  const wallpaperStatus = useWallpaperCheck(draft.wallpaper);
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
   const [copied, setCopied] = useState(false);
   const [showToml, setShowToml] = useState(false);
@@ -442,6 +444,13 @@ export function ConfigPage({ config, send }: Props) {
         cellBackgroundOpacity: draft.cellBackgroundOpacity,
       },
       wallpaper: draft.wallpaper || null,
+      // The server serves the applied wallpaper; an edited URL previews directly.
+      wallpaper_url:
+        draft.wallpaper === (config.wallpaper ?? '')
+          ? config.wallpaper_url
+          : /^(https?|data):/.test(draft.wallpaper)
+            ? draft.wallpaper
+            : null,
       wallpaper_shaders: draft.wallpaperShaders,
       wallpaper_opacity: draft.wallpaperOpacity,
       desktop_background_opacity: draft.desktopBackgroundOpacity,
@@ -535,7 +544,8 @@ export function ConfigPage({ config, send }: Props) {
     key: { [K in DraftKey]: Draft[K] extends string ? K : never }[DraftKey],
     label: string,
     description?: string,
-    error?: string | null,
+    /** An error message, or a full status. */
+    status?: string | WallpaperStatus | null,
   ) => (
     <TextInput
       key={key}
@@ -543,7 +553,7 @@ export function ConfigPage({ config, send }: Props) {
       value={draft[key]}
       onChange={(value) => update(key, value as never)}
       description={description}
-      status={error ? { type: 'error', message: error } : undefined}
+      status={typeof status === 'string' ? { type: 'error', message: status } : (status ?? undefined)}
     />
   );
   const range = (
@@ -783,7 +793,12 @@ export function ConfigPage({ config, send }: Props) {
                   {tab === 'wallpaper' && (
                     <VStack gap={4} id="settings-wallpaper" role="tabpanel" aria-label={TAB_LABELS.wallpaper}>
                       <FormLayout>
-                        {text('wallpaper', 'Wallpaper URL or path', 'Shown when no shader layer is enabled.')}
+                        {text(
+                          'wallpaper',
+                          'Wallpaper URL or path',
+                          'Drawn beneath the shader layers.',
+                          wallpaperStatus,
+                        )}
                         {range('wallpaperOpacity', 'Wallpaper opacity', 0, 1, 0.01)}
                         {range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5)}
                         {range('wallpaperSaturate', 'Wallpaper saturation', 0, 3, 0.05)}

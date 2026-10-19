@@ -519,8 +519,13 @@ async fn desktop_parent_exit(parent_pid: Option<u32>) {
         std::future::pending::<()>().await;
         return;
     };
-    let _ =
-        tokio::task::spawn_blocking(move || process::wait_exit(parent_pid as process::Pid)).await;
+    // Not `spawn_blocking`: the runtime waits for those on exit.
+    let (exited, exit) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        process::wait_exit(parent_pid as process::Pid);
+        let _ = exited.send(());
+    });
+    let _ = exit.await;
 }
 
 /// Watch the config file's parent directory (so editor atomic rename-on-save is

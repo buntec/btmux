@@ -191,11 +191,7 @@ pub fn load_token(state_path: Option<&Path>) -> Result<String, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        match options.open(&path) {
+        match crate::discovery::create_private_file(&path) {
             Ok(mut file) => {
                 let token = format!(
                     "{}{}",
@@ -210,15 +206,20 @@ pub fn load_token(state_path: Option<&Path>) -> Result<String, String> {
             Err(e) => return Err(e.to_string()),
         }
         let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-        // Windows: files under %LOCALAPPDATA% inherit its owner-only ACL.
         #[cfg(unix)]
         let private = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o077 == 0;
         #[cfg(windows)]
-        let private = true;
+        let private =
+            std::fs::File::open(&path).is_ok_and(|file| crate::discovery::acl::is_private(&file));
         if !metadata.is_file() || !private {
             return Err(format!(
-                "{} must be a regular owner-only file (chmod 600)",
-                path.display()
+                "{} must be a regular owner-only file ({})",
+                path.display(),
+                if cfg!(windows) {
+                    "readable only by you, SYSTEM, and Administrators"
+                } else {
+                    "chmod 600"
+                }
             ));
         }
         eprintln!(

@@ -246,9 +246,12 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         let Some(pane) = mgr.find_pane(*pane_id) else {
             return Err("Pane no longer exists".into());
         };
-        let quoted = crate::session::manager::shell_single_quote(path);
-        let text = format!("cd {quoted}{SHELL_ENTER}");
-        return pane.pty.send_shell_command(text.into_bytes()).await;
+        // Typed even when the pane's shell isn't in the foreground, so a
+        // shell nested in it (`nix develop`, `sudo -s`) changes directory.
+        return pane
+            .pty
+            .input_tx
+            .send(change_directory_command(path).into_bytes());
     }
 
     // Browser settings (color scheme, font, general settings, shader) are session-only:
@@ -473,6 +476,17 @@ fn validate_command(
 
 /// Submits a line typed into the pane's shell; PSReadLine reads LF as "add a line".
 const SHELL_ENTER: char = if cfg!(windows) { '\r' } else { '\n' };
+
+/// Shell text that changes to `path`. PowerShell's `cd` reads `[` and `]` as
+/// wildcards; `-LiteralPath` doesn't.
+fn change_directory_command(path: &str) -> String {
+    let quoted = crate::session::manager::shell_single_quote(path);
+    if cfg!(windows) {
+        format!("Set-Location -LiteralPath {quoted}{SHELL_ENTER}")
+    } else {
+        format!("cd {quoted}{SHELL_ENTER}")
+    }
+}
 
 /// Build the shell text that runs `btmux open-editor` (on `path`, if any) in the
 /// pane's own shell through `bin` (`PtyHandle::shell_bin`), jumping to `line`
@@ -1087,6 +1101,16 @@ mod tests {
         let _ = tui.kill();
         let _ = std::fs::remove_file(file);
         assert!(opened);
+    }
+
+    #[test]
+    fn change_directory_command_quotes_literal_path() {
+        let expected = if cfg!(windows) {
+            "Set-Location -LiteralPath '/a''b[1]'\r"
+        } else {
+            "cd '/a'\\''b[1]'\n"
+        };
+        assert_eq!(change_directory_command("/a'b[1]"), expected);
     }
 
     #[test]

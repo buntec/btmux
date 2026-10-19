@@ -52,10 +52,10 @@ the bottom, showing an empty pane until the next focus. `trackInputPosition`
 in `frontend/src/lib/paneTerminal.ts` repositions it after every render;
 `terminal-browser-test.ts` covers it. Recheck it on every `@wterm/*` bump.
 
+Reported upstream: https://github.com/vercel-labs/wterm/issues/245.
+
 Options:
 
-- Report it upstream with a repro: write 300 lines, focus, write
-  `\x1b[3J\x1b[H\x1b[2J$ `; `scrollTop` stays near the old bottom.
 - Fix upstream by positioning the textarea in `syncInputPosition` always, or
   before `_scrollToBottom` reads `scrollHeight`.
 

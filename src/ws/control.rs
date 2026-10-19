@@ -496,6 +496,7 @@ fn vimscript_string(s: &str) -> String {
 /// open `path`, jumping to `line` when given. Shells out to the `nvim` binary
 /// itself as an RPC client (`--remote-expr`) rather than linking an RPC
 /// client crate — the editor doing the listening is already `nvim`.
+/// `--headless` keeps it from starting a UI, which on Windows swallows the reply.
 pub(crate) async fn remote_open_in_editor(
     addr: &str,
     path: &str,
@@ -505,7 +506,7 @@ pub(crate) async fn remote_open_in_editor(
     let status = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio::process::Command::new("nvim")
-            .args(["--server", addr, "--remote-expr", &expr])
+            .args(["--headless", "--server", addr, "--remote-expr", &expr])
             .kill_on_drop(true)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -532,7 +533,13 @@ pub(crate) async fn neovim_current_file(addr: &str) -> Option<String> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio::process::Command::new("nvim")
-            .args(["--server", addr, "--remote-expr", "expand('%:p')"])
+            .args([
+                "--headless",
+                "--server",
+                addr,
+                "--remote-expr",
+                "expand('%:p')",
+            ])
             .kill_on_drop(true)
             .stdin(std::process::Stdio::null())
             .output(),
@@ -693,7 +700,7 @@ async fn neovim_server_pid(addr: &str) -> Option<u32> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio::process::Command::new("nvim")
-            .args(["--server", addr, "--remote-expr", "getpid()"])
+            .args(["--headless", "--server", addr, "--remote-expr", "getpid()"])
             .kill_on_drop(true)
             .stdin(std::process::Stdio::null())
             .output(),
@@ -1006,6 +1013,18 @@ mod tests {
         command.arg("NONE");
         command.env("TERM", "xterm-256color");
         let mut tui = pair.slave.spawn_command(command).unwrap();
+        // Drain output, and answer cursor queries: ConPTY waits for one at startup.
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut writer = pair.master.take_writer().unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let mut buf = [0; 4096];
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                if buf[..n].windows(4).any(|w| w == b"\x1b[6n") {
+                    let _ = writer.write_all(b"\x1b[1;1R");
+                }
+            }
+        });
         let tui_pid = tui.process_id().unwrap();
         let pgrp = crate::process::group(tui_pid as crate::process::Pid).unwrap();
         let detected = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -1030,6 +1049,7 @@ mod tests {
             if remote_open_in_editor(&addr, path, Some(3)).await.is_ok() {
                 let result = tokio::process::Command::new("nvim")
                     .args([
+                        "--headless",
                         "--server",
                         &addr,
                         "--remote-expr",

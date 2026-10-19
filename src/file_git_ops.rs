@@ -440,6 +440,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("file.txt"), "one\n").unwrap();
         let repo = Repository::init(&root).unwrap();
+        // Git for Windows enables autocrlf system-wide.
+        repo.config()
+            .unwrap()
+            .set_bool("core.autocrlf", false)
+            .unwrap();
         {
             let mut index = repo.index().unwrap();
             index.add_path(Path::new("file.txt")).unwrap();

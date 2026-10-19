@@ -1847,7 +1847,7 @@ mod agent_tests {
         let (exit_tx, _) = mpsc::unbounded_channel();
         let (meta_tx, _) = mpsc::unbounded_channel();
         let mut mgr = SessionManager::new(
-            "/bin/sh".into(),
+            if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }.into(),
             FileConfig::default(),
             exit_tx,
             meta_tx,

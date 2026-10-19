@@ -89,6 +89,8 @@ pub const MAX_CAPTURE_HISTORY: usize = 10_000;
 pub struct Capture {
     pub text: String,
     pub bracketed_paste: bool,
+    /// DECCKM: cursor keys send `ESC O` instead of `ESC [`.
+    pub application_cursor: bool,
 }
 
 /// Renders journal `events` with up to `history` rows of scrollback above the
@@ -130,6 +132,7 @@ pub fn capture(events: &[Output], history: usize) -> Capture {
     Capture {
         text,
         bracketed_paste: screen.bracketed_paste(),
+        application_cursor: screen.application_cursor(),
     }
 }
 
@@ -144,11 +147,12 @@ mod tests {
         for line in 1..=30 {
             data.extend(format!("line {line}\r\n").into_bytes());
         }
-        data.extend(b"abcdefghijklmnop\x1b[?2004h");
+        data.extend(b"abcdefghijklmnop\x1b[?2004h\x1b[?1h");
         let events = [Output::Size(12, 5), Output::Data(Bytes::from(data))];
         let screen = capture(&events, 0);
         assert_eq!(screen.text, "line 28\nline 29\nline 30\nabcdefghijklmnop\n");
         assert!(screen.bracketed_paste);
+        assert!(screen.application_cursor);
         let all = capture(&events, 100).text;
         assert!(all.starts_with("line 1\nline 2\n"));
         assert_eq!(all.lines().count(), 31);

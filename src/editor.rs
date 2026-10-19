@@ -14,14 +14,22 @@ pub fn editor_argv(editor: &str, file: Option<&str>, line: Option<u32>) -> Vec<S
     if argv.is_empty() {
         argv.push(if cfg!(windows) { "notepad" } else { "vi" }.into());
     }
-    let name = Path::new(&argv[0])
+    let program = Path::new(&argv[0]);
+    // `nvim.exe`, `code.cmd`, any case.
+    #[cfg(windows)]
+    let name = program
+        .file_stem()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    #[cfg(not(windows))]
+    let name = program
         .file_name()
-        .and_then(|n| n.to_str())
+        .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let Some(file) = file else {
         return argv;
     };
-    match (name, line.filter(|&l| l >= 1)) {
+    match (name.as_str(), line.filter(|&l| l >= 1)) {
         ("vi" | "vim" | "nvim" | "nano" | "emacs", Some(line)) => {
             argv.push(format!("+{line}"));
             argv.push(file.into());
@@ -139,6 +147,19 @@ mod tests {
         assert_eq!(
             argv("code --wait", Some(3)),
             ["code", "--wait", "--goto", "/a b/f.rs:3"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_editor_names_ignore_extension_and_case() {
+        assert_eq!(
+            argv(r"C:\Tools\nvim.exe", Some(7)),
+            [r"C:\Tools\nvim.exe", "+7", "/a b/f.rs"]
+        );
+        assert_eq!(
+            argv("Code.cmd", Some(3)),
+            ["Code.cmd", "--goto", "/a b/f.rs:3"]
         );
     }
 

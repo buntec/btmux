@@ -135,7 +135,8 @@ fn looks_binary(head: &[u8]) -> bool {
     }
 }
 
-/// Opens a binary file with the system opener (`open` / `xdg-open`).
+/// Opens a binary file with the system opener (`open`, `xdg-open`, or the
+/// Windows file association).
 /// Returns false, without opening, for text or unreadable files, which are
 /// left to the editor.
 pub async fn open_if_binary(root: &Path, path: &str) -> Result<bool, String> {
@@ -152,6 +153,21 @@ pub async fn open_if_binary(root: &Path, path: &str) -> Result<bool, String> {
         return Ok(false);
     }
 
+    open_with_system(file_path).await
+}
+
+/// Open `file_path` in its associated application.
+#[cfg(windows)]
+async fn open_with_system(file_path: PathBuf) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || open::that(&file_path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|()| true)
+        .map_err(|e| format!("Cannot open file: {e}"))
+}
+
+#[cfg(not(windows))]
+async fn open_with_system(file_path: PathBuf) -> Result<bool, String> {
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else {

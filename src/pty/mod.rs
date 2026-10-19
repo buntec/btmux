@@ -298,7 +298,7 @@ impl PtyHandle {
     pub async fn send_shell_command(&self, data: Vec<u8>) -> Result<(), String> {
         let shell_pid = self
             .shell_pid
-            .ok_or_else(|| "Cannot open file: pane shell is unavailable".to_string())?;
+            .ok_or_else(|| "The pane's shell is unavailable".to_string())?;
         self.input_tx.send_shell_command(data, shell_pid).await
     }
 

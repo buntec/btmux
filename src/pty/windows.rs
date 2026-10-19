@@ -169,9 +169,7 @@ impl PtyHandle {
                         reply,
                     } => {
                         if probe.lock().unwrap().and_then(foreground) != Some(shell_pid) {
-                            let _ = reply.send(Err(
-                                "Cannot open file: the pane is not at a shell prompt".into(),
-                            ));
+                            let _ = reply.send(Err("The pane is not at a shell prompt".into()));
                             continue;
                         }
                         let result = writer.write_all(&data);

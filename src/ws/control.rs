@@ -241,6 +241,16 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return pane.pty.send_shell_command(text.into_bytes()).await;
     }
 
+    if let ClientMessage::ChangeDirectory { pane_id, path } = &cmd {
+        let mgr = state.read().await;
+        let Some(pane) = mgr.find_pane(*pane_id) else {
+            return Err("Pane no longer exists".into());
+        };
+        let quoted = crate::session::manager::shell_single_quote(path);
+        let text = format!("cd {quoted}{SHELL_ENTER}");
+        return pane.pty.send_shell_command(text.into_bytes()).await;
+    }
+
     // Browser settings (color scheme, font, general settings, shader) are session-only:
     // they're layered over the on-disk config in memory and broadcast to every
     // tab, but config.toml is left untouched, so they last until btmux restarts
@@ -348,6 +358,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
         | ClientMessage::OpenFile { .. }
+        | ClientMessage::ChangeDirectory { .. }
         | ClientMessage::NvimOpen { .. }
         | ClientMessage::VscodeOpen { .. }
         | ClientMessage::FocusClient
@@ -460,21 +471,22 @@ fn validate_command(
     Ok(())
 }
 
+/// Submits a line typed into the pane's shell; PSReadLine reads LF as "add a line".
+const SHELL_ENTER: char = if cfg!(windows) { '\r' } else { '\n' };
+
 /// Build the shell text that runs `btmux open-editor` (on `path`, if any) in the
 /// pane's own shell through `bin` (`PtyHandle::shell_bin`), jumping to `line`
 /// when given. The editor-specific arguments are resolved by that subcommand,
 /// which keeps the typed line short. The leading space keeps it out of history
 /// in shells that honor it.
 fn shell_editor_open_command(bin: &str, path: Option<&str>, line: Option<u32>) -> String {
-    // PSReadLine reads LF as "add a line".
-    let enter = if cfg!(windows) { '\r' } else { '\n' };
     let Some(path) = path else {
-        return format!(" {bin} open-editor{enter}");
+        return format!(" {bin} open-editor{SHELL_ENTER}");
     };
     let quoted = crate::session::manager::shell_single_quote(path);
     match line.filter(|&l| l >= 1) {
-        Some(line) => format!(" {bin} open-editor {quoted} {line}{enter}"),
-        None => format!(" {bin} open-editor {quoted}{enter}"),
+        Some(line) => format!(" {bin} open-editor {quoted} {line}{SHELL_ENTER}"),
+        None => format!(" {bin} open-editor {quoted}{SHELL_ENTER}"),
     }
 }
 
@@ -547,8 +559,9 @@ pub(crate) async fn neovim_current_file(addr: &str) -> Option<String> {
     .await
     .ok()?
     .ok()?;
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (output.status.success() && path.starts_with('/')).then_some(path)
+    let path = String::from_utf8_lossy(&output.stdout);
+    let path = std::path::Path::new(path.trim());
+    (output.status.success() && path.is_absolute()).then(|| crate::fs_ops::client_path(path))
 }
 
 /// Absolute path of the file in the current buffer of the pane's foreground
@@ -894,6 +907,11 @@ pub(crate) enum ClientMessage {
         pane_id: Uuid,
         path: Option<String>,
         line: Option<u32>,
+    },
+    /// `cd` the pane's shell to `path` when it is at a prompt.
+    ChangeDirectory {
+        pane_id: Uuid,
+        path: String,
     },
     /// Open a file in the built-in Neovim (`/ws/nvim`).
     NvimOpen {

@@ -12,7 +12,7 @@ use std::time::Duration;
 pub fn editor_argv(editor: &str, file: Option<&str>, line: Option<u32>) -> Vec<String> {
     let mut argv: Vec<String> = editor.split_whitespace().map(String::from).collect();
     if argv.is_empty() {
-        argv.push("vi".into());
+        argv.push(if cfg!(windows) { "notepad" } else { "vi" }.into());
     }
     let name = Path::new(&argv[0])
         .file_name()

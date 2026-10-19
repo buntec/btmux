@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::BtmuxMcpServer;
 use crate::api;
+use crate::automation;
 use crate::ws::control::broadcast_state;
 
 fn parse_uuid(s: &str, field: &str) -> Result<Uuid, ErrorData> {
@@ -75,13 +76,39 @@ struct SessionRefParams {
 #[derive(Deserialize, JsonSchema)]
 struct SendKeysParams {
     pane_id: String,
-    /// Sent verbatim — no implicit Enter. Use e.g. "\r" for Enter, "\x03" for Ctrl-C.
-    text: String,
+    /// Sent verbatim, before `keys`. No implicit Enter.
+    text: Option<String>,
+    /// tmux-style key names sent after `text`, e.g. ["Enter"], ["C-c"], ["Escape"], ["Up"], ["M-x"], ["F5"].
+    keys: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct ReadPaneOutputParams {
     pane_id: String,
+    /// Include scrollback above the screen. Default false (screen only).
+    scrollback: Option<bool>,
+    /// Return only the last N lines.
+    lines: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WaitForAgentParams {
+    pane_id: String,
+    /// Agent states to wait for: idle, working, blocked, done, unknown. Default ["idle", "done", "blocked"].
+    states: Option<Vec<String>>,
+    /// Default 600000 (10 minutes), at most 3600000.
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct SendPromptParams {
+    pane_id: String,
+    /// Prompt text; may span lines. Submitted with Enter.
+    prompt: String,
+    /// Wait for the agent to finish its turn. Default true.
+    wait: Option<bool>,
+    /// Default 600000 (10 minutes), at most 3600000.
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -259,13 +286,25 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "Send raw text into a pane's shell, verbatim -- no implicit Enter. Use for interactive control (e.g. \"\\x03\" for Ctrl-C) or partial input. For \"run a command and see its output\" use run_command instead."
+        description = "Type into a pane: `text` verbatim (no implicit Enter), then tmux-style `keys` such as [\"Enter\"] or [\"C-c\"]. For agent prompts use send_prompt; for shell commands use run_command."
     )]
     async fn send_keys(
         &self,
-        Parameters(SendKeysParams { pane_id, text }): Parameters<SendKeysParams>,
+        Parameters(SendKeysParams {
+            pane_id,
+            text,
+            keys,
+        }): Parameters<SendKeysParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let pane_id = parse_uuid(&pane_id, "pane_id")?;
+        let mut bytes = text.unwrap_or_default().into_bytes();
+        bytes.extend(
+            automation::encode_keys(&keys.unwrap_or_default())
+                .map_err(|e| ErrorData::invalid_params(e, None))?,
+        );
+        if bytes.is_empty() {
+            return Err(ErrorData::invalid_params("pass text or keys", None));
+        }
         let mut mgr = self.state.write().await;
         let Some(pane) = mgr.find_pane_mut(pane_id) else {
             return tool_error(format!("pane {pane_id} not found"));
@@ -277,33 +316,95 @@ impl BtmuxMcpServer {
         ) {
             return tool_error(error);
         }
-        if let Err(error) = pane.pty.input_tx.send(text.into_bytes()) {
+        if let Err(error) = pane.pty.input_tx.send(bytes) {
             return tool_error(error);
         }
         ok_json(serde_json::json!({"newly_spawned": newly_spawned}))
     }
 
     #[tool(
-        description = "Read a pane's current scrollback as clean text (ANSI escapes stripped), without sending any input."
+        description = "Read a pane as rendered text, like `tmux capture-pane -pJ`: the visible screen, or with scrollback=true the retained history above it too. Wrapped lines are joined; no ANSI escapes."
     )]
     async fn read_pane_output(
         &self,
-        Parameters(ReadPaneOutputParams { pane_id }): Parameters<ReadPaneOutputParams>,
+        Parameters(ReadPaneOutputParams {
+            pane_id,
+            scrollback,
+            lines,
+        }): Parameters<ReadPaneOutputParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let pane_id = parse_uuid(&pane_id, "pane_id")?;
-        let mut mgr = self.state.write().await;
-        let Some(pane) = mgr.find_pane_mut(pane_id) else {
-            return tool_error(format!("pane {pane_id} not found"));
-        };
-        if let Err(error) = pane.pty.ensure_spawned(
-            crate::config::DEFAULT_PTY_COLS,
-            crate::config::DEFAULT_PTY_ROWS,
-        ) {
-            return tool_error(error);
+        match automation::capture_pane(&self.state, pane_id, scrollback.unwrap_or(false), lines)
+            .await
+        {
+            Ok(text) => ok_text(text),
+            Err(error) => tool_error(error.to_string()),
         }
-        let (_rx, scrollback) = pane.pty.subscribe_and_get_scrollback();
-        let cleaned = strip_ansi_escapes::strip(&scrollback);
-        ok_text(String::from_utf8_lossy(&cleaned).into_owned())
+    }
+
+    #[tool(
+        description = "List panes running a coding agent (Claude Code, Codex, Gemini CLI, ...) across all sessions, with each agent's state: working, blocked (waiting for approval or input), done (finished a turn nobody has looked at yet), idle, or unknown."
+    )]
+    async fn list_agents(&self) -> Result<CallToolResult, ErrorData> {
+        ok_json(self.state.read().await.agent_panes())
+    }
+
+    #[tool(
+        description = "Wait until a pane's agent reaches one of `states` (default idle, done, or blocked) or exits; status is null once it has exited. A pane with no agent yet is waited on, so this can follow launching one. Returns immediately if the agent is already in such a state; to wait for a reply to a new prompt, use send_prompt."
+    )]
+    async fn wait_for_agent(
+        &self,
+        Parameters(WaitForAgentParams {
+            pane_id,
+            states,
+            timeout_ms,
+        }): Parameters<WaitForAgentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pane_id = parse_uuid(&pane_id, "pane_id")?;
+        let states = match states {
+            Some(names) => {
+                automation::parse_states(&names).map_err(|e| ErrorData::invalid_params(e, None))?
+            }
+            None => automation::SETTLED.to_vec(),
+        };
+        match automation::wait_for_agent(
+            &self.state,
+            pane_id,
+            &states,
+            automation::wait_duration(timeout_ms),
+        )
+        .await
+        {
+            Ok(outcome) => ok_json(outcome),
+            Err(error) => tool_error(error.to_string()),
+        }
+    }
+
+    #[tool(
+        description = "Submit a prompt to the agent in a pane: pastes it, then presses Enter. By default waits until the agent starts and then settles (idle, done, or blocked) and returns its status and rendered screen; started=false means no turn was seen starting. Refuses while the agent is blocked, since typing would answer its dialog."
+    )]
+    async fn send_prompt(
+        &self,
+        Parameters(SendPromptParams {
+            pane_id,
+            prompt,
+            wait,
+            timeout_ms,
+        }): Parameters<SendPromptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pane_id = parse_uuid(&pane_id, "pane_id")?;
+        match automation::send_prompt(
+            &self.state,
+            pane_id,
+            &prompt,
+            wait.unwrap_or(true),
+            automation::wait_duration(timeout_ms),
+        )
+        .await
+        {
+            Ok(outcome) => ok_json(outcome),
+            Err(error) => tool_error(error.to_string()),
+        }
     }
 
     #[tool(

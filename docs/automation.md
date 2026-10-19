@@ -33,9 +33,9 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
 
 curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/input \
   -H 'Content-Type: application/json' \
-  -d '{"text":"echo hi\n"}'
+  -d '{"text":"echo hi","keys":["Enter"]}'
 
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" http://127.0.0.1:8004/api/panes/<pane-id>/output
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" "http://127.0.0.1:8004/api/panes/<pane-id>/capture?lines=20"
 
 curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/open-file-browser \
   -H 'Content-Type: application/json' \
@@ -43,6 +43,13 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
 
 curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/focus
 ```
+
+`input` sends `text` verbatim, then `keys`: tmux-style key names such as
+`Enter`, `Tab`, `Escape`, `Space`, `BSpace`, `Up`, `PageDown`, `F5`, `C-c`, or
+`M-x`. `capture` returns the pane as rendered plain text, like
+`tmux capture-pane -pJ`: the visible screen, or with `scrollback=true` the
+retained history above it too, with wrapped lines joined. `lines=N` keeps the
+last N lines. `output` returns the raw bytes instead.
 
 `focus` switches every connected browser tab to the pane's window and session
 (204, or 404 for an unknown pane).
@@ -70,8 +77,12 @@ shows an error and leaves that program's input untouched.
 | `POST/DELETE /api/sessions/<session-id>/panes/...`              | Split, kill, select, navigate, cycle, swap, or zoom panes |
 | `POST /api/sessions/<session-id>/layout`                        | Select a named pane layout                                |
 | `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                             |
-| `POST /api/panes/<pane-id>/input`                               | Send text to a pane, spawning its shell if necessary      |
+| `POST /api/panes/<pane-id>/input`                               | Send text and keys to a pane, spawning its shell if necessary |
+| `GET /api/panes/<pane-id>/capture`                              | Read the rendered screen or scrollback as text            |
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
+| `GET /api/agents`                                               | List panes running an agent, with their states            |
+| `GET /api/panes/<pane-id>/wait`                                 | Wait for the pane's agent to reach a state                |
+| `POST /api/panes/<pane-id>/prompt`                              | Submit a prompt to the pane's agent and wait for its turn |
 | `POST /api/notify`                                              | Show a notification, not tied to a pane, in every client   |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification            |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
@@ -81,7 +92,10 @@ shows an error and leaves that program's input untouched.
 ## MCP server
 
 The MCP server at `/mcp` exposes tools for creating and inspecting sessions,
-splitting panes, running commands, sending keys, and reading pane output.
+splitting panes, running commands, sending text and keys, reading pane output,
+and [driving agents](#orchestrating-agents). `read_pane_output` returns the
+rendered screen (with `scrollback` and `lines` like `/capture`), and
+`send_keys` takes `text` and tmux-style `keys`.
 
 `run_command` waits until output has been idle for 400 ms by default, then
 returns an ANSI-stripped result. This does not prove that the process exited: a
@@ -100,6 +114,49 @@ claude mcp list
 Add `--scope user` to the first command to make it available in every project.
 The btmux server must already be running. Re-register the server if you change
 its port or token.
+
+## Orchestrating agents
+
+btmux knows when each agent in a pane is working, blocked, done, or idle (see
+[below](#semantic-agent-status)), so scripts and agents can wait for that state
+instead of scraping the screen or polling.
+
+| MCP tool         | REST                                  | Purpose                                                       |
+| ---------------- | ------------------------------------- | ------------------------------------------------------------- |
+| `list_agents`    | `GET /api/agents`                     | Panes running an agent, with session, window, cwd, and status |
+| `wait_for_agent` | `GET /api/panes/<pane-id>/wait`       | Wait until the agent reaches one of `states`, or exits        |
+| `send_prompt`    | `POST /api/panes/<pane-id>/prompt`    | Paste a prompt, press Enter, and wait for the turn to finish  |
+
+`wait_for_agent` waits for `idle`, `done`, or `blocked` by default (`states`;
+comma-separated over REST) and returns `{status, timed_out}`. It returns at
+once if the agent is already in such a state, and `status` is null once the
+agent has exited. A pane with no agent yet is waited on, so it can follow
+launching one. The timeout defaults to 10 minutes (`timeout_ms`, at most an
+hour).
+
+`send_prompt` pastes the prompt with bracketed paste, so it may span lines,
+waits 300 ms (agent input boxes can drop an Enter that arrives with the text),
+and presses Enter. With `wait` (the default), it waits up to 15 s for the turn
+to start and then for the agent to settle, and returns `{status, started,
+timed_out, screen}`, where `screen` is the rendered screen. It refuses while
+the agent is `blocked`: typed text would answer the dialog, which `send_keys`
+can do deliberately.
+
+```sh
+curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST "$BTMUX_API_URL/api/panes/<pane-id>/prompt" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Run the tests and fix any failures."}'
+```
+
+From a shell, `btmux agents` prints the agent list as JSON, and `btmux wait`
+blocks until an agent settles, then prints its status. It exits 2 on timeout:
+
+```sh
+btmux wait <pane-id> --state done --state blocked --timeout 1800
+```
+
+Like `send-notification`, both target the pane's server inside btmux, and
+otherwise the running server of `--profile`.
 
 ## Semantic agent status
 

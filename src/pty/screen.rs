@@ -82,10 +82,79 @@ impl LiveScreen {
     }
 }
 
+/// Most scrollback rows `capture` renders.
+pub const MAX_CAPTURE_HISTORY: usize = 10_000;
+
+/// Rendered text of a pane, like `tmux capture-pane -pJ`.
+pub struct Capture {
+    pub text: String,
+    pub bracketed_paste: bool,
+}
+
+/// Renders journal `events` with up to `history` rows of scrollback above the
+/// screen. Wrapped rows are joined, and trailing blank lines dropped.
+pub fn capture(events: &[Output], history: usize) -> Capture {
+    let history = history.min(MAX_CAPTURE_HISTORY);
+    let mut parser = vt100::Parser::new(24, 80, history);
+    for event in events {
+        match event {
+            Output::Data(bytes) => parser.process(bytes),
+            Output::Size(cols, rows) => parser.screen_mut().set_size(*rows, *cols),
+        }
+    }
+    let screen = parser.screen_mut();
+    let (rows, cols) = screen.size();
+    let rows = usize::from(rows);
+    screen.set_scrollback(usize::MAX);
+    let mut offset = screen.scrollback();
+    let mut text = String::new();
+    loop {
+        screen.set_scrollback(offset);
+        // Above the screen, only the first `offset` visible rows are scrollback.
+        let take = if offset == 0 { rows } else { offset.min(rows) };
+        for (row, contents) in screen.rows(0, cols).take(take).enumerate() {
+            text.push_str(&contents);
+            if !screen.row_wrapped(row as u16) {
+                text.push('\n');
+            }
+        }
+        if offset == 0 {
+            break;
+        }
+        offset -= take;
+    }
+    text.truncate(text.trim_end().len());
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    Capture {
+        text,
+        bracketed_paste: screen.bracketed_paste(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Bytes;
+
+    #[test]
+    fn capture_includes_history_and_joins_wrapped_rows() {
+        let mut data = Vec::new();
+        for line in 1..=30 {
+            data.extend(format!("line {line}\r\n").into_bytes());
+        }
+        data.extend(b"abcdefghijklmnop\x1b[?2004h");
+        let events = [Output::Size(12, 5), Output::Data(Bytes::from(data))];
+        let screen = capture(&events, 0);
+        assert_eq!(screen.text, "line 28\nline 29\nline 30\nabcdefghijklmnop\n");
+        assert!(screen.bracketed_paste);
+        let all = capture(&events, 100).text;
+        assert!(all.starts_with("line 1\nline 2\n"));
+        assert_eq!(all.lines().count(), 31);
+        assert!(all.ends_with("line 30\nabcdefghijklmnop\n"));
+        assert_eq!(capture(&events, 3).text.lines().next(), Some("line 25"));
+    }
 
     #[test]
     fn reconstructs_redraws_wrapping_and_split_osc_sequences() {

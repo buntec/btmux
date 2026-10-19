@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::{
     agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority},
     layout::{Layout, LayoutPreset},
-    AgentState, AgentStatus, Pane, PaneSnapshot, Session, SessionSummary, Window,
+    AgentPane, AgentState, AgentStatus, Pane, PaneSnapshot, Session, SessionSummary, Window,
 };
 use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
@@ -115,6 +115,29 @@ impl SessionManager {
                     .then_some(pane.id)
             })
             .collect()
+    }
+
+    /// Panes running an agent, for automation.
+    pub fn agent_panes(&self) -> Vec<AgentPane> {
+        let mut panes = Vec::new();
+        for session in &self.sessions {
+            for (window_index, window) in session.windows.iter().enumerate() {
+                for pane in &window.panes {
+                    if let Some(status) = self.agent_status(pane.id) {
+                        panes.push(AgentPane {
+                            pane_id: pane.id,
+                            session_id: session.id,
+                            session_name: session.name.clone(),
+                            window_index,
+                            window_name: window.name.clone(),
+                            cwd: pane.pty.effective_cwd(),
+                            status: status.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        panes
     }
 
     pub fn agent_status(&self, pane_id: Uuid) -> Option<&AgentStatus> {

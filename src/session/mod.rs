@@ -174,6 +174,18 @@ pub struct PaneSnapshot {
     pub unread: Option<PaneAlert>,
 }
 
+/// A pane running an agent, as listed to automation.
+#[derive(Serialize, Clone)]
+pub struct AgentPane {
+    pub pane_id: Uuid,
+    pub session_id: Uuid,
+    pub session_name: String,
+    pub window_index: usize,
+    pub window_name: String,
+    pub cwd: Option<String>,
+    pub status: AgentStatus,
+}
+
 /// One entry per session for the StatusBar and the session picker.
 #[derive(Serialize, Clone)]
 #[cfg_attr(test, derive(ts_rs::TS))]

@@ -23,7 +23,7 @@ Once fixed upstream, remove `unscaleMeasurement` and bump `@wterm/*`.
 
 ## Astryx collapsed SideNavItem tooltips
 
-In @astryxdesign/core 0.6.5 (still in 0.7.1), a collapsed childless
+In @astryxdesign/core 0.6.5 (still in 0.7.2-canary), a collapsed childless
 `SideNavItem` renders `<Tooltip anchorRef={itemRef}>` inside the `<div
 ref={itemRef}>` it anchors to. React runs the child's layout effect before it
 attaches the parent's ref, so `anchorRef.current` is null, and the effect's
@@ -33,10 +33,12 @@ unaffected (`useTooltip` via a callback ref). `RailNavItem`
 in a children-mode `Tooltip`, enabled only while the rail is collapsed. The
 sidebar's own "Expand sidebar" toggle still has no tooltip.
 
+Only items that mount collapsed are affected; collapsing later works.
+
+Reported upstream: https://github.com/facebook/astryx/issues/7692.
+
 Options:
 
-- Report it upstream with a repro: hover a collapsed `SideNavItem`; the item
-  never gets `aria-describedby`.
 - Fix upstream by tracking the anchor in state (callback ref) instead of reading
   `anchorRef.current` in the effect, and add a test that mounts collapsed.
 

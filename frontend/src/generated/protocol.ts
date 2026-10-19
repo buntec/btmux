@@ -173,10 +173,15 @@ animations: boolean,
  */
 show_pane_titles: boolean,
 /**
- * URL of a background image displayed behind all terminal panes, or `null`.
- * When the user specifies a local file path, this is rewritten to `"/wallpaper"`.
+ * The configured background image (a URL or local path), or `null`. It is
+ * the bottom wallpaper layer, beneath any shader layers.
  */
 wallpaper: string | null,
+/**
+ * What browsers load for `wallpaper`: local files and remote images are
+ * served from `/wallpaper`.
+ */
+wallpaper_url: string | null,
 /**
  * Procedural WebGPU wallpaper layers rendered by the frontend, bottom first.
  */
@@ -288,6 +293,9 @@ pid: number, };
 
 // prettier-ignore
 export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "state": "error", message: string, };
+
+// prettier-ignore
+export type WallpaperCheck = { error: string | null, };
 
 // prettier-ignore
 export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shaders?: ShaderLayers, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,

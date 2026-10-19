@@ -3,7 +3,10 @@
 Shader wallpapers use the MIT-licensed [Shaders](https://shaders.com/docs/guide)
 components, bundled locally with btmux. A wallpaper is a stack of up to 8 layers,
 composed like Shaders' [layers](https://shaders.com/docs/guide/composing-effects):
-generators draw new content, and an effect processes every layer beneath it. Build
+generators draw new content, and an effect processes every layer beneath it. A
+`wallpaper` image is drawn beneath the stack, so effects process it and blend modes
+composite over it; it renders at `wallpaper-resolution`, so raise that for a sharp
+photo. Build
 the stack in Settings → Wallpaper: add, reorder, disable, or remove layers, and edit
 each layer's native parameters. Changes preview immediately; Apply changes only the
 running server, and Show TOML copies the settings to persist them.
@@ -67,8 +70,8 @@ ordered, and numeric values stay within sensible native ranges. It previews
 immediately and changes only that layer; Apply and the TOML export work as with
 manual edits.
 
-WebGPU is required; unsupported browsers and GPU failures leave the theme
-background visible. Frame rates are capped to 10–60 FPS, and background tabs,
+WebGPU is required; unsupported browsers and GPU failures leave the wallpaper
+image, or else the theme background, visible. Frame rates are capped to 10–60 FPS, and background tabs,
 modal transitions, and disabled animations pause continuous rendering. Wallpaper
 changes preserve terminal instances and pane sockets. Changing the stack or shader
 settings can restart simulations. No hosted presets or runtime shader downloads

@@ -425,13 +425,22 @@ not the terminal.
 wallpaper is an ordered stack of `[[wallpaper-shader]]` layers (`ShaderLayer`: shader,
 enabled, blend mode, opacity, interactive, params; at most `MAX_WALLPAPER_SHADER_LAYERS`).
 `wallpaperRenderer.ts` registers enabled layers as sibling nodes under one core renderer,
-so an effect processes every layer beneath it, and reconciles edits in place. Stack and
+so an effect processes every layer beneath it, and reconciles edits in place. The
+`wallpaper` image, if any, is an `ImageTexture` node beneath them; core never repaints
+when media loads, so the renderer hooks its texture upload, and `ShaderWallpaper` shows
+a DOM copy of the image until the canvas has drawn it (or when WebGPU fails). An image
+alone stays a plain DOM background. `ClientConfig.wallpaper` is the configured value;
+`wallpaper_url` is what browsers load: `wallpaper.rs` serves local files and fetches
+remote images (no CORS needed, `image/*` only, size-capped, sandboxed CSP) at a
+`/wallpaper?v=` URL that changes with the source. Settings validates the field
+through `GET /api/wallpaper/check` (debounced, `useWallpaperCheck`); a checked remote
+image fills the cache. Stack and
 parameter changes may restart simulations. It adds runtime FPS, resolution, pause, seed,
 and cursor controls. No terminal post-processing. `wallpaperCatalog.ts` resolves IDs and
 kebab-case parameters. `just sync-shaders` regenerates parameter metadata and lazy loaders
 from the pinned package (the `generators`/`effects` lists in `scripts/sync-shaders.mjs`);
 `just test-frontend` checks that metadata is current. The session-only override replaces
-the whole `wallpaper_shaders` stack. GPU failure leaves the theme background visible.
+the whole `wallpaper_shaders` stack. GPU failure leaves the image or the theme background visible.
 Core rendering has no telemetry collector.
 
 `PANE_BORDER_STYLES` in `lib/paneSwitchBorder.ts` is a CSS-masked one-shot border

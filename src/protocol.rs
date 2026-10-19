@@ -44,6 +44,7 @@ fn generated_protocol_is_current() {
         ClientConfig::decl(&config),
         crate::server::ServerInfo::decl(&config),
         crate::vscode::VscodeStatus::decl(&config),
+        crate::wallpaper::WallpaperCheck::decl(&config),
         ConfigUpdate::decl(&config),
         ClientMessage::decl(&config),
         ServerMessage::decl(&config),

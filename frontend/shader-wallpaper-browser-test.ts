@@ -15,6 +15,20 @@ assert(created.ok);
 const session = await created.json();
 const snapshot = await (await fetch(`${url}/api/sessions/${session.id}`, { headers })).json();
 const pane = snapshot.windows[0].panes[0].id;
+// Red and blue PNGs from a host without CORS headers; the server must proxy them.
+const png = (base64: string) => Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+const images: Record<string, Uint8Array> = {
+  '/red.png': png(
+    'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=',
+  ),
+  '/blue.png': png('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFUlEQVR4nGNgYPhPIhrVMKph2GoAAJLb/wFh5Z4RAAAAAElFTkSuQmCC'),
+};
+const imageHost = Bun.serve({
+  port: 0,
+  fetch: (request) =>
+    new Response(images[new URL(request.url).pathname], { headers: { 'Content-Type': 'image/png' } }),
+});
+const imageUrl = `http://127.0.0.1:${imageHost.port}/red.png`;
 const browser = await chromium.launch({
   headless: true,
   channel: process.env.BTMUX_TEST_BROWSER,
@@ -191,6 +205,42 @@ try {
     await configure({ wallpaper_shaders: [layer('invert'), base] });
     await showing(['invert', 'aurora']);
     console.log('PASS effect layers, opacity, blend modes, disabling, and reordering');
+
+    /** The canvas pixel at its center. */
+    const center = () =>
+      canvas.evaluate(async (canvas: HTMLCanvasElement) => {
+        const image = new Image();
+        image.src = canvas.toDataURL();
+        await image.decode();
+        const copy = new OffscreenCanvas(image.width, image.height).getContext('2d')!;
+        copy.drawImage(image, 0, 0);
+        return [...copy.getImageData(image.width >> 1, image.height >> 1, 1, 1).data.slice(0, 3)];
+      });
+    const inverts = async (wallpaper: string, expected: number[]) => {
+      await configure({ wallpaper, wallpaper_shaders: [layer('invert')] });
+      await page.waitForFunction(
+        () =>
+          !!document.querySelector<HTMLCanvasElement>('canvas[data-shader-state]')?.dataset.shaderImage &&
+          !document.querySelector('[data-wallpaper-image]'),
+      );
+      const deadline = Date.now() + 10_000;
+      let pixel = await center();
+      while (!pixel.every((value, index) => Math.abs(value - expected[index]) < 40)) {
+        assert(Date.now() < deadline, `effects must process ${wallpaper}, got ${pixel}`);
+        await page.waitForTimeout(100);
+        pixel = await center();
+      }
+    };
+    await inverts(imageUrl, [0, 255, 255]);
+    await inverts(imageUrl.replace('red', 'blue'), [255, 255, 0]);
+    await configure({ wallpaper_shaders: [] });
+    await page.locator('[data-wallpaper-image]').waitFor();
+    assert.equal(await canvas.count(), 0, 'an image alone must not start the renderer');
+    await send({ type: 'update_config', update: { wallpaper: '', wallpaper_shaders: [base] } });
+    await page.waitForFunction(() => (window as any).shaderStore.getState().config.wallpaper === null);
+    await showing(['aurora']);
+    assert.equal(await page.locator('[data-wallpaper-image]').count(), 0);
+    console.log('PASS proxied image beneath the shader stack');
 
     const unavailable = await page.evaluate(async () => {
       const { WALLPAPER_SHADERS, createShaderLayer } = await import('/src/lib/wallpaperCatalog.ts' as string);
@@ -466,6 +516,7 @@ try {
   await fallback.addInitScript(() =>
     Object.defineProperty(navigator, 'gpu', { get: () => undefined, configurable: true }),
   );
+  await send({ type: 'update_config', update: { wallpaper: imageUrl } });
   const fallbackPage = await fallback.newPage();
   await fallbackPage.goto(url);
   await fallbackPage.getByLabel('Access token').fill(token);
@@ -478,11 +529,13 @@ try {
     await fallbackPage.locator('canvas[data-shader-state]').evaluate((canvas) => getComputedStyle(canvas).visibility),
     'hidden',
   );
+  await fallbackPage.locator('[data-wallpaper-image]').waitFor();
   console.log('PASS graceful fallback without WebGPU');
   await send({ type: 'reset_config' });
   await context.close();
   await fallback.close();
 } finally {
   await browser.close();
+  imageHost.stop();
   await fetch(`${url}/api/sessions/${session.id}`, { method: 'DELETE', headers });
 }

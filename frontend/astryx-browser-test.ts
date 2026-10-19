@@ -461,6 +461,22 @@ try {
   );
   await toastIsOnTop('Toast before settings');
 
+  await settings.click();
+  await dialog.getByRole('tab', { name: 'Wallpaper', exact: true }).click();
+  const wallpaper = dialog.getByRole('textbox', { name: 'Wallpaper URL or path', exact: true });
+  const wallpaperStatus = async (value: string, status: string, message?: string) => {
+    await wallpaper.fill(value);
+    await wallpaper.locator(`xpath=parent::*[@data-status="${status}"]`).waitFor();
+    if (message) await dialog.getByText(message, { exact: true }).waitFor();
+  };
+  await wallpaperStatus(path.join(repo, 'missing.png'), 'error', 'File not found');
+  await wallpaperStatus(path.join(repo, 'README'), 'error', 'Not an image file');
+  writeFileSync(path.join(repo, 'bg.png'), 'PNG!');
+  await wallpaperStatus(path.join(repo, 'bg.png'), 'success');
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'hidden' });
+  console.log('PASS debounced wallpaper validation');
+
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await toastIsOnTop('Toast before settings');
   const confirmationLabel = await page.evaluate(async () => {

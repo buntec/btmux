@@ -1,6 +1,6 @@
 # btmux
 
-A tmux-style terminal manager for the browser and desktop, powered by [wterm](https://github.com/vercel-labs/wterm) and [libghostty](https://github.com/ghostty-org/ghostty).
+A terminal emulator and tmux-style session manager for the browser and desktop, powered by [wterm](https://github.com/vercel-labs/wterm) and [libghostty](https://github.com/ghostty-org/ghostty).
 
 ## Highlights
 
@@ -8,9 +8,10 @@ A tmux-style terminal manager for the browser and desktop, powered by [wterm](ht
 - Server-side sessions: (re)connect from any number of frontends
 - Batteries included: file browser, Git mode, process viewer, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
+- LaTeX rendering overlay
 - Single self-contained binary
-- Interactive shader wallpapers
-- Support for base16/base24 color schemes
+- Interactive, composable shader wallpapers
+- Support for base16/base24 color schemes, dark/light mode
 - Highly configurable
 - REST API and MCP server
 

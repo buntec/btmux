@@ -4,6 +4,7 @@ import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Button } from '@astryxdesign/core/Button';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
+import { Spinner } from '@astryxdesign/core/Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
 import { Activity, FolderOpen, GitBranch, Zap, ZapOff } from 'lucide-react';
@@ -99,10 +100,13 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
               value={win.id}
               label={`${index} · ${win.name}${win.zoomed_pane ? ' ⛶' : ''}`}
               endContent={
-                level ? (
+                animations && !notification && agent?.agent_status.state === 'working' ? (
+                  <Spinner size="sm" aria-label="Agent working" />
+                ) : level ? (
                   <StatusDot
                     label={notification?.body ?? `Agent ${agent?.agent_status.state}`}
                     variant={level === 'attention' ? 'warning' : level === 'info' ? 'accent' : level}
+                    isPulsing={animations && (level === 'attention' || level === 'error')}
                   />
                 ) : undefined
               }

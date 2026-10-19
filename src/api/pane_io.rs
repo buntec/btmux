@@ -165,7 +165,8 @@ async fn api_pane_prompt(
     )
     .await
     {
-        Ok(outcome) => Json(outcome).into_response(),
+        Ok(Some(outcome)) => Json(outcome).into_response(),
+        Ok(None) => Json(serde_json::json!({"submitted": true})).into_response(),
         Err(error) => error_response(error),
     }
 }

@@ -381,7 +381,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "Submit a prompt to the agent in a pane: pastes it, then presses Enter. By default waits until the agent starts and then settles (idle, done, or blocked) and returns its status and rendered screen; started=false means no turn was seen starting. Refuses while the agent is blocked, since typing would answer its dialog."
+        description = "Submit a prompt to the agent in a pane: pastes it, then presses Enter. By default waits until the agent starts and then settles (idle, done, or blocked) and returns its status and rendered screen; started=false means no turn was seen starting. With wait=false, returns {submitted: true} once Enter is sent. Refuses while the agent is blocked, since typing would answer its dialog, and, when waiting, while it is working, since the turn that ends would not be this one."
     )]
     async fn send_prompt(
         &self,
@@ -402,7 +402,8 @@ impl BtmuxMcpServer {
         )
         .await
         {
-            Ok(outcome) => ok_json(outcome),
+            Ok(Some(outcome)) => ok_json(outcome),
+            Ok(None) => ok_json(serde_json::json!({"submitted": true})),
             Err(error) => tool_error(error.to_string()),
         }
     }

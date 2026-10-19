@@ -19,6 +19,9 @@ pub const SETTLED: [AgentState; 3] = [AgentState::Idle, AgentState::Done, AgentS
 const SUBMIT_DELAY: Duration = Duration::from_millis(300);
 /// How long a submitted prompt may take to start a turn.
 const START_TIMEOUT: Duration = Duration::from_secs(15);
+/// A pause in output that ends the agent's final redraw.
+const OUTPUT_QUIET: Duration = Duration::from_millis(200);
+const OUTPUT_SETTLE: Duration = Duration::from_secs(1);
 
 pub enum Error {
     PaneNotFound(Uuid),
@@ -182,19 +185,20 @@ pub struct PromptOutcome {
     /// Whether the agent was seen working on the prompt.
     pub started: bool,
     pub timed_out: bool,
-    /// The rendered screen when the call returned.
+    /// The rendered screen once output went quiet.
     pub screen: String,
 }
 
 /// Pastes `prompt` into the pane's agent and submits it. With `wait`, waits
-/// for the agent to start and then settle (idle, done, or blocked).
+/// for the agent to start and then settle (idle, done, or blocked); without,
+/// returns None once submitted.
 pub async fn send_prompt(
     state: &AppState,
     pane_id: Uuid,
     prompt: &str,
     wait: bool,
     timeout: Duration,
-) -> Result<PromptOutcome, Error> {
+) -> Result<Option<PromptOutcome>, Error> {
     let (input, journal) = {
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
@@ -205,6 +209,13 @@ pub async fn send_prompt(
             // Typed text would answer the pending dialog.
             return Err(
                 "the agent is waiting for a decision; read the pane and answer it with send_keys"
+                    .into(),
+            );
+        }
+        if wait && status.state == AgentState::Working {
+            // The next settle could end the current turn, not this prompt's.
+            return Err(
+                "the agent is busy; wait_for_agent first, or pass wait=false to queue the prompt"
                     .into(),
             );
         }
@@ -228,42 +239,61 @@ pub async fn send_prompt(
     input.send_wait(paste.into_bytes()).await?;
     tokio::time::sleep(SUBMIT_DELAY).await;
     input.send_wait(b"\r".to_vec()).await?;
+    if !wait {
+        return Ok(None);
+    }
 
-    let mut started = false;
-    let mut outcome = AgentWait {
-        status: None,
-        timed_out: false,
-    };
-    if wait {
-        let start = deadline.min(Instant::now() + START_TIMEOUT);
+    let start = deadline.min(Instant::now() + START_TIMEOUT);
+    let mut outcome = wait_until(
+        state,
+        pane_id,
+        &mut events,
+        |s| matches!(s, AgentState::Working | AgentState::Blocked),
+        start,
+    )
+    .await?;
+    let started = !outcome.timed_out && outcome.status.is_some();
+    if started {
         outcome = wait_until(
             state,
             pane_id,
             &mut events,
-            |s| matches!(s, AgentState::Working | AgentState::Blocked),
-            start,
+            |s| SETTLED.contains(s),
+            deadline,
         )
         .await?;
-        started = !outcome.timed_out && outcome.status.is_some();
-        if started {
-            outcome = wait_until(
-                state,
-                pane_id,
-                &mut events,
-                |s| SETTLED.contains(s),
-                deadline,
-            )
-            .await?;
-        }
-    } else {
-        outcome.status = state.read().await.agent_status(pane_id).cloned();
     }
-    Ok(PromptOutcome {
+    // Hooks report before the agent finishes drawing.
+    settle_output(state, pane_id).await?;
+    Ok(Some(PromptOutcome {
         status: outcome.status,
         started,
         timed_out: outcome.timed_out,
         screen: capture_pane(state, pane_id, false, None).await?,
-    })
+    }))
+}
+
+/// Waits until the pane's output pauses for `OUTPUT_QUIET`, at most
+/// `OUTPUT_SETTLE`.
+async fn settle_output(state: &AppState, pane_id: Uuid) -> Result<(), Error> {
+    let mut output = state
+        .read()
+        .await
+        .find_pane(pane_id)
+        .ok_or(Error::PaneNotFound(pane_id))?
+        .pty
+        .subscribe_output();
+    let deadline = Instant::now() + OUTPUT_SETTLE;
+    loop {
+        tokio::select! {
+            event = output.recv() => match event {
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            },
+            _ = tokio::time::sleep(OUTPUT_QUIET) => return Ok(()),
+            _ = tokio::time::sleep_until(deadline) => return Ok(()),
+        }
+    }
 }
 
 /// Encodes tmux-style key names (`Enter`, `C-c`, `M-x`, `Up`, `F5`) as the
@@ -426,6 +456,9 @@ mod tests {
         set(&state, pane_id, AgentState::Blocked).await;
         let error = send_prompt(&state, pane_id, "hi", false, DEFAULT_WAIT).await;
         assert!(matches!(error, Err(Error::Failed(message)) if message.contains("decision")));
+        set(&state, pane_id, AgentState::Working).await;
+        let error = send_prompt(&state, pane_id, "hi", true, DEFAULT_WAIT).await;
+        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("busy")));
         set(&state, pane_id, AgentState::Idle).await;
         // /bin/sh doesn't enable bracketed paste.
         let error = send_prompt(&state, pane_id, "a\nb", false, DEFAULT_WAIT).await;
@@ -439,7 +472,7 @@ mod tests {
         set(&state, pane_id, AgentState::Working).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         set(&state, pane_id, AgentState::Idle).await;
-        let outcome = prompt.await.unwrap().ok().unwrap();
+        let outcome = prompt.await.unwrap().ok().unwrap().unwrap();
         assert!(outcome.started);
         assert!(!outcome.timed_out);
         assert_eq!(outcome.status.unwrap().state, AgentState::Idle);

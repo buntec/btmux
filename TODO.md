@@ -62,3 +62,33 @@ Options:
   before `_scrollToBottom` reads `scrollHeight`.
 
 Once fixed upstream, remove `trackInputPosition` and bump `@wterm/*`.
+
+## Approve or deny agent permission requests from notifications
+
+A `PermissionRequest` hook already marks the pane as needing attention. Add
+Approve and Deny buttons to its toast (and the agent grid) that answer the
+active prompt by sending its keys to the pane, so you don't have to switch to
+it. Only act while the request is still pending, and check that the keys match
+the prompt the agent shows.
+
+## Encrypt the upgrade handoff file
+
+`handoff.rs` writes session snapshots and replay journals (pane output, which
+can contain secrets) to an unlinked, owner-only file. Seal it (e.g. AES-256-GCM)
+with a random key that never touches disk, passed to the new image through an
+inherited pipe. Bump `handoff::VERSION`.
+
+## Fork an agent conversation into a new pane
+
+Hooks already report the agent's `session_id`. Add an action (key, command
+palette, agent grid, REST/MCP) that splits the pane and starts the same agent
+with its fork-session option (e.g. `claude --resume <id> --fork-session`) in
+the pane's cwd.
+
+## Notify when a long command finishes
+
+Notify when a command that ran for at least N seconds (configurable, e.g. 15)
+finishes in a pane you aren't looking at, with its exit status. Needs shell
+integration (OSC 133 prompt and command marks) for zsh, bash, and fish to know
+where commands start and end. The same marks would let `run_command` wait for
+the prompt instead of 400 ms of quiet output.

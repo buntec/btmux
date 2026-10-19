@@ -74,8 +74,17 @@ pub struct Pane {
     pub pty: PtyHandle,
     /// The most severe notification since the pane was last viewed.
     pub unread: Option<PaneAlert>,
-    /// Held while automation submits a prompt.
-    pub prompt: Arc<tokio::sync::Mutex<()>>,
+    pub prompt: Arc<PromptLock>,
+}
+
+/// Orders automation prompts to a pane.
+#[derive(Default)]
+pub struct PromptLock {
+    /// Keeps a paste with its Enter.
+    pub submit: tokio::sync::Mutex<()>,
+    /// Shared by unwaited prompts and held exclusively by a waited one, each
+    /// until its turn starts, so a waited prompt can't claim another's turn.
+    pub turn: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl Pane {

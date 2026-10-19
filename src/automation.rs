@@ -141,7 +141,7 @@ pub async fn wait_for_agent(
 }
 
 /// Checks `status`, then each later status broadcast in order, so brief
-/// states count and a known agent's absence is an exit.
+/// states count and a known agent's absence, or the pane's, is an exit.
 async fn wait_until(
     state: &AppState,
     pane_id: Uuid,
@@ -170,11 +170,14 @@ async fn wait_until(
         }
         status = tokio::select! {
             event = events.recv() => match event {
-                Ok(statuses) => statuses
-                    .get(&pane_id)
-                    .cloned()
-                    .ok_or(Error::PaneNotFound(pane_id))?,
-                Err(broadcast::error::RecvError::Lagged(_)) => status_of(&*state.read().await, pane_id)?,
+                Ok(statuses) => match statuses.get(&pane_id) {
+                    Some(status) => status.clone(),
+                    None => return Ok(AgentWait { status: None, timed_out: false }),
+                },
+                Err(broadcast::error::RecvError::Lagged(_)) => match status_of(&*state.read().await, pane_id) {
+                    Err(Error::PaneNotFound(_)) => return Ok(AgentWait { status: None, timed_out: false }),
+                    status => status?,
+                },
                 Err(broadcast::error::RecvError::Closed) => return Err("server is shutting down".into()),
             },
             _ = tokio::time::sleep_until(deadline) => {
@@ -198,8 +201,13 @@ pub struct PromptOutcome {
     /// Whether the agent was seen working on the prompt.
     pub started: bool,
     pub timed_out: bool,
-    /// The rendered screen once output went quiet.
-    pub screen: String,
+    /// The rendered screen once output went quiet; None once the pane has
+    /// closed.
+    pub screen: Option<String>,
+}
+
+fn turn_started(state: &AgentState) -> bool {
+    matches!(state, AgentState::Working | AgentState::Blocked)
 }
 
 /// Pastes `prompt` into the pane's agent and submits it. With `wait`, waits
@@ -219,8 +227,12 @@ pub async fn send_prompt(
         .ok_or(Error::PaneNotFound(pane_id))?
         .prompt
         .clone();
-    // Keeps a paste with its Enter, and a waited prompt with the turn it starts.
-    let submitting = lock.lock().await;
+    let (exclusive, shared) = if wait {
+        (Some(lock.turn.clone().write_owned().await), None)
+    } else {
+        (None, Some(lock.turn.clone().read_owned().await))
+    };
+    let submitting = lock.submit.lock().await;
     let (status, input, journal, mut events) = {
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
@@ -266,21 +278,23 @@ pub async fn send_prompt(
     input.send_wait(paste.into_bytes()).await?;
     tokio::time::sleep(SUBMIT_DELAY).await;
     input.send_wait(b"\r".to_vec()).await?;
+    drop(submitting);
     if !wait {
+        // Keeps waited prompts out until this turn starts. A prompt queued
+        // while the agent works returns at once: the agent may fold it into
+        // the current turn.
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _shared = shared;
+            let start = Instant::now() + START_TIMEOUT;
+            let _ = wait_until(&state, pane_id, status, &mut events, turn_started, start).await;
+        });
         return Ok(None);
     }
 
     let start = deadline.min(Instant::now() + START_TIMEOUT);
-    let mut outcome = wait_until(
-        state,
-        pane_id,
-        status,
-        &mut events,
-        |s| matches!(s, AgentState::Working | AgentState::Blocked),
-        start,
-    )
-    .await?;
-    drop(submitting);
+    let mut outcome = wait_until(state, pane_id, status, &mut events, turn_started, start).await?;
+    drop(exclusive);
     let started = !outcome.timed_out && outcome.status.is_some();
     if started {
         outcome = wait_until(
@@ -294,12 +308,20 @@ pub async fn send_prompt(
         .await?;
     }
     // Hooks report before the agent finishes drawing.
-    settle_output(state, pane_id).await?;
+    let screen = match settle_output(state, pane_id).await {
+        Ok(()) => capture_pane(state, pane_id, false, None).await,
+        Err(error) => Err(error),
+    };
+    let screen = match screen {
+        Ok(screen) => Some(screen),
+        Err(Error::PaneNotFound(_)) => None,
+        Err(error) => return Err(error),
+    };
     Ok(Some(PromptOutcome {
         status: outcome.status,
         started,
         timed_out: outcome.timed_out,
-        screen: capture_pane(state, pane_id, false, None).await?,
+        screen,
     }))
 }
 
@@ -585,7 +607,16 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
 
-        // A second waited prompt can't claim the first one's turn.
+        // A waited prompt can't claim an unwaited one's turn.
+        let waited = send("true", true);
+        tokio::time::sleep(SUBMIT_DELAY * 2).await;
+        assert!(!waited.is_finished());
+        set(&state, pane_id, AgentState::Working).await;
+        let error = waited.await.unwrap();
+        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("busy")));
+        set(&state, pane_id, AgentState::Idle).await;
+
+        // Nor a second waited prompt the first one's.
         let first = send("true", true);
         tokio::time::sleep(Duration::from_millis(50)).await;
         let second = send("true", true);
@@ -595,6 +626,34 @@ mod tests {
         assert!(matches!(error, Err(Error::Failed(message)) if message.contains("busy")));
         set(&state, pane_id, AgentState::Idle).await;
         assert!(first.await.unwrap().ok().unwrap().unwrap().started);
+    }
+
+    #[tokio::test]
+    async fn a_closed_pane_is_an_exit() {
+        let (state, pane_id) = pane().await;
+        set(&state, pane_id, AgentState::Idle).await;
+        let prompt = tokio::spawn({
+            let state = state.clone();
+            async move { send_prompt(&state, pane_id, "true", true, DEFAULT_WAIT).await }
+        });
+        tokio::time::sleep(SUBMIT_DELAY * 2).await;
+        set(&state, pane_id, AgentState::Working).await;
+        let waiter = tokio::spawn({
+            let state = state.clone();
+            async move { wait_for_agent(&state, pane_id, &SETTLED, DEFAULT_WAIT).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        {
+            let mut mgr = state.write().await;
+            mgr.handle_pane_exit(pane_id).await;
+            broadcast_state(&mgr);
+        }
+        let outcome = waiter.await.unwrap().ok().unwrap();
+        assert!(outcome.status.is_none() && !outcome.timed_out);
+        let outcome = prompt.await.unwrap().ok().unwrap().unwrap();
+        assert!(outcome.started && outcome.status.is_none() && outcome.screen.is_none());
+        let error = wait_for_agent(&state, pane_id, &SETTLED, DEFAULT_WAIT).await;
+        assert!(matches!(error, Err(Error::PaneNotFound(_))));
     }
 
     #[test]

@@ -27,7 +27,7 @@ enum Source {
 fn source(raw: &str) -> Option<Source> {
     if raw.starts_with("http://") || raw.starts_with("https://") {
         Some(Source::Remote(raw.to_string()))
-    } else if std::path::Path::new(raw).is_absolute() {
+    } else if raw.starts_with('/') || std::path::Path::new(raw).is_absolute() {
         Some(Source::File(PathBuf::from(raw)))
     } else {
         raw.strip_prefix('~').map(|rest| {
@@ -139,17 +139,16 @@ pub async fn check(raw: &str) -> WallpaperCheck {
 }
 
 async fn check_file(path: &std::path::Path) -> Result<(), String> {
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => "File not found".to_string(),
-            std::io::ErrorKind::PermissionDenied => "Permission denied".to_string(),
-            _ => e.to_string(),
-        })?;
-    let metadata = file.metadata().await.map_err(|e| e.to_string())?;
-    if !metadata.is_file() {
+    let error = |e: std::io::Error| match e.kind() {
+        std::io::ErrorKind::NotFound => "File not found".to_string(),
+        std::io::ErrorKind::PermissionDenied => "Permission denied".to_string(),
+        _ => e.to_string(),
+    };
+    // Windows can't open a directory as a file.
+    if !tokio::fs::metadata(path).await.map_err(error)?.is_file() {
         return Err("Not a file".into());
     }
+    tokio::fs::File::open(path).await.map_err(error)?;
     if mime_guess::from_path(path).first_or_octet_stream().type_() != mime_guess::mime::IMAGE {
         return Err("Not an image file".into());
     }

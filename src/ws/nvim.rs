@@ -324,7 +324,7 @@ async fn modified_buffers(addr: &Path) -> Result<String, String> {
     let output = tokio::time::timeout(
         Duration::from_secs(2),
         Command::new("nvim")
-            .arg("--server")
+            .args(["--headless", "--server"])
             .arg(addr)
             .args(["--remote-expr", MODIFIED_BUFFERS])
             .kill_on_drop(true)
@@ -542,7 +542,7 @@ mod tests {
         let (_, addr, state) = connect().await.unwrap();
         let eval = |expr: &str| {
             let status = std::process::Command::new("nvim")
-                .arg("--server")
+                .args(["--headless", "--server"])
                 .arg(&addr)
                 .args(["--remote-expr", expr])
                 .stdout(std::process::Stdio::null())

@@ -326,7 +326,12 @@ async fn collect_grep_results(
 }
 
 fn search_path(root: &Path, relative: &str) -> String {
-    crate::fs_ops::client_path(&root.join(relative.trim_start_matches("./")))
+    // ripgrep's JSON output ignores `--path-separator`.
+    let relative = relative
+        .strip_prefix("./")
+        .or_else(|| relative.strip_prefix(".\\"))
+        .unwrap_or(relative);
+    crate::fs_ops::client_path(&root.join(relative))
 }
 
 fn parse_grep_result(line: &str, root: &Path) -> Option<SearchResult> {
@@ -374,7 +379,10 @@ mod tests {
         let results = FileIndex::new().search("needle", &root).await.unwrap();
 
         let paths: Vec<_> = results.iter().map(|r| r.path.as_str()).collect();
-        assert_eq!(paths, [root.join(".needle.txt").to_string_lossy()]);
+        assert_eq!(
+            paths,
+            [crate::fs_ops::client_path(&root.join(".needle.txt"))]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -394,7 +402,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].path,
-            root.join("nested/matches.txt").to_string_lossy()
+            crate::fs_ops::client_path(&root.join("nested/matches.txt"))
         );
         assert_eq!(results[0].line, Some(2));
         assert_eq!(results[0].text.as_deref(), Some("needle with context"));

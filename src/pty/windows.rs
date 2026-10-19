@@ -133,11 +133,16 @@ impl PtyHandle {
         let pane_id = self.pane_id;
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            let mut first = true;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if output.feed(&buf[..n]).is_err() {
+                        let mut chunk = &buf[..n];
+                        if std::mem::take(&mut first) {
+                            chunk = output.answer_startup_query(chunk);
+                        }
+                        if output.feed(chunk).is_err() {
                             break;
                         }
                     }
@@ -186,6 +191,22 @@ impl PtyHandle {
         });
 
         self.input_tx = InputSender(input_tx);
+    }
+}
+
+impl OutputPipeline {
+    /// Answer ConPTY's startup cursor query (`PSEUDOCONSOLE_INHERIT_CURSOR`):
+    /// the shell waits for it, and a pane may have no viewer to reply.
+    fn answer_startup_query<'a>(&self, chunk: &'a [u8]) -> &'a [u8] {
+        let Some(rest) = chunk.strip_prefix(b"\x1b[6n") else {
+            return chunk;
+        };
+        // Recorded so the stale-CPR filter lets the reply through.
+        PtyHandle::record_cpr_pgrp(&self.probe, &self.pending_cpr_pgrps);
+        let _ = self
+            .response_tx
+            .try_send(PtyInput::Raw(b"\x1b[1;1R".to_vec()));
+        rest
     }
 }
 

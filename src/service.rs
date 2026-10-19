@@ -479,7 +479,7 @@ fn stable_homebrew_path(exe: &Path) -> Option<PathBuf> {
     (std::fs::canonicalize(&stable).ok()? == exe).then_some(stable)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -491,7 +491,6 @@ mod tests {
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("btmux"), "").unwrap();
         std::fs::create_dir_all(dir.join("opt")).unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(dir.join("Cellar/btmux/1.2.3"), dir.join("opt/btmux")).unwrap();
 
         let exe = std::fs::canonicalize(bin.join("btmux")).unwrap();

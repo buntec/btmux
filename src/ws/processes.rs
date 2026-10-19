@@ -490,10 +490,15 @@ mod tests {
     }
 
     fn spawn_sleeper() -> std::process::Child {
-        std::process::Command::new("sleep")
-            .arg("30")
+        #[cfg(unix)]
+        let (program, args) = ("sleep", ["30"].as_slice());
+        #[cfg(windows)]
+        let (program, args) = ("ping", ["-n", "31", "127.0.0.1"].as_slice());
+        std::process::Command::new(program)
+            .args(args)
+            .stdout(std::process::Stdio::null())
             .spawn()
-            .expect("spawn sleep")
+            .expect("spawn sleeper")
     }
 
     #[test]

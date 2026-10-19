@@ -46,10 +46,11 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
 
 `input` sends `text` verbatim, then `keys`: tmux-style key names such as
 `Enter`, `Tab`, `Escape`, `Space`, `BSpace`, `Up`, `PageDown`, `F5`, `C-c`, or
-`M-x`. `capture` returns the pane as rendered plain text, like
-`tmux capture-pane -pJ`: the visible screen, or with `scrollback=true` the
-retained history above it too, with wrapped lines joined. `lines=N` keeps the
-last N lines. `output` returns the raw bytes instead.
+`M-x`. Cursor keys follow the program's cursor key mode, as in tmux. `capture`
+returns the pane as rendered plain text, like `tmux capture-pane -pJ`: the
+visible screen, or with `scrollback=true` the retained history above it too,
+with wrapped lines joined. `lines=N` keeps the last N lines. `output` returns
+the raw bytes instead.
 
 `focus` switches every connected browser tab to the pane's window and session
 (204, or 404 for an unknown pane).
@@ -66,28 +67,28 @@ shows an error. Otherwise, selecting a file runs `$EDITOR` only if the pane's
 shell owns the terminal. If another program is in the foreground, the browser
 shows an error and leaves that program's input untouched.
 
-| Method and path                                                 | Purpose                                                   |
-| --------------------------------------------------------------- | --------------------------------------------------------- |
-| `GET/POST/DELETE /api/sessions`                                 | List, create, or clear sessions                           |
-| `GET/DELETE /api/sessions/<session-id>`                         | Inspect or kill a session                                 |
-| `POST /api/sessions/<session-id>/rename`                        | Rename a session                                          |
-| `POST /api/sessions/<session-id>/windows`                       | Create a window                                           |
-| `POST /api/sessions/<session-id>/windows/{switch,rename,close}` | Operate on a session's active window                      |
-| `DELETE /api/windows/<window-id>`                               | Kill a window by ID                                       |
-| `POST/DELETE /api/sessions/<session-id>/panes/...`              | Split, kill, select, navigate, cycle, swap, or zoom panes |
-| `POST /api/sessions/<session-id>/layout`                        | Select a named pane layout                                |
-| `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                             |
+| Method and path                                                 | Purpose                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------------- |
+| `GET/POST/DELETE /api/sessions`                                 | List, create, or clear sessions                               |
+| `GET/DELETE /api/sessions/<session-id>`                         | Inspect or kill a session                                     |
+| `POST /api/sessions/<session-id>/rename`                        | Rename a session                                              |
+| `POST /api/sessions/<session-id>/windows`                       | Create a window                                               |
+| `POST /api/sessions/<session-id>/windows/{switch,rename,close}` | Operate on a session's active window                          |
+| `DELETE /api/windows/<window-id>`                               | Kill a window by ID                                           |
+| `POST/DELETE /api/sessions/<session-id>/panes/...`              | Split, kill, select, navigate, cycle, swap, or zoom panes     |
+| `POST /api/sessions/<session-id>/layout`                        | Select a named pane layout                                    |
+| `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                                 |
 | `POST /api/panes/<pane-id>/input`                               | Send text and keys to a pane, spawning its shell if necessary |
-| `GET /api/panes/<pane-id>/capture`                              | Read the rendered screen or scrollback as text            |
-| `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes             |
-| `GET /api/agents`                                               | List panes running an agent, with their states            |
-| `GET /api/panes/<pane-id>/wait`                                 | Wait for the pane's agent to reach a state                |
-| `POST /api/panes/<pane-id>/prompt`                              | Submit a prompt to the pane's agent and wait for its turn |
-| `POST /api/notify`                                              | Show a notification, not tied to a pane, in every client   |
-| `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification            |
-| `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session     |
-| `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session          |
-| `GET/POST/DELETE /api/panes/<pane-id>/agent-status`                 | Explain, set, or clear semantic agent status                       |
+| `GET /api/panes/<pane-id>/capture`                              | Read the rendered screen or scrollback as text                |
+| `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes                 |
+| `GET /api/agents`                                               | List panes running an agent, with their states                |
+| `GET /api/panes/<pane-id>/wait`                                 | Wait for the pane's agent to reach a state                    |
+| `POST /api/panes/<pane-id>/prompt`                              | Submit a prompt to the pane's agent and wait for its turn     |
+| `POST /api/notify`                                              | Show a notification, not tied to a pane, in every client      |
+| `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification               |
+| `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session        |
+| `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session             |
+| `GET/POST/DELETE /api/panes/<pane-id>/agent-status`             | Explain, set, or clear semantic agent status                  |
 
 ## MCP server
 
@@ -121,11 +122,11 @@ btmux knows when each agent in a pane is working, blocked, done, or idle (see
 [below](#semantic-agent-status)), so scripts and agents can wait for that state
 instead of scraping the screen or polling.
 
-| MCP tool         | REST                                  | Purpose                                                       |
-| ---------------- | ------------------------------------- | ------------------------------------------------------------- |
-| `list_agents`    | `GET /api/agents`                     | Panes running an agent, with session, window, cwd, and status |
-| `wait_for_agent` | `GET /api/panes/<pane-id>/wait`       | Wait until the agent reaches one of `states`, or exits        |
-| `send_prompt`    | `POST /api/panes/<pane-id>/prompt`    | Paste a prompt, press Enter, and wait for the turn to finish  |
+| MCP tool         | REST                               | Purpose                                                       |
+| ---------------- | ---------------------------------- | ------------------------------------------------------------- |
+| `list_agents`    | `GET /api/agents`                  | Panes running an agent, with session, window, cwd, and status |
+| `wait_for_agent` | `GET /api/panes/<pane-id>/wait`    | Wait until the agent reaches one of `states`, or exits        |
+| `send_prompt`    | `POST /api/panes/<pane-id>/prompt` | Paste a prompt, press Enter, and wait for the turn to finish  |
 
 `wait_for_agent` waits for `idle`, `done`, or `blocked` by default (`states`;
 comma-separated over REST) and returns `{status, timed_out}`. It returns at
@@ -161,6 +162,10 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST "$BTMUX_API_URL/api/pa
   -H 'Content-Type: application/json' \
   -d '{"prompt":"Run the tests and fix any failures."}'
 ```
+
+Over REST, `input`, `capture`, `wait`, and `prompt` return 400 for a bad
+request, 404 for an unknown pane, 409 when the pane's state doesn't allow it
+now (such as a busy agent), and 500 otherwise.
 
 From a shell, `btmux agents` prints the agent list as JSON, and `btmux wait`
 blocks until an agent settles, then prints its status. It exits 2 on timeout:

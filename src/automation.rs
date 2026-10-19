@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::pty::replay::Output;
 use crate::pty::screen::{self, MAX_CAPTURE_HISTORY};
+use crate::pty::MAX_INPUT;
 use crate::session::manager::{PaneStatuses, SessionManager};
 use crate::session::{AgentState, AgentStatus};
 use crate::{config, AppState};
@@ -27,6 +28,10 @@ const OUTPUT_SETTLE: Duration = Duration::from_secs(1);
 
 pub enum Error {
     PaneNotFound(Uuid),
+    /// The request itself is wrong.
+    Invalid(String),
+    /// The pane's current state doesn't allow it; may succeed later.
+    Conflict(String),
     Failed(String),
 }
 
@@ -34,7 +39,9 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PaneNotFound(pane_id) => write!(f, "pane {pane_id} not found"),
-            Self::Failed(message) => f.write_str(message),
+            Self::Invalid(message) | Self::Conflict(message) | Self::Failed(message) => {
+                f.write_str(message)
+            }
         }
     }
 }
@@ -58,15 +65,69 @@ pub fn wait_duration(timeout_ms: Option<u64>) -> Duration {
         .min(MAX_WAIT)
 }
 
-/// Parses agent state names such as `idle`.
+/// Parses agent state names such as `idle`, skipping blanks.
 pub fn parse_states<S: AsRef<str>>(names: &[S]) -> Result<Vec<AgentState>, String> {
-    names
+    let states = names
         .iter()
+        .map(|name| name.as_ref().trim())
+        .filter(|name| !name.is_empty())
         .map(|name| {
-            serde_json::from_value(serde_json::Value::String(name.as_ref().to_owned()))
-                .map_err(|_| format!("unknown agent state: {}", name.as_ref()))
+            serde_json::from_value(serde_json::Value::String(name.to_owned()))
+                .map_err(|_| format!("unknown agent state: {name}"))
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    if states.is_empty() {
+        return Err("pass at least one agent state".into());
+    }
+    Ok(states)
+}
+
+/// Sends `text` verbatim, then tmux-style `keys`, spawning the pane's shell
+/// at `size` if needed. Returns whether it spawned.
+pub async fn send_keys<S: AsRef<str>>(
+    state: &AppState,
+    pane_id: Uuid,
+    text: &str,
+    keys: &[S],
+    size: Option<(u16, u16)>,
+) -> Result<bool, Error> {
+    // Validates the names before anything spawns.
+    let mut bytes = text.as_bytes().to_vec();
+    bytes.extend(encode_keys(keys, false).map_err(Error::Invalid)?);
+    if bytes.is_empty() {
+        return Err(Error::Invalid("pass text or keys".into()));
+    }
+    if bytes.len() > MAX_INPUT {
+        return Err(Error::Invalid(
+            "input exceeds 64 KiB; split it into smaller requests".into(),
+        ));
+    }
+    let (cols, rows) = size.unwrap_or((config::DEFAULT_PTY_COLS, config::DEFAULT_PTY_ROWS));
+    let (newly_spawned, input, journal) = {
+        let mut mgr = state.write().await;
+        let pane = mgr
+            .find_pane_mut(pane_id)
+            .ok_or(Error::PaneNotFound(pane_id))?;
+        let newly_spawned = !pane.pty.is_spawned();
+        pane.pty.ensure_spawned(cols, rows)?;
+        let journal = keys
+            .iter()
+            .any(|key| cursor_key(key.as_ref()).is_some())
+            .then(|| pane.pty.journal());
+        (newly_spawned, pane.pty.input_tx.clone(), journal)
+    };
+    if let Some(journal) = journal {
+        let application =
+            tokio::task::spawn_blocking(move || screen::capture(&journal, 0).application_cursor)
+                .await
+                .map_err(|e| Error::Failed(e.to_string()))?;
+        if application {
+            bytes.truncate(text.len());
+            bytes.extend(encode_keys(keys, true).map_err(Error::Invalid)?);
+        }
+    }
+    input.send(bytes)?;
+    Ok(newly_spawned)
 }
 
 /// The pane's rendered screen, with retained history above it when `history`
@@ -236,22 +297,22 @@ pub async fn send_prompt(
     let (status, input, journal, mut events) = {
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
-        let status = mgr
-            .agent_status(pane_id)
-            .ok_or("no agent detected in this pane; use send_keys")?;
+        let status = mgr.agent_status(pane_id).ok_or_else(|| {
+            Error::Conflict("no agent detected in this pane; use send_keys".into())
+        })?;
         if status.state == AgentState::Blocked {
             // Typed text would answer the pending dialog.
-            return Err(
+            return Err(Error::Conflict(
                 "the agent is waiting for a decision; read the pane and answer it with send_keys"
                     .into(),
-            );
+            ));
         }
         if wait && status.state == AgentState::Working {
             // The next settle could end the current turn, not this prompt's.
-            return Err(
+            return Err(Error::Conflict(
                 "the agent is busy; wait_for_agent first, or pass wait=false to queue the prompt"
                     .into(),
-            );
+            ));
         }
         // Subscribed with the check, so no earlier turn is seen as this one.
         (
@@ -269,10 +330,15 @@ pub async fn send_prompt(
     let paste = if bracketed {
         format!("\x1b[200~{}\x1b[201~", text.replace('\x1b', ""))
     } else if text.contains(['\r', '\n']) {
-        return Err("the pane doesn't accept pasted text, so a newline would submit early".into());
+        return Err(Error::Conflict(
+            "the pane doesn't accept pasted text, so a newline would submit early".into(),
+        ));
     } else {
         text.to_owned()
     };
+    if paste.len() > MAX_INPUT {
+        return Err(Error::Invalid("prompt exceeds 64 KiB".into()));
+    }
 
     let deadline = Instant::now() + timeout;
     input.send_wait(paste.into_bytes()).await?;
@@ -349,24 +415,42 @@ async fn settle_output(state: &AppState, pane_id: Uuid) -> Result<(), Error> {
 }
 
 /// Encodes tmux-style key names (`Enter`, `C-c`, `M-x`, `Up`, `F5`) as the
-/// bytes a terminal sends.
-pub fn encode_keys<S: AsRef<str>>(keys: &[S]) -> Result<Vec<u8>, String> {
+/// bytes a terminal sends, with cursor keys in `application` mode (DECCKM)
+/// if set.
+fn encode_keys<S: AsRef<str>>(keys: &[S], application: bool) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     for key in keys {
         let key = key.as_ref();
-        bytes.extend(encode_key(key).ok_or_else(|| format!("unknown key: {key}"))?);
+        bytes.extend(encode_key(key, application).ok_or_else(|| format!("unknown key: {key}"))?);
     }
     Ok(bytes)
 }
 
-fn encode_key(key: &str) -> Option<Vec<u8>> {
+/// The final byte of a cursor key, which DECCKM changes.
+fn cursor_key(key: &str) -> Option<u8> {
+    let key = key.trim_start_matches("M-");
+    Some(match key.to_ascii_lowercase().as_str() {
+        "up" => b'A',
+        "down" => b'B',
+        "right" => b'C',
+        "left" => b'D',
+        "home" => b'H',
+        "end" => b'F',
+        _ => return None,
+    })
+}
+
+fn encode_key(key: &str, application: bool) -> Option<Vec<u8>> {
     if let Some(rest) = key.strip_prefix("M-") {
         let mut bytes = vec![0x1b];
-        bytes.extend(encode_key(rest)?);
+        bytes.extend(encode_key(rest, application)?);
         return Some(bytes);
     }
     if let Some(rest) = key.strip_prefix("C-") {
         return control(rest).map(|byte| vec![byte]);
+    }
+    if let Some(byte) = cursor_key(key) {
+        return Some(vec![0x1b, if application { b'O' } else { b'[' }, byte]);
     }
     let named: &[u8] = match key.to_ascii_lowercase().as_str() {
         "enter" => b"\r",
@@ -375,12 +459,6 @@ fn encode_key(key: &str) -> Option<Vec<u8>> {
         "escape" | "esc" => b"\x1b",
         "space" => b" ",
         "bspace" | "backspace" => b"\x7f",
-        "up" => b"\x1b[A",
-        "down" => b"\x1b[B",
-        "right" => b"\x1b[C",
-        "left" => b"\x1b[D",
-        "home" => b"\x1b[H",
-        "end" => b"\x1b[F",
         "ic" | "insert" => b"\x1b[2~",
         "dc" | "delete" => b"\x1b[3~",
         "ppage" | "pageup" | "pgup" => b"\x1b[5~",
@@ -504,17 +582,17 @@ mod tests {
     async fn send_prompt_waits_for_the_turn() {
         let (state, pane_id) = pane().await;
         let error = send_prompt(&state, pane_id, "hi", false, DEFAULT_WAIT).await;
-        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("no agent")));
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("no agent")));
         set(&state, pane_id, AgentState::Blocked).await;
         let error = send_prompt(&state, pane_id, "hi", false, DEFAULT_WAIT).await;
-        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("decision")));
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("decision")));
         set(&state, pane_id, AgentState::Working).await;
         let error = send_prompt(&state, pane_id, "hi", true, DEFAULT_WAIT).await;
-        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("busy")));
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("busy")));
         set(&state, pane_id, AgentState::Idle).await;
         // /bin/sh doesn't enable bracketed paste.
         let error = send_prompt(&state, pane_id, "a\nb", false, DEFAULT_WAIT).await;
-        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("newline")));
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("newline")));
 
         let prompt = tokio::spawn({
             let state = state.clone();
@@ -613,7 +691,7 @@ mod tests {
         assert!(!waited.is_finished());
         set(&state, pane_id, AgentState::Working).await;
         let error = waited.await.unwrap();
-        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("busy")));
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("busy")));
         set(&state, pane_id, AgentState::Idle).await;
 
         // Nor a second waited prompt the first one's.
@@ -623,9 +701,40 @@ mod tests {
         tokio::time::sleep(SUBMIT_DELAY * 2).await;
         set(&state, pane_id, AgentState::Working).await;
         let error = second.await.unwrap();
-        assert!(matches!(error, Err(Error::Failed(message)) if message.contains("busy")));
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("busy")));
         set(&state, pane_id, AgentState::Idle).await;
         assert!(first.await.unwrap().ok().unwrap().unwrap().started);
+    }
+
+    #[tokio::test]
+    async fn send_keys_checks_input_and_cursor_mode() {
+        let (state, pane_id) = pane().await;
+        let error = send_keys::<&str>(&state, pane_id, "", &[], None).await;
+        assert!(matches!(error, Err(Error::Invalid(_))));
+        let error = send_keys(&state, pane_id, "", &["Entr"], None).await;
+        assert!(matches!(error, Err(Error::Invalid(_))));
+        let error = send_keys(
+            &state,
+            pane_id,
+            &"x".repeat(MAX_INPUT + 1),
+            &["Enter"],
+            None,
+        )
+        .await;
+        assert!(matches!(error, Err(Error::Invalid(_))));
+        let error = send_keys(&state, Uuid::new_v4(), "x", &["Up"], None).await;
+        assert!(matches!(error, Err(Error::PaneNotFound(_))));
+        let spawned = send_keys(
+            &state,
+            pane_id,
+            "printf '\\033[?1h'",
+            &["Enter", "Up"],
+            None,
+        )
+        .await
+        .ok()
+        .unwrap();
+        assert!(!spawned);
     }
 
     #[tokio::test]
@@ -670,18 +779,25 @@ mod tests {
 
     #[test]
     fn encodes_tmux_key_names() {
-        assert_eq!(encode_keys(&["C-c"]).unwrap(), b"\x03");
+        assert_eq!(encode_keys(&["C-c"], false).unwrap(), b"\x03");
         assert_eq!(
-            encode_keys(&["Enter", "M-x", "Up"]).unwrap(),
+            encode_keys(&["Enter", "M-x", "Up"], false).unwrap(),
             b"\r\x1bx\x1b[A"
         );
         assert_eq!(
-            encode_keys(&["M-C-a", "C-Space", "q"]).unwrap(),
+            encode_keys(&["M-C-a", "C-Space", "q"], false).unwrap(),
             b"\x1b\x01\x00q"
         );
-        assert_eq!(encode_keys(&["F5", "BTab"]).unwrap(), b"\x1b[15~\x1b[Z");
-        assert!(encode_keys(&["Entr"]).is_err());
-        assert!(encode_keys(&["C-é"]).is_err());
+        assert_eq!(
+            encode_keys(&["F5", "BTab"], false).unwrap(),
+            b"\x1b[15~\x1b[Z"
+        );
+        assert_eq!(
+            encode_keys(&["Up", "M-End", "PageUp"], true).unwrap(),
+            b"\x1bOA\x1b\x1bOF\x1b[5~"
+        );
+        assert!(encode_keys(&["Entr"], false).is_err());
+        assert!(encode_keys(&["C-é"], false).is_err());
     }
 
     #[test]
@@ -690,7 +806,13 @@ mod tests {
             parse_states(&["idle", "blocked"]).unwrap(),
             [AgentState::Idle, AgentState::Blocked]
         );
+        assert_eq!(
+            parse_states(&["done", " idle", ""]).unwrap(),
+            [AgentState::Done, AgentState::Idle]
+        );
         assert!(parse_states(&["asleep"]).is_err());
+        assert!(parse_states::<&str>(&[]).is_err());
+        assert!(parse_states(&[" "]).is_err());
         assert_eq!(last_lines("a\nb\nc\n", 2), "b\nc\n");
         assert_eq!(last_lines("a\n", 5), "a\n");
         assert_eq!(last_lines("a\n", 0), "");

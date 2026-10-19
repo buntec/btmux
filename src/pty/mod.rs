@@ -19,6 +19,9 @@ use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use uuid::Uuid;
 
+/// Largest single write to a PTY's input queue.
+pub const MAX_INPUT: usize = 64 * 1024;
+
 /// PTY state carried across an in-place upgrade; the master fd travels separately.
 pub struct Handoff {
     pub pid: libc::pid_t,
@@ -259,7 +262,7 @@ enum PtyInput {
 
 impl InputSender {
     pub async fn send_wait(&self, data: Vec<u8>) -> Result<(), String> {
-        if data.len() > 64 * 1024 {
+        if data.len() > MAX_INPUT {
             return Err("PTY input exceeds 64 KiB".into());
         }
         self.0
@@ -268,7 +271,7 @@ impl InputSender {
             .map_err(|e| format!("PTY input unavailable: {e}"))
     }
     pub fn send(&self, data: Vec<u8>) -> Result<(), String> {
-        if data.len() > 64 * 1024 {
+        if data.len() > MAX_INPUT {
             return Err("PTY input exceeds 64 KiB; split it into smaller requests".into());
         }
         self.0
@@ -281,7 +284,7 @@ impl InputSender {
         data: Vec<u8>,
         shell_pid: libc::pid_t,
     ) -> Result<(), String> {
-        if data.len() > 64 * 1024 {
+        if data.len() > MAX_INPUT {
             return Err("PTY input exceeds 64 KiB".into());
         }
         let (reply, result) = oneshot::channel();

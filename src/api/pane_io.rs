@@ -62,27 +62,14 @@ async fn api_pane_input(
     Path(pane_id): Path<Uuid>,
     Json(body): Json<PaneInputRequest>,
 ) -> Response {
-    let mut bytes = body.text.into_bytes();
-    match automation::encode_keys(&body.keys) {
-        Ok(keys) => bytes.extend(keys),
-        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
-    }
-    let mut mgr = state.write().await;
-    let Some(pane) = mgr.find_pane_mut(pane_id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let newly_spawned = !pane.pty.is_spawned();
-    if let Err(error) = pane.pty.ensure_spawned(
+    let size = (
         body.cols.unwrap_or(config::DEFAULT_PTY_COLS),
         body.rows.unwrap_or(config::DEFAULT_PTY_ROWS),
-    ) {
-        return (StatusCode::BAD_REQUEST, error).into_response();
+    );
+    match automation::send_keys(&state, pane_id, &body.text, &body.keys, Some(size)).await {
+        Ok(newly_spawned) => Json(PaneInputResponse { newly_spawned }).into_response(),
+        Err(error) => error_response(error),
     }
-    if let Err(error) = pane.pty.input_tx.send(bytes) {
-        return (StatusCode::SERVICE_UNAVAILABLE, error).into_response();
-    }
-
-    Json(PaneInputResponse { newly_spawned }).into_response()
 }
 
 #[derive(Deserialize)]
@@ -211,7 +198,9 @@ async fn api_agents(State(state): State<AppState>) -> Response {
 fn error_response(error: automation::Error) -> Response {
     let status = match error {
         automation::Error::PaneNotFound(_) => StatusCode::NOT_FOUND,
-        automation::Error::Failed(_) => StatusCode::CONFLICT,
+        automation::Error::Invalid(_) => StatusCode::BAD_REQUEST,
+        automation::Error::Conflict(_) => StatusCode::CONFLICT,
+        automation::Error::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, error.to_string()).into_response()
 }

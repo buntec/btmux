@@ -35,6 +35,13 @@ fn tool_error(msg: impl Into<String>) -> Result<CallToolResult, ErrorData> {
     Ok(CallToolResult::error(vec![ContentBlock::text(msg.into())]))
 }
 
+fn automation_error(error: automation::Error) -> Result<CallToolResult, ErrorData> {
+    match error {
+        automation::Error::Invalid(message) => Err(ErrorData::invalid_params(message, None)),
+        error => tool_error(error.to_string()),
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 struct GetSessionParams {
     session_id: String,
@@ -297,29 +304,18 @@ impl BtmuxMcpServer {
         }): Parameters<SendKeysParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let pane_id = parse_uuid(&pane_id, "pane_id")?;
-        let mut bytes = text.unwrap_or_default().into_bytes();
-        bytes.extend(
-            automation::encode_keys(&keys.unwrap_or_default())
-                .map_err(|e| ErrorData::invalid_params(e, None))?,
-        );
-        if bytes.is_empty() {
-            return Err(ErrorData::invalid_params("pass text or keys", None));
+        match automation::send_keys(
+            &self.state,
+            pane_id,
+            &text.unwrap_or_default(),
+            &keys.unwrap_or_default(),
+            None,
+        )
+        .await
+        {
+            Ok(newly_spawned) => ok_json(serde_json::json!({"newly_spawned": newly_spawned})),
+            Err(error) => automation_error(error),
         }
-        let mut mgr = self.state.write().await;
-        let Some(pane) = mgr.find_pane_mut(pane_id) else {
-            return tool_error(format!("pane {pane_id} not found"));
-        };
-        let newly_spawned = !pane.pty.is_spawned();
-        if let Err(error) = pane.pty.ensure_spawned(
-            crate::config::DEFAULT_PTY_COLS,
-            crate::config::DEFAULT_PTY_ROWS,
-        ) {
-            return tool_error(error);
-        }
-        if let Err(error) = pane.pty.input_tx.send(bytes) {
-            return tool_error(error);
-        }
-        ok_json(serde_json::json!({"newly_spawned": newly_spawned}))
     }
 
     #[tool(
@@ -338,7 +334,7 @@ impl BtmuxMcpServer {
             .await
         {
             Ok(text) => ok_text(text),
-            Err(error) => tool_error(error.to_string()),
+            Err(error) => automation_error(error),
         }
     }
 
@@ -376,7 +372,7 @@ impl BtmuxMcpServer {
         .await
         {
             Ok(outcome) => ok_json(outcome),
-            Err(error) => tool_error(error.to_string()),
+            Err(error) => automation_error(error),
         }
     }
 
@@ -404,7 +400,7 @@ impl BtmuxMcpServer {
         {
             Ok(Some(outcome)) => ok_json(outcome),
             Ok(None) => ok_json(serde_json::json!({"submitted": true})),
-            Err(error) => tool_error(error.to_string()),
+            Err(error) => automation_error(error),
         }
     }
 

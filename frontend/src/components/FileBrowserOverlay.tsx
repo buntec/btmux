@@ -69,10 +69,6 @@ function scrollFilePreview(direction: 1 | -1) {
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
 /** The git item list as currently navigable — forces all sections open and applies the filter while filtering. */
 function visibleGitItems(
   gitStatus: GitStatusResult,
@@ -632,7 +628,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         }
       }
       if (isDir) {
-        send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text: `cd ${shellQuote(path)}\n` });
+        send({ type: 'change_directory', pane_id: paneId, path });
       } else if (useStore.getState().config?.editor === 'vscode') {
         send({ type: 'vscode_open', path, line: line ?? null });
         useStore.getState().setVscodeOpen(true, paneId);
@@ -645,7 +641,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
       onClose();
     },
-    [send, fileSend, currentPath, onClose, sessionId, paneId],
+    [send, fileSend, currentPath, onClose, paneId],
   );
 
   // Auto-preview focused entry (file, directory, or search result)

@@ -593,9 +593,7 @@ impl PtyHandle {
                             unwritten = data;
                             reply = Some(sender);
                         } else {
-                            let _ = sender.send(Err(
-                                "Cannot open file: the pane is not at a shell prompt".into(),
-                            ));
+                            let _ = sender.send(Err("The pane is not at a shell prompt".into()));
                         }
                     }
                 }

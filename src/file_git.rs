@@ -236,7 +236,8 @@ fn git_status_sync(root: &Path, include_diff_stats: bool) -> Result<GitStatusRes
         .workdir()
         .and_then(|wd| root.strip_prefix(wd).ok())
         .map(|p| {
-            let s = p.to_string_lossy().to_string();
+            // Git paths are `/`-separated on Windows too.
+            let s = crate::fs_ops::client_path(p);
             if s.is_empty() || s.ends_with('/') {
                 s
             } else {
@@ -1033,6 +1034,36 @@ mod tests {
         let status = git_status_sync(&root, true).unwrap();
         assert_eq!(status.staged[0].additions, 2);
         assert_eq!(status.staged[0].deletions, 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn status_of_nested_directory_matches_git_paths() {
+        let root = std::env::temp_dir().join(format!("btmux-git-nested-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let repo = Repository::init(&root).unwrap();
+        // Resolved, like the roots browsers send.
+        let inner = repo.workdir().unwrap().join("nested").join("inner");
+        fs::create_dir_all(&inner).unwrap();
+        fs::write(inner.join("child.txt"), "one\n").unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("nested/inner/child.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+
+        fs::write(inner.join("child.txt"), "two\n").unwrap();
+        fs::write(inner.join("new.txt"), "new\n").unwrap();
+        fs::write(root.join("outside.txt"), "outside\n").unwrap();
+
+        let status = git_status_sync(&inner, false).unwrap();
+        let unstaged: Vec<_> = status.unstaged.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(unstaged, ["nested/inner/child.txt"]);
+        assert_eq!(status.untracked, ["nested/inner/new.txt"]);
 
         fs::remove_dir_all(root).unwrap();
     }

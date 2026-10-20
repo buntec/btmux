@@ -32,6 +32,11 @@ export interface GridFont {
   size: number;
   /** CSS weight of regular text (bold is 700, as in terminal panes). */
   weight?: number;
+  /** All text bold or italic ('guifont' `:b`, `:i`). */
+  bold?: boolean;
+  italic?: boolean;
+  /** CSS pixels added to the cell width ('guifont' `:w`). */
+  widthOffset?: number;
   /** Extra CSS pixels between rows ('linespace'). */
   linespace?: number;
   /** Fallback colors until Neovim sends `default_colors_set`. */
@@ -66,6 +71,9 @@ export interface FloatFrame {
 const WINDOW_Z = 1;
 const FLOAT_Z = 10;
 const FLOAT_Z_MAX = 38;
+
+/** Scrolls of a whole region or more animate only this many rows, like Neovide's far lines. */
+const FAR_SCROLL_ROWS = 1;
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
 
@@ -247,6 +255,8 @@ class Layer {
   win: unknown = null;
   margins: Margins = NO_MARGINS;
   compindex = 0;
+  /** z-index of the canvas; the cursor canvas takes it while the cursor is here. */
+  z = 0;
   mouse = true;
   /** Placement or size changed since the last layout. */
   moved = true;
@@ -359,6 +369,7 @@ class Layer {
   layout(zIndex: number) {
     this.moved = false;
     if (this.kind === 'root') return;
+    this.z = zIndex;
     const { cellWidth: cw, cellHeight: ch, dpr } = this.s;
     const crop = this.crop;
     const style = this.canvas.style;
@@ -405,8 +416,8 @@ class Layer {
   }
 
   /** Repaint dirty rows and present the frame, unless nothing on it changed. */
-  flush(cursorChanged: boolean) {
-    if (!this.dirty.size && !this.anims.size && !this.stale && !cursorChanged) return;
+  flush() {
+    if (!this.dirty.size && !this.anims.size && !this.stale) return;
     this.stale = false;
     if (this.kind === 'root') {
       // Clear the margin outside the grid before repainting opaque defaults.
@@ -444,20 +455,18 @@ class Layer {
     const delta = rows * ch;
     const existing = this.anims.get(key);
     // A second scroll before the flush: the displayed pixels haven't changed.
+    // Far scrolls show their last rows sliding in.
+    const far = (from: number) =>
+      Math.abs(from) >= height ? Math.sign(from) * Math.min(FAR_SCROLL_ROWS * ch, height) : from;
     if (existing && this.scrolledThisBatch.has(key)) {
-      existing.from += delta;
-      if (Math.abs(existing.from) >= height) this.anims.delete(key);
+      existing.from = far(existing.from + delta);
       return;
     }
     const now = performance.now();
     const residual = existing ? this.animOffset(existing, now) : 0;
-    const from = delta + residual;
-    if (Math.abs(from) >= height) {
-      this.anims.delete(key);
-      return;
-    }
-    // Capture what is on screen now, without the cursor.
-    this.compose(now, false);
+    const from = far(delta + residual);
+    // Capture what is on screen now.
+    this.compose(now);
     const [ox, oy] = this.origin();
     const x0 = this.x(left);
     const width = this.x(right) - x0;
@@ -478,23 +487,43 @@ class Layer {
   /** Draw the current frame, and keep animating while scrolls are in flight. */
   present() {
     if (this.hidden) return;
-    this.compose(performance.now(), true);
+    this.compose(performance.now());
     if (this.anims.size && !this.frame) {
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
         this.present();
+        // The cursor follows scrolls of its region.
+        if (this.s.cursor.grid === this.id) this.s.drawCursor();
       });
     }
   }
 
-  private compose(now: number, withCursor: boolean) {
+  /** Remaining scroll animation offset of a cell, for the cursor. */
+  scrollOffset(row: number, col: number, now: number): number {
+    for (const anim of this.anims.values()) {
+      if (row >= anim.top && row < anim.bot && col >= anim.left && col < anim.right) return this.animOffset(anim, now);
+    }
+    return 0;
+  }
+
+  /** Device-pixel box of the visible canvas on the surface. */
+  box(): { left: number; top: number; right: number; bottom: number } {
+    const { cellWidth: cw, cellHeight: ch } = this.s;
+    const crop = this.crop;
+    return {
+      left: Math.round((this.col + crop.left) * cw),
+      top: (this.row + crop.top) * ch,
+      right: Math.round((this.col + this.cols - crop.right) * cw),
+      bottom: (this.row + this.rows - crop.bottom) * ch,
+    };
+  }
+
+  private compose(now: number) {
     const ctx = this.ctx;
     const ch = this.s.cellHeight;
     const [ox, oy] = this.origin();
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.drawImage(this.gridCanvas, -ox, -oy);
-    let cursorOffset = 0;
-    const cursor = this.s.cursor;
     for (const [key, anim] of this.anims) {
       const d = this.animOffset(anim, now);
       // Finished: the plain grid blit above already shows the final position.
@@ -523,12 +552,7 @@ class Layer {
       ctx.restore();
       ctx.drawImage(this.gridCanvas, gx, gy, width, height, x0, y0 + d, width, height);
       ctx.restore();
-      const { row: r, col: c } = cursor;
-      if (cursor.grid === this.id && r >= anim.top && r < anim.bot && c >= anim.left && c < anim.right) {
-        cursorOffset = d;
-      }
     }
-    if (withCursor && cursor.grid === this.id) this.drawCursor(cursorOffset - oy, -ox);
   }
 
   private drawRow(row: number) {
@@ -663,9 +687,9 @@ class Layer {
     }
   }
 
-  private drawCursor(yOffset: number, xOffset: number) {
+  /** Draw the cursor cell with its top-left at device pixel (x, y) of `ctx`. */
+  drawCursor(ctx: CanvasRenderingContext2D, x: number, y: number) {
     const { row, col } = this.s.cursor;
-    if (this.s.cursorSuppressed || this.s.cursorBlinkedOff || row >= this.rows || col >= this.cols) return;
     const { cellHeight: ch, dpr } = this.s;
     const info = this.s.modeInfo();
     const idx = row * this.cols + col;
@@ -674,12 +698,9 @@ class Layer {
     // attr_id 0 means "invert the cell".
     const cursorBg = cursorAttr?.background !== undefined ? hex(cursorAttr.background) : cell.fg;
     const cursorFg = cursorAttr?.foreground !== undefined ? hex(cursorAttr.foreground) : cell.bg;
-    const x = this.x(col) + xOffset;
     const wide = col + 1 < this.cols && this.text[idx + 1] === '';
-    const w = this.x(col + (wide ? 2 : 1)) + xOffset - x;
-    const y = row * ch + yOffset;
+    const w = this.x(col + (wide ? 2 : 1)) - this.x(col);
     const pct = (info.cell_percentage ?? 100) / 100;
-    const ctx = this.ctx;
     ctx.fillStyle = cursorBg;
     switch (info.cursor_shape) {
       case 'vertical':
@@ -702,7 +723,7 @@ class Layer {
         }
         ctx.fillRect(x, y, w, ch);
         if (this.text[idx] && this.text[idx] !== ' ') {
-          this.drawCell(ctx, this.text[idx], x, y, this.x(col + 1) + xOffset - x, cursorFg, cell.attr);
+          this.drawCell(ctx, this.text[idx], x, y, this.x(col + 1) - this.x(col), cursorFg, cell.attr);
         }
     }
   }
@@ -741,12 +762,20 @@ export class NvimGrid {
   cursorHidden = false;
   // The cursor as of the last flush.
   private cursorKey = '';
-  private cursorGrid = 1;
   private hasFocus = true;
   private blinkOff = false;
   private blinkTimer: ReturnType<typeof setTimeout> | undefined;
   /** Scroll animation length in ms; 0 scrolls instantly. */
   smoothScroll = 0;
+  /** Cursor movement animation length in ms; 0 jumps. */
+  cursorAnimation = 0;
+  // The cursor has its own canvas, above the window it's in, so it can travel between windows.
+  private cursorCanvas: HTMLCanvasElement;
+  private cctx: CanvasRenderingContext2D;
+  // Where the cursor was last placed (device pixels, without scroll offsets), and where a move started.
+  private cursorAt: { x: number; y: number } | null = null;
+  private cursorMove: { x: number; y: number; start: number } | null = null;
+  private cursorFrame = 0;
 
   cellWidth = 1;
   cellHeight = 1;
@@ -772,6 +801,10 @@ export class NvimGrid {
     this.sp = font.foreground;
     this.root = new Layer(1, this, canvas);
     this.layers.set(1, this.root);
+    this.cursorCanvas = document.createElement('canvas');
+    this.cctx = this.cursorCanvas.getContext('2d')!;
+    Object.assign(this.cursorCanvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none' });
+    host?.appendChild(this.cursorCanvas);
     this.measureCtx = document.createElement('canvas').getContext('2d')!;
     this.measure();
   }
@@ -787,6 +820,8 @@ export class NvimGrid {
   setFont(font: GridFont) {
     this.font = font;
     this.measure();
+    this.cursorAt = null;
+    this.cursorMove = null;
     for (const layer of this.layers.values()) {
       layer.clearAnims();
       layer.moved = true;
@@ -800,8 +835,12 @@ export class NvimGrid {
     this.dpr = window.devicePixelRatio || 1;
     this.measureCtx.font = this.fontString(false, false);
     const m = this.measureCtx.measureText('M');
-    this.cellWidth = m.width;
-    this.monospace = ['i', 'W', '=', ' '].every((c) => Math.abs(this.measureCtx.measureText(c).width - m.width) < 0.01);
+    const offset = (this.font.widthOffset ?? 0) * this.dpr;
+    this.cellWidth = Math.max(1, m.width + offset);
+    // Runs advance by glyph widths, so a width offset needs cell-by-cell drawing too.
+    this.monospace =
+      offset === 0 &&
+      ['i', 'W', '=', ' '].every((c) => Math.abs(this.measureCtx.measureText(c).width - m.width) < 0.01);
     const ascent = m.fontBoundingBoxAscent ?? this.font.size * this.dpr * 0.8;
     const descent = m.fontBoundingBoxDescent ?? this.font.size * this.dpr * 0.2;
     const linespace = (this.font.linespace ?? 0) * this.dpr;
@@ -819,6 +858,12 @@ export class NvimGrid {
 
   resizeCanvas(width: number, height: number) {
     this.root.resizeCanvas(width, height);
+    this.cursorCanvas.width = Math.round(width * this.dpr);
+    this.cursorCanvas.height = Math.round(height * this.dpr);
+    this.cursorCanvas.style.width = `${width}px`;
+    this.cursorCanvas.style.height = `${height}px`;
+    this.cursorAt = null;
+    this.cursorMove = null;
     this.flush();
   }
 
@@ -898,7 +943,7 @@ export class NvimGrid {
     if (!layer) {
       layer = new Layer(id, this);
       this.layers.set(id, layer);
-      this.host?.appendChild(layer.canvas);
+      this.host?.insertBefore(layer.canvas, this.cursorCanvas);
     }
     return layer;
   }
@@ -1038,6 +1083,72 @@ export class NvimGrid {
 
   dispose() {
     clearTimeout(this.blinkTimer);
+    cancelAnimationFrame(this.cursorFrame);
+  }
+
+  /** Device-pixel cell origin of the cursor on the surface, or null while its grid isn't shown. */
+  private cursorTarget(): { layer: Layer; x: number; y: number } | null {
+    const layer = this.layers.get(this.cursor.grid);
+    const { row, col } = this.cursor;
+    if (!layer || layer.hidden || row >= layer.rows || col >= layer.cols) return null;
+    return { layer, x: Math.round((layer.col + col) * this.cellWidth), y: (layer.row + row) * this.cellHeight };
+  }
+
+  /** Animate the cursor from where it is drawn to its new cell. */
+  private startCursorMove() {
+    const target = this.cursorTarget();
+    const from = this.cursorAt;
+    if (!target || !from || this.cursorAnimation <= 0) {
+      this.cursorMove = null;
+      return;
+    }
+    // A mode or focus change: keep any move in flight.
+    if (from.x === target.x && from.y === target.y) return;
+    // Typing moves a cell or two along the row; those jump.
+    const short = from.y === target.y && Math.abs(from.x - target.x) <= 2 * this.cellWidth + 1;
+    this.cursorMove = short ? null : { ...from, start: performance.now() };
+  }
+
+  /** @internal Draw the cursor on its canvas, a frame of its move if one is in flight. */
+  drawCursor() {
+    const ctx = this.cctx;
+    ctx.clearRect(0, 0, this.cursorCanvas.width, this.cursorCanvas.height);
+    const target = this.cursorTarget();
+    if (!target) {
+      this.cursorAt = null;
+      this.cursorMove = null;
+      return;
+    }
+    const now = performance.now();
+    let { x, y } = target;
+    const move = this.cursorMove;
+    if (move) {
+      const t = this.cursorAnimation > 0 ? Math.min(1, (now - move.start) / this.cursorAnimation) : 1;
+      const k = (1 - t) ** 3;
+      x = Math.round(x + (move.x - x) * k);
+      y = Math.round(y + (move.y - y) * k);
+      if (t >= 1) this.cursorMove = null;
+      else if (!this.cursorFrame) {
+        this.cursorFrame = requestAnimationFrame(() => {
+          this.cursorFrame = 0;
+          this.drawCursor();
+        });
+      }
+    }
+    this.cursorAt = { x, y };
+    if (this.cursorSuppressed || this.blinkOff) return;
+    const { layer } = target;
+    this.cursorCanvas.style.zIndex = String(layer.z);
+    ctx.save();
+    // At rest, keep the cursor within its window, as scrolls slide it.
+    if (!this.cursorMove) {
+      const box = layer.box();
+      ctx.beginPath();
+      ctx.rect(box.left, box.top, box.right - box.left, box.bottom - box.top);
+      ctx.clip();
+    }
+    layer.drawCursor(ctx, x, y + layer.scrollOffset(this.cursor.row, this.cursor.col, now));
+    ctx.restore();
   }
 
   /** Show the cursor and restart its 'guicursor' blink cycle. */
@@ -1049,7 +1160,7 @@ export class NvimGrid {
     const next = (delay: number) => {
       this.blinkTimer = setTimeout(() => {
         this.blinkOff = !this.blinkOff;
-        this.layers.get(this.cursor.grid)?.present();
+        this.drawCursor();
         next(this.blinkOff ? blinkoff : blinkon);
       }, delay);
     };
@@ -1077,8 +1188,9 @@ export class NvimGrid {
 
   /** @internal */
   fontString(bold: boolean, italic: boolean) {
-    const weight = bold ? 'bold' : (this.font.weight ?? 400);
-    return `${italic ? 'italic ' : ''}${weight} ${this.font.size * this.dpr}px ${this.font.family}`;
+    const weight = bold || this.font.bold ? 'bold' : (this.font.weight ?? 400);
+    const style = italic || this.font.italic ? 'italic ' : '';
+    return `${style}${weight} ${this.font.size * this.dpr}px ${this.font.family}`;
   }
 
   /** @internal */
@@ -1133,13 +1245,9 @@ export class NvimGrid {
   }
 
   private flush() {
-    // Repaint the cursor's previous and current layers when anything about it changes.
     const cursorKey = JSON.stringify([this.cursor, this.modeInfo(), this.cursorSuppressed, this.hasFocus]);
     const cursorChanged = cursorKey !== this.cursorKey;
-    if (cursorChanged) this.restartBlink();
-    const cursorGrids = [this.cursorGrid, this.cursor.grid];
     this.cursorKey = cursorKey;
-    this.cursorGrid = this.cursor.grid;
     const floats = [...this.layers.values()]
       .filter((l) => l.kind === 'float' && l.visible)
       .sort((a, b) => a.compindex - b.compindex);
@@ -1158,9 +1266,15 @@ export class NvimGrid {
         const i = order.get(layer);
         layer.layout(i === undefined ? WINDOW_Z : Math.min(FLOAT_Z_MAX, FLOAT_Z + 2 * i + 1));
       }
-      layer.flush(cursorChanged && cursorGrids.includes(layer.id));
+      layer.flush();
     }
     this.publishFloats(floats);
+    if (cursorChanged) {
+      this.restartBlink();
+      this.startCursorMove();
+    }
+    // The block cursor shows its cell's text, which may have changed.
+    this.drawCursor();
   }
 
   private publishFloats(floats: Layer[]) {

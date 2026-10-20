@@ -755,6 +755,8 @@ pub struct TerminalOptions {
     pub disable_stdin: Option<bool>,
     /// Neovim and file preview scroll animations, in ms.
     pub smooth_scroll_duration: Option<f32>,
+    /// Neovim cursor movement animation, in ms.
+    pub cursor_animation_duration: Option<f32>,
     /// Opacity, 0–1, of explicitly colored cell backgrounds (Visual,
     /// CursorLine, …) when transparency is on. btmux-specific; Neovim only.
     pub cell_background_opacity: Option<f32>,
@@ -771,6 +773,7 @@ impl Default for TerminalOptions {
             allow_transparency: None,
             disable_stdin: None,
             smooth_scroll_duration: None,
+            cursor_animation_duration: None,
             cell_background_opacity: None,
         }
     }
@@ -1635,6 +1638,7 @@ pub fn generate_config_toml() -> String {
 # allow-transparency = false
 # disable-stdin = false
 # smooth-scroll-duration = 120.0   # ms, Neovim and file preview scrolling; 0 = instant
+# cursor-animation-duration = 120.0   # ms, Neovim cursor moves; 0 = instant
 # cell-background-opacity = 1.0   # 0-1, colored cell backgrounds over a transparent background (Neovim)
 
 # Logging configuration. Both levels accept standard tracing directives:
@@ -1964,6 +1968,7 @@ pub struct ConfigUpdate {
     pub allow_transparency: Option<bool>,
     pub disable_stdin: Option<bool>,
     pub smooth_scroll_duration: Option<f32>,
+    pub cursor_animation_duration: Option<f32>,
     pub cell_background_opacity: Option<f32>,
     pub animations: Option<bool>,
     pub console_level: Option<String>,
@@ -2052,6 +2057,9 @@ impl ConfigUpdate {
         }
         if other.smooth_scroll_duration.is_some() {
             self.smooth_scroll_duration = other.smooth_scroll_duration;
+        }
+        if other.cursor_animation_duration.is_some() {
+            self.cursor_animation_duration = other.cursor_animation_duration;
         }
         if other.cell_background_opacity.is_some() {
             self.cell_background_opacity = other.cell_background_opacity;
@@ -2193,6 +2201,9 @@ pub fn resolve_with_overrides(
     }
     if let Some(smooth_scroll_duration) = overrides.smooth_scroll_duration {
         file.terminal.smooth_scroll_duration = Some(smooth_scroll_duration.max(0.0));
+    }
+    if let Some(duration) = overrides.cursor_animation_duration {
+        file.terminal.cursor_animation_duration = Some(duration.max(0.0));
     }
     if let Some(opacity) = overrides.cell_background_opacity {
         file.terminal.cell_background_opacity = Some(opacity.clamp(0.0, 1.0));
@@ -2608,6 +2619,7 @@ palette:
                 allow_transparency: Some(true),
                 disable_stdin: Some(true),
                 smooth_scroll_duration: Some(0.4),
+                cursor_animation_duration: Some(-5.0),
                 cell_background_opacity: Some(1.5),
                 console_level: Some("debug".to_string()),
                 file_level: Some("trace".to_string()),
@@ -2634,6 +2646,7 @@ palette:
         assert_eq!(resolved.terminal.allow_transparency, Some(true));
         assert_eq!(resolved.terminal.disable_stdin, Some(true));
         assert_eq!(resolved.terminal.smooth_scroll_duration, Some(0.4));
+        assert_eq!(resolved.terminal.cursor_animation_duration, Some(0.0));
         assert_eq!(resolved.terminal.cell_background_opacity, Some(1.0));
         assert_eq!(resolved.log.console_level, "debug");
         assert_eq!(resolved.log.file_level, "trace");

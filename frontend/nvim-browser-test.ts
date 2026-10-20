@@ -115,12 +115,16 @@ try {
       ['grid_cursor_goto', [1, 0, 0]],
       ['flush', []],
     ]);
-    check(alpha(w / 2, h / 2) === 255, 'cursor stays visible');
+    // The cursor has its own canvas.
+    const cursorCtx = ((grid as any).cursorCanvas as HTMLCanvasElement).getContext('2d')!;
+    const cursorAlpha = (x: number, y: number) =>
+      cursorCtx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data[3];
+    check(cursorAlpha(w / 2, h / 2) === 255 && alpha(w / 2, h / 2) === 0, 'cursor stays visible');
     grid.redraw([
       ['grid_cursor_goto', [1, 1, 0]],
       ['flush', []],
     ]);
-    check(alpha(w / 2, h / 2) === 0, 'moving cursor clears old pixels');
+    check(cursorAlpha(w / 2, h / 2) === 0 && cursorAlpha(w / 2, 1.5 * h) === 255, 'moving cursor clears old pixels');
     grid.cursorHidden = true;
     grid.setFont({ ...font, transparent: false });
     check(alpha(w / 2, h / 2) === 255 && alpha(3 * w + 2, 4 * h + 2) === 255, 'opaque config fills cells and margins');
@@ -752,8 +756,28 @@ try {
     true,
     'clicking a float focuses it',
   );
+  // The cursor canvas stacks with the grid the cursor is in.
+  const cursorStacking = () =>
+    page.evaluate(() => {
+      const host = document.querySelector('canvas[data-grid]:not([data-grid="1"])')!.parentElement!;
+      const cursor = host.lastElementChild as HTMLCanvasElement;
+      const shown = [...host.querySelectorAll<HTMLCanvasElement>('canvas[data-grid]')].filter(
+        (c) => c.style.display !== 'none',
+      );
+      const pixels = cursor
+        .getContext('2d')!
+        .getImageData(0, 0, cursor.width, cursor.height)
+        .data.some((v, i) => i % 4 === 3 && v > 0);
+      return { own: !cursor.dataset.grid, z: Number(cursor.style.zIndex), top: Math.max(...shown.map((c) => Number(c.style.zIndex))), pixels };
+    });
+  await page.waitForTimeout(200);
+  let stacking = await cursorStacking();
+  assert(stacking.own && stacking.pixels && stacking.z === stacking.top, `cursor over its float: ${JSON.stringify(stacking)}`);
   await page.locator('.astryx-card.border-accent').waitFor();
   await rpc('nvim_exec_lua', ['vim.cmd.wincmd("p"); vim.api.nvim_win_close(_G.btmux_test_float, true)', []]);
+  await page.waitForTimeout(200);
+  stacking = await cursorStacking();
+  assert(stacking.pixels && stacking.z === 1, `cursor over its window: ${JSON.stringify(stacking)}`);
   await title.waitFor({ state: 'detached' });
   const floatCount = () =>
     page.evaluate(

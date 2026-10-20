@@ -1,3 +1,6 @@
+# Windows-only recipes are PowerShell scripts; it doesn't ship `sh`.
+set script-interpreter := ['powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File']
+
 default:
     @just --list
 
@@ -31,17 +34,43 @@ build:
     cd frontend && bun install && bun run build
     cargo build --release
 
+[unix]
 _desktop-sidecar-debug:
     cd frontend && bun install && bun run build
     cargo build
     mkdir -p desktop/src-tauri/binaries
     cp target/debug/btmux desktop/src-tauri/binaries/btmux-$(rustc --print host-tuple)
 
+[windows]
+[script]
+[extension('.ps1')]
+_desktop-sidecar-debug:
+    $ErrorActionPreference = 'Stop'
+    Push-Location frontend
+    bun install; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    Pop-Location
+    # build.rs builds the frontend.
+    cargo build; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    $target = rustc --print host-tuple; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    New-Item -ItemType Directory -Force desktop\src-tauri\binaries | Out-Null
+    Copy-Item target\debug\btmux.exe "desktop\src-tauri\binaries\btmux-$target.exe"
+
 # Build and run the standalone desktop app with a bundled debug server.
+[unix]
 desktop-dev: _desktop-sidecar-debug
     cd desktop && bun install && bun run dev
 
+# Build and run the standalone desktop app with a bundled debug server.
+[windows]
+[script]
+[extension('.ps1')]
+desktop-dev: _desktop-sidecar-debug
+    Set-Location desktop
+    bun install; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    bun run dev; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
 # Package the standalone desktop app with a release server.
+[unix]
 desktop-build:
     cd frontend && bun install && bun run build
     cargo build --release
@@ -50,9 +79,35 @@ desktop-build:
     cd desktop && bun install
     if [ "$(uname -s)" = "Darwin" ]; then cd desktop && bun run build -- --bundles app; else cd desktop && bun run build; fi
 
+# Package the standalone desktop app with a release server as an NSIS installer.
+[windows]
+[script]
+[extension('.ps1')]
+desktop-build:
+    $ErrorActionPreference = 'Stop'
+    Push-Location frontend
+    bun install; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    Pop-Location
+    cargo build --release; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    $target = rustc --print host-tuple; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    New-Item -ItemType Directory -Force desktop\src-tauri\binaries | Out-Null
+    Copy-Item target\release\btmux.exe "desktop\src-tauri\binaries\btmux-$target.exe"
+    Set-Location desktop
+    bun install; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    bun run build -- --bundles nsis; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
 # Compile the Tauri launcher with its bundled debug server.
+[unix]
 desktop-check: _desktop-sidecar-debug
     cd desktop/src-tauri && cargo check
+
+# Compile the Tauri launcher with its bundled debug server.
+[windows]
+[script]
+[extension('.ps1')]
+desktop-check: _desktop-sidecar-debug
+    Set-Location desktop\src-tauri
+    cargo check; if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 # Desktop launcher UI regressions (no server needed).
 test-desktop-launcher:
@@ -82,9 +137,20 @@ lint:
     cargo clippy -- -D warnings
 
 # Install all dependencies
+[unix]
 setup:
     cd frontend && bun install
     cargo fetch
+
+# Install all dependencies
+[windows]
+[script]
+[extension('.ps1')]
+setup:
+    Push-Location frontend
+    bun install; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    Pop-Location
+    cargo fetch; if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 # Refresh wallpaper parameter metadata from the pinned Shaders dependency.
 sync-shaders:

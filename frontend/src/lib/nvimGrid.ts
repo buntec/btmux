@@ -773,8 +773,8 @@ export class NvimGrid {
   private cursorCanvas: HTMLCanvasElement;
   private cctx: CanvasRenderingContext2D;
   // Where the cursor was last placed (device pixels, without scroll offsets), and where a move started.
-  private cursorAt: { x: number; y: number } | null = null;
-  private cursorMove: { x: number; y: number; start: number } | null = null;
+  private cursorAt: { grid: number; x: number; y: number } | null = null;
+  private cursorMove: { grid: number; x: number; y: number; start: number } | null = null;
   private cursorFrame = 0;
 
   cellWidth = 1;
@@ -1135,13 +1135,13 @@ export class NvimGrid {
         });
       }
     }
-    this.cursorAt = { x, y };
+    this.cursorAt = { grid: this.cursorMove?.grid ?? this.cursor.grid, x, y };
     if (this.cursorSuppressed || this.blinkOff) return;
     const { layer } = target;
     this.cursorCanvas.style.zIndex = String(layer.z);
     ctx.save();
-    // At rest, keep the cursor within its window, as scrolls slide it.
-    if (!this.cursorMove) {
+    // Only moves between windows may leave the cursor's window.
+    if (!this.cursorMove || this.cursorMove.grid === layer.id) {
       const box = layer.box();
       ctx.beginPath();
       ctx.rect(box.left, box.top, box.right - box.left, box.bottom - box.top);

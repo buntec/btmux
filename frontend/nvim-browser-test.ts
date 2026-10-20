@@ -538,6 +538,52 @@ try {
   assert.equal(await rpc('nvim_get_current_line', []), 'FOCUS_PROBE@');
   console.log('PASS AltGr produces text in Neovim');
 
+  await rpc('nvim_exec_lua', [
+    `_G.btmux_test_moves = {}
+    vim.o.mousemoveevent = true
+    vim.keymap.set("n", "<MouseMove>", function()
+      table.insert(_G.btmux_test_moves, vim.fn.getmousepos().screencol)
+    end)`,
+    [],
+  ]);
+  await page.waitForTimeout(100);
+  const hoverBox = (await input.locator('..').boundingBox())!;
+  for (const dx of [40, 42, 120]) await page.mouse.move(hoverBox.x + dx, hoverBox.y + 40);
+  await page.waitForTimeout(200);
+  const moves: number[] = await rpc('nvim_exec_lua', ['return _G.btmux_test_moves', []]);
+  assert(moves.length >= 2 && moves.at(-1)! > moves[0], `hover moves reach Neovim: ${JSON.stringify(moves)}`);
+  const pointer = () => input.evaluate((el) => el.parentElement!.style.cursor);
+  await page.keyboard.press('0');
+  assert.equal(await pointer(), 'none', "'mousehide' hides the pointer while typing");
+  await page.mouse.move(hoverBox.x + 60, hoverBox.y + 60);
+  assert.equal(await pointer(), '');
+  await rpc('nvim_exec_lua', ['vim.o.mousemoveevent = false; vim.keymap.del("n", "<MouseMove>")', []]);
+  console.log("PASS 'mousemoveevent' sends hover moves and 'mousehide' hides the pointer while typing");
+
+  const nvimOpen = () => page.evaluate(() => (window as any).nvimStore.getState().nvimOpen);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(250);
+  assert.equal(await nvimOpen(), false, 'CTRL-Z hides Neovim');
+  await page.evaluate(() => {
+    const state = (window as any).nvimStore.getState();
+    state.setNvimOpen(true, (window as any).nvimPane);
+  });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Neovim input');
+  console.log('PASS CTRL-Z suspends Neovim back to the shell');
+
+  await input.evaluate((el) => {
+    const surface = el.parentElement!;
+    const animate = surface.animate.bind(surface);
+    (window as any).nvimBells = 0;
+    surface.animate = (...args) => ((window as any).nvimBells++, animate(...args));
+  });
+  await rpc('nvim_set_option_value', ['belloff', '', {}]);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  await rpc('nvim_set_option_value', ['belloff', 'all', {}]);
+  assert.equal(await page.evaluate(() => (window as any).nvimBells), 1, 'the bell flashes the surface');
+  console.log('PASS the bell flashes the surface');
+
   const columns = await rpc('nvim_get_option_value', ['columns', {}]);
   const line = `${'x'.repeat(columns - 5)} ab`;
   await rpc('nvim_set_current_line', [line]);

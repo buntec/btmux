@@ -152,11 +152,21 @@ export function NvimSurface({
     gridRef.current = grid;
     const model = new WidgetModel();
     setWidgets(model.snapshot());
+    // 'mousemoveevent': hover moves; 'mousehide': hide the pointer while typing.
+    let mouseMoves = false;
+    let mouseHide = true;
     grid.onEvent = (name, args) => {
       if (model.apply(name, args)) grid.cursorHidden = model.cmdlineActive;
       else if (name === 'option_set' && args[0] === 'guifont') setGuifont(parseGuifont(String(args[1])));
       else if (name === 'option_set' && args[0] === 'linespace') setLinespace(Number(args[1]) || 0);
       else if (name === 'option_set' && args[0] === 'pumblend') setPumblend(Number(args[1]) || 0);
+      else if (name === 'option_set' && args[0] === 'mousemoveevent') mouseMoves = !!args[1];
+      else if (name === 'option_set' && args[0] === 'mousehide') mouseHide = !!args[1];
+      // CTRL-Z and `:suspend` go back to the shell, like a TUI editor.
+      else if (name === 'suspend') useStore.getState().setNvimOpen(false);
+      else if (name === 'bell' || name === 'visual_bell') {
+        container.animate([{ filter: 'brightness(1.6)' }, { filter: 'none' }], { duration: 150, easing: 'ease-out' });
+      }
     };
     // Keep the input on the cursor so IME candidates and composition appear there.
     const placeInput = () => {
@@ -331,6 +341,7 @@ export function NvimSurface({
       const key = nvimKey(e);
       if (key === null) return;
       e.preventDefault();
+      if (mouseHide) container.style.cursor = 'none';
       // A quick second Esc hides the surface; the first one still reaches Neovim.
       if (key === '<Esc>' && !e.repeat) {
         if (e.timeStamp - lastEsc < DOUBLE_ESC_MS) {
@@ -378,10 +389,12 @@ export function NvimSurface({
 
     let pressed: { button: string; grid: number } | null = null;
     let lastCell = [-1, -1];
+    let lastHover = '';
     let wheelX = 0;
     let wheelY = 0;
     const scrollLines = { ver: 3, hor: 6 };
-    const mods = (e: MouseEvent) => (e.ctrlKey ? 'C-' : '') + (e.shiftKey ? 'S-' : '') + (e.altKey ? 'A-' : '');
+    const mods = (e: MouseEvent) =>
+      (e.ctrlKey ? 'C-' : '') + (e.shiftKey ? 'S-' : '') + (e.altKey ? 'A-' : '') + (e.metaKey ? 'D-' : '');
     // Mouse events go to the grid under the pointer; drags stay with the grid they started on.
     const onMouseDown = (e: MouseEvent) => {
       const target = grid.gridAt(e.target);
@@ -400,6 +413,17 @@ export function NvimSurface({
       if (cell[0] === lastCell[0] && cell[1] === lastCell[1]) return;
       lastCell = cell;
       notify('nvim_input_mouse', [pressed.button, 'drag', mods(e), pressed.grid, ...cell]);
+    };
+    const onHover = (e: MouseEvent) => {
+      container.style.cursor = '';
+      if (pressed || !mouseMoves || !visibleRef.current) return;
+      const target = grid.gridAt(e.target);
+      if (target === null) return;
+      const cell = grid.cellIn(target, e.clientX, e.clientY);
+      const key = `${target}:${cell}`;
+      if (key === lastHover) return;
+      lastHover = key;
+      notify('nvim_input_mouse', ['move', '', mods(e), target, ...cell]);
     };
     const onMouseUp = (e: MouseEvent) => {
       if (!pressed) return;
@@ -438,6 +462,7 @@ export function NvimSurface({
     input.addEventListener('focus', onFocus);
     input.addEventListener('blur', onBlur);
     container.addEventListener('mousedown', onMouseDown);
+    container.addEventListener('mousemove', onHover);
     container.addEventListener('wheel', onWheel, { passive: false });
     container.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('mousemove', onMouseMove);
@@ -462,6 +487,7 @@ export function NvimSurface({
       input.removeEventListener('focus', onFocus);
       input.removeEventListener('blur', onBlur);
       container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('mousemove', onHover);
       container.removeEventListener('wheel', onWheel);
       container.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('mousemove', onMouseMove);

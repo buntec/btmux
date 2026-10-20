@@ -281,7 +281,9 @@ keybinding hook lets them through for the `data-nvim-input` textarea, which
 follows the cursor so IME candidates and compositions appear there. Its focus
 and blur go to `nvim_ui_set_focus` (`FocusGained`/`FocusLost`); unfocused, the
 block cursor is an outline and stops blinking ('guicursor' blink times). Wheel
-steps follow 'mousescroll'.
+steps follow 'mousescroll'; 'mousemoveevent' sends hover moves, and 'mousehide'
+hides the pointer while typing. `suspend` (CTRL-Z) hides the surface, and a
+bell flashes it.
 `lib/nvimWidgets.ts` reduces cmdline, popupmenu, and message events and
 publishes them once per `flush`; `NvimWidgets.tsx` renders them as Astryx
 components. Short messages (echo, `vim.notify`, errors) are expiring toasts;

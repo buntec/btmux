@@ -2,6 +2,7 @@ import { WTerm, type CellData, type SearchState } from '@wterm/dom';
 import { GhosttyCore } from '@wterm/ghostty';
 import '@wterm/dom/css';
 import type { Theme } from '../state/types';
+import { findUrls } from './urlDetect';
 
 export interface PaneTerminalOptions {
   theme: Theme;
@@ -112,6 +113,13 @@ const fontRowHeight = (family: string, size: number, weight: number) => {
   return Math.ceil((m.fontBoundingBoxAscent ?? size * 0.8) + (m.fontBoundingBoxDescent ?? size * 0.2));
 };
 
+// Soft-wrapped rows joined to find a URL under the pointer.
+const MAX_URL_ROWS = 32;
+
+/** wterm's OSC 8 link modifier: Command on macOS, Control elsewhere. */
+const linkModifier = (event: { metaKey: boolean; ctrlKey: boolean }) =>
+  navigator.platform.startsWith('Mac') ? event.metaKey : event.ctrlKey;
+
 const cellText = (cell: CellData) => cell.chars ?? (cell.char > 32 ? String.fromCodePoint(cell.char) : ' ');
 
 /** btmux's view of a wterm emulator with the libghostty core. */
@@ -124,6 +132,10 @@ export class PaneTerminal {
   private inputDisabled: boolean;
   private scrollAccumPx = 0;
   private forwardingWheel = false;
+  private swallowMouseUp = false;
+  private pointer: { x: number; y: number; target: EventTarget | null } | null = null;
+  private linkModifierHeld = false;
+  private hoveredLink: string | null = null;
 
   private constructor(wterm: WTerm, element: HTMLElement, core: GhosttyCore, inputDisabled: boolean) {
     this.wterm = wterm;
@@ -135,6 +147,13 @@ export class PaneTerminal {
     wterm.onBinary = (data) => this.emit(data);
     wterm.onResize = (cols, rows) => this.resizeListeners.forEach((fn) => fn(cols, rows));
     element.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
+    element.addEventListener('mousedown', this.onMouseDown, true);
+    element.addEventListener('mouseup', this.onMouseUp, true);
+    element.addEventListener('mousemove', this.onMouseMove);
+    element.addEventListener('mouseleave', this.onMouseLeave);
+    element.addEventListener('scroll', this.onLinkModifier, { passive: true });
+    document.addEventListener('keydown', this.onLinkModifier, true);
+    document.addEventListener('keyup', this.onLinkModifier, true);
   }
 
   static async open(host: HTMLElement, options: PaneTerminalOptions, size?: { cols: number; rows: number }) {
@@ -252,6 +271,97 @@ export class PaneTerminal {
     } finally {
       this.forwardingWheel = false;
     }
+  };
+
+  /** Plain-text URL at a viewport point; wterm handles OSC 8 links itself. */
+  private urlAt(clientX: number, clientY: number, target: EventTarget | null) {
+    if (target instanceof Element && target.closest('.term-link')) return null;
+    const cell = this.measureCell();
+    if (!cell) return null;
+    const rect = this.element.getBoundingClientRect();
+    const scale = elementScale(this.element);
+    const row = Math.floor(((clientY - rect.top) / scale + this.element.scrollTop) / cell.height);
+    const col = Math.floor((clientX - rect.left) / scale / cell.width);
+    if (row < 0 || row >= this.rowCount || col < 0 || col >= this.cols) return null;
+    let first = row;
+    while (first > 0 && row - first < MAX_URL_ROWS && this.readRow(first).wrapped) first--;
+    let text = '';
+    const cells: { line: number; column: number }[] = [];
+    for (let y = first; y < this.rowCount && y - first < 2 * MAX_URL_ROWS; y++) {
+      const r = this.readRow(y);
+      if (y > first && !r.wrapped) break;
+      text += r.text;
+      for (const column of r.cols) cells.push({ line: y, column });
+    }
+    // Last string index at or before the pointer; one column back covers wide cells.
+    let index = -1;
+    for (let i = 0; i < cells.length; i++) {
+      if (cells[i].line === row && cells[i].column <= col && cells[i].column >= col - 1) index = i;
+    }
+    const match = findUrls(text).find((m) => m.start <= index && index < m.end);
+    if (!match) return null;
+    const spans: { line: number; column: number; length: number }[] = [];
+    for (let i = match.start; i < match.end; i++) {
+      const { line, column } = cells[i];
+      const last = spans[spans.length - 1];
+      if (last?.line === line) last.length = column - last.column + 1;
+      else spans.push({ line, column, length: 1 });
+    }
+    return { url: match.url, spans };
+  }
+
+  /** Underline the URL under the pointer while the link modifier is held. */
+  private updateUrlHover() {
+    const { pointer } = this;
+    const match = this.linkModifierHeld && pointer ? this.urlAt(pointer.x, pointer.y, pointer.target) : null;
+    const key = match ? `${match.spans[0].line}:${match.spans[0].column}:${match.url}` : null;
+    if (key === this.hoveredLink) return;
+    this.element.querySelector(':scope > .btm-wterm-url')?.remove();
+    this.hoveredLink = key;
+    this.element.classList.toggle('btm-wterm-url-hover', !!match);
+    const cell = this.measureCell();
+    if (!match || !cell) return;
+    const layer = document.createElement('div');
+    layer.className = 'btm-wterm-url';
+    for (const s of match.spans) {
+      const div = document.createElement('div');
+      div.style.cssText = `top:${s.line * cell.height}px;left:${s.column * cell.width}px;width:${s.length * cell.width}px;height:${cell.height}px`;
+      layer.appendChild(div);
+    }
+    this.element.appendChild(layer);
+  }
+
+  private onMouseMove = (event: MouseEvent) => {
+    this.pointer = { x: event.clientX, y: event.clientY, target: event.target };
+    this.linkModifierHeld = linkModifier(event);
+    this.updateUrlHover();
+  };
+
+  private onMouseLeave = () => {
+    this.pointer = null;
+    this.updateUrlHover();
+  };
+
+  private onLinkModifier = (event: Event) => {
+    if (event instanceof KeyboardEvent) this.linkModifierHeld = linkModifier(event);
+    if (this.pointer) this.updateUrlHover();
+  };
+
+  /** Modifier-click opens a plain-text URL instead of reaching the terminal. */
+  private onMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0 || !linkModifier(event)) return;
+    const match = this.urlAt(event.clientX, event.clientY, event.target);
+    if (!match) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.swallowMouseUp = true;
+    window.open(match.url, '_blank', 'noopener,noreferrer');
+  };
+
+  private onMouseUp = (event: MouseEvent) => {
+    if (!this.swallowMouseUp) return;
+    this.swallowMouseUp = false;
+    event.stopPropagation();
   };
 
   resize(cols: number, rows: number) {
@@ -446,6 +556,13 @@ export class PaneTerminal {
 
   dispose() {
     this.element.removeEventListener('wheel', this.onWheel, true);
+    this.element.removeEventListener('mousedown', this.onMouseDown, true);
+    this.element.removeEventListener('mouseup', this.onMouseUp, true);
+    this.element.removeEventListener('mousemove', this.onMouseMove);
+    this.element.removeEventListener('mouseleave', this.onMouseLeave);
+    this.element.removeEventListener('scroll', this.onLinkModifier);
+    document.removeEventListener('keydown', this.onLinkModifier, true);
+    document.removeEventListener('keyup', this.onLinkModifier, true);
     this.dataListeners.clear();
     this.resizeListeners.clear();
     this.wterm.destroy();

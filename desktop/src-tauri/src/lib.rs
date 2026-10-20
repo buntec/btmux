@@ -10,7 +10,7 @@ use tauri::TitleBarStyle;
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
 use tauri::webview::cookie::SameSite;
-use tauri::webview::{Cookie, WebviewWindowBuilder};
+use tauri::webview::{Cookie, NewWindowResponse, WebviewWindowBuilder};
 use tauri::{AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -397,7 +397,14 @@ pub fn run() {
                     .title("")
                     .inner_size(1200.0, 800.0)
                     .min_inner_size(640.0, 400.0)
-                    .initialization_script(include_str!("notification.js"));
+                    .initialization_script(include_str!("notification.js"))
+                    // Links (window.open, target=_blank) open in the default browser.
+                    .on_new_window(|url, _| {
+                        if matches!(url.scheme(), "http" | "https") {
+                            let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                        }
+                        NewWindowResponse::Deny
+                    });
             #[cfg(target_os = "macos")]
             let window_builder = window_builder
                 .transparent(true)

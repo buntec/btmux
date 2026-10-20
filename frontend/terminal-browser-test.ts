@@ -156,6 +156,55 @@ try {
   assert(cleared.inView, `rows scrolled away after clear: ${JSON.stringify(cleared)}`);
   console.log('PASS clear after focusing deep scrollback keeps the rows in view');
 
+  // Modifier-hover underlines a soft-wrapped plain-text URL; modifier-click opens it.
+  const link = await page.evaluate(async () => {
+    const { PaneTerminal } = await import('/src/lib/paneTerminal.ts' as string);
+    const { buildTerminalOptions } = await import('/src/components/TerminalPane.tsx' as string);
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:300px;z-index:9999';
+    document.body.appendChild(host);
+    const term = await PaneTerminal.open(host, buildTerminalOptions(useStore.getState().config), {
+      cols: 30,
+      rows: 5,
+    });
+    const opened: string[] = [];
+    const open = window.open;
+    window.open = (url?: string | URL) => (opened.push(String(url)), null);
+    const data: number[][] = [];
+    const off = term.onData((bytes: Uint8Array) => data.push(Array.from(bytes)));
+    try {
+      term.write('\x1bc\x1b[?1000hsee https://example.com/a/very/long/path.');
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const cell = term.measureCell()!;
+      const rows = term.element.querySelectorAll('.term-row:not(.term-scrollback-row)');
+      const second = rows[1].getBoundingClientRect();
+      const at = { clientX: second.left + 3.5 * cell.width, clientY: second.top + cell.height / 2 };
+      const mod = navigator.platform.startsWith('Mac') ? { metaKey: true } : { ctrlKey: true };
+      const target = document.elementFromPoint(at.clientX, at.clientY)!;
+      target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, ...at, ...mod }));
+      const underlines = term.element.querySelectorAll('.btm-wterm-url > div').length;
+      const ev = (type: string, init: MouseEventInit) =>
+        target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...at, ...init }));
+      ev('mousedown', { buttons: 1, ...mod });
+      ev('mouseup', mod);
+      const forwarded = data.splice(0).length;
+      ev('mousedown', { buttons: 1 });
+      ev('mouseup', {});
+      return { underlines, opened, forwarded, plain: data.length };
+    } finally {
+      off();
+      window.open = open;
+      term.dispose();
+      host.remove();
+    }
+  });
+  assert.equal(link.underlines, 2, 'wrapped URL must underline both rows');
+  assert.deepEqual(link.opened, ['https://example.com/a/very/long/path']);
+  assert.equal(link.forwarded, 0, 'modifier-click on a URL must not reach the application');
+  assert(link.plain > 0, 'plain click must still reach the application');
+  console.log('PASS modifier-click opens soft-wrapped plain-text URLs');
+
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const store = useStore.getState();

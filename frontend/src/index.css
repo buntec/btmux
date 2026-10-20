@@ -400,6 +400,19 @@ dialog::backdrop {
   pointer-events: none;
   z-index: 2;
 }
+.btm-wterm-url {
+  position: absolute;
+  inset: 0 auto auto 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.btm-wterm-url > div {
+  position: absolute;
+  box-shadow: inset 0 -1px currentColor;
+}
+.btm-wterm-url-hover {
+  cursor: pointer;
+}
 .btm-wterm-cursor-hidden .term-grid {
   --term-cursor: transparent;
   --term-app-cursor: transparent;

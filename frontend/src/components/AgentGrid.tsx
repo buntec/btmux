@@ -258,8 +258,9 @@ export function AgentGrid({ send }: Props) {
   const dragRef = useRef<DragState | null>(null);
   const stopDragRef = useRef<((commit: boolean) => void) | null>(null);
   const dropRef = useRef<{ paneId: string; x: number; y: number } | null>(null);
+  const suppressClickRef = useRef(false);
 
-  const contentPoint = (e: PointerEvent) => {
+  const contentPoint = (e: Pick<PointerEvent, 'clientX' | 'clientY'>) => {
     const area = areaElRef.current;
     if (!area) return null;
     const rect = area.getBoundingClientRect();
@@ -273,7 +274,7 @@ export function AgentGrid({ send }: Props) {
     el.style.transform = `translate(${drag.x - drag.grabX - el.offsetLeft}px, ${drag.y - drag.grabY - el.offsetTop}px)`;
   };
 
-  const startDrag = (paneId: string, e: PointerEvent): DragState | null => {
+  const startDrag = (paneId: string, e: PointerEvent, grab: { x: number; y: number }): DragState | null => {
     const el = tileEls.current.get(paneId);
     const point = contentPoint(e);
     if (!el || !point) return null;
@@ -288,8 +289,8 @@ export function AgentGrid({ send }: Props) {
     const drag = {
       paneId,
       ...point,
-      grabX: point.x - el.offsetLeft,
-      grabY: point.y - el.offsetTop,
+      grabX: grab.x,
+      grabY: grab.y,
       ids,
       slots,
       order: ids,
@@ -327,13 +328,8 @@ export function AgentGrid({ send }: Props) {
     if (!drag) return;
     dragRef.current = null;
     dropRef.current = { paneId: drag.paneId, x: drag.x - drag.grabX, y: drag.y - drag.grabY };
-    // The click that ends a drag must not switch to the pane.
-    const swallow = (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    window.addEventListener('click', swallow, true);
-    setTimeout(() => window.removeEventListener('click', swallow, true));
+    // Escape can cancel before the pointer is released.
+    suppressClickRef.current = true;
     setDragId(null);
     setDragOrder(null);
     if (commit) setOrder(saveAgentGridOrder(drag.order));
@@ -343,13 +339,17 @@ export function AgentGrid({ send }: Props) {
   const onTilePointerDown = (paneId: string, e: React.PointerEvent) => {
     if (e.button !== 0 || !e.isPrimary || entries.length < 2 || stopDragRef.current) return;
     if ((e.target as Element).closest('button')) return;
+    const el = tileEls.current.get(paneId);
+    const point = contentPoint(e);
+    if (!el || !point) return;
+    const grab = { x: point.x - el.offsetLeft, y: point.y - el.offsetTop };
     const { pointerId, clientX, clientY } = e;
     const move = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return;
       let drag = dragRef.current;
       if (!drag) {
         if (Math.hypot(ev.clientX - clientX, ev.clientY - clientY) < DRAG_THRESHOLD) return;
-        drag = startDrag(paneId, ev);
+        drag = startDrag(paneId, ev, grab);
         if (!drag) return stop(false);
       }
       ev.preventDefault();
@@ -471,6 +471,15 @@ export function AgentGrid({ send }: Props) {
       }}
       variant="fullscreen"
       onKeyDown={onKeyDown}
+      onPointerDownCapture={() => {
+        suppressClickRef.current = false;
+      }}
+      onClickCapture={(e) => {
+        if (!suppressClickRef.current || e.detail === 0) return;
+        suppressClickRef.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onFocus={(e) => {
         // MirrorPane's Terminal.open() focuses its textarea; keep keys on the dialog.
         if ((e.target as Element).closest('[data-agent-mirror]')) dialogRef.current?.focus();
@@ -516,7 +525,7 @@ export function AgentGrid({ send }: Props) {
                             tileEls.current.delete(entry.paneId);
                           };
                         }}
-                        className={entry.paneId === dragId ? 'relative z-10' : undefined}
+                        className={`touch-none **:touch-none ${entry.paneId === dragId ? 'relative z-10' : ''}`}
                         style={{ width: size.w + CHROME_W, height: size.h + CHROME_H }}
                         onPointerDown={(e) => onTilePointerDown(entry.paneId, e)}
                       >

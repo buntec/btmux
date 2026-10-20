@@ -89,10 +89,20 @@ try {
   // Let the tiles slide back.
   await page.waitForTimeout(300);
 
-  // Dropping onto the last slot moves the tile there; the click is swallowed.
+  // Escape must suppress the later release inside the same tile.
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
-  await page.mouse.move(to.x, to.y, { steps: 10 });
+  await page.mouse.move(from.x + 20, from.y, { steps: 4 });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  await page.mouse.up();
+  assert.deepEqual(await tileOrder(page), initial);
+  assert.equal(await gridOpen(page), true, 'releasing a canceled drag must not switch panes');
+
+  // A single move to the last slot keeps the full drag distance; its click is swallowed.
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y);
   await page.mouse.up();
   assert.deepEqual(await tileOrder(page), [b, c, a]);
   assert.equal(await gridOpen(page), true);
@@ -116,6 +126,39 @@ try {
   await page.reload();
   await openGrid(page);
   assert.deepEqual(await tileOrder(page), [b, a, c]);
+
+  // Real touch input must reorder instead of starting native panning.
+  const touchPage = await browser.newPage({ viewport: { width: 1400, height: 900 }, hasTouch: true, isMobile: true });
+  touchPage.on('pageerror', (error) => errors.push(error.message));
+  await touchPage.goto(url);
+  await touchPage.getByLabel('Access token').fill(token);
+  await touchPage.getByRole('button', { name: 'Connect', exact: true }).click();
+  await openGrid(touchPage);
+  const touchInitial = await tileOrder(touchPage);
+  const [first, second, third] = touchInitial as string[];
+  const touchFrom = await center(touchPage, first);
+  const touchTo = await center(touchPage, third);
+  const cdp = await touchPage.context().newCDPSession(touchPage);
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ ...touchFrom, id: 1 }],
+  });
+  for (let i = 1; i <= 10; i++) {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [
+        {
+          x: touchFrom.x + ((touchTo.x - touchFrom.x) * i) / 10,
+          y: touchFrom.y + ((touchTo.y - touchFrom.y) * i) / 10,
+          id: 1,
+        },
+      ],
+    });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  assert.deepEqual(await tileOrder(touchPage), [second, third, first], 'touch drag must move the tile');
+  assert.equal(await gridOpen(touchPage), true, 'touch drop must not switch panes');
+  await touchPage.close();
   assert.deepEqual(errors, []);
   console.log('agent grid browser test passed');
 } finally {

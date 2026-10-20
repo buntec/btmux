@@ -99,6 +99,46 @@ try {
   assert.deepEqual(await tileOrder(page), initial);
   assert.equal(await gridOpen(page), true, 'releasing a canceled drag must not switch panes');
 
+  // Dragged past the grid's corner, the tile stays inside it and adds no scroll overflow.
+  const viewport = page.viewportSize();
+  assert(viewport);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(viewport.width - 1, viewport.height - 1, { steps: 10 });
+  const overflow = await page
+    .locator('[data-agent-tile]')
+    .first()
+    .evaluate((tile) => {
+      const area = tile.parentElement!;
+      return { x: area.scrollWidth - area.clientWidth, y: area.scrollHeight - area.clientHeight };
+    });
+  assert.deepEqual(overflow, { x: 0, y: 0 }, 'a dragged tile must not overflow the grid');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+
+  // A move without a pressed button (the release went elsewhere) cancels the drag.
+  const pointerId = page.evaluate(
+    () => new Promise<number>((resolve) => addEventListener('pointerdown', (e) => resolve(e.pointerId), { once: true })),
+  );
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 10 });
+  assert.deepEqual(await tileOrder(page), [b, c, a]);
+  await page.evaluate(
+    ({ pointerId, x, y }) =>
+      dispatchEvent(new PointerEvent('pointermove', { pointerId, buttons: 0, clientX: x, clientY: y })),
+    { pointerId: await pointerId, ...to },
+  );
+  assert.deepEqual(await tileOrder(page), initial);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  assert.equal(
+    await page.locator(`[data-agent-tile="${a}"]`).evaluate((tile) => (tile as HTMLElement).style.transform),
+    '',
+  );
+  assert.equal(await gridOpen(page), true, 'releasing a lost drag must not switch panes');
+
   // A single move to the last slot keeps the full drag distance; its click is swallowed.
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();

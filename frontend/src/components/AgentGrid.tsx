@@ -267,11 +267,26 @@ export function AgentGrid({ send }: Props) {
     return { x: e.clientX - rect.left + area.scrollLeft, y: e.clientY - rect.top + area.scrollTop };
   };
 
+  // The dragged tile's top left, kept inside the visible grid: past its edge
+  // the tile would add scroll overflow, and scrollbars would repack the tiles.
+  // 1px covers offset rounding of fractional tile boxes.
+  const dragOrigin = (drag: DragState, el: HTMLElement) => {
+    const area = areaElRef.current;
+    const x = drag.x - drag.grabX;
+    const y = drag.y - drag.grabY;
+    if (!area) return { x, y };
+    return {
+      x: Math.max(area.scrollLeft, Math.min(x, area.scrollLeft + area.clientWidth - el.offsetWidth - 1)),
+      y: Math.max(area.scrollTop, Math.min(y, area.scrollTop + area.clientHeight - el.offsetHeight - 1)),
+    };
+  };
+
   const placeDragged = () => {
     const drag = dragRef.current;
     const el = drag && tileEls.current.get(drag.paneId);
     if (!drag || !el) return;
-    el.style.transform = `translate(${drag.x - drag.grabX - el.offsetLeft}px, ${drag.y - drag.grabY - el.offsetTop}px)`;
+    const origin = dragOrigin(drag, el);
+    el.style.transform = `translate(${origin.x - el.offsetLeft}px, ${origin.y - el.offsetTop}px)`;
   };
 
   const startDrag = (paneId: string, e: PointerEvent, grab: { x: number; y: number }): DragState | null => {
@@ -308,8 +323,9 @@ export function AgentGrid({ send }: Props) {
     drag.x = point.x;
     drag.y = point.y;
     placeDragged();
-    const cx = drag.x - drag.grabX + el.offsetWidth / 2;
-    const cy = drag.y - drag.grabY + el.offsetHeight / 2;
+    const origin = dragOrigin(drag, el);
+    const cx = origin.x + el.offsetWidth / 2;
+    const cy = origin.y + el.offsetHeight / 2;
     let target = 0;
     drag.slots.forEach((slot, i) => {
       const best = drag.slots[target];
@@ -327,7 +343,8 @@ export function AgentGrid({ send }: Props) {
     const drag = dragRef.current;
     if (!drag) return;
     dragRef.current = null;
-    dropRef.current = { paneId: drag.paneId, x: drag.x - drag.grabX, y: drag.y - drag.grabY };
+    const el = tileEls.current.get(drag.paneId);
+    if (el) dropRef.current = { paneId: drag.paneId, ...dragOrigin(drag, el) };
     // Escape can cancel before the pointer is released.
     suppressClickRef.current = true;
     setDragId(null);
@@ -346,6 +363,8 @@ export function AgentGrid({ send }: Props) {
     const { pointerId, clientX, clientY } = e;
     const move = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return;
+      // The release went elsewhere (e.g. another window).
+      if (ev.buttons === 0) return stop(false);
       let drag = dragRef.current;
       if (!drag) {
         if (Math.hypot(ev.clientX - clientX, ev.clientY - clientY) < DRAG_THRESHOLD) return;
@@ -357,16 +376,19 @@ export function AgentGrid({ send }: Props) {
     };
     const up = (ev: PointerEvent) => ev.pointerId === pointerId && stop(true);
     const cancel = (ev: PointerEvent) => ev.pointerId === pointerId && stop(false);
+    const blur = () => stop(false);
     const stop = (commit: boolean) => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', blur);
       stopDragRef.current = null;
       endDrag(commit);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', cancel);
+    window.addEventListener('blur', blur);
     stopDragRef.current = stop;
   };
 

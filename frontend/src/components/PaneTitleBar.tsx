@@ -3,12 +3,14 @@ import type { NotificationLevel } from '../protocol/messages';
 import { Token, type TokenProps } from '@astryxdesign/core/Token';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { Text } from '@astryxdesign/core/Text';
+import { Icon } from '@astryxdesign/core/Icon';
 import { HStack } from '@astryxdesign/core/Layout';
 import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { cn } from '@/lib/utils';
 import { useStore } from '../state/store';
 import { getAnimations } from '../state/configDefaults';
+import { AGENTS } from './AgentIcon';
 
 /** Collapse a home-directory prefix to `~` so cwds read like the shell prompt. */
 function shortCwd(cwd: string | null | undefined): string | null {
@@ -129,11 +131,13 @@ const AGENT_TOKEN_COLORS: Record<Exclude<AgentState, 'unknown'>, TokenProps['col
 export function AgentStatusBadge({ status }: { status?: AgentStatus }) {
   const animate = useStore((state) => getAnimations(state.config));
   if (!status || status.state === 'unknown') return null;
-  const label = `${status.agent ? `${status.agent} ` : ''}${status.state}`;
+  const agent = status.agent ? AGENTS.get(status.agent) : undefined;
+  const label = agent || !status.agent ? status.state : `${status.agent} ${status.state}`;
   const token = (
     <Token
       size="sm"
       color={AGENT_TOKEN_COLORS[status.state]}
+      icon={agent && <Icon icon={agent.icon} size="xsm" label={agent.name} />}
       label={label}
       className={animate && status.state === 'working' ? 'btm-agent-shimmer' : undefined}
     />

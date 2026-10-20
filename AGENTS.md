@@ -226,7 +226,10 @@ fonts before measuring, including for mirrors. Recheck measurement when bumping
 Scrollback scrolls natively (`scrollTop` on the element); `PaneTerminal` throttles
 application wheel input, delegates mouse encoding to wterm, and emits arrow keys
 for alternate-screen programs without mouse tracking. Text and raw mouse input
-share a byte callback. Theme, font, and
+share a byte callback. wterm links only OSC 8 hyperlinks; `PaneTerminal` finds
+plain-text URLs (`lib/urlDetect.ts`, across soft wraps) under the pointer, which
+Cmd-click (Ctrl elsewhere) opens without reaching the application. The desktop
+app opens `window.open` URLs in the default browser. Theme, font, and
 transparency are CSS variables and classes on the element.
 
 ### Built-in Neovim

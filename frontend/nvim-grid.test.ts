@@ -498,6 +498,31 @@ test("text uses the terminal font weight; bold is 700", () => {
   expect(grid.fontString(true, true)).toBe('italic bold 16px monospace');
 });
 
+test('a cursor staying on its line follows a scroll without moving on its own', () => {
+  const now = spyOn(performance, 'now').mockReturnValue(1000);
+  const { grid } = makeGrid(4, 6);
+  grid.smoothScroll = 100;
+  grid.cursorAnimation = 100;
+  fillRows(grid);
+  grid.redraw([['mode_info_set', [true, [{ cursor_shape: 'block' }]]], ['grid_cursor_goto', [1, 3, 0]], ['flush', []]]);
+  const canvas = cursorCanvas(grid);
+  const y = () => {
+    const ys = canvas.calls.filter(([name]) => name === 'fillRect').map(([, a]) => a[1]);
+    canvas.calls = [];
+    return ys;
+  };
+  y();
+  // CTRL-E: the text scrolls up a row and the cursor goes with its line.
+  grid.redraw([['grid_scroll', [1, 0, 6, 0, 4, 1, 0]], ['grid_cursor_goto', [1, 2, 0]], ['flush', []]]);
+  expect(y()).toEqual([60]);
+  now.mockReturnValue(1050);
+  grid.redraw([['flush', []]]);
+  expect(y()).toEqual([43]);
+  now.mockReturnValue(1200);
+  grid.redraw([['flush', []]]);
+  expect(y()).toEqual([40]);
+});
+
 test('cursor moves animate, short moves along a row jump, and the cursor travels between windows', () => {
   const now = spyOn(performance, 'now').mockReturnValue(1000);
   const frames: FrameRequestCallback[] = [];

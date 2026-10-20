@@ -477,6 +477,38 @@ try {
   await dialog.waitFor({ state: 'hidden' });
   console.log('PASS debounced wallpaper validation');
 
+  await settings.click();
+  const shellField = dialog.getByRole('combobox', { name: 'Shell for new panes', exact: true });
+  // The stack runs `btmux --shell /bin/sh`, which the setting can't change.
+  await shellField.filter({ hasText: '/bin/sh' }).waitFor();
+  assert.equal(await shellField.getAttribute('aria-disabled'), 'true');
+  const setCliShell = (shell: string | null) =>
+    page.evaluate(async (shell) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      useStore.setState((state: any) => ({ config: { ...state.config, cli_shell: shell } }));
+    }, shell);
+  await setCliShell(null);
+  const shells = await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return useStore.getState().config.shells as { label: string; command: string }[];
+  });
+  assert(shells.length > 0, 'settings must list installed shells');
+  await shellField.filter({ hasText: 'Default (' }).waitFor();
+  const shellCommand = dialog.getByRole('textbox', { name: 'Shell command', exact: true });
+  await shellField.click();
+  await page.getByRole('option').filter({ hasText: shells[0].command }).first().click();
+  await shellField.filter({ hasText: shells[0].label }).waitFor();
+  assert.equal(await shellCommand.count(), 0, 'a listed shell needs no command field');
+  await shellField.click();
+  await page.getByRole('option', { name: 'Custom…', exact: true }).click();
+  assert.equal(await shellCommand.inputValue(), shells[0].command);
+  await shellCommand.fill('/bin/sh -l');
+  await page.keyboard.press('Escape');
+  if (await dialog.count()) await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'hidden' });
+  await setCliShell('/bin/sh');
+  console.log('PASS shell selection');
+
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await toastIsOnTop('Toast before settings');
   const confirmationLabel = await page.evaluate(async () => {

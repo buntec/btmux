@@ -79,7 +79,8 @@ impl SessionManager {
     ) -> Self {
         let (events, _) = broadcast::channel::<String>(64);
         let (statuses, _) = broadcast::channel(64);
-        let config = crate::config::resolve_binds(&file_config, ColorMode::default());
+        let mut config = crate::config::resolve_binds(&file_config, ColorMode::default());
+        config.cli_shell = cli_shell.clone();
         let pty_env = PtyEnv {
             exit_tx,
             meta_tx,
@@ -487,6 +488,7 @@ impl SessionManager {
             self.system_color_mode,
         );
         config.config_error = self.config_error.clone();
+        config.cli_shell = self.cli_shell.clone();
         config
     }
 

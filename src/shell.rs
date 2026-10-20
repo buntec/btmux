@@ -1,7 +1,9 @@
 //! A pane's shell: its command line and the syntax of the text btmux types
 //! into it.
 
+use serde::Serialize;
 use std::borrow::Cow;
+use std::sync::LazyLock;
 
 /// Submits a typed line; PSReadLine reads LF as "add a line".
 pub const ENTER: char = if cfg!(windows) { '\r' } else { '\n' };
@@ -161,6 +163,120 @@ impl Dialect {
 
 /// The Linux `$VISUAL`/`$EDITOR`, through `sh` as fish lacks `${…:-…}`.
 const LINUX_EDITOR: &str = r#"sh -c '${VISUAL:-${EDITOR:-vi}} "$@"' sh"#;
+
+/// An installed shell offered in settings.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ShellOption {
+    pub label: String,
+    /// The `shell` value that runs it.
+    pub command: String,
+}
+
+/// Shells found on this machine, looked up once.
+pub fn installed() -> Vec<ShellOption> {
+    static SHELLS: LazyLock<Vec<ShellOption>> = LazyLock::new(detect);
+    SHELLS.clone()
+}
+
+fn option(label: impl Into<String>, command: impl Into<String>) -> ShellOption {
+    ShellOption {
+        label: label.into(),
+        command: command.into(),
+    }
+}
+
+/// `/etc/shells` and `$SHELL`, one entry per executable.
+#[cfg(unix)]
+fn detect() -> Vec<ShellOption> {
+    let listed = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let login = std::env::var("SHELL").ok();
+    let mut seen = std::collections::HashSet::new();
+    let paths = listed.lines().map(str::trim).chain(login.as_deref());
+    paths
+        .filter(|path| path.starts_with('/'))
+        .filter(|path| {
+            std::fs::canonicalize(path).is_ok_and(|real| real.is_file() && seen.insert(real))
+        })
+        .map(|path| {
+            let name = std::path::Path::new(path).file_name().unwrap_or_default();
+            option(name.to_string_lossy(), path)
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn detect() -> Vec<ShellOption> {
+    use std::path::Path;
+    let mut shells = vec![option("Windows PowerShell", "powershell.exe")];
+    let pwsh = Path::new(r"C:\Program Files\PowerShell\7\pwsh.exe");
+    if resolve(Path::new("pwsh")).is_some() {
+        shells.push(option("PowerShell 7", "pwsh"));
+    } else if pwsh.is_file() {
+        shells.push(option("PowerShell 7", pwsh.to_string_lossy()));
+    }
+    shells.push(option("Command Prompt", "cmd.exe"));
+    // Git's installer puts `cmd\git.exe` (or `bin\git.exe`) on `PATH`.
+    let git = resolve(Path::new("git"))
+        .and_then(|git| {
+            git.ancestors()
+                .skip(1)
+                .take(3)
+                .map(|root| root.join(r"bin\bash.exe"))
+                .find(|bash| bash.is_file())
+        })
+        .or_else(|| Some(Path::new(r"C:\Program Files\Git\bin\bash.exe").to_path_buf()))
+        .filter(|bash| bash.is_file());
+    if let Some(bash) = git {
+        shells.push(option("Git Bash", bash.to_string_lossy()));
+    }
+    for distro in wsl_distros() {
+        shells.push(option(
+            format!("{distro} (WSL)"),
+            format!("wsl.exe -d {distro}"),
+        ));
+    }
+    shells
+}
+
+/// Installed WSL distributions, except Docker Desktop's.
+#[cfg(windows)]
+fn wsl_distros() -> Vec<String> {
+    use std::os::windows::process::CommandExt;
+    use std::time::{Duration, Instant};
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let Ok(mut child) = std::process::Command::new("wsl.exe")
+        .args(["--list", "--quiet"])
+        .env("WSL_UTF8", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    // A wedged WSL service mustn't hold up the server.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while child.try_wait().is_ok_and(|status| status.is_none()) {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            return Vec::new();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let Ok(output) = child.wait_with_output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().trim_matches('\0').to_string())
+        .filter(|name| !name.is_empty() && !name.starts_with("docker-desktop"))
+        .collect()
+}
 
 #[cfg(windows)]
 fn program_dialect(program: &std::path::Path) -> Dialect {

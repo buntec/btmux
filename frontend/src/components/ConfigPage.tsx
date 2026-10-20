@@ -105,6 +105,10 @@ type Draft = {
 };
 
 type DraftKey = keyof Draft;
+
+// Shell choices that aren't commands.
+const SHELL_DEFAULT = ':default';
+const SHELL_CUSTOM = ':custom';
 type ConfigUpdate = Extract<ClientMessage, { type: 'update_config' }>['update'];
 
 function initialDraft(config: ClientConfig): Draft {
@@ -414,6 +418,7 @@ export function ConfigPage({ config, send }: Props) {
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const toast = useToast();
   const [draft, setDraft] = useState(() => initialDraft(config));
+  const [customShell, setCustomShell] = useState(false);
   const wallpaperCheck = useWallpaperCheck(draft.wallpaper);
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
   const [copied, setCopied] = useState(false);
@@ -477,11 +482,19 @@ export function ConfigPage({ config, send }: Props) {
   useEffect(() => {
     setDraft(initialDraft(config));
     setDirty(new Set());
+    setCustomShell(false);
   }, [config]);
 
   const update = <K extends DraftKey>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
     setDirty((current) => new Set(current).add(key));
+  };
+
+  const knownShell = draft.shell === '' || config.shells.some((shell) => shell.command === draft.shell);
+  const shellChoice = customShell || !knownShell ? SHELL_CUSTOM : draft.shell || SHELL_DEFAULT;
+  const chooseShell = (value: string) => {
+    setCustomShell(value === SHELL_CUSTOM);
+    if (value !== SHELL_CUSTOM) update('shell', value === SHELL_DEFAULT ? '' : value);
   };
 
   const prefixInvalid = dirty.has('prefix') && draft.prefix.trim() !== '' ? prefixError(draft.prefix) : null;
@@ -719,7 +732,31 @@ export function ConfigPage({ config, send }: Props) {
                           'Use tmux notation such as C-a, C-b, M-x, or C-Space.',
                           prefixInvalid,
                         )}
-                        {text('shell', 'Shell for new panes', 'Leave empty to use $SHELL.')}
+                        <Selector
+                          label="Shell for new panes"
+                          value={config.cli_shell ?? shellChoice}
+                          presentation="adaptive"
+                          isDisabled={config.cli_shell != null}
+                          disabledMessage="Set by btmux --shell."
+                          options={
+                            config.cli_shell != null
+                              ? [{ value: config.cli_shell, label: config.cli_shell }]
+                              : [
+                                  { value: SHELL_DEFAULT, label: `Default (${config.default_shell})` },
+                                  ...config.shells.map((shell) => ({
+                                    value: shell.command,
+                                    label: shell.label,
+                                    description: shell.command,
+                                  })),
+                                  { type: 'divider' as const },
+                                  { value: SHELL_CUSTOM, label: 'Custom…' },
+                                ]
+                          }
+                          onChange={chooseShell}
+                        />
+                        {config.cli_shell == null &&
+                          shellChoice === SHELL_CUSTOM &&
+                          text('shell', 'Shell command', 'A program, with arguments on Windows (wsl.exe -d Ubuntu).')}
                         {toggle('animations', 'Animations')}
                         {toggle(
                           'showPaneTitles',

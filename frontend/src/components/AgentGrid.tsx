@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Layout, LayoutContent, LayoutFooter, HStack, VStack } from '@astryxdesign/core/Layout';
@@ -16,6 +16,8 @@ import { AgentStatusBadge } from './PaneTitleBar';
 import { MirrorPane } from './MirrorPane';
 import { KeyCap } from './KeyHint';
 import { chromePalette } from '../lib/chrome-colors';
+import { getAnimations } from '../state/configDefaults';
+import { getAgentGridOrder, moveId, saveAgentGridOrder, sortByAgentGridOrder } from '../state/agentGridOrder';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -63,6 +65,28 @@ const CHROME_W = 24;
 const CHROME_H = 56;
 const FALLBACK_SIZE = { w: 640, h: 400 };
 const MIN_SCALE = 0.1;
+// Pointer travel (px) before a press becomes a drag.
+const DRAG_THRESHOLD = 5;
+const SLIDE: KeyframeAnimationOptions = { duration: 150, easing: 'ease-out' };
+
+interface DragState {
+  paneId: string;
+  /** Pointer position in the grid's content coordinates. */
+  x: number;
+  y: number;
+  /** Pointer offset from the tile's top left corner. */
+  grabX: number;
+  grabY: number;
+  /** Order and slot centers when the drag started. */
+  ids: string[];
+  slots: { x: number; y: number }[];
+  order: string[];
+}
+
+/** Animates `el` from an offset of (dx, dy) back to its layout position. */
+function slide(el: HTMLElement, dx: number, dy: number) {
+  el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], SLIDE);
+}
 
 interface Packed {
   /** Entry indices per visual row. */
@@ -123,7 +147,14 @@ export function AgentGrid({ send }: Props) {
   const config = useStore((s) => s.config);
   const location = useLocation();
   const navigate = useNavigate();
-  const entries = useMemo(() => buildEntries(allSessions, agentPanes), [allSessions, agentPanes]);
+  // Dragging previews `dragOrder`; dropping saves it as `order`.
+  const [order, setOrder] = useState(getAgentGridOrder);
+  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const entries = useMemo(
+    () => sortByAgentGridOrder(buildEntries(allSessions, agentPanes), (entry) => entry.paneId, dragOrder ?? order),
+    [allSessions, agentPanes, order, dragOrder],
+  );
   const terminalBg = chromePalette(config?.theme ?? null).bodyBg;
 
   const [mirrorsReady, setMirrorsReady] = useState(false);
@@ -150,9 +181,11 @@ export function AgentGrid({ send }: Props) {
   }, []);
   const [area, setArea] = useState<{ w: number; h: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
+  const areaElRef = useRef<HTMLDivElement | null>(null);
   const areaRef = useCallback((el: HTMLDivElement | null) => {
     observerRef.current?.disconnect();
     observerRef.current = null;
+    areaElRef.current = el;
     if (!el) return;
     const measure = () => setArea({ w: el.clientWidth, h: el.clientHeight });
     measure();
@@ -205,8 +238,179 @@ export function AgentGrid({ send }: Props) {
     if (entry) send({ type: 'reset_agent', pane_id: entry.paneId });
   };
 
+  const moveTile = (from: number, to: number) => {
+    setOrder(
+      saveAgentGridOrder(
+        moveId(
+          entries.map((entry) => entry.paneId),
+          from,
+          to,
+        ),
+      ),
+    );
+    setSelectedIdx(to);
+  };
+
+  // Drag to reorder: the tile follows the pointer and the others reflow around
+  // the slot nearest its center. Window listeners, not pointer capture, since
+  // React may move the tile's node while it reorders.
+  const tileEls = useRef(new Map<string, HTMLDivElement>());
+  const dragRef = useRef<DragState | null>(null);
+  const stopDragRef = useRef<((commit: boolean) => void) | null>(null);
+  const dropRef = useRef<{ paneId: string; x: number; y: number } | null>(null);
+
+  const contentPoint = (e: PointerEvent) => {
+    const area = areaElRef.current;
+    if (!area) return null;
+    const rect = area.getBoundingClientRect();
+    return { x: e.clientX - rect.left + area.scrollLeft, y: e.clientY - rect.top + area.scrollTop };
+  };
+
+  const placeDragged = () => {
+    const drag = dragRef.current;
+    const el = drag && tileEls.current.get(drag.paneId);
+    if (!drag || !el) return;
+    el.style.transform = `translate(${drag.x - drag.grabX - el.offsetLeft}px, ${drag.y - drag.grabY - el.offsetTop}px)`;
+  };
+
+  const startDrag = (paneId: string, e: PointerEvent): DragState | null => {
+    const el = tileEls.current.get(paneId);
+    const point = contentPoint(e);
+    if (!el || !point) return null;
+    const ids = entries.map((entry) => entry.paneId);
+    const slots = ids.map((id) => {
+      const tile = tileEls.current.get(id);
+      return tile
+        ? { x: tile.offsetLeft + tile.offsetWidth / 2, y: tile.offsetTop + tile.offsetHeight / 2 }
+        : { x: Infinity, y: Infinity };
+    });
+    window.getSelection()?.removeAllRanges();
+    const drag = {
+      paneId,
+      ...point,
+      grabX: point.x - el.offsetLeft,
+      grabY: point.y - el.offsetTop,
+      ids,
+      slots,
+      order: ids,
+    };
+    dragRef.current = drag;
+    setDragId(paneId);
+    setSelectedIdx(ids.indexOf(paneId));
+    return drag;
+  };
+
+  const dragTo = (drag: DragState, e: PointerEvent) => {
+    const point = contentPoint(e);
+    const el = tileEls.current.get(drag.paneId);
+    if (!point || !el) return;
+    drag.x = point.x;
+    drag.y = point.y;
+    placeDragged();
+    const cx = drag.x - drag.grabX + el.offsetWidth / 2;
+    const cy = drag.y - drag.grabY + el.offsetHeight / 2;
+    let target = 0;
+    drag.slots.forEach((slot, i) => {
+      const best = drag.slots[target];
+      if (Math.hypot(slot.x - cx, slot.y - cy) < Math.hypot(best.x - cx, best.y - cy)) target = i;
+    });
+    const next = moveId(drag.ids, drag.ids.indexOf(drag.paneId), target);
+    if (next.some((id, i) => id !== drag.order[i])) {
+      drag.order = next;
+      setDragOrder(next);
+      setSelectedIdx(target);
+    }
+  };
+
+  const endDrag = (commit: boolean) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    dropRef.current = { paneId: drag.paneId, x: drag.x - drag.grabX, y: drag.y - drag.grabY };
+    // The click that ends a drag must not switch to the pane.
+    const swallow = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('click', swallow, true);
+    setTimeout(() => window.removeEventListener('click', swallow, true));
+    setDragId(null);
+    setDragOrder(null);
+    if (commit) setOrder(saveAgentGridOrder(drag.order));
+    setSelectedIdx((commit ? drag.order : drag.ids).indexOf(drag.paneId));
+  };
+
+  const onTilePointerDown = (paneId: string, e: React.PointerEvent) => {
+    if (e.button !== 0 || !e.isPrimary || entries.length < 2 || stopDragRef.current) return;
+    if ((e.target as Element).closest('button')) return;
+    const { pointerId, clientX, clientY } = e;
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      let drag = dragRef.current;
+      if (!drag) {
+        if (Math.hypot(ev.clientX - clientX, ev.clientY - clientY) < DRAG_THRESHOLD) return;
+        drag = startDrag(paneId, ev);
+        if (!drag) return stop(false);
+      }
+      ev.preventDefault();
+      dragTo(drag, ev);
+    };
+    const up = (ev: PointerEvent) => ev.pointerId === pointerId && stop(true);
+    const cancel = (ev: PointerEvent) => ev.pointerId === pointerId && stop(false);
+    const stop = (commit: boolean) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      stopDragRef.current = null;
+      endDrag(commit);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    stopDragRef.current = stop;
+  };
+
+  // Cancel a drag when the grid closes or the dragged agent goes away.
+  useEffect(() => {
+    if (dragId && (!open || !entries.some((entry) => entry.paneId === dragId))) stopDragRef.current?.(false);
+  }, [open, entries, dragId]);
+  useEffect(() => () => stopDragRef.current?.(false), []);
+
+  // Slide reordered tiles (FLIP) and the dropped tile into their slots.
+  const animations = getAnimations(config);
+  const orderKey = entries.map((entry) => entry.paneId).join('\n');
+  const lastLayout = useRef({ orderKey, pos: new Map<string, { x: number; y: number }>() });
+  useLayoutEffect(() => {
+    const prev = lastLayout.current;
+    const pos = new Map<string, { x: number; y: number }>();
+    for (const [id, el] of tileEls.current) pos.set(id, { x: el.offsetLeft, y: el.offsetTop });
+    lastLayout.current = { orderKey, pos };
+    placeDragged();
+    const drop = dropRef.current;
+    dropRef.current = null;
+    const dropped = drop && tileEls.current.get(drop.paneId);
+    if (dropped) {
+      dropped.style.transform = '';
+      if (animations) slide(dropped, drop.x - dropped.offsetLeft, drop.y - dropped.offsetTop);
+    }
+    const reordered =
+      prev.orderKey !== orderKey && prev.pos.size === pos.size && [...pos.keys()].every((id) => prev.pos.has(id));
+    if (!animations || !reordered) return;
+    for (const [id, el] of tileEls.current) {
+      const from = prev.pos.get(id);
+      const to = pos.get(id);
+      if (id === dragRef.current?.paneId || id === drop?.paneId || !from || !to) continue;
+      if (from.x !== to.x || from.y !== to.y) slide(el, from.x - to.x, from.y - to.y);
+    }
+  });
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     e.stopPropagation();
+    if (dragRef.current) {
+      e.preventDefault();
+      if (e.key === 'Escape') stopDragRef.current?.(false);
+      return;
+    }
     const n = entries.length;
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -219,22 +423,26 @@ export function AgentGrid({ send }: Props) {
       select(entries[clampedIdx]);
       return;
     }
-    const right = e.key === 'ArrowRight' || e.key === 'l';
-    const left = e.key === 'ArrowLeft' || e.key === 'h';
-    const down = e.key === 'ArrowDown' || e.key === 'j';
-    const up = e.key === 'ArrowUp' || e.key === 'k';
+    // Shift moves the selected tile instead of the selection.
+    const key = e.shiftKey && e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const right = key === 'ArrowRight' || key === 'l';
+    const left = key === 'ArrowLeft' || key === 'h';
+    const down = key === 'ArrowDown' || key === 'j';
+    const up = key === 'ArrowUp' || key === 'k';
     if (right || left || down || up) {
       e.preventDefault();
+      let to: number;
       if (left || right) {
-        setSelectedIdx(Math.max(0, Math.min(n - 1, clampedIdx + (right ? 1 : -1))));
-        return;
+        to = Math.max(0, Math.min(n - 1, clampedIdx + (right ? 1 : -1)));
+      } else {
+        const lines = packed?.lines ?? [];
+        const li = lines.findIndex((line) => line.includes(clampedIdx));
+        const target = lines[li + (down ? 1 : -1)];
+        if (li < 0 || !target) return;
+        to = target[Math.min(lines[li].indexOf(clampedIdx), target.length - 1)];
       }
-      const lines = packed?.lines ?? [];
-      const li = lines.findIndex((line) => line.includes(clampedIdx));
-      const target = lines[li + (down ? 1 : -1)];
-      if (li < 0 || !target) return;
-      const pos = lines[li].indexOf(clampedIdx);
-      setSelectedIdx(target[Math.min(pos, target.length - 1)]);
+      if (!e.shiftKey) setSelectedIdx(to);
+      else if (to !== clampedIdx) moveTile(clampedIdx, to);
       return;
     }
     if (e.key === 'x') {
@@ -290,7 +498,7 @@ export function AgentGrid({ send }: Props) {
             ) : (
               <div
                 ref={areaRef}
-                className="flex h-full min-h-0 flex-wrap content-center items-center justify-center overflow-auto"
+                className={`relative flex h-full min-h-0 flex-wrap content-center items-center justify-center overflow-auto${dragId ? ' select-none' : ''}`}
                 style={{ gap: GAP }}
               >
                 {packed &&
@@ -298,7 +506,20 @@ export function AgentGrid({ send }: Props) {
                     const paneLabel = entry.paneTitle || `pane ${entry.paneIndex + 1}`;
                     const size = packed.sizes[i];
                     return (
-                      <div key={entry.paneId} style={{ width: size.w + CHROME_W, height: size.h + CHROME_H }}>
+                      <div
+                        key={entry.paneId}
+                        data-agent-tile={entry.paneId}
+                        ref={(el) => {
+                          if (!el) return;
+                          tileEls.current.set(entry.paneId, el);
+                          return () => {
+                            tileEls.current.delete(entry.paneId);
+                          };
+                        }}
+                        className={entry.paneId === dragId ? 'relative z-10' : undefined}
+                        style={{ width: size.w + CHROME_W, height: size.h + CHROME_H }}
+                        onPointerDown={(e) => onTilePointerDown(entry.paneId, e)}
+                      >
                         <SelectableCard
                           label={`${entry.sessionName} › ${entry.windowName} › ${paneLabel}`}
                           isSelected={i === clampedIdx}
@@ -372,6 +593,7 @@ export function AgentGrid({ send }: Props) {
 const HINTS: [string[], string][] = [
   [['up', 'down', 'left', 'right'], 'move'],
   [['1', '9'], 'jump to cell'],
+  [['shift', 'up', 'down', 'left', 'right'], 'reorder (or drag)'],
   [['enter'], 'switch'],
   [['x'], 'reset agent state'],
   [['esc'], 'close'],

@@ -30,6 +30,8 @@ interface ModeInfo {
 export interface GridFont {
   family: string;
   size: number;
+  /** CSS weight of regular text (bold is 700, as in terminal panes). */
+  weight?: number;
   /** Extra CSS pixels between rows ('linespace'). */
   linespace?: number;
   /** Fallback colors until Neovim sends `default_colors_set`. */
@@ -69,6 +71,142 @@ const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
 
 const decorated = (a: HlAttr) =>
   a.underline || a.undercurl || a.underdouble || a.underdotted || a.underdashed || a.strikethrough;
+
+const printableAscii = (text: string) => text.length === 1 && text >= ' ' && text <= '~';
+
+// Box drawing and block elements drawn to the cell edges, as terminal panes (wterm)
+// do, so lines connect across rows and 'linespace' leaves no gaps.
+/** Arms of lines: up, down, left, right. */
+const LIGHT_ARMS: Record<number, string> = {
+  0x2500: 'lr',
+  0x2502: 'ud',
+  0x250c: 'dr',
+  0x2510: 'dl',
+  0x2514: 'ur',
+  0x2518: 'ul',
+  0x251c: 'udr',
+  0x2524: 'udl',
+  0x252c: 'dlr',
+  0x2534: 'ulr',
+  0x253c: 'udlr',
+  0x2574: 'l',
+  0x2575: 'u',
+  0x2576: 'r',
+  0x2577: 'd',
+};
+const HEAVY_ARMS: Record<number, string> = {
+  0x2501: 'lr',
+  0x2503: 'ud',
+  0x250f: 'dr',
+  0x2513: 'dl',
+  0x2517: 'ur',
+  0x251b: 'ul',
+  0x2523: 'udr',
+  0x252b: 'udl',
+  0x2533: 'dlr',
+  0x253b: 'ulr',
+  0x254b: 'udlr',
+  0x2578: 'l',
+  0x2579: 'u',
+  0x257a: 'r',
+  0x257b: 'd',
+};
+/** Rounded corners: the arms their arc joins. */
+const ARCS: Record<number, string> = { 0x256d: 'dr', 0x256e: 'dl', 0x256f: 'ul', 0x2570: 'ur' };
+/** Quadrant blocks: top-left 1, top-right 2, bottom-left 4, bottom-right 8. */
+const QUADRANTS: Record<number, number> = {
+  0x2596: 4,
+  0x2597: 8,
+  0x2598: 1,
+  0x2599: 13,
+  0x259a: 9,
+  0x259b: 7,
+  0x259c: 11,
+  0x259d: 2,
+  0x259e: 6,
+  0x259f: 14,
+};
+const SHADES: Record<number, number> = { 0x2591: 0.25, 0x2592: 0.5, 0x2593: 0.75 };
+
+/** Filled parts of a block element, as [left, top, right, bottom] in eighths of the cell. */
+function blockRects(cp: number): number[][] | null {
+  if (cp === 0x2580) return [[0, 0, 8, 4]];
+  if (cp >= 0x2581 && cp <= 0x2588) return [[0, 0x2588 - cp, 8, 8]];
+  if (cp >= 0x2589 && cp <= 0x258f) return [[0, 0, 0x2590 - cp, 8]];
+  if (cp === 0x2590) return [[4, 0, 8, 8]];
+  if (cp === 0x2594) return [[0, 0, 8, 1]];
+  if (cp === 0x2595) return [[7, 0, 8, 8]];
+  const q = QUADRANTS[cp];
+  if (!q) return null;
+  const quadrants = [
+    [0, 0, 4, 4],
+    [4, 0, 8, 4],
+    [0, 4, 4, 8],
+    [4, 4, 8, 8],
+  ];
+  return quadrants.filter((_, i) => q & (1 << i));
+}
+
+/** Draw a box-drawing or block character natively; false for any other text. */
+function drawCellArt(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fg: string,
+  bold: boolean,
+  dpr: number,
+): boolean {
+  const cp = text.length === 1 ? text.charCodeAt(0) : 0;
+  if (cp < 0x2500 || cp > 0x259f) return false;
+  ctx.fillStyle = fg;
+  const shade = SHADES[cp];
+  if (shade) {
+    ctx.globalAlpha = shade;
+    ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = 1;
+    return true;
+  }
+  const rects = blockRects(cp);
+  if (rects) {
+    for (const [l, t, r, b] of rects) {
+      const x0 = Math.round((l * w) / 8);
+      const y0 = Math.round((t * h) / 8);
+      ctx.fillRect(x + x0, y + y0, Math.round((r * w) / 8) - x0, Math.round((b * h) / 8) - y0);
+    }
+    return true;
+  }
+  const heavy = HEAVY_ARMS[cp];
+  const arc = ARCS[cp];
+  const arms = LIGHT_ARMS[cp] ?? heavy ?? arc;
+  if (!arms) return false;
+  // wterm's stroke widths: thicker for heavy lines and bold text.
+  const px = Math.max(1, Math.round(dpr));
+  const t = heavy || bold ? Math.max(2 * px, Math.round(w * 0.3)) : Math.max(px, Math.round(w * 0.18));
+  const vx = x + Math.floor((w - t) / 2);
+  const hy = y + Math.floor((h - t) / 2);
+  if (arc) {
+    const cx = vx + t / 2;
+    const cy = hy + t / 2;
+    const ex = arms.includes('l') ? x : x + w;
+    const ey = arms.includes('u') ? y : y + h;
+    ctx.strokeStyle = fg;
+    ctx.lineWidth = t;
+    ctx.beginPath();
+    ctx.moveTo(cx, ey);
+    ctx.arcTo(cx, cy, ex, cy, Math.min(Math.abs(ex - cx), Math.abs(ey - cy)));
+    ctx.lineTo(ex, cy);
+    ctx.stroke();
+    return true;
+  }
+  if (arms.includes('u')) ctx.fillRect(vx, y, t, hy + t - y);
+  if (arms.includes('d')) ctx.fillRect(vx, hy, t, y + h - hy);
+  if (arms.includes('l')) ctx.fillRect(x, hy, vx + t - x, t);
+  if (arms.includes('r')) ctx.fillRect(vx, hy, x + w - vx, t);
+  return true;
+}
 
 /** A `grid_scroll` region sliding from its old pixels to its new content. */
 interface ScrollAnim {
@@ -421,16 +559,37 @@ class Layer {
       start = end;
     }
     ctx.globalAlpha = 1;
-    // Glyphs and decorations, per cell to keep grid alignment.
+    // Glyphs. Runs of printable ASCII in one highlight share a fillText, so the font
+    // can join ligatures; other cells are drawn alone to keep grid alignment.
     ctx.textBaseline = 'alphabetic';
+    let runStart = -1;
+    const endRun = (end: number) => {
+      if (runStart < 0) return;
+      const text = this.text.slice(base + runStart, base + end).join('');
+      if (text.trim()) {
+        const { fg, attr } = this.s.colors(this.hlIds[base + runStart], float);
+        this.drawGlyph(ctx, text, this.x(runStart), y, fg, attr);
+      }
+      runStart = -1;
+    };
     for (let col = 0; col < this.cols; col++) {
       const text = this.text[base + col];
-      if (!text || text === ' ') {
-        const attr = this.s.attr(this.hlIds[base + col]);
-        if (!attr || !decorated(attr)) continue;
+      const id = this.hlIds[base + col];
+      if (this.s.monospace && printableAscii(text)) {
+        if (runStart >= 0 && id !== this.hlIds[base + runStart]) endRun(col);
+        if (runStart < 0) runStart = col;
+        continue;
       }
-      const { fg, sp, attr } = this.s.colors(this.hlIds[base + col], float);
-      this.drawGlyph(ctx, text, this.x(col), row * ch, fg, attr);
+      endRun(col);
+      if (!text || text === ' ') continue;
+      const { fg, attr } = this.s.colors(id, float);
+      this.drawCell(ctx, text, this.x(col), y, this.x(col + 1) - this.x(col), fg, attr);
+    }
+    endRun(this.cols);
+    for (let col = 0; col < this.cols; col++) {
+      const attr = this.s.attr(this.hlIds[base + col]);
+      if (!attr || !decorated(attr)) continue;
+      const { fg, sp } = this.s.colors(this.hlIds[base + col], float);
       this.drawDecorations(col, row, fg, sp, attr);
     }
     // Windows hide grid 1 beneath them, where Neovim leaves stale separators and
@@ -443,6 +602,19 @@ class Layer {
       }
     }
     ctx.restore();
+  }
+
+  private drawCell(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    w: number,
+    fg: string,
+    a: HlAttr,
+  ) {
+    const { cellHeight, dpr } = this.s;
+    if (!drawCellArt(ctx, text, x, y, w, cellHeight, fg, !!a.bold, dpr)) this.drawGlyph(ctx, text, x, y, fg, a);
   }
 
   private drawGlyph(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, fg: string, attr: HlAttr) {
@@ -529,7 +701,9 @@ class Layer {
           break;
         }
         ctx.fillRect(x, y, w, ch);
-        this.drawGlyph(ctx, this.text[idx], x, y, cursorFg, cell.attr);
+        if (this.text[idx] && this.text[idx] !== ' ') {
+          this.drawCell(ctx, this.text[idx], x, y, this.x(col + 1) + xOffset - x, cursorFg, cell.attr);
+        }
     }
   }
 }
@@ -578,6 +752,8 @@ export class NvimGrid {
   cellHeight = 1;
   ascent = 1;
   dpr = 1;
+  /** @internal Every glyph advances one cell width; proportional fonts are drawn cell by cell. */
+  monospace = true;
   private font: GridFont;
   private measureCtx: CanvasRenderingContext2D;
 
@@ -625,6 +801,7 @@ export class NvimGrid {
     this.measureCtx.font = this.fontString(false, false);
     const m = this.measureCtx.measureText('M');
     this.cellWidth = m.width;
+    this.monospace = ['i', 'W', '=', ' '].every((c) => Math.abs(this.measureCtx.measureText(c).width - m.width) < 0.01);
     const ascent = m.fontBoundingBoxAscent ?? this.font.size * this.dpr * 0.8;
     const descent = m.fontBoundingBoxDescent ?? this.font.size * this.dpr * 0.2;
     const linespace = (this.font.linespace ?? 0) * this.dpr;
@@ -900,7 +1077,8 @@ export class NvimGrid {
 
   /** @internal */
   fontString(bold: boolean, italic: boolean) {
-    return `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${this.font.size * this.dpr}px ${this.font.family}`;
+    const weight = bold ? 'bold' : (this.font.weight ?? 400);
+    return `${italic ? 'italic ' : ''}${weight} ${this.font.size * this.dpr}px ${this.font.family}`;
   }
 
   /** @internal */

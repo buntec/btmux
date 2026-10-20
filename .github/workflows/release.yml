@@ -22,11 +22,22 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe: .exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            exe: .exe
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
 
+      # The other targets check the same files; `python3` may be a Store stub here.
       - name: Verify release version
+        if: runner.os != 'Windows'
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -84,13 +95,13 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Rename binary
-        run: cp target/${{ matrix.target }}/release/btmux btmux-${{ matrix.target }}
+        run: cp target/${{ matrix.target }}/release/btmux${{ matrix.exe }} btmux-${{ matrix.target }}${{ matrix.exe }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: btmux-${{ matrix.target }}
-          path: btmux-${{ matrix.target }}
+          path: btmux-${{ matrix.target }}${{ matrix.exe }}
           if-no-files-found: error
 
       - name: Install desktop dependencies
@@ -100,7 +111,7 @@ jobs:
       - name: Prepare desktop sidecar
         run: |
           mkdir -p desktop/src-tauri/binaries
-          cp btmux-${{ matrix.target }} desktop/src-tauri/binaries/btmux-${{ matrix.target }}
+          cp btmux-${{ matrix.target }}${{ matrix.exe }} desktop/src-tauri/binaries/btmux-${{ matrix.target }}${{ matrix.exe }}
 
       - name: Build macOS desktop app
         if: runner.os == 'macOS'
@@ -113,6 +124,11 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: desktop
         run: bun run build -- --target ${{ matrix.target }} --bundles deb
+
+      - name: Build Windows desktop installer
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: bun run build -- --target ${{ matrix.target }} --bundles nsis
 
       - name: Package macOS desktop app
         if: runner.os == 'macOS'
@@ -129,11 +145,19 @@ jobs:
           test "${#debs[@]}" -eq 1
           cp "${debs[0]}" btmux-desktop-${{ matrix.target }}.deb
 
+      - name: Package Windows desktop installer
+        if: runner.os == 'Windows'
+        run: |
+          installers=(desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe)
+          test -f "${installers[0]}"
+          test "${#installers[@]}" -eq 1
+          cp "${installers[0]}" btmux-desktop-${{ matrix.target }}-setup.exe
+
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v4
         with:
           name: btmux-desktop-${{ matrix.target }}
-          path: btmux-desktop-${{ matrix.target }}.*
+          path: btmux-desktop-${{ matrix.target }}*
           if-no-files-found: error
 
   release:

@@ -49,8 +49,9 @@ https://github.com/user-attachments/assets/a26bbac8-c9fe-434a-9fbc-5063048c9d10
 brew install --cask buntec/btmux/btmux
 ```
 
-Linux `.deb` packages are on the [Releases](https://github.com/buntec/btmux/releases/latest) page.
+Linux `.deb` packages and Windows installers (`-setup.exe`) are on the [Releases](https://github.com/buntec/btmux/releases/latest) page.
 The macOS app is unsigned; if macOS blocks it, go to **System Settings → Privacy & Security → Open Anyway**.
+The Windows builds are unsigned too; if SmartScreen blocks one, choose **More info → Run anyway**.
 See [desktop details](desktop/README.md).
 
 **Browser / CLI** (macOS or Linux):
@@ -59,6 +60,9 @@ See [desktop details](desktop/README.md).
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 # or: brew install buntec/btmux/btmux
 ```
+
+On Windows, download `btmux-x86_64-pc-windows-msvc.exe` or `btmux-aarch64-pc-windows-msvc.exe` from
+[Releases](https://github.com/buntec/btmux/releases/latest) and rename it to `btmux.exe`.
 
 Homebrew, background services, and Home Manager are covered in [Installation](docs/installation.md).
 

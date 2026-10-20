@@ -5,9 +5,9 @@ export interface UrlMatch {
   end: number;
 }
 
-// Box drawing and block elements often border URLs in TUIs.
+// Box drawing, block elements, and `|` often border URLs in TUIs.
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`─-▟]+/gi;
-const TRAILING = /[.,;:!?*]$/;
+const TRAILING = /[.,;:!?*|]$/;
 const CLOSERS: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
 
 const count = (s: string, ch: string) => s.split(ch).length - 1;

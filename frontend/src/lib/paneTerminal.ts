@@ -133,6 +133,8 @@ export class PaneTerminal {
   private scrollAccumPx = 0;
   private forwardingWheel = false;
   private swallowMouseUp = false;
+  private swallowClick = false;
+  private hoverFrame = 0;
   private pointer: { x: number; y: number; target: EventTarget | null } | null = null;
   private linkModifierHeld = false;
   private hoveredLink: string | null = null;
@@ -149,6 +151,7 @@ export class PaneTerminal {
     element.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
     element.addEventListener('mousedown', this.onMouseDown, true);
     window.addEventListener('mouseup', this.onMouseUp, true);
+    element.addEventListener('click', this.onClick, true);
     window.addEventListener('blur', this.onWindowBlur);
     element.addEventListener('mousemove', this.onMouseMove);
     element.addEventListener('mouseleave', this.onMouseLeave);
@@ -221,6 +224,7 @@ export class PaneTerminal {
   write(data: Uint8Array | string) {
     this.clearUrlHover();
     this.wterm.write(data);
+    this.refreshUrlHover();
   }
 
   /** Inactive panes hide the cursor: over a transparent background it would leave a visible outline. */
@@ -340,6 +344,15 @@ export class PaneTerminal {
     this.hoveredLink = null;
   }
 
+  /** Redraw the hover after output, once per frame. */
+  private refreshUrlHover() {
+    if (this.hoverFrame || !this.linkModifierHeld || !this.pointer) return;
+    this.hoverFrame = requestAnimationFrame(() => {
+      this.hoverFrame = 0;
+      this.updateUrlHover();
+    });
+  }
+
   private onMouseMove = (event: MouseEvent) => {
     this.pointer = { x: event.clientX, y: event.clientY, target: event.target };
     this.linkModifierHeld = linkModifier(event);
@@ -358,6 +371,7 @@ export class PaneTerminal {
 
   private onWindowBlur = () => {
     this.swallowMouseUp = false;
+    this.swallowClick = false;
     this.linkModifierHeld = false;
     this.pointer = null;
     this.clearUrlHover();
@@ -367,18 +381,28 @@ export class PaneTerminal {
   private onMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return;
     this.swallowMouseUp = false;
+    this.swallowClick = false;
     if (!linkModifier(event)) return;
     const match = this.urlAt(event.clientX, event.clientY, event.target);
     if (!match) return;
     event.preventDefault();
     event.stopPropagation();
     this.swallowMouseUp = true;
+    this.swallowClick = true;
     window.open(match.url, '_blank', 'noopener,noreferrer');
   };
 
   private onMouseUp = (event: MouseEvent) => {
     if (!this.swallowMouseUp || event.button !== 0) return;
     this.swallowMouseUp = false;
+    event.stopPropagation();
+  };
+
+  /** The link click's click event would focus this pane without selecting it. */
+  private onClick = (event: MouseEvent) => {
+    if (!this.swallowClick) return;
+    this.swallowClick = false;
+    event.preventDefault();
     event.stopPropagation();
   };
 
@@ -578,6 +602,8 @@ export class PaneTerminal {
     this.element.removeEventListener('wheel', this.onWheel, true);
     this.element.removeEventListener('mousedown', this.onMouseDown, true);
     window.removeEventListener('mouseup', this.onMouseUp, true);
+    this.element.removeEventListener('click', this.onClick, true);
+    cancelAnimationFrame(this.hoverFrame);
     window.removeEventListener('blur', this.onWindowBlur);
     this.element.removeEventListener('mousemove', this.onMouseMove);
     this.element.removeEventListener('mouseleave', this.onMouseLeave);

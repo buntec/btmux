@@ -20,6 +20,7 @@ test('trailing punctuation and brackets', () => {
 
 test('TUI borders', () => {
   expect(urls('│ https://example.com/z│')).toEqual(['https://example.com/z']);
+  expect(urls('| https://example.com/t| b |')).toEqual(['https://example.com/t']);
 });
 
 test('indices', () => {

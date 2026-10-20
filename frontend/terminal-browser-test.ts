@@ -209,11 +209,17 @@ try {
       const underlines = term.element.querySelectorAll('.btm-wterm-url > div').length;
       const ev = (type: string, init: MouseEventInit) =>
         target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...at, ...init }));
+      const focused = () => term.element.contains(document.activeElement);
+      term.blur();
       ev('mousedown', { buttons: 1, ...mod });
       ev('mouseup', mod);
+      ev('click', { detail: 1, ...mod });
+      const focusedByLink = focused();
       const forwarded = data.splice(0).length;
       ev('mousedown', { buttons: 1 });
       ev('mouseup', {});
+      ev('click', { detail: 1 });
+      const focusedByPlain = focused();
       const plain = data.splice(0);
 
       ev('mousedown', { buttons: 1, ...mod });
@@ -237,7 +243,13 @@ try {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       term.element.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, ...at, ...mod }));
       const underlinesRefreshed = term.element.querySelectorAll('.btm-wterm-url > div').length;
+      term.write('\x1b7\x1b[4;1Hx\x1b8');
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const underlinesAfterOutput = term.element.querySelectorAll('.btm-wterm-url > div').length;
       return {
+        focusedByLink,
+        focusedByPlain,
+        underlinesAfterOutput,
         underlines,
         opened,
         forwarded,
@@ -260,6 +272,8 @@ try {
   assert.equal(link.underlines, 2, 'wrapped URL must underline both rows');
   assert.deepEqual(link.opened, Array(3).fill('https://example.com/a/very/long/path'));
   assert.equal(link.forwarded, 0, 'modifier-click on a URL must not reach the application');
+  assert.equal(link.focusedByLink, false, 'modifier-click on a URL must not focus the pane');
+  assert.equal(link.focusedByPlain, true, 'a plain click after a link click must focus the pane');
   const plainClick = [bytes('\x1b[<0;4;2M'), bytes('\x1b[<0;4;2m')];
   assert.deepEqual(link.plain, plainClick, 'plain click must send both press and release');
   assert.equal(link.outsideForwarded, 0, 'a link click released outside the pane must not reach the application');
@@ -269,7 +283,8 @@ try {
   assert.equal(link.underlinesBeforeResize, 2, 'resize regression must begin with an underlined URL');
   assert.equal(link.underlinesAfterResize, 0, 'resize must remove stale URL underlines');
   assert.equal(link.underlinesRefreshed, 2, 'hover must rebuild the resized URL underlines');
-  console.log('PASS wrapped URL clicks, outside releases, focus loss, and resize hover');
+  assert.equal(link.underlinesAfterOutput, 2, 'output must not drop the hovered URL underline');
+  console.log('PASS wrapped URL clicks, focus, outside releases, focus loss, resize, and output hover');
 
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);

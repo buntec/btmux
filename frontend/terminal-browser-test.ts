@@ -124,7 +124,7 @@ try {
   assert.deepEqual(result.paste, [bytes('\x1b[200~a[201~b\x1b[201~')], 'paste must not end bracketed paste early');
   console.log('PASS cold fonts, binary mouse input, wheel throttling, mouse encodings and paste');
 
-  // Focus with deep scrollback, then `clear`: the rows must stay in view.
+  // Clear deep scrollback while a URL is underlined: the rows must stay in view.
   const cleared = await page.evaluate(async () => {
     const { PaneTerminal } = await import('/src/lib/paneTerminal.ts' as string);
     const { buildTerminalOptions } = await import('/src/components/TerminalPane.tsx' as string);
@@ -138,23 +138,46 @@ try {
     });
     const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     try {
-      term.write(Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\r\n'));
+      term.write(Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\r\n') + '\r\nhttps://example.com');
       await frame();
       term.focus();
+      await frame();
+      const link = Array.from(term.element.querySelectorAll('.term-row:not(.term-scrollback-row)')).find((row) =>
+        row.textContent?.includes('https://'),
+      )!;
+      const rect = link.getBoundingClientRect();
+      const cell = term.measureCell()!;
+      const mod = navigator.platform.startsWith('Mac') ? { metaKey: true } : { ctrlKey: true };
+      link.dispatchEvent(
+        new MouseEvent('mousemove', {
+          bubbles: true,
+          clientX: rect.left + 5.5 * cell.width,
+          clientY: rect.top + cell.height / 2,
+          ...mod,
+        }),
+      );
+      const underlinesBefore = term.element.querySelectorAll('.btm-wterm-url > div').length;
       term.write('\x1b[3J\x1b[H\x1b[2J$ ');
       await frame();
       await frame();
       const el = term.element;
       const row = el.querySelector('.term-row:not(.term-scrollback-row)')!.getBoundingClientRect();
       const view = el.getBoundingClientRect();
-      return { scrollTop: el.scrollTop, inView: row.top >= view.top && row.bottom <= view.bottom };
+      return {
+        scrollTop: el.scrollTop,
+        inView: row.top >= view.top && row.bottom <= view.bottom,
+        underlinesBefore,
+        underlinesAfter: el.querySelectorAll('.btm-wterm-url > div').length,
+      };
     } finally {
       term.dispose();
       host.remove();
     }
   });
+  assert.equal(cleared.underlinesBefore, 1, 'clear regression must begin with an underlined URL');
+  assert.equal(cleared.underlinesAfter, 0, 'clear must remove stale URL underlines');
   assert(cleared.inView, `rows scrolled away after clear: ${JSON.stringify(cleared)}`);
-  console.log('PASS clear after focusing deep scrollback keeps the rows in view');
+  console.log('PASS clear with a hovered URL removes stale underlines and keeps the rows in view');
 
   // Modifier-hover underlines a soft-wrapped plain-text URL; modifier-click opens it.
   const link = await page.evaluate(async () => {
@@ -174,7 +197,7 @@ try {
     const data: number[][] = [];
     const off = term.onData((bytes: Uint8Array) => data.push(Array.from(bytes)));
     try {
-      term.write('\x1bc\x1b[?1000hsee https://example.com/a/very/long/path.');
+      term.write('\x1bc\x1b[?1000h\x1b[?1006hsee https://example.com/a/very/long/path.');
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       const cell = term.measureCell()!;
       const rows = term.element.querySelectorAll('.term-row:not(.term-scrollback-row)');
@@ -191,7 +214,42 @@ try {
       const forwarded = data.splice(0).length;
       ev('mousedown', { buttons: 1 });
       ev('mouseup', {});
-      return { underlines, opened, forwarded, plain: data.length };
+      const plain = data.splice(0);
+
+      ev('mousedown', { buttons: 1, ...mod });
+      document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, ...mod }));
+      const outsideForwarded = data.splice(0).length;
+      ev('mousedown', { buttons: 1 });
+      ev('mouseup', {});
+      const afterOutsideRelease = data.splice(0);
+
+      ev('mousedown', { buttons: 1, ...mod });
+      window.dispatchEvent(new Event('blur'));
+      const underlinesAfterBlur = term.element.querySelectorAll('.btm-wterm-url > div').length;
+      ev('mousedown', { buttons: 1 });
+      ev('mouseup', {});
+      const afterBlur = data.splice(0);
+
+      target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, ...at, ...mod }));
+      const underlinesBeforeResize = term.element.querySelectorAll('.btm-wterm-url > div').length;
+      term.resize(31, 5);
+      const underlinesAfterResize = term.element.querySelectorAll('.btm-wterm-url > div').length;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      term.element.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, ...at, ...mod }));
+      const underlinesRefreshed = term.element.querySelectorAll('.btm-wterm-url > div').length;
+      return {
+        underlines,
+        opened,
+        forwarded,
+        plain,
+        outsideForwarded,
+        afterOutsideRelease,
+        underlinesAfterBlur,
+        afterBlur,
+        underlinesBeforeResize,
+        underlinesAfterResize,
+        underlinesRefreshed,
+      };
     } finally {
       off();
       window.open = open;
@@ -200,10 +258,18 @@ try {
     }
   });
   assert.equal(link.underlines, 2, 'wrapped URL must underline both rows');
-  assert.deepEqual(link.opened, ['https://example.com/a/very/long/path']);
+  assert.deepEqual(link.opened, Array(3).fill('https://example.com/a/very/long/path'));
   assert.equal(link.forwarded, 0, 'modifier-click on a URL must not reach the application');
-  assert(link.plain > 0, 'plain click must still reach the application');
-  console.log('PASS modifier-click opens soft-wrapped plain-text URLs');
+  const plainClick = [bytes('\x1b[<0;4;2M'), bytes('\x1b[<0;4;2m')];
+  assert.deepEqual(link.plain, plainClick, 'plain click must send both press and release');
+  assert.equal(link.outsideForwarded, 0, 'a link click released outside the pane must not reach the application');
+  assert.deepEqual(link.afterOutsideRelease, plainClick, 'an outside release must not swallow the next release');
+  assert.equal(link.underlinesAfterBlur, 0, 'focus loss must clear URL hover');
+  assert.deepEqual(link.afterBlur, plainClick, 'focus loss must not swallow the next release');
+  assert.equal(link.underlinesBeforeResize, 2, 'resize regression must begin with an underlined URL');
+  assert.equal(link.underlinesAfterResize, 0, 'resize must remove stale URL underlines');
+  assert.equal(link.underlinesRefreshed, 2, 'hover must rebuild the resized URL underlines');
+  console.log('PASS wrapped URL clicks, outside releases, focus loss, and resize hover');
 
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);

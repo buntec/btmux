@@ -278,8 +278,10 @@ and 'background' is set from the theme's luminance. 'guifont' (Neovide format,
 through `lib/nvimKeys.ts` to `nvim_input`: F-keys and Cmd (`<D-…>`) reach
 Neovim, except Cmd shortcuts the browser or desktop app keeps; the global
 keybinding hook lets them through for the `data-nvim-input` textarea, which
-follows the cursor so IME candidates and compositions appear there. Wheel steps
-follow 'mousescroll'.
+follows the cursor so IME candidates and compositions appear there. Its focus
+and blur go to `nvim_ui_set_focus` (`FocusGained`/`FocusLost`); unfocused, the
+block cursor is an outline and stops blinking ('guicursor' blink times). Wheel
+steps follow 'mousescroll'.
 `lib/nvimWidgets.ts` reduces cmdline, popupmenu, and message events and
 publishes them once per `flush`; `NvimWidgets.tsx` renders them as Astryx
 components. Short messages (echo, `vim.notify`, errors) are expiring toasts;

@@ -148,6 +148,7 @@ export function NvimSurface({
     const input = inputRef.current!;
     const grid = new NvimGrid(canvas, fontRef.current, layersRef.current);
     grid.smoothScroll = smoothScrollRef.current;
+    grid.setFocused(document.activeElement === input && document.hasFocus());
     gridRef.current = grid;
     const model = new WidgetModel();
     setWidgets(model.snapshot());
@@ -254,6 +255,7 @@ export function NvimSurface({
       request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: false }]);
       request('nvim_ui_detach', [], () => (resyncing = false));
       request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: true }]);
+      if (document.activeElement === input && document.hasFocus()) notify('nvim_ui_set_focus', [true]);
       // Kind icons from the btmux plugin (empty without mini.icons or the plugin).
       request(
         'nvim_exec_lua',
@@ -360,6 +362,13 @@ export function NvimSurface({
     const onInput = (e: Event) => {
       if (!(e as InputEvent).isComposing) flushText();
     };
+    // FocusGained/FocusLost (also when the browser window loses focus).
+    const setFocus = (focused: boolean) => {
+      grid.setFocused(focused);
+      if (attached) notify('nvim_ui_set_focus', [focused]);
+    };
+    const onFocus = () => setFocus(true);
+    const onBlur = () => setFocus(false);
     const onPaste = (e: ClipboardEvent) => {
       const text = e.clipboardData?.getData('text/plain');
       if (!text) return;
@@ -426,6 +435,8 @@ export function NvimSurface({
     input.addEventListener('compositionstart', onCompositionStart);
     input.addEventListener('compositionend', onCompositionEnd);
     input.addEventListener('paste', onPaste);
+    input.addEventListener('focus', onFocus);
+    input.addEventListener('blur', onBlur);
     container.addEventListener('mousedown', onMouseDown);
     container.addEventListener('wheel', onWheel, { passive: false });
     container.addEventListener('contextmenu', onContextMenu);
@@ -437,6 +448,7 @@ export function NvimSurface({
       applyThemeRef.current = () => {};
       if (activeInput === sendKeys) activeInput = null;
       ro.disconnect();
+      grid.dispose();
       layersRef.current?.replaceChildren();
       setFloats([]);
       setTitles({});
@@ -447,6 +459,8 @@ export function NvimSurface({
       input.removeEventListener('compositionstart', onCompositionStart);
       input.removeEventListener('compositionend', onCompositionEnd);
       input.removeEventListener('paste', onPaste);
+      input.removeEventListener('focus', onFocus);
+      input.removeEventListener('blur', onBlur);
       container.removeEventListener('mousedown', onMouseDown);
       container.removeEventListener('wheel', onWheel);
       container.removeEventListener('contextmenu', onContextMenu);

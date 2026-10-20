@@ -129,12 +129,14 @@ test(':messages history fills the panel; msg_clear clears everything', () => {
   expect(w.snapshot().panel).toBeNull();
 });
 
-test('showmode and showcmd are set and cleared with empty content', () => {
+test('showmode, showcmd, and ruler are set and cleared with empty content', () => {
   const w = new NvimWidgets();
   w.apply('msg_showmode', [content('recording @q')]);
   w.apply('msg_showcmd', [content('2d')]);
+  w.apply('msg_ruler', [content('12,5          Top')]);
   expect(text(w.snapshot().showmode)).toBe('recording @q');
   expect(text(w.snapshot().showcmd)).toBe('2d');
+  expect(text(w.snapshot().ruler)).toBe('12,5          Top');
   w.apply('msg_showmode', [[]]);
   expect(w.snapshot().showmode).toEqual([]);
 });

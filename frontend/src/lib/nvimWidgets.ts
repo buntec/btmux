@@ -90,6 +90,8 @@ export interface WidgetState {
   panel: OutputPanel | null;
   showmode: Chunk[];
   showcmd: Chunk[];
+  /** 'ruler', when no statusline shows it. */
+  ruler: Chunk[];
   kindIcons: KindIcons;
 }
 
@@ -148,6 +150,7 @@ export class NvimWidgets {
   private panelFresh = true;
   private showmode: Chunk[] = [];
   private showcmd: Chunk[] = [];
+  private ruler: Chunk[] = [];
   private kindIcons: KindIcons = {};
   // Highlight ids of UI groups (`hl_group_set`), e.g. to spot `vim.notify` warnings.
   private groups = new Map<string, number>();
@@ -214,6 +217,9 @@ export class NvimWidgets {
         break;
       case 'msg_showcmd':
         this.showcmd = chunks(args[0]);
+        break;
+      case 'msg_ruler':
+        this.ruler = chunks(args[0]);
         break;
       case 'msg_history_show': {
         const [entries] = args as [[string, unknown][]];
@@ -388,6 +394,7 @@ export class NvimWidgets {
       panel: this.panel,
       showmode: this.showmode,
       showcmd: this.showcmd,
+      ruler: this.ruler,
       kindIcons: this.kindIcons,
     };
   }

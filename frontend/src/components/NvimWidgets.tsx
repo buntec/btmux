@@ -57,7 +57,8 @@ const STATUSLINE_GAP = 8;
 
 /** Externalized Neovim cmdline and popupmenu, drawn over the grid. */
 export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire, pumblend }: Props) {
-  const { cmdline, block, popupmenu, signature, messages, progress, panel, showmode, showcmd, kindIcons } = state;
+  const { cmdline, block, popupmenu, signature, messages, progress, panel, showmode, showcmd, ruler, kindIcons } =
+    state;
   const cmdlineMenu = popupmenu?.grid === -1 && cmdline ? popupmenu : null;
   const gridMenu = popupmenu && popupmenu.grid !== -1 ? popupmenu : null;
   const [menuSide, setMenuSide] = useState<'above' | 'below'>('below');
@@ -88,10 +89,11 @@ export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire, p
           ))}
         </VStack>
       )}
-      {(showmode.length > 0 || showcmd.length > 0) && (
+      {(showmode.length > 0 || showcmd.length > 0 || ruler.length > 0) && (
         <HStack gap={1} className="pointer-events-none absolute right-2 z-40" style={{ bottom }}>
           {showmode.length > 0 && <Token size="sm" color="orange" label={chunkText(showmode)} />}
           {showcmd.length > 0 && <Token size="sm" label={chunkText(showcmd)} />}
+          {ruler.length > 0 && <Token size="sm" label={chunkText(ruler)} />}
         </HStack>
       )}
       {gridMenu && (

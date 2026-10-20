@@ -378,3 +378,69 @@ test('flush presents only the layers that changed', () => {
   grid.redraw([['flush', []]]);
   expect(presented()).toEqual([false, false, false]);
 });
+
+test('dotted and dashed underlines draw segments, also under blank cells', () => {
+  const { grid } = makeGrid(2, 1);
+  const gridCanvas = (grid as unknown as { root: { gridCanvas: FakeCanvas } }).root.gridCanvas;
+  const underline = (attr: Record<string, boolean>) => {
+    grid.redraw([['hl_attr_define', [2, attr]], ['grid_line', [1, 0, 0, [[' ', 2, 2]], false]], ['flush', []]]);
+    const rects = gridCanvas.calls.filter(([name, args]) => name === 'fillRect' && args[1] === 18).map(([, a]) => a);
+    gridCanvas.calls = [];
+    return rects.map(([x, , w]) => [x, w]);
+  };
+  expect(underline({ underdotted: true })).toEqual(Array.from({ length: 10 }, (_, i) => [2 * i, 1]));
+  expect(underline({ underdashed: true })).toEqual([
+    [0, 3],
+    [5, 3],
+    [10, 3],
+    [15, 3],
+  ]);
+  expect(underline({ underdouble: true })).toEqual([
+    [0, 10],
+    [10, 10],
+  ]);
+});
+
+test("the cursor blinks per 'guicursor', restarts when it moves, and is an outline unfocused", () => {
+  const timers: [() => void, number][] = [];
+  const spy = spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms: number) => {
+    timers.push([fn, ms]);
+    return timers.length;
+  }) as unknown as typeof setTimeout);
+  try {
+    const { grid, canvas } = makeGrid(4, 2);
+    const cursor = () => {
+      const rects = canvas.calls.filter(([name]) => name === 'fillRect').map(([, a]) => a);
+      canvas.calls = [];
+      return rects;
+    };
+    const fire = () => {
+      const [fn, ms] = timers.at(-1)!;
+      fn();
+      return ms;
+    };
+    const mode = { cursor_shape: 'block', blinkwait: 700, blinkon: 400, blinkoff: 250 };
+    grid.redraw([['mode_info_set', [true, [mode]]], ['flush', []]]);
+    expect(cursor()).toEqual([[0, 0, 10, 20]]);
+    expect(fire()).toBe(700);
+    expect(cursor()).toEqual([]);
+    expect(fire()).toBe(250);
+    expect(cursor()).toEqual([[0, 0, 10, 20]]);
+    fire();
+    grid.redraw([['grid_cursor_goto', [1, 1, 1]], ['flush', []]]);
+    expect(cursor()).toEqual([[10, 20, 10, 20]]);
+    expect(timers.at(-1)![1]).toBe(700);
+
+    const pending = timers.length;
+    grid.setFocused(false);
+    expect(cursor()).toEqual([
+      [10, 20, 10, 1],
+      [10, 39, 10, 1],
+      [10, 20, 1, 20],
+      [19, 20, 1, 20],
+    ]);
+    expect(timers.length).toBe(pending);
+  } finally {
+    spy.mockRestore();
+  }
+});

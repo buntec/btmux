@@ -739,12 +739,28 @@ try {
   assert.equal(await floatCount(), 0, 'the diagnostic float closes when the cursor moves');
   await rpc('nvim_exec_lua', ['vim.diagnostic.reset(vim.api.nvim_create_namespace("btmux_test"))', []]);
   console.log('PASS floats render in cropped Astryx frames, scroll and focus with the mouse, and close with Neovim');
+  await rpc('nvim_exec_lua', [
+    `_G.btmux_test_focus = {}
+    vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost" }, {
+      group = vim.api.nvim_create_augroup("btmux_test_focus", {}),
+      callback = function(ev) table.insert(_G.btmux_test_focus, ev.event) end,
+    })`,
+    [],
+  ]);
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await page.locator('[data-nvim-input]').focus();
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     useStore.getState().setNvimOpen(false);
   });
   await page.waitForTimeout(250);
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Terminal');
+  assert.deepEqual(
+    await rpc('nvim_exec_lua', ['return _G.btmux_test_focus', []]),
+    ['FocusLost', 'FocusGained', 'FocusLost'],
+    'focus changes reach Neovim',
+  );
+  await rpc('nvim_del_augroup_by_name', ['btmux_test_focus']);
   await page.evaluate(() => (window as any).nvimStore.getState().setSettingsOpen(true));
   await page.waitForTimeout(100);
   await page.evaluate(() => (window as any).nvimStore.getState().setSettingsOpen(false));

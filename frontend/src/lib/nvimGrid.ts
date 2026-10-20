@@ -21,6 +21,10 @@ interface ModeInfo {
   cursor_shape?: 'block' | 'horizontal' | 'vertical';
   cell_percentage?: number;
   attr_id?: number;
+  /** 'guicursor' blink times in ms; any of them 0 (or unset) disables blinking. */
+  blinkwait?: number;
+  blinkon?: number;
+  blinkoff?: number;
 }
 
 export interface GridFont {
@@ -62,6 +66,9 @@ const FLOAT_Z = 10;
 const FLOAT_Z_MAX = 38;
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
+
+const decorated = (a: HlAttr) =>
+  a.underline || a.undercurl || a.underdouble || a.underdotted || a.underdashed || a.strikethrough;
 
 /** A `grid_scroll` region sliding from its old pixels to its new content. */
 interface ScrollAnim {
@@ -420,7 +427,7 @@ class Layer {
       const text = this.text[base + col];
       if (!text || text === ' ') {
         const attr = this.s.attr(this.hlIds[base + col]);
-        if (!attr || !(attr.underline || attr.undercurl || attr.strikethrough)) continue;
+        if (!attr || !decorated(attr)) continue;
       }
       const { fg, sp, attr } = this.s.colors(this.hlIds[base + col], float);
       this.drawGlyph(ctx, text, this.x(col), row * ch, fg, attr);
@@ -468,16 +475,25 @@ class Layer {
         else ctx.lineTo(x + i, yy);
       }
       ctx.stroke();
-    } else if (attr.underline || attr.underdouble || attr.underdotted || attr.underdashed) {
+    } else if (attr.underline || attr.underdouble) {
       ctx.fillStyle = sp;
       ctx.fillRect(x, underY, w, thickness);
       if (attr.underdouble) ctx.fillRect(x, underY - 2 * thickness, w, thickness);
+    } else if (attr.underdotted || attr.underdashed) {
+      ctx.fillStyle = sp;
+      const [on, period] = attr.underdotted ? [thickness, 2 * thickness] : [3 * thickness, 5 * thickness];
+      // Segments follow the grid's x, so the pattern continues across cells.
+      for (let s = x - (x % period); s < x + w; s += period) {
+        const a = Math.max(s, x);
+        const b = Math.min(s + on, x + w);
+        if (b > a) ctx.fillRect(a, underY, b - a, thickness);
+      }
     }
   }
 
   private drawCursor(yOffset: number, xOffset: number) {
     const { row, col } = this.s.cursor;
-    if (this.s.cursorSuppressed || row >= this.rows || col >= this.cols) return;
+    if (this.s.cursorSuppressed || this.s.cursorBlinkedOff || row >= this.rows || col >= this.cols) return;
     const { cellHeight: ch, dpr } = this.s;
     const info = this.s.modeInfo();
     const idx = row * this.cols + col;
@@ -503,6 +519,15 @@ class Layer {
         break;
       }
       default:
+        if (!this.s.focused) {
+          // Unfocused, the block is an outline, as in GUI Vims.
+          const t = Math.max(1, Math.round(dpr));
+          ctx.fillRect(x, y, w, t);
+          ctx.fillRect(x, y + ch - t, w, t);
+          ctx.fillRect(x, y, t, ch);
+          ctx.fillRect(x + w - t, y, t, ch);
+          break;
+        }
         ctx.fillRect(x, y, w, ch);
         this.drawGlyph(ctx, this.text[idx], x, y, cursorFg, cell.attr);
     }
@@ -543,6 +568,9 @@ export class NvimGrid {
   // The cursor as of the last flush.
   private cursorKey = '';
   private cursorGrid = 1;
+  private hasFocus = true;
+  private blinkOff = false;
+  private blinkTimer: ReturnType<typeof setTimeout> | undefined;
   /** Scroll animation length in ms; 0 scrolls instantly. */
   smoothScroll = 0;
 
@@ -824,6 +852,33 @@ export class NvimGrid {
     }
   }
 
+  /** Keyboard focus: unfocused, the block cursor is an outline and doesn't blink. */
+  setFocused(focused: boolean) {
+    if (focused === this.hasFocus) return;
+    this.hasFocus = focused;
+    this.flush();
+  }
+
+  dispose() {
+    clearTimeout(this.blinkTimer);
+  }
+
+  /** Show the cursor and restart its 'guicursor' blink cycle. */
+  private restartBlink() {
+    clearTimeout(this.blinkTimer);
+    this.blinkOff = false;
+    const { blinkwait, blinkon, blinkoff } = this.modeInfo();
+    if (!this.hasFocus || !blinkwait || !blinkon || !blinkoff) return;
+    const next = (delay: number) => {
+      this.blinkTimer = setTimeout(() => {
+        this.blinkOff = !this.blinkOff;
+        this.layers.get(this.cursor.grid)?.present();
+        next(this.blinkOff ? blinkoff : blinkon);
+      }, delay);
+    };
+    next(blinkwait);
+  }
+
   /** Record which colors the Normal group sets (from `nvim_get_hl`). */
   setNormal(hl: { fg?: number; bg?: number; sp?: number }) {
     this.normal = { fg: hl.fg !== undefined, bg: hl.bg !== undefined, sp: hl.sp !== undefined };
@@ -856,6 +911,16 @@ export class NvimGrid {
   /** @internal */
   modeInfo(): ModeInfo {
     return this.modes[this.mode] ?? {};
+  }
+
+  /** @internal */
+  get focused(): boolean {
+    return this.hasFocus;
+  }
+
+  /** @internal In the off phase of a blink. */
+  get cursorBlinkedOff(): boolean {
+    return this.blinkOff;
   }
 
   /** @internal Whether the cursor is hidden altogether. */
@@ -891,8 +956,9 @@ export class NvimGrid {
 
   private flush() {
     // Repaint the cursor's previous and current layers when anything about it changes.
-    const cursorKey = JSON.stringify([this.cursor, this.modeInfo(), this.cursorSuppressed]);
+    const cursorKey = JSON.stringify([this.cursor, this.modeInfo(), this.cursorSuppressed, this.hasFocus]);
     const cursorChanged = cursorKey !== this.cursorKey;
+    if (cursorChanged) this.restartBlink();
     const cursorGrids = [this.cursorGrid, this.cursor.grid];
     this.cursorKey = cursorKey;
     this.cursorGrid = this.cursor.grid;

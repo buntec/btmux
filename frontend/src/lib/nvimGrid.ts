@@ -1078,7 +1078,8 @@ export class NvimGrid {
   setFocused(focused: boolean) {
     if (focused === this.hasFocus) return;
     this.hasFocus = focused;
-    this.flush();
+    this.restartBlink();
+    this.drawCursor();
   }
 
   dispose() {
@@ -1097,12 +1098,15 @@ export class NvimGrid {
   /** Animate the cursor from where it is drawn to its new cell. */
   private startCursorMove() {
     const target = this.cursorTarget();
-    const from = this.cursorAt;
-    if (!target || !from || this.cursorAnimation <= 0) {
+    const at = this.cursorAt;
+    if (!target || !at || this.cursorAnimation <= 0) {
       this.cursorMove = null;
       return;
     }
-    // A mode or focus change: keep any move in flight.
+    // Moves are relative to the text, which a scroll may still be sliding.
+    const scroll = target.layer.scrollOffset(this.cursor.row, this.cursor.col, performance.now());
+    const from = { ...at, y: at.y - scroll };
+    // A mode change, or the cursor stays on its scrolled line: keep any move in flight.
     if (from.x === target.x && from.y === target.y) return;
     // Typing moves a cell or two along the row; those jump.
     const short = from.y === target.y && Math.abs(from.x - target.x) <= 2 * this.cellWidth + 1;
@@ -1135,9 +1139,10 @@ export class NvimGrid {
         });
       }
     }
+    const { layer } = target;
+    y += layer.scrollOffset(this.cursor.row, this.cursor.col, now);
     this.cursorAt = { grid: this.cursorMove?.grid ?? this.cursor.grid, x, y };
     if (this.cursorSuppressed || this.blinkOff) return;
-    const { layer } = target;
     this.cursorCanvas.style.zIndex = String(layer.z);
     ctx.save();
     // Only moves between windows may leave the cursor's window.
@@ -1147,7 +1152,7 @@ export class NvimGrid {
       ctx.rect(box.left, box.top, box.right - box.left, box.bottom - box.top);
       ctx.clip();
     }
-    layer.drawCursor(ctx, x, y + layer.scrollOffset(this.cursor.row, this.cursor.col, now));
+    layer.drawCursor(ctx, x, y);
     ctx.restore();
   }
 
@@ -1245,7 +1250,7 @@ export class NvimGrid {
   }
 
   private flush() {
-    const cursorKey = JSON.stringify([this.cursor, this.modeInfo(), this.cursorSuppressed, this.hasFocus]);
+    const cursorKey = JSON.stringify([this.cursor, this.modeInfo(), this.cursorSuppressed]);
     const cursorChanged = cursorKey !== this.cursorKey;
     this.cursorKey = cursorKey;
     const floats = [...this.layers.values()]

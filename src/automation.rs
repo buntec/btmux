@@ -520,7 +520,7 @@ mod tests {
         let (exit_tx, _) = mpsc::unbounded_channel();
         let (meta_tx, _) = mpsc::unbounded_channel();
         let mut mgr = SessionManager::new(
-            "/bin/sh".into(),
+            if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }.into(),
             FileConfig::default(),
             exit_tx,
             meta_tx,
@@ -578,6 +578,8 @@ mod tests {
         assert_eq!(outcome.status.unwrap().state, AgentState::Done);
     }
 
+    // These type POSIX shell commands.
+    #[cfg(unix)]
     #[tokio::test]
     async fn send_prompt_waits_for_the_turn() {
         let (state, pane_id) = pane().await;
@@ -613,6 +615,7 @@ mod tests {
         assert!(screen.contains("btmux-42"), "{screen}");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn send_prompt_sees_brief_turns_and_exits() {
         let (state, pane_id) = pane().await;
@@ -659,6 +662,7 @@ mod tests {
         assert!(outcome.status.is_none());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn concurrent_prompts_stay_whole() {
         let (state, pane_id) = pane().await;
@@ -706,6 +710,7 @@ mod tests {
         assert!(first.await.unwrap().ok().unwrap().unwrap().started);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn send_keys_checks_input_and_cursor_mode() {
         let (state, pane_id) = pane().await;
@@ -737,6 +742,7 @@ mod tests {
         assert!(!spawned);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_closed_pane_is_an_exit() {
         let (state, pane_id) = pane().await;

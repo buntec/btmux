@@ -649,11 +649,18 @@ impl OutputPipeline {
         let Some(pgrp) = self.probe.lock().unwrap().as_ref().and_then(foreground) else {
             return;
         };
+        // A shell can exec another program in its group (`exec cat`), so
+        // recheck shells; other programs, which write most output, stay cached.
         let shell = match self.leader {
-            Some((leader, shell)) if leader == pgrp => shell,
+            Some((leader, false)) if leader == pgrp => false,
             _ => {
-                let shell = Some(pgrp) == self.shell_pid
-                    || crate::process::name(pgrp).is_some_and(|name| is_shell(&name));
+                let shell = crate::process::name(pgrp).is_some_and(|name| {
+                    is_shell(&name)
+                        || self
+                            .shell
+                            .as_ref()
+                            .is_some_and(|(pid, shell)| *pid == pgrp && *shell == name)
+                });
                 self.leader = Some((pgrp, shell));
                 shell
             }

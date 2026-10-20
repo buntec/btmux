@@ -491,8 +491,9 @@ struct OutputPipeline {
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
     pane_id: Uuid,
+    /// The pane's shell and its name when the pipeline started.
     #[cfg(unix)]
-    shell_pid: Option<Pid>,
+    shell: Option<(Pid, String)>,
     /// The last foreground group polled for its cwd, and whether it's a shell.
     #[cfg(unix)]
     leader: Option<(Pid, bool)>,
@@ -516,7 +517,9 @@ impl PtyHandle {
             output_tx: self.output_tx.clone(),
             pane_id: self.pane_id,
             #[cfg(unix)]
-            shell_pid: self.shell_pid,
+            shell: self
+                .shell_pid
+                .and_then(|pid| Some((pid, crate::process::name(pid)?))),
             #[cfg(unix)]
             leader: None,
         }
@@ -813,12 +816,17 @@ mod lifecycle_tests {
         wait_until(&pane, |pane| cwd(pane).as_deref() == Some("/usr")).await;
         let nested = pane.foreground_pgrp();
 
-        // Not a shell: its directory isn't the pane's.
+        // A shell that execs a program: the program's directory isn't the pane's.
+        let (mut rx, _) = pane.subscribe_replay();
         pane.input_tx
-            .send(b"sh -c 'cd /bin && exec cat'\n".to_vec())
+            .send(
+                b"sh -c \"echo BTMUX_''READY; read x; exec perl -e 'chdir q(/bin); exec q(cat)'\"\n"
+                    .to_vec(),
+            )
             .unwrap();
-        wait_until(&pane, |pane| pane.foreground_pgrp() != nested).await;
-        pane.input_tx.send(b"x\n".to_vec()).unwrap();
+        read_until(&mut rx, "BTMUX_READY").await;
+        assert_ne!(pane.foreground_pgrp(), nested);
+        pane.input_tx.send(b"\nx\n".to_vec()).unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         assert_eq!(cwd(&pane).as_deref(), Some("/usr"));
     }

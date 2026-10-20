@@ -493,7 +493,7 @@ class Layer {
         this.frame = 0;
         this.present();
         // The cursor follows scrolls of its region.
-        if (this.s.cursor.grid === this.id) this.s.drawCursor();
+        if (this.s.cursor.grid === this.id) this.s.followScroll();
       });
     }
   }
@@ -508,14 +508,10 @@ class Layer {
 
   /** Device-pixel box of the visible canvas on the surface. */
   box(): { left: number; top: number; right: number; bottom: number } {
-    const { cellWidth: cw, cellHeight: ch } = this.s;
     const crop = this.crop;
-    return {
-      left: Math.round((this.col + crop.left) * cw),
-      top: (this.row + crop.top) * ch,
-      right: Math.round((this.col + this.cols - crop.right) * cw),
-      bottom: (this.row + this.rows - crop.bottom) * ch,
-    };
+    const [left, top] = this.s.cellOrigin(this.row + crop.top, this.col + crop.left);
+    const [right, bottom] = this.s.cellOrigin(this.row + this.rows - crop.bottom, this.col + this.cols - crop.right);
+    return { left, top, right, bottom };
   }
 
   private compose(now: number) {
@@ -599,7 +595,7 @@ class Layer {
     for (let col = 0; col < this.cols; col++) {
       const text = this.text[base + col];
       const id = this.hlIds[base + col];
-      if (this.s.monospace && printableAscii(text)) {
+      if (this.s.monospace(id) && printableAscii(text)) {
         if (runStart >= 0 && id !== this.hlIds[base + runStart]) endRun(col);
         if (runStart < 0) runStart = col;
         continue;
@@ -781,8 +777,8 @@ export class NvimGrid {
   cellHeight = 1;
   ascent = 1;
   dpr = 1;
-  /** @internal Every glyph advances one cell width; proportional fonts are drawn cell by cell. */
-  monospace = true;
+  /** Per face (bold + 2 × italic): every glyph advances one cell width. */
+  private monospaceFaces = [true, true, true, true];
   private font: GridFont;
   private measureCtx: CanvasRenderingContext2D;
 
@@ -838,9 +834,16 @@ export class NvimGrid {
     const offset = (this.font.widthOffset ?? 0) * this.dpr;
     this.cellWidth = Math.max(1, m.width + offset);
     // Runs advance by glyph widths, so a width offset needs cell-by-cell drawing too.
-    this.monospace =
-      offset === 0 &&
-      ['i', 'W', '=', ' '].every((c) => Math.abs(this.measureCtx.measureText(c).width - m.width) < 0.01);
+    // Bold and italic faces may advance differently from the regular one.
+    this.monospaceFaces = [false, true].flatMap((italic) =>
+      [false, true].map((bold) => {
+        this.measureCtx.font = this.fontString(bold, italic);
+        return (
+          offset === 0 &&
+          ['M', 'i', 'W', '=', ' '].every((c) => Math.abs(this.measureCtx.measureText(c).width - m.width) < 0.01)
+        );
+      }),
+    );
     const ascent = m.fontBoundingBoxAscent ?? this.font.size * this.dpr * 0.8;
     const descent = m.fontBoundingBoxDescent ?? this.font.size * this.dpr * 0.2;
     const linespace = (this.font.linespace ?? 0) * this.dpr;
@@ -913,11 +916,13 @@ export class NvimGrid {
 
   /** CSS-pixel box of a screen cell, for anchoring external widgets. */
   cellRect(row: number, col: number): { left: number; top: number; height: number } {
-    return {
-      left: Math.round(col * this.cellWidth) / this.dpr,
-      top: (row * this.cellHeight) / this.dpr,
-      height: this.cellHeight / this.dpr,
-    };
+    const [x, y] = this.cellOrigin(row, col);
+    return { left: x / this.dpr, top: y / this.dpr, height: this.cellHeight / this.dpr };
+  }
+
+  /** @internal Device-pixel origin of a screen cell. */
+  cellOrigin(row: number, col: number): [number, number] {
+    return [Math.round(col * this.cellWidth), row * this.cellHeight];
   }
 
   /** Resolved colors and styles of a highlight attribute id. */
@@ -1092,7 +1097,8 @@ export class NvimGrid {
     const layer = this.layers.get(this.cursor.grid);
     const { row, col } = this.cursor;
     if (!layer || layer.hidden || row >= layer.rows || col >= layer.cols) return null;
-    return { layer, x: Math.round((layer.col + col) * this.cellWidth), y: (layer.row + row) * this.cellHeight };
+    const [x, y] = this.cellOrigin(...this.screenCell(layer.id, row, col));
+    return { layer, x, y };
   }
 
   /** Animate the cursor from where it is drawn to its new cell. */
@@ -1143,7 +1149,9 @@ export class NvimGrid {
     y += layer.scrollOffset(this.cursor.row, this.cursor.col, now);
     this.cursorAt = { grid: this.cursorMove?.grid ?? this.cursor.grid, x, y };
     if (this.cursorSuppressed || this.blinkOff) return;
-    this.cursorCanvas.style.zIndex = String(layer.z);
+    // Leaving a window, stay above it until the move ends.
+    const origin = this.cursorMove && this.layers.get(this.cursorMove.grid);
+    this.cursorCanvas.style.zIndex = String(origin?.visible ? Math.max(origin.z, layer.z) : layer.z);
     ctx.save();
     // Only moves between windows may leave the cursor's window.
     if (!this.cursorMove || this.cursorMove.grid === layer.id) {
@@ -1154,6 +1162,11 @@ export class NvimGrid {
     }
     layer.drawCursor(ctx, x, y);
     ctx.restore();
+  }
+
+  /** @internal Redraw the cursor for a scroll frame, unless its own move frame will. */
+  followScroll() {
+    if (!this.cursorFrame) this.drawCursor();
   }
 
   /** Show the cursor and restart its 'guicursor' blink cycle. */
@@ -1198,6 +1211,12 @@ export class NvimGrid {
     return `${style}${weight} ${this.font.size * this.dpr}px ${this.font.family}`;
   }
 
+  /** @internal Whether a highlight's face advances one cell per glyph; others are drawn cell by cell. */
+  monospace(id: number): boolean {
+    const attr = this.hl.get(id);
+    return this.monospaceFaces[(attr?.bold ? 1 : 0) + (attr?.italic ? 2 : 0)];
+  }
+
   /** @internal */
   attr(id: number): HlAttr | undefined {
     return this.hl.get(id);
@@ -1211,11 +1230,6 @@ export class NvimGrid {
   /** @internal */
   get focused(): boolean {
     return this.hasFocus;
-  }
-
-  /** @internal In the off phase of a blink. */
-  get cursorBlinkedOff(): boolean {
-    return this.blinkOff;
   }
 
   /** @internal Whether the cursor is hidden altogether. */

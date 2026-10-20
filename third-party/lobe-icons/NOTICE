@@ -1,0 +1,7 @@
+Lobe Icons — https://github.com/lobehub/lobe-icons
+Revision: 8a1b2821bb768c484fe8da20c5e1838b6bf551a9 (@lobehub/icons-static-svg 1.95.1)
+Licensed under MIT; see LICENSE in this directory.
+
+The agent logos in frontend/src/components/AgentIcon.tsx (claudecode, codex,
+geminicli, antigravity, opencode) are copied from Lobe Icons. The logos are
+trademarks of their owners and identify the agent running in a pane.

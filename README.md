@@ -85,7 +85,7 @@ On Windows:
 - `btmux install` (background service) and `btmux upgrade` (in-place upgrade)
   aren't supported. To update, quit btmux, replace `btmux.exe`, and start it again.
 
-Homebrew, background services, and Home Manager are covered in [Installation](docs/installation.md).
+Homebrew, Windows, background services, and Home Manager are covered in [Installation](docs/installation.md).
 
 ## Quick start
 
@@ -94,7 +94,7 @@ btmux
 ```
 
 This opens `http://127.0.0.1:8004`. Sign in with username `btmux` and the
-access token printed on first launch:
+access token from the file whose path btmux prints at startup:
 
 ```sh
 cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
@@ -124,9 +124,9 @@ See [Editor](docs/configuration.md#editor) for details.
 
 ## Learn more
 
-- [Installation](docs/installation.md): services, tokens, remote access, and shell completions
+- [Installation](docs/installation.md): Windows, services, tokens, remote access, and shell completions
 - [In-place upgrades](docs/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
-- [Configuration](docs/configuration.md): `~/.config/btmux/config.toml`, themes, editors, and profiles
+- [Configuration](docs/configuration.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, editors, and profiles
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization
 - [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux
 - [Neovim GUI](docs/neovim.md): the Neovim GUI, its plugin, and config tips
@@ -139,6 +139,9 @@ On macOS, install Xcode Command Line Tools (`xcode-select --install`): socket
 enumeration builds generate bindings using the macOS SDK and libclang. If
 libclang is installed separately, set `LIBCLANG_PATH` to its library directory.
 The pinned socket enumeration dependency does not require libclang on Linux.
+On Windows, install the MSVC build tools Rust needs. `just setup` and the
+desktop recipes run in PowerShell; the others need `sh`, so run them from Git
+Bash or put `C:\Program Files\Git\bin` on `PATH`.
 
 ```sh
 just setup  # install dependencies

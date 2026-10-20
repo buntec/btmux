@@ -544,9 +544,10 @@ export function NvimSurface({
   // Re-measure once the configured font is loaded or changes.
   useEffect(() => {
     let cancelled = false;
+    const style = guifont.italic ? 'italic ' : '';
     void Promise.all([
-      document.fonts.load(`${weight} ${size}px ${family}`),
-      document.fonts.load(`bold ${size}px ${family}`),
+      document.fonts.load(`${style}${weight} ${size}px ${family}`),
+      document.fonts.load(`${style}bold ${size}px ${family}`),
     ])
       .catch(() => {})
       .then(() => {

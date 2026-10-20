@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { encode, MsgpackStream, type MsgpackExt } from './src/lib/msgpack';
+import { waitForAsync } from './browser-test-utils';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
 const token = process.env.BTMUX_AUTH_TOKEN;
@@ -117,8 +118,7 @@ try {
     ]);
     // The cursor has its own canvas.
     const cursorCtx = ((grid as any).cursorCanvas as HTMLCanvasElement).getContext('2d')!;
-    const cursorAlpha = (x: number, y: number) =>
-      cursorCtx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data[3];
+    const cursorAlpha = (x: number, y: number) => cursorCtx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data[3];
     check(cursorAlpha(w / 2, h / 2) === 255 && alpha(w / 2, h / 2) === 0, 'cursor stays visible');
     grid.redraw([
       ['grid_cursor_goto', [1, 1, 0]],
@@ -184,6 +184,56 @@ try {
   });
   console.log('PASS canvas transparency, explicit backgrounds, cursor clearing, scrolling, and grid 1 under windows');
 
+  await page.evaluate(async () => {
+    const { NvimGrid } = await import('/src/lib/nvimGrid.ts' as string);
+    const grid = new NvimGrid(document.createElement('canvas'), {
+      family: 'monospace',
+      size: 16,
+      foreground: '#ffffff',
+      background: '#000000',
+    });
+    const w = grid.cellWidth,
+      h = grid.cellHeight;
+    const clock = Object.getOwnPropertyDescriptor(performance, 'now');
+    let now = performance.now();
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => now });
+    try {
+      grid.resizeCanvas((10 * w) / devicePixelRatio, (20 * h) / devicePixelRatio);
+      grid.redraw([
+        ['grid_resize', [1, 10, 20], [2, 10, 10], [3, 10, 10]],
+        ['win_pos', [2, null, 0, 0, 10, 10], [3, null, 10, 0, 10, 10]],
+        ['grid_cursor_goto', [2, 8, 1]],
+        ['flush', []],
+      ]);
+      grid.smoothScroll = 120;
+      grid.cursorAnimation = 120;
+      const ctx = ((grid as any).cursorCanvas as HTMLCanvasElement).getContext('2d')!;
+      const alpha = (row: number) => ctx.getImageData(Math.floor(1.5 * w), Math.floor((row + 0.5) * h), 1, 1).data[3];
+      grid.redraw([
+        ['grid_scroll', [2, 0, 10, 0, 10, 5, 0]],
+        ['grid_cursor_goto', [2, 9, 1]],
+        ['flush', []],
+      ]);
+      if (alpha(13) !== 0) throw new Error('an animated scroll paints the cursor into the lower split');
+      now += 120;
+      grid.redraw([['flush', []]]);
+      if (alpha(9) !== 255) throw new Error('the cursor returns to its cell after scrolling');
+      grid.redraw([
+        ['grid_cursor_goto', [3, 0, 1]],
+        ['flush', []],
+      ]);
+      if (alpha(9) !== 255) throw new Error('the cursor can travel between windows');
+      now += 120;
+      grid.redraw([['flush', []]]);
+      if (alpha(10) !== 255) throw new Error('the cursor reaches the lower window');
+    } finally {
+      grid.dispose();
+      if (clock) Object.defineProperty(performance, 'now', clock);
+      else delete (performance as any).now;
+    }
+  });
+  console.log('PASS animated cursors stay within their split while scrolling and travel between windows');
+
   socket = new WebSocket(`${url.replace(/^http/, 'ws')}/ws/nvim`, { headers });
   socket.binaryType = 'arraybuffer';
   await new Promise<void>((resolve, reject) => {
@@ -227,6 +277,14 @@ try {
   // Keep the test's text out of the user's buffers.
   scratch = bufferId(await rpc('nvim_create_buf', [false, true]));
   await rpc('nvim_set_current_buf', [scratch]);
+  await page.evaluate(async () => {
+    const { NvimGrid } = await import('/src/lib/nvimGrid.ts' as string);
+    const setFont = NvimGrid.prototype.setFont;
+    NvimGrid.prototype.setFont = function (font) {
+      setFont.call(this, font);
+      (window as any).nvimGrid = this;
+    };
+  });
   const nvimPaneId: string = await page.evaluate(async (id) => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const pane = useStore.getState().getActivePaneId(id);
@@ -415,7 +473,9 @@ try {
     }, size);
     await page.waitForFunction((pane) => {
       const term = (window as any).nvimStore.getState().terminals.get(pane);
-      return term && term !== (window as any).nvimOldTerminal && term.element.parentElement?.style.visibility === 'visible';
+      return (
+        term && term !== (window as any).nvimOldTerminal && term.element.parentElement?.style.visibility === 'visible'
+      );
     }, pane);
     assert.equal(
       await input.evaluate((el) => document.activeElement === el),
@@ -424,6 +484,60 @@ try {
     );
   }
   console.log('PASS terminal replay and font changes preserve Neovim focus');
+
+  const guifont = await rpc('nvim_get_option_value', ['guifont', {}]);
+  for (const { family, asset, bold } of [
+    { family: 'JetBrains Mono', asset: 'jetbrains-mono', bold: false },
+    { family: 'Source Code Pro', asset: 'source-code-pro', bold: true },
+  ]) {
+    const weight = bold
+      ? 700
+      : await page.evaluate(() => (window as any).nvimStore.getState().config.terminal.fontWeight ?? 300);
+    const pattern = `**/${asset}-latin-${weight}-italic.woff2`;
+    let release!: () => void;
+    let requested!: () => void;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    const loading = new Promise<void>((resolve) => (requested = resolve));
+    await page.route(pattern, async (route) => {
+      requested();
+      await blocked;
+      await route.continue();
+    });
+    try {
+      await rpc('nvim_set_option_value', ['guifont', `${family.replaceAll(' ', '_')}:h14:i${bold ? ':b' : ''}`, {}]);
+      await Promise.race([
+        loading,
+        page.waitForTimeout(5000).then(() => {
+          throw new Error('italic font was not requested');
+        }),
+      ]);
+      release();
+      await page.evaluate(
+        ({ family, weight }) => document.fonts.load(`italic ${weight} 18.67px "${family}"`).then(() => {}),
+        { family, weight },
+      );
+      await waitForAsync(
+        page,
+        async ({ family, bold, weight }) => {
+          const grid = (window as any).nvimGrid;
+          if (!grid?.font.italic || grid.font.bold !== bold || !grid.font.family.includes(family)) return false;
+          const ctx = document.createElement('canvas').getContext('2d')!;
+          ctx.font = `italic ${weight} ${18.67 * devicePixelRatio}px "${family}"`;
+          const metrics = ctx.measureText('M');
+          return (
+            grid.cellHeight === Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent) &&
+            Math.abs(grid.cellWidth - metrics.width) < 0.01
+          );
+        },
+        { family, bold, weight },
+      );
+    } finally {
+      release();
+      await page.unroute(pattern);
+      await rpc('nvim_set_option_value', ['guifont', guifont, {}]);
+    }
+  }
+  console.log('PASS delayed italic and bold italic fonts are loaded before measuring the editor');
 
   const update = (update: unknown) =>
     page.evaluate(async (update) => {
@@ -768,11 +882,19 @@ try {
         .getContext('2d')!
         .getImageData(0, 0, cursor.width, cursor.height)
         .data.some((v, i) => i % 4 === 3 && v > 0);
-      return { own: !cursor.dataset.grid, z: Number(cursor.style.zIndex), top: Math.max(...shown.map((c) => Number(c.style.zIndex))), pixels };
+      return {
+        own: !cursor.dataset.grid,
+        z: Number(cursor.style.zIndex),
+        top: Math.max(...shown.map((c) => Number(c.style.zIndex))),
+        pixels,
+      };
     });
   await page.waitForTimeout(200);
   let stacking = await cursorStacking();
-  assert(stacking.own && stacking.pixels && stacking.z === stacking.top, `cursor over its float: ${JSON.stringify(stacking)}`);
+  assert(
+    stacking.own && stacking.pixels && stacking.z === stacking.top,
+    `cursor over its float: ${JSON.stringify(stacking)}`,
+  );
   await page.locator('.astryx-card.border-accent').waitFor();
   await rpc('nvim_exec_lua', ['vim.cmd.wincmd("p"); vim.api.nvim_win_close(_G.btmux_test_float, true)', []]);
   await page.waitForTimeout(200);

@@ -444,3 +444,52 @@ test("the cursor blinks per 'guicursor', restarts when it moves, and is an outli
     spy.mockRestore();
   }
 });
+
+const gridCalls = (grid: Grid, name: string) => {
+  const gridCanvas = (grid as unknown as { root: { gridCanvas: FakeCanvas } }).root.gridCanvas;
+  const calls = gridCanvas.calls.filter(([n]) => n === name).map(([, args]) => args);
+  gridCanvas.calls = gridCanvas.calls.filter(([n]) => n !== name);
+  return calls;
+};
+
+test('ASCII runs in one highlight share a fillText; other cells are drawn alone', () => {
+  const { grid } = makeGrid(8, 1);
+  grid.redraw([
+    ['grid_line', [1, 0, 0, [['a'], ['='], ['>'], ['b'], ['c', 2], ['é', 0], ['d'], [' ']], false]],
+    ['flush', []],
+  ]);
+  expect(gridCalls(grid, 'fillText').map(([text, x]) => [text, x])).toEqual([
+    ['a=>b', 0],
+    ['c', 40],
+    ['é', 50],
+    ['d ', 60],
+  ]);
+  // Proportional fonts are drawn cell by cell.
+  const measure = (grid as unknown as { measureCtx: Record<string, unknown> }).measureCtx;
+  measure.measureText = (c: string) => ({ width: c === 'i' ? 5 : 10, fontBoundingBoxAscent: 16, fontBoundingBoxDescent: 4 });
+  grid.setFont(font);
+  expect(gridCalls(grid, 'fillText').map(([text]) => text)).toEqual(['a', '=', '>', 'b', 'c', 'é', 'd']);
+});
+
+test('box drawing and block elements fill their cells, also with linespace', () => {
+  const { grid } = makeGrid(4, 1);
+  grid.setFont({ ...font, linespace: 6 });
+  gridCalls(grid, 'fillRect');
+  grid.redraw([['grid_line', [1, 0, 0, [['│'], ['─'], ['▀'], ['x']], false]], ['flush', []]]);
+  // 10×26 cells (backgrounds and the margin aside): light strokes are 2px wide, centered.
+  expect(gridCalls(grid, 'fillRect').filter(([x, , w]) => x < 40 && w !== 40)).toEqual([
+    [4, 0, 2, 14],
+    [4, 12, 2, 14],
+    [10, 12, 6, 2],
+    [14, 12, 6, 2],
+    [20, 0, 10, 13],
+  ]);
+  expect(gridCalls(grid, 'fillText').map(([text]) => text)).toEqual(['x']);
+});
+
+test("text uses the terminal font weight; bold is 700", () => {
+  const { grid } = makeGrid();
+  grid.setFont({ ...font, weight: 300 });
+  expect(grid.fontString(false, false)).toBe('300 16px monospace');
+  expect(grid.fontString(true, true)).toBe('italic bold 16px monospace');
+});

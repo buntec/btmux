@@ -8,7 +8,12 @@ import { Text } from '@astryxdesign/core/Text';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
-import { getSmoothScrollDuration, getTerminalFontFamily, getTerminalFontSize } from '../state/configDefaults';
+import {
+  getSmoothScrollDuration,
+  getTerminalFontFamily,
+  getTerminalFontSize,
+  getTerminalFontWeight,
+} from '../state/configDefaults';
 import { buildFontFamily, terminalTransparency } from './TerminalPane';
 import { encode, MsgpackStream, type MsgpackExt } from '../lib/msgpack';
 import { NvimGrid, type FloatFrame } from '../lib/nvimGrid';
@@ -120,12 +125,14 @@ export function NvimSurface({
     guifont.families.length ? guifont.families.map(cssFamily).join(', ') : getTerminalFontFamily(config),
   );
   const size = guifont.size ?? getTerminalFontSize(config);
+  const weight = getTerminalFontWeight(config);
   const theme = config?.theme ?? STARTUP_THEME;
   const transparent = terminalTransparency(config);
   const cellOpacity = config?.terminal.cellBackgroundOpacity ?? 1;
   const font = {
     family,
     size,
+    weight,
     linespace,
     foreground: theme.foreground,
     background: theme.background,
@@ -174,7 +181,7 @@ export function NvimSurface({
       input.style.left = `${rect.left}px`;
       input.style.top = `${rect.top}px`;
       input.style.height = `${rect.height}px`;
-      input.style.font = `${fontRef.current.size}px ${fontRef.current.family}`;
+      input.style.font = `${fontRef.current.weight} ${fontRef.current.size}px ${fontRef.current.family}`;
     };
     // Publish widget changes once per flush, in step with the grid.
     grid.onFlush = () => {
@@ -525,8 +532,10 @@ export function NvimSurface({
   // Re-measure once the configured font is loaded or changes.
   useEffect(() => {
     let cancelled = false;
-    void document.fonts
-      .load(`${size}px ${family}`)
+    void Promise.all([
+      document.fonts.load(`${weight} ${size}px ${family}`),
+      document.fonts.load(`bold ${size}px ${family}`),
+    ])
       .catch(() => {})
       .then(() => {
         if (cancelled) return;
@@ -536,7 +545,7 @@ export function NvimSurface({
     return () => {
       cancelled = true;
     };
-  }, [family, size, linespace, theme.foreground, theme.background, transparent, cellOpacity, generation]);
+  }, [family, size, weight, linespace, theme.foreground, theme.background, transparent, cellOpacity, generation]);
 
   return (
     <div

@@ -267,7 +267,11 @@ border reported by `win_viewport_margins` is cropped, its title is fetched for
 the frame, and cells with the NormalFloat background stay transparent.
 'winblend' arrives as `blend` on each cell's highlight: it sets the frame's
 background alpha (blurred by `--btm-backdrop-blur`) and other cell backgrounds'
-alpha, never the text's; 'pumblend' does the same for the popupmenu cards. Each
+alpha, never the text's; 'pumblend' does the same for the popupmenu cards. As
+in wterm, rows draw printable ASCII runs of one highlight with one `fillText`
+(so fonts join ligatures; cell by cell for proportional fonts), other cells
+alone, and light/heavy box drawing, rounded corners, and block elements as
+shapes to the cell edges; text uses `[terminal] font-weight`, bold 700. Each
 layer draws dirty rows to an offscreen canvas, and each flush composes it onto
 the visible canvas with in-flight
 `grid_scroll` animations (a snapshot of the region plus an eased pixel offset;

@@ -112,6 +112,10 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   mode 2031 when the theme changes. Replies are queued once per read and dropped
   if the input queue is full.
 - **Termios** is set manually on the PTY master (`configure_termios`: `IUTF8`, `ECHOK`, `IMAXBEL`) because `portable-pty` opens the PTY with NULL termios; without `IUTF8`, fish misbehaves.
+- **Working directory**: shells report it with OSC 7. On Unix, until one does,
+  the reader takes it from the OS (`/proc/<pid>/cwd`, `proc_pidinfo`) after each
+  output chunk while the foreground group's leader is a shell (the pane's or a
+  nested one, by name), so `make -C` doesn't move it.
 - **Windows shells** (`shell.rs`): `shell` is a command line (`wsl.exe -d Ubuntu`)
   whose program picks a `Dialect` (PowerShell, cmd, POSIX for Git Bash, WSL) for
   typed commands (`cd`, `open-editor`, capture-pane) and paths. `pty/windows.rs`

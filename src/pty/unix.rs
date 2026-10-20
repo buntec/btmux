@@ -638,6 +638,61 @@ impl PtyHandle {
     }
 }
 
+impl OutputPipeline {
+    /// Follow the cwd of a foreground shell, the pane's or one nested in it,
+    /// until the shell reports it with OSC 7. Other programs (`make -C`)
+    /// don't move it.
+    pub(super) fn poll_cwd(&mut self) {
+        if self.osc_parser.reported_cwd {
+            return;
+        }
+        let Some(pgrp) = self.probe.lock().unwrap().as_ref().and_then(foreground) else {
+            return;
+        };
+        let shell = match self.leader {
+            Some((leader, shell)) if leader == pgrp => shell,
+            _ => {
+                let shell = Some(pgrp) == self.shell_pid
+                    || crate::process::name(pgrp).is_some_and(|name| is_shell(&name));
+                self.leader = Some((pgrp, shell));
+                shell
+            }
+        };
+        let Some(cwd) = shell.then(|| crate::process::cwd(pgrp)).flatten() else {
+            return;
+        };
+        let cwd = cwd.to_string_lossy();
+        let mut current = self.cwd.lock().unwrap();
+        if current.as_deref() != Some(&*cwd) {
+            *current = Some(cwd.into_owned());
+            drop(current);
+            let _ = self.osc_parser.meta_tx.send(());
+        }
+    }
+}
+
+/// Whether `name` is a shell's executable; login shells start with `-`, Nix
+/// wrappers with `.` and end in `-wrapped`.
+fn is_shell(name: &str) -> bool {
+    let name = name.trim_start_matches(['-', '.']);
+    let name = name.strip_suffix("-wrapped").unwrap_or(name);
+    matches!(
+        name,
+        "bash"
+            | "zsh"
+            | "fish"
+            | "sh"
+            | "dash"
+            | "ksh"
+            | "mksh"
+            | "yash"
+            | "tcsh"
+            | "csh"
+            | "nu"
+            | "elvish"
+    )
+}
+
 impl Drop for PtyHandle {
     fn drop(&mut self) {
         // Invalidate the borrowed descriptor before `master` closes it and the

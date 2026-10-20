@@ -163,7 +163,8 @@ export function NvimSurface({
     const grid = new NvimGrid(canvas, fontRef.current, layersRef.current);
     grid.smoothScroll = smoothScrollRef.current;
     grid.cursorAnimation = cursorAnimationRef.current;
-    grid.setFocused(document.activeElement === input && document.hasFocus());
+    const hasFocus = () => document.activeElement === input && document.hasFocus();
+    grid.setFocused(hasFocus());
     gridRef.current = grid;
     const model = new WidgetModel();
     setWidgets(model.snapshot());
@@ -279,8 +280,15 @@ export function NvimSurface({
       // without multigrid frees those grids, and the real attach gets them in full.
       request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: false }]);
       request('nvim_ui_detach', [], () => (resyncing = false));
-      request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: true }]);
-      if (document.activeElement === input && document.hasFocus()) notify('nvim_ui_set_focus', [true]);
+      // Report focus; unfocused only as the sole UI, since other tabs report their own.
+      request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: true }], () => {
+        if (hasFocus()) notify('nvim_ui_set_focus', [true]);
+        else {
+          request('nvim_list_uis', [], (uis) => {
+            if ((uis as unknown[]).length === 1 && !hasFocus()) notify('nvim_ui_set_focus', [false]);
+          });
+        }
+      });
       // Kind icons from the btmux plugin (empty without mini.icons or the plugin).
       request(
         'nvim_exec_lua',

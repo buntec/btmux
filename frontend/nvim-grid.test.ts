@@ -475,6 +475,24 @@ test('ASCII runs in one highlight share a fillText; other cells are drawn alone'
   expect(gridCalls(grid, 'fillText').map(([text]) => text)).toEqual(['a', '=', '>', 'b', 'c', 'é', 'd']);
 });
 
+test('runs of a bold face that advances differently are drawn cell by cell', () => {
+  const { grid } = makeGrid(5, 1);
+  const measure = (grid as unknown as { measureCtx: Record<string, unknown> }).measureCtx;
+  measure.measureText = () => ({
+    width: String(measure.font).includes('bold') ? 11 : 10,
+    fontBoundingBoxAscent: 16,
+    fontBoundingBoxDescent: 4,
+  });
+  grid.setFont(font);
+  gridCalls(grid, 'fillText');
+  grid.redraw([
+    ['hl_attr_define', [1, { bold: true }, {}, []]],
+    ['grid_line', [1, 0, 0, [['a', 0], ['b'], ['c', 1, 2], ['d', 0]], false]],
+    ['flush', []],
+  ]);
+  expect(gridCalls(grid, 'fillText').map(([text]) => text)).toEqual(['ab', 'c', 'c', 'd']);
+});
+
 test('box drawing and block elements fill their cells, also with linespace', () => {
   const { grid } = makeGrid(4, 1);
   grid.setFont({ ...font, linespace: 6 });
@@ -521,6 +539,36 @@ test('a cursor staying on its line follows a scroll without moving on its own', 
   now.mockReturnValue(1200);
   grid.redraw([['flush', []]]);
   expect(y()).toEqual([40]);
+});
+
+test('a cursor leaving a float stays above it until its move ends', () => {
+  const now = spyOn(performance, 'now').mockReturnValue(1000);
+  const frames: FrameRequestCallback[] = [];
+  const raf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (cb) => frames.push(cb);
+  try {
+    const { grid } = makeGrid(20, 10);
+    grid.cursorAnimation = 100;
+    const canvas = cursorCanvas(grid);
+    grid.redraw([
+      ['mode_info_set', [true, [{ cursor_shape: 'block' }]]],
+      ['grid_resize', [2, 20, 10]],
+      ['win_pos', [2, win, 0, 0, 20, 10]],
+      ['grid_resize', [3, 4, 2]],
+      ['win_float_pos', [3, win, 'NW', 1, 5, 5, true, 50, 0, 5, 5]],
+      ['grid_cursor_goto', [3, 0, 0]],
+      ['flush', []],
+    ]);
+    const floatZ = canvas.style.zIndex;
+    expect(Number(floatZ)).toBeGreaterThan(1);
+    grid.redraw([['grid_cursor_goto', [2, 0, 0]], ['flush', []]]);
+    expect(canvas.style.zIndex).toBe(floatZ);
+    now.mockReturnValue(1200);
+    while (frames.length) frames.shift()!(1200);
+    expect(canvas.style.zIndex).toBe('1');
+  } finally {
+    globalThis.requestAnimationFrame = raf;
+  }
 });
 
 test('cursor moves animate, short moves along a row jump, and the cursor travels between windows', () => {

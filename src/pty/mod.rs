@@ -143,7 +143,7 @@ pub struct PtyHandle {
     probe: Arc<Mutex<Option<Probe>>>,
     /// Last OSC 0/2 title emitted by the shell.
     pub title: Arc<Mutex<Option<String>>>,
-    /// Last OSC 7 cwd URI emitted by the shell.
+    /// The shell's working directory: its last OSC 7, or on Unix, from the OS.
     pub cwd: Arc<Mutex<Option<String>>>,
     /// Server port, injected as BTMUX_API_URL into the shell environment.
     port: u16,
@@ -491,6 +491,11 @@ struct OutputPipeline {
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
     pane_id: Uuid,
+    #[cfg(unix)]
+    shell_pid: Option<Pid>,
+    /// The last foreground group polled for its cwd, and whether it's a shell.
+    #[cfg(unix)]
+    leader: Option<(Pid, bool)>,
 }
 
 impl PtyHandle {
@@ -510,6 +515,10 @@ impl PtyHandle {
             scrollback: self.scrollback.clone(),
             output_tx: self.output_tx.clone(),
             pane_id: self.pane_id,
+            #[cfg(unix)]
+            shell_pid: self.shell_pid,
+            #[cfg(unix)]
+            leader: None,
         }
     }
 }
@@ -547,6 +556,8 @@ impl OutputPipeline {
 
         self.osc_parser
             .feed(&result.scrollback, &self.title, &self.cwd);
+        #[cfg(unix)]
+        self.poll_cwd();
         let mut sb = self.scrollback.lock().unwrap();
         sb.push(Output::Data(Bytes::from(result.scrollback)));
         let _ = self
@@ -597,6 +608,8 @@ fn percent_decode(s: &str) -> String {
 struct OscParser {
     buf: Vec<u8>,
     in_osc: bool,
+    /// An OSC 7 arrived; it then owns the cwd.
+    reported_cwd: bool,
     meta_tx: mpsc::UnboundedSender<()>,
     prompt: Arc<AtomicU32>,
 }
@@ -606,6 +619,7 @@ impl OscParser {
         Self {
             buf: Vec::new(),
             in_osc: false,
+            reported_cwd: false,
             meta_tx,
             prompt,
         }
@@ -646,7 +660,7 @@ impl OscParser {
         }
     }
 
-    fn dispatch(&self, title: &Arc<Mutex<Option<String>>>, cwd: &Arc<Mutex<Option<String>>>) {
+    fn dispatch(&mut self, title: &Arc<Mutex<Option<String>>>, cwd: &Arc<Mutex<Option<String>>>) {
         // buf contains everything after "ESC ]" and before the terminator.
         // Format: "<code>;<payload>"
         let Ok(s) = std::str::from_utf8(&self.buf) else {
@@ -692,6 +706,7 @@ impl OscParser {
                 };
                 if !path.is_empty() {
                     *cwd.lock().unwrap() = Some(path);
+                    self.reported_cwd = true;
                     true
                 } else {
                     false
@@ -775,6 +790,37 @@ mod lifecycle_tests {
         pane.send_shell_command(b"printf 'SHELL_READY'\r".to_vec())
             .await
             .unwrap();
+    }
+    async fn wait_until(pane: &PtyHandle, condition: impl Fn(&PtyHandle) -> bool) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !condition(pane) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    fn cwd(pane: &PtyHandle) -> Option<String> {
+        pane.cwd.lock().unwrap().clone()
+    }
+    #[tokio::test]
+    async fn cwd_follows_foreground_shells_without_osc7() {
+        let mut pane = pane("/bin/sh");
+        pane.ensure_spawned(80, 24).unwrap();
+        pane.input_tx.send(b"cd /\n".to_vec()).unwrap();
+        wait_until(&pane, |pane| cwd(pane).as_deref() == Some("/")).await;
+        pane.input_tx.send(b"sh\ncd /usr\n".to_vec()).unwrap();
+        wait_until(&pane, |pane| cwd(pane).as_deref() == Some("/usr")).await;
+        let nested = pane.foreground_pgrp();
+
+        // Not a shell: its directory isn't the pane's.
+        pane.input_tx
+            .send(b"sh -c 'cd /bin && exec cat'\n".to_vec())
+            .unwrap();
+        wait_until(&pane, |pane| pane.foreground_pgrp() != nested).await;
+        pane.input_tx.send(b"x\n".to_vec()).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(cwd(&pane).as_deref(), Some("/usr"));
     }
     #[tokio::test]
     async fn reply_bursts_keep_the_pane_alive() {

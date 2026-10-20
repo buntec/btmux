@@ -1,4 +1,4 @@
-//! Process groups across platforms.
+//! Process groups, names, and working directories across platforms.
 //!
 //! Windows has no process groups: a pane's "group" is the shell's child that
 //! runs a process (or the shell itself), and its foreground group is the
@@ -13,6 +13,64 @@ pub fn group(pid: Pid) -> Option<Pid> {
         group if group > 0 => Some(group),
         _ => None,
     }
+}
+
+/// Name of `pid`'s executable.
+#[cfg(target_os = "linux")]
+pub fn name(pid: Pid) -> Option<String> {
+    let name = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    Some(name.trim_end().to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn name(pid: Pid) -> Option<String> {
+    let mut name = [0u8; 64];
+    let len = unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+    (len > 0).then(|| String::from_utf8_lossy(&name[..len as usize]).into_owned())
+}
+
+/// Working directory of `pid`.
+#[cfg(target_os = "linux")]
+pub fn cwd(pid: Pid) -> Option<std::path::PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+}
+
+#[cfg(target_os = "macos")]
+pub fn cwd(pid: Pid) -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    if read != size {
+        return None;
+    }
+    let path: Vec<u8> = info
+        .pvi_cdir
+        .vip_path
+        .as_flattened()
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    (!path.is_empty()).then(|| std::ffi::OsString::from_vec(path).into())
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+pub fn name(_pid: Pid) -> Option<String> {
+    None
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+pub fn cwd(_pid: Pid) -> Option<std::path::PathBuf> {
+    None
 }
 
 /// Process group of `pid`: its ancestor (or itself) whose parent is a shell

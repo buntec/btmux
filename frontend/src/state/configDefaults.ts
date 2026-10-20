@@ -37,6 +37,7 @@ export const CONFIG_DEFAULTS = {
     allowTransparency: null,
     disableStdin: null,
     smoothScrollDuration: 120,
+    cursorAnimationDuration: 120,
     cellBackgroundOpacity: null,
   },
 } as const;
@@ -67,6 +68,13 @@ export function getAnimations(config: ConfigLike): boolean {
 export function getSmoothScrollDuration(config: ConfigLike): number {
   return getAnimations(config)
     ? (config?.terminal.smoothScrollDuration ?? CONFIG_DEFAULTS.terminal.smoothScrollDuration)
+    : 0;
+}
+
+/** Neovim cursor movement length in ms; 0 when animations are off. */
+export function getCursorAnimationDuration(config: ConfigLike): number {
+  return getAnimations(config)
+    ? (config?.terminal.cursorAnimationDuration ?? CONFIG_DEFAULTS.terminal.cursorAnimationDuration)
     : 0;
 }
 

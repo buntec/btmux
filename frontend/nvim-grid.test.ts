@@ -169,6 +169,8 @@ test('default colors query Normal and fall back to the theme', () => {
 });
 
 /** drawImage calls on the visible canvas since the last reset. */
+const cursorCanvas = (grid: Grid) => (grid as unknown as { cursorCanvas: FakeCanvas }).cursorCanvas;
+
 const draws = (canvas: FakeCanvas) => canvas.calls.filter(([name]) => name === 'drawImage').map(([, args]) => args);
 
 test('scrolls animate from the old position to the new one', () => {
@@ -219,7 +221,7 @@ test('scrolls in one batch accumulate; a scroll mid-animation continues from the
   expect(continued).toBeLessThan(60);
 });
 
-test('scrolls taller than the region, or with animation off, are instant', () => {
+test('scrolls of the whole region slide in their last row; with animation off, scrolls are instant', () => {
   spyOn(performance, 'now').mockReturnValue(1000);
   const { grid, canvas } = makeGrid(4, 3);
   grid.smoothScroll = 100;
@@ -227,7 +229,10 @@ test('scrolls taller than the region, or with animation off, are instant', () =>
   grid.redraw([['flush', []]]);
   canvas.calls = [];
   grid.redraw([['grid_scroll', [1, 0, 3, 0, 4, 3, 0]], ['flush', []]]);
-  expect(draws(canvas).length).toBe(1);
+  expect(draws(canvas).at(-1)![6]).toBe(20);
+  canvas.calls = [];
+  grid.redraw([['grid_scroll', [1, 0, 3, 0, 4, -7, 0]], ['flush', []]]);
+  expect(draws(canvas).at(-1)![6]).toBe(-20);
 
   grid.smoothScroll = 0;
   canvas.calls = [];
@@ -370,12 +375,10 @@ test('flush presents only the layers that changed', () => {
   presented();
   grid.redraw([['grid_line', [2, 1, 0, [['x', 0, 3]], false]], ['flush', []]]);
   expect(presented()).toEqual([false, true, false]);
-  // The cursor leaves grid 2 and appears in grid 3.
+  // The cursor has its own canvas, so moving it repaints no grid.
   grid.redraw([['grid_cursor_goto', [3, 0, 0]], ['flush', []]]);
-  expect(presented()).toEqual([false, true, true]);
+  expect(presented()).toEqual([false, false, false]);
   grid.redraw([['mode_change', ['insert', 1]], ['flush', []]]);
-  expect(presented()).toEqual([false, false, true]);
-  grid.redraw([['flush', []]]);
   expect(presented()).toEqual([false, false, false]);
 });
 
@@ -408,7 +411,8 @@ test("the cursor blinks per 'guicursor', restarts when it moves, and is an outli
     return timers.length;
   }) as unknown as typeof setTimeout);
   try {
-    const { grid, canvas } = makeGrid(4, 2);
+    const { grid } = makeGrid(4, 2);
+    const canvas = cursorCanvas(grid);
     const cursor = () => {
       const rects = canvas.calls.filter(([name]) => name === 'fillRect').map(([, a]) => a);
       canvas.calls = [];
@@ -492,4 +496,51 @@ test("text uses the terminal font weight; bold is 700", () => {
   grid.setFont({ ...font, weight: 300 });
   expect(grid.fontString(false, false)).toBe('300 16px monospace');
   expect(grid.fontString(true, true)).toBe('italic bold 16px monospace');
+});
+
+test('cursor moves animate, short moves along a row jump, and the cursor travels between windows', () => {
+  const now = spyOn(performance, 'now').mockReturnValue(1000);
+  const frames: FrameRequestCallback[] = [];
+  const raf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (cb) => frames.push(cb);
+  try {
+    const { grid } = makeGrid(20, 5);
+    grid.cursorAnimation = 100;
+    const canvas = cursorCanvas(grid);
+    const at = () => {
+      const rect = canvas.calls.filter(([name]) => name === 'fillRect').map(([, a]) => a.slice(0, 2));
+      canvas.calls = [];
+      return rect;
+    };
+    const frame = (t: number) => {
+      now.mockReturnValue(t);
+      frames.shift()!(t);
+    };
+    grid.redraw([['mode_info_set', [true, [{ cursor_shape: 'block' }]]], ['flush', []]]);
+    expect(at()).toEqual([[0, 0]]);
+    grid.redraw([['grid_cursor_goto', [1, 2, 5]], ['flush', []]]);
+    expect(at()).toEqual([[0, 0]]);
+    frame(1050);
+    // Ease-out cubic: 1/8 of the way left at half time.
+    expect(at()).toEqual([[44, 35]]);
+    frame(1100);
+    expect(at()).toEqual([[50, 40]]);
+    expect(frames).toEqual([]);
+    grid.redraw([['grid_cursor_goto', [1, 2, 7]], ['flush', []]]);
+    expect(at()).toEqual([[70, 40]]);
+    expect(frames).toEqual([]);
+
+    grid.redraw([
+      ['grid_resize', [2, 10, 5]],
+      ['win_pos', [2, win, 0, 10, 10, 5]],
+      ['grid_cursor_goto', [2, 0, 0]],
+      ['flush', []],
+    ]);
+    expect(canvas.style.zIndex).toBe('1');
+    expect(at()).toEqual([[70, 40]]);
+    frame(1200);
+    expect(at()).toEqual([[100, 0]]);
+  } finally {
+    globalThis.requestAnimationFrame = raf;
+  }
 });

@@ -275,10 +275,15 @@ shapes to the cell edges; text uses `[terminal] font-weight`, bold 700. Each
 layer draws dirty rows to an offscreen canvas, and each flush composes it onto
 the visible canvas with in-flight
 `grid_scroll` animations (a snapshot of the region plus an eased pixel offset;
-`[terminal] smooth-scroll-duration`, off with `animations = false`) and then
-the cursor; layers with no dirty rows, scrolls, or cursor change are skipped. Unset `Normal` colors fall back to the btmux theme, as in a TUI,
+`[terminal] smooth-scroll-duration`, off with `animations = false`; scrolls of
+the whole region or more animate one row); layers with no dirty rows or scrolls
+are skipped. The cursor has its own canvas, last in the layer host with its
+grid's z-index, so it stays above its window and below higher floats, and
+moves between cells and windows with an eased slide (`[terminal]
+cursor-animation-duration`; a cell or two along a row jumps). Unset `Normal` colors fall back to the btmux theme, as in a TUI,
 and 'background' is set from the theme's luminance. 'guifont' (Neovide format,
-`lib/nvimFont.ts`) and 'linespace' override the btmux terminal font. Keys go
+`lib/nvimFont.ts`, with `:h`, `:b`, `:i`, and `:w`) and 'linespace' override
+the btmux terminal font. Keys go
 through `lib/nvimKeys.ts` to `nvim_input`: F-keys and Cmd (`<D-…>`) reach
 Neovim, except Cmd shortcuts the browser or desktop app keeps; the global
 keybinding hook lets them through for the `data-nvim-input` textarea, which
@@ -393,7 +398,7 @@ config error, so update `generate_config_toml` and tests when adding fields.
 
 `[terminal]` holds `cursor-blink`, `scrollback` (lines; libghostty's limit is
 bytes, so `lib/paneTerminal.ts` converts it), `font-size`, `font-family`,
-`font-weight`, `allow-transparency`, `disable-stdin`, `smooth-scroll-duration` (Neovim and file preview scrolling), and
+`font-weight`, `allow-transparency`, `disable-stdin`, `smooth-scroll-duration` (Neovim and file preview scrolling), `cursor-animation-duration` (Neovim cursor moves), and
 `cell-background-opacity` (the Neovim surface's colored cell backgrounds over a
 transparent background). Keys are **kebab-case in TOML but camelCase on the wire**
 — `TerminalOptions` uses `rename_all(serialize = "camelCase", deserialize = "kebab-case")`

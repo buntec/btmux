@@ -82,6 +82,7 @@ type Draft = {
   allowTransparency: boolean;
   disableStdin: boolean;
   smoothScrollDuration: number;
+  cursorAnimationDuration: number;
   cellBackgroundOpacity: number;
   consoleLevel: string;
   fileLevel: string;
@@ -135,6 +136,7 @@ function initialDraft(config: ClientConfig): Draft {
       config.terminal.allowTransparency ?? (config.wallpaper != null || hasShaderWallpaper(config.wallpaper_shaders)),
     disableStdin: config.terminal.disableStdin ?? false,
     smoothScrollDuration: config.terminal.smoothScrollDuration ?? 120,
+    cursorAnimationDuration: config.terminal.cursorAnimationDuration ?? 120,
     cellBackgroundOpacity: config.terminal.cellBackgroundOpacity ?? 1,
     consoleLevel: config.log['console-level'],
     fileLevel: config.log['file-level'],
@@ -202,6 +204,7 @@ const TOML_DEFAULTS = {
   fontWeight: 300,
   disableStdin: false,
   smoothScrollDuration: 120,
+  cursorAnimationDuration: 120,
   cellBackgroundOpacity: 1,
   consoleLevel: 'warn',
   fileLevel: 'info',
@@ -280,6 +283,7 @@ function toToml(draft: Draft): string {
     boolLine('allow-transparency', draft.allowTransparency, defaultAllowTransparency),
     boolLine('disable-stdin', draft.disableStdin, TOML_DEFAULTS.disableStdin),
     numLine('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 1),
+    numLine('cursor-animation-duration', draft.cursorAnimationDuration, TOML_DEFAULTS.cursorAnimationDuration, 1),
     numLine('cell-background-opacity', draft.cellBackgroundOpacity, TOML_DEFAULTS.cellBackgroundOpacity, 2),
   ].filter((line): line is string => line !== null);
 
@@ -326,6 +330,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('allowTransparency')) update.allow_transparency = draft.allowTransparency;
   if (dirty.has('disableStdin')) update.disable_stdin = draft.disableStdin;
   if (dirty.has('smoothScrollDuration')) update.smooth_scroll_duration = draft.smoothScrollDuration;
+  if (dirty.has('cursorAnimationDuration')) update.cursor_animation_duration = draft.cursorAnimationDuration;
   if (dirty.has('cellBackgroundOpacity')) update.cell_background_opacity = draft.cellBackgroundOpacity;
   if (dirty.has('animations')) update.animations = draft.animations;
   if (dirty.has('consoleLevel')) update.console_level = draft.consoleLevel;
@@ -446,6 +451,9 @@ export function ConfigPage({ config, send }: Props) {
         smoothScrollDuration: dirty.has('smoothScrollDuration')
           ? draft.smoothScrollDuration
           : config.terminal.smoothScrollDuration,
+        cursorAnimationDuration: dirty.has('cursorAnimationDuration')
+          ? draft.cursorAnimationDuration
+          : config.terminal.cursorAnimationDuration,
         cellBackgroundOpacity: draft.cellBackgroundOpacity,
       },
       wallpaper: draft.wallpaper || null,
@@ -818,6 +826,7 @@ export function ConfigPage({ config, send }: Props) {
                         {toggle('allowTransparency', 'Allow transparency')}
                         {toggle('disableStdin', 'Disable terminal input')}
                         {range('smoothScrollDuration', 'Smooth scroll duration (ms)', 0, 500, 10)}
+                        {range('cursorAnimationDuration', 'Cursor animation duration (ms)', 0, 500, 10)}
                         {range('cellBackgroundOpacity', 'Cell background opacity', 0, 1, 0.05)}
                       </FormLayout>
                     </VStack>

@@ -9,6 +9,7 @@ import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import {
+  getCursorAnimationDuration,
   getSmoothScrollDuration,
   getTerminalFontFamily,
   getTerminalFontSize,
@@ -107,7 +108,7 @@ export function NvimSurface({
     kind: 'connecting',
   });
   // 'guifont' and 'linespace' from Neovim override the btmux terminal font.
-  const [guifont, setGuifont] = useState<GuiFont>({ families: [], size: null });
+  const [guifont, setGuifont] = useState<GuiFont>(() => parseGuifont(''));
   const [linespace, setLinespace] = useState(0);
   const [pumblend, setPumblend] = useState(0);
   const [generation, setGeneration] = useState(0);
@@ -133,6 +134,9 @@ export function NvimSurface({
     family,
     size,
     weight,
+    bold: guifont.bold,
+    italic: guifont.italic,
+    widthOffset: guifont.width,
     linespace,
     foreground: theme.foreground,
     background: theme.background,
@@ -148,6 +152,9 @@ export function NvimSurface({
   const smoothScroll = getSmoothScrollDuration(config);
   const smoothScrollRef = useRef(smoothScroll);
   smoothScrollRef.current = smoothScroll;
+  const cursorAnimation = getCursorAnimationDuration(config);
+  const cursorAnimationRef = useRef(cursorAnimation);
+  cursorAnimationRef.current = cursorAnimation;
 
   useEffect(() => {
     const container = containerRef.current!;
@@ -155,6 +162,7 @@ export function NvimSurface({
     const input = inputRef.current!;
     const grid = new NvimGrid(canvas, fontRef.current, layersRef.current);
     grid.smoothScroll = smoothScrollRef.current;
+    grid.cursorAnimation = cursorAnimationRef.current;
     grid.setFocused(document.activeElement === input && document.hasFocus());
     gridRef.current = grid;
     const model = new WidgetModel();
@@ -521,6 +529,10 @@ export function NvimSurface({
     if (gridRef.current) gridRef.current.smoothScroll = smoothScroll;
   }, [smoothScroll]);
 
+  useEffect(() => {
+    if (gridRef.current) gridRef.current.cursorAnimation = cursorAnimation;
+  }, [cursorAnimation]);
+
   // Take focus back when a modal closes; closing a dialog restores focus to
   // whatever was focused before it opened, often a terminal pane.
   useEffect(() => {
@@ -545,7 +557,20 @@ export function NvimSurface({
     return () => {
       cancelled = true;
     };
-  }, [family, size, weight, linespace, theme.foreground, theme.background, transparent, cellOpacity, generation]);
+  }, [
+    family,
+    size,
+    weight,
+    guifont.bold,
+    guifont.italic,
+    guifont.width,
+    linespace,
+    theme.foreground,
+    theme.background,
+    transparent,
+    cellOpacity,
+    generation,
+  ]);
 
   return (
     <div

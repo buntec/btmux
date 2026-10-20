@@ -6,6 +6,11 @@ export interface GuiFont {
   families: string[];
   /** CSS pixels, or null to keep the btmux size. */
   size: number | null;
+  /** `:b` and `:i`: all text bold or italic. */
+  bold: boolean;
+  italic: boolean;
+  /** `:w`: CSS pixels added to the cell width. */
+  width: number;
 }
 
 /** Points to CSS pixels (CSS defines 1pt as 4/3px). */
@@ -14,6 +19,9 @@ const PT_TO_PX = 4 / 3;
 export function parseGuifont(value: string): GuiFont {
   const families: string[] = [];
   let size: number | null = null;
+  let bold = false;
+  let italic = false;
+  let width = 0;
   // Split on commas not escaped with a backslash.
   for (const entry of value.split(/(?<!\\),/)) {
     const [name, ...options] = entry.replace(/\\,/g, ',').split(':');
@@ -21,11 +29,15 @@ export function parseGuifont(value: string): GuiFont {
     const family = name.replace(/\\ /g, ' ').replace(/_/g, ' ').trim();
     if (family && family !== '*') families.push(family);
     for (const option of options) {
-      const height = option.match(/^h(\d+(?:\.\d+)?)$/);
-      if (height) size = Math.round(Number(height[1]) * PT_TO_PX * 100) / 100;
+      const points = option.match(/^([hw])(-?\d+(?:\.\d+)?)$/);
+      const px = points && Math.round(Number(points[2]) * PT_TO_PX * 100) / 100;
+      if (points?.[1] === 'h' && px! > 0) size = px;
+      else if (points?.[1] === 'w') width = px!;
+      else if (option === 'b') bold = true;
+      else if (option === 'i') italic = true;
     }
   }
-  return { families, size };
+  return { families, size, bold, italic, width };
 }
 
 /** Quote a family name for a CSS font-family list. */

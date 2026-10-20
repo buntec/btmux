@@ -90,12 +90,24 @@ to enabled with a wallpaper or shader. Explicit highlight backgrounds (selection
 search, floats, and cursor line) remain visible. The panes underneath stay mounted
 and are hidden while the editor is open.
 
-The view uses the terminal font. Neovim's `guifont` and `linespace` override it,
-for example `:set guifont=JetBrains\ Mono:h14`. Scrolling animates for
-`[terminal] smooth-scroll-duration` (default 120 ms) unless `animations = false`.
+The view uses the terminal font and `font-weight` (bold is 700). Neovim's
+`guifont` and `linespace` override it, as in Neovide: `:set guifont=Fira\ Code:h14`
+sets the size in points, `:b` and `:i` make all text bold or italic, and `:w1`
+widens cells by a point. Fonts with ligatures join them. Box-drawing and block
+characters are drawn to the cell edges, so lines connect even with `linespace`.
+
+Scrolling animates for `[terminal] smooth-scroll-duration` (default 120 ms);
+scrolls of a whole window or more slide in their last line. Cursor moves animate
+for `[terminal] cursor-animation-duration` (default 120 ms), except a cell or
+two along the line. `animations = false` turns both off. The cursor blinks as
+`guicursor` says, and is an outline while the view doesn't have focus. Focus
+changes trigger `FocusGained` and `FocusLost`.
 
 F-keys and Cmd shortcuts reach Neovim as `<F5>` or `<D-s>`. Cmd+Q, W, T, N, R,
 L, M, H, Cmd+digits, and Cmd+V (paste) stay with the browser or desktop app.
+With `mousemoveevent` set, hovering sends `<MouseMove>`; `mousehide` hides the
+pointer while you type. CTRL-Z (`:suspend`) hides the view, and a bell (when
+`belloff` allows it) flashes it.
 
 ## Limitations
 

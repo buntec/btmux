@@ -11,8 +11,8 @@ pub type Master = OwnedFd;
 /// The master fd, for tcgetpgrp.
 pub type Probe = RawFd;
 
-pub fn foreground(fd: Probe) -> Option<Pid> {
-    match unsafe { libc::tcgetpgrp(fd) } {
+pub fn foreground(fd: &Probe) -> Option<Pid> {
+    match unsafe { libc::tcgetpgrp(*fd) } {
         pgrp if pgrp > 0 => Some(pgrp),
         _ => None,
     }
@@ -588,7 +588,7 @@ impl PtyHandle {
                         shell_pid,
                         reply: sender,
                     }) => {
-                        let foreground = probe_writer.lock().unwrap().and_then(foreground);
+                        let foreground = probe_writer.lock().unwrap().as_ref().and_then(foreground);
                         if foreground == Some(shell_pid) {
                             unwritten = data;
                             reply = Some(sender);

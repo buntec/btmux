@@ -29,6 +29,7 @@ mod send_notification;
 mod server;
 mod service;
 mod session;
+mod shell;
 mod update_check;
 mod vscode;
 mod wallpaper;

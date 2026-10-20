@@ -12,6 +12,35 @@ curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.s
 It downloads the latest release binary to `~/.local/bin`. Set
 `BTMUX_INSTALL_DIR` to choose another location.
 
+## Windows
+
+Windows support (x64 and ARM64) is experimental. Download the release binary
+and put it on your `PATH`, for example in PowerShell:
+
+```powershell
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+$dir = "$env:LOCALAPPDATA\Programs\btmux"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
+[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
+```
+
+Open a new terminal so it picks up the `PATH` change. The desktop app's
+installer, `btmux-desktop-<arch>-pc-windows-msvc-setup.exe`, is on the
+[Releases](https://github.com/buntec/btmux/releases/latest) page; both are
+unsigned, so SmartScreen may ask you to choose **More info → Run anyway**.
+
+Panes run `powershell.exe` by default. Set `shell` in
+`%APPDATA%\btmux\config.toml` to another command line: `pwsh`, `cmd.exe`,
+`'C:\Program Files\Git\bin\bash.exe'` (Git Bash), or `wsl.exe -d Ubuntu`.
+Under bash, btmux tracks the pane's directory with `PROMPT_COMMAND` and `PS0`;
+if your bashrc replaces them, emit OSC 7 and OSC 133 A/C marks yourself.
+
+There is no background service or in-place upgrade on Windows. To update, quit
+btmux (and the desktop app), replace `btmux.exe` or run the new desktop
+installer, and start it again. Running shells end, but the saved sessions,
+windows, and pane directories are restored.
+
 ## Homebrew
 
 The [buntec/homebrew-btmux](https://github.com/buntec/homebrew-btmux) tap has a
@@ -64,11 +93,19 @@ on localhost. Unless `BTMUX_AUTH_TOKEN` is set, btmux creates an owner-only
 | `btmux --profile NAME` | `~/.local/state/btmux/NAME/state.token` |
 | `just dev` / `just dev-backend` | `~/.local/state/btmux/dev/state.token` |
 
-These paths apply on both macOS and Linux. If `XDG_STATE_HOME` is set, it replaces
-`~/.local/state`. For the default instance, read the token with:
+These paths apply on both macOS and Linux. On Windows, `%LOCALAPPDATA%`
+replaces `~/.local/state` (`%LOCALAPPDATA%\btmux\state.token`). If
+`XDG_STATE_HOME` is set, it replaces either. For the default instance, read the
+token with:
 
 ```sh
 cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
+```
+
+or, in PowerShell on Windows:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\btmux\state.token"
 ```
 
 Enter `btmux` as the browser username and the file's contents as the password.
@@ -124,6 +161,9 @@ Install the service from a stable binary path such as `~/.local/bin/btmux`.
 Using a `target/` build artifact will break the service after `cargo clean` or a
 rebuild that replaces the binary.
 
+Windows has no service support yet: `btmux install` exits with an error. Run
+`btmux` in a terminal instead, or use the desktop app.
+
 ## Build from source
 
 Install [Rust](https://rustup.rs), [Bun](https://bun.sh), and
@@ -149,6 +189,12 @@ btmux completions fish > ~/.config/fish/completions/btmux.fish
 # zsh: add ~/.zfunc to fpath before compinit runs in ~/.zshrc
 mkdir -p ~/.zfunc
 btmux completions zsh > ~/.zfunc/_btmux
+```
+
+```powershell
+# PowerShell: load completions from your profile
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }
+Add-Content $PROFILE 'btmux completions powershell | Out-String | Invoke-Expression'
 ```
 
 Regenerate the script after updating btmux so it includes new commands and flags.

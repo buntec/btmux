@@ -43,26 +43,47 @@ https://github.com/user-attachments/assets/a26bbac8-c9fe-434a-9fbc-5063048c9d10
 
 ## Install
 
-**Desktop app** (macOS Apple Silicon):
+Release builds cover Apple Silicon macOS, x86-64/ARM64 Linux, and x64/ARM64
+Windows. Windows support is experimental.
 
-```sh
-brew install --cask buntec/btmux/btmux
-```
+**Desktop app**:
 
-Linux `.deb` packages and Windows installers (`-setup.exe`) are on the [Releases](https://github.com/buntec/btmux/releases/latest) page.
-The macOS app is unsigned; if macOS blocks it, go to **System Settings → Privacy & Security → Open Anyway**.
-The Windows builds are unsigned too; if SmartScreen blocks one, choose **More info → Run anyway**.
-See [desktop details](desktop/README.md).
+- macOS: `brew install --cask buntec/btmux/btmux`
+- Linux: install `btmux-desktop-<arch>-unknown-linux-gnu.deb` from [Releases](https://github.com/buntec/btmux/releases/latest).
+- Windows: run `btmux-desktop-<arch>-pc-windows-msvc-setup.exe` from [Releases](https://github.com/buntec/btmux/releases/latest). It installs for the current user, without admin rights.
 
-**Browser / CLI** (macOS or Linux):
+The macOS app and Windows installers are unsigned. If macOS blocks the app, go
+to **System Settings → Privacy & Security → Open Anyway**; if SmartScreen blocks
+the installer, choose **More info → Run anyway**. See [desktop details](desktop/README.md).
+
+**Browser / CLI** on macOS or Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 # or: brew install buntec/btmux/btmux
 ```
 
-On Windows, download `btmux-x86_64-pc-windows-msvc.exe` or `btmux-aarch64-pc-windows-msvc.exe` from
-[Releases](https://github.com/buntec/btmux/releases/latest) and rename it to `btmux.exe`.
+**Browser / CLI** on Windows: download `btmux-x86_64-pc-windows-msvc.exe` or
+`btmux-aarch64-pc-windows-msvc.exe` from
+[Releases](https://github.com/buntec/btmux/releases/latest), rename it to
+`btmux.exe`, and put it in a directory on your `PATH`. For example, in PowerShell:
+
+```powershell
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+$dir = "$env:LOCALAPPDATA\Programs\btmux"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
+[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
+```
+
+On Windows:
+
+- Panes run `powershell.exe` by default. Set `shell` in `config.toml` to use
+  `pwsh`, `cmd.exe`, Git Bash, or a WSL distribution (`wsl.exe -d Ubuntu`).
+- The config file is `%APPDATA%\btmux\config.toml`, and the access token is in
+  `%LOCALAPPDATA%\btmux\state.token` (`Get-Content "$env:LOCALAPPDATA\btmux\state.token"`).
+- `btmux install` (background service) and `btmux upgrade` (in-place upgrade)
+  aren't supported. To update, quit btmux, replace `btmux.exe`, and start it again.
 
 Homebrew, background services, and Home Manager are covered in [Installation](docs/installation.md).
 
@@ -77,6 +98,12 @@ access token printed on first launch:
 
 ```sh
 cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
+```
+
+On Windows, in PowerShell:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\btmux\state.token"
 ```
 
 Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the command palette.

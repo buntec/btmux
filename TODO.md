@@ -92,3 +92,19 @@ finishes in a pane you aren't looking at, with its exit status. Needs shell
 integration (OSC 133 prompt and command marks) for zsh, bash, and fish to know
 where commands start and end. The same marks would let `run_command` wait for
 the prompt instead of 400 ms of quiet output.
+
+## Neovim clipboard in remote browsers
+
+The built-in Neovim uses the server host's clipboard provider, so `"+` (and the
+plugin's `<D-c>`/`<D-x>`) never reach a browser on another machine. Neovide
+bridges this for `--server` sessions with a `g:clipboard` that calls back to
+the GUI. A btmux version:
+
+- The plugin sets `g:clipboard` to `rpcrequest` the browser tab that last had
+  focus (tabs report their channel on focus), falling back to the server
+  provider when none is known or it fails.
+- `NvimSurface.tsx` answers those requests (it currently rejects all UI
+  requests) with `navigator.clipboard`.
+- The async clipboard API only exists on secure origins (HTTPS or localhost),
+  and reading asks for permission in Chromium; plain-HTTP remotes keep the
+  server provider.

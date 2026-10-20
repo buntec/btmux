@@ -77,6 +77,13 @@ export type Command = { id: string, label: string, description: string, confirm:
 export type FontEntry = { family: string, weight_min: number, weight_max: number, };
 
 // prettier-ignore
+export type ShellOption = { label: string,
+/**
+ * The `shell` value that runs it.
+ */
+command: string, };
+
+// prettier-ignore
 export type Theme = { foreground: string, background: string, cursor: string, cursorAccent: string, selectionBackground: string, black: string, red: string, green: string, yellow: string, blue: string, magenta: string, cyan: string, white: string, brightBlack: string, brightRed: string, brightGreen: string, brightYellow: string, brightBlue: string, brightMagenta: string, brightCyan: string, brightWhite: string, };
 
 // prettier-ignore
@@ -121,9 +128,21 @@ export type ShaderLayers = Array<ShaderLayer>;
 // prettier-ignore
 export type ClientConfig = { prefix: string, binds: Array<Bind>,
 /**
- * The configured shell for new panes, or `null` to use `$SHELL`.
+ * The configured shell for new panes, or `null` for `default_shell`.
  */
 shell: string | null,
+/**
+ * The shell new panes run when `shell` is unset.
+ */
+default_shell: string,
+/**
+ * Installed shells to choose from.
+ */
+shells: Array<ShellOption>,
+/**
+ * `btmux --shell`, which wins over `shell`. Set by `SessionManager`.
+ */
+cli_shell: string | null,
 /**
  * Exact `[keys]` overrides from config.toml. `binds` is the effective table.
  */

@@ -1052,8 +1052,14 @@ pub struct FontEntry {
 pub struct ClientConfig {
     pub prefix: String,
     pub binds: Vec<Bind>,
-    /// The configured shell for new panes, or `null` to use `$SHELL`.
+    /// The configured shell for new panes, or `null` for `default_shell`.
     pub shell: Option<String>,
+    /// The shell new panes run when `shell` is unset.
+    pub default_shell: String,
+    /// Installed shells to choose from.
+    pub shells: Vec<crate::shell::ShellOption>,
+    /// `btmux --shell`, which wins over `shell`. Set by `SessionManager`.
+    pub cli_shell: Option<String>,
     /// Exact `[keys]` overrides from config.toml. `binds` is the effective table.
     pub keys: BTreeMap<String, String>,
     /// Logging levels configured for the server.
@@ -1864,6 +1870,9 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
             .unwrap_or_else(|| DEFAULT_PREFIX.to_string()),
         binds,
         shell: file.shell.clone(),
+        default_shell: resolve_shell(None),
+        shells: crate::shell::installed(),
+        cli_shell: None,
         keys: file.keys.clone(),
         log: file.log.clone(),
         notifications: file.notifications.clone(),

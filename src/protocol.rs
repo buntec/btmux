@@ -34,6 +34,7 @@ fn generated_protocol_is_current() {
         Bind::decl(&config),
         Command::decl(&config),
         FontEntry::decl(&config),
+        crate::shell::ShellOption::decl(&config),
         Theme::decl(&config),
         BaseTheme::decl(&config),
         TerminalOptions::decl(&config),

@@ -14,7 +14,7 @@ pub use crate::process::Pid;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 #[cfg(unix)]
@@ -122,6 +122,10 @@ pub struct PtyHandle {
     spawned: Arc<Mutex<bool>>,
     shell_pid: Option<Pid>,
     shell: String,
+    dialect: crate::shell::Dialect,
+    /// OSC 133 marks: 0 before the first, odd at a prompt, `2n` while
+    /// command `n` runs.
+    prompt: Arc<AtomicU32>,
     /// Initial working directory for the shell process.
     spawn_cwd: Option<std::path::PathBuf>,
     /// Id of the pane owning this PTY, reported on `exit_tx` when the shell dies.
@@ -184,6 +188,8 @@ impl PtyHandle {
             spawned: Arc::new(Mutex::new(false)),
             shell_pid: None,
             shell: shell.to_string(),
+            dialect: crate::shell::Dialect::of(shell),
+            prompt: Arc::default(),
             spawn_cwd,
             pane_id,
             exit_tx: env.exit_tx.clone(),
@@ -235,7 +241,7 @@ impl PtyHandle {
     }
 
     pub fn foreground_pgrp(&self) -> Option<Pid> {
-        self.probe.lock().unwrap().and_then(foreground)
+        self.probe.lock().unwrap().as_ref().and_then(foreground)
     }
 
     pub fn ensure_spawned(&mut self, cols: u16, rows: u16) -> Result<(), String> {
@@ -249,7 +255,10 @@ impl PtyHandle {
 
         // Prepare all fallible resources before starting worker threads. The PTY
         // kernel buffer retains initial shell output until the reader starts.
-        let mut cmd = CommandBuilder::new(&self.shell);
+        let argv = crate::shell::argv(&self.shell);
+        let (program, args) = argv.split_first().ok_or("no shell configured")?;
+        let mut cmd = CommandBuilder::new(program);
+        cmd.args(args);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());
@@ -271,7 +280,7 @@ impl PtyHandle {
             cmd.cwd(dir);
         }
         #[cfg(windows)]
-        windows::integrate_shell(&mut cmd, &self.shell, self.spawn_cwd.is_none());
+        windows::integrate_shell(&mut cmd, self.dialect, self.spawn_cwd.is_none());
 
         self.spawn(cmd, cols, rows)
     }
@@ -279,13 +288,13 @@ impl PtyHandle {
     /// The program that runs `btmux` subcommands in this pane's shell: its
     /// `$BTMUX_BIN`, unless an upgrade replaced that binary.
     pub fn shell_bin(&self) -> String {
-        match server_exe() {
-            Some(exe) if self.bin.as_deref() != Some(exe) => {
-                crate::session::manager::shell_single_quote(&exe.to_string_lossy())
-            }
-            _ if cfg!(windows) => "& $env:BTMUX_BIN".into(),
-            _ => "\"$BTMUX_BIN\"".into(),
-        }
+        let exe = server_exe().filter(|exe| self.bin.as_deref() != Some(*exe));
+        self.dialect
+            .btmux(exe.map(|exe| exe.to_string_lossy()).as_deref())
+    }
+
+    pub fn dialect(&self) -> crate::shell::Dialect {
+        self.dialect
     }
 
     /// Tell a program that enabled mode 2031 that the theme changed.
@@ -304,7 +313,12 @@ impl PtyHandle {
 
     /// Record the current foreground process group for a forwarded DSR 6 query.
     fn record_cpr_pgrp(probe: &Mutex<Option<Probe>>, pending_cpr_pgrps: &Mutex<VecDeque<Pid>>) {
-        let pgrp = probe.lock().unwrap().and_then(foreground).unwrap_or(-1);
+        let pgrp = probe
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(foreground)
+            .unwrap_or(-1);
         let mut pending = pending_cpr_pgrps.lock().unwrap();
         if pending.len() == 256 {
             pending.pop_front();
@@ -337,8 +351,12 @@ impl PtyHandle {
                     if params.contains(&b';') {
                         let recorded_pgrp = pending_cpr_pgrps.lock().unwrap().pop_front();
                         if let Some(pgrp) = recorded_pgrp {
-                            let current_pgrp =
-                                probe.lock().unwrap().and_then(foreground).unwrap_or(-1);
+                            let current_pgrp = probe
+                                .lock()
+                                .unwrap()
+                                .as_ref()
+                                .and_then(foreground)
+                                .unwrap_or(-1);
                             if pgrp == current_pgrp {
                                 out.extend_from_slice(&data[i..end + 1]);
                             }
@@ -483,7 +501,7 @@ impl PtyHandle {
     ) -> OutputPipeline {
         OutputPipeline {
             interceptor,
-            osc_parser: OscParser::new(self.meta_tx.clone()),
+            osc_parser: OscParser::new(self.meta_tx.clone(), self.prompt.clone()),
             response_tx,
             pending_cpr_pgrps: self.pending_cpr_pgrps.clone(),
             probe: self.probe.clone(),
@@ -538,6 +556,17 @@ impl OutputPipeline {
     }
 }
 
+/// Record an OSC 133 prompt or command mark.
+fn mark_prompt(state: &AtomicU32, command: bool) {
+    let _ = state.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |state| {
+        match (command, state % 2 == 1) {
+            (true, false) if state == 0 => Some(2),
+            (false, false) | (true, true) => Some(state + 1),
+            _ => None,
+        }
+    });
+}
+
 /// Decode `%XX` escapes; malformed escapes and non-UTF-8 results stay raw.
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -563,19 +592,22 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Incremental OSC sequence parser. Handles sequences split across read() chunks.
-/// Parses OSC 0/2 (window title) and OSC 7 (working directory URI).
+/// Parses OSC 0/2 (window title), OSC 7 (working directory URI), and OSC 133
+/// prompt (`A`) and command (`C`) marks.
 struct OscParser {
     buf: Vec<u8>,
     in_osc: bool,
     meta_tx: mpsc::UnboundedSender<()>,
+    prompt: Arc<AtomicU32>,
 }
 
 impl OscParser {
-    fn new(meta_tx: mpsc::UnboundedSender<()>) -> Self {
+    fn new(meta_tx: mpsc::UnboundedSender<()>, prompt: Arc<AtomicU32>) -> Self {
         Self {
             buf: Vec::new(),
             in_osc: false,
             meta_tx,
+            prompt,
         }
     }
 
@@ -651,10 +683,11 @@ impl OscParser {
                 } else {
                     payload.to_string()
                 };
-                // `file:///C:/x` names `C:/x`.
+                // `file:///C:/x` names `C:/x`, `file:////server/share` a UNC path.
                 #[cfg(windows)]
                 let path = match path.as_bytes() {
                     [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => path[1..].to_string(),
+                    [b'/', b'/', b'/', ..] => path[1..].replace('/', "\\"),
                     _ => path,
                 };
                 if !path.is_empty() {
@@ -663,6 +696,14 @@ impl OscParser {
                 } else {
                     false
                 }
+            }
+            133 => {
+                match payload.as_bytes().first() {
+                    Some(b'A') => mark_prompt(&self.prompt, false),
+                    Some(b'C') => mark_prompt(&self.prompt, true),
+                    _ => {}
+                }
+                false
             }
             _ => false,
         };
@@ -1002,7 +1043,7 @@ mod lifecycle_tests {
         let exe = server_exe().unwrap();
         assert_eq!(
             pane.shell_bin(),
-            crate::session::manager::shell_single_quote(&exe.to_string_lossy())
+            crate::shell::Dialect::Posix.quote(&exe.to_string_lossy())
         );
     }
     #[tokio::test]
@@ -1076,8 +1117,19 @@ mod lifecycle_tests {
 mod osc_tests {
     use super::*;
 
+    #[test]
+    fn prompt_marks_number_commands() {
+        let state = AtomicU32::new(0);
+        let mut seen = Vec::new();
+        for command in [true, false, false, true, true, false] {
+            mark_prompt(&state, command);
+            seen.push(state.load(Ordering::Relaxed));
+        }
+        assert_eq!(seen, [2, 3, 3, 4, 4, 5]);
+    }
+
     fn cwd_of(seq: &[u8]) -> Option<String> {
-        let mut parser = OscParser::new(mpsc::unbounded_channel().0);
+        let mut parser = OscParser::new(mpsc::unbounded_channel().0, Arc::default());
         let (title, cwd) = Default::default();
         parser.feed(seq, &title, &cwd);
         let cwd = cwd.lock().unwrap().clone();

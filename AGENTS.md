@@ -112,6 +112,13 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   mode 2031 when the theme changes. Replies are queued once per read and dropped
   if the input queue is full.
 - **Termios** is set manually on the PTY master (`configure_termios`: `IUTF8`, `ECHOK`, `IMAXBEL`) because `portable-pty` opens the PTY with NULL termios; without `IUTF8`, fish misbehaves.
+- **Windows shells** (`shell.rs`): `shell` is a command line (`wsl.exe -d Ubuntu`)
+  whose program picks a `Dialect` (PowerShell, cmd, POSIX for Git Bash, WSL) for
+  typed commands (`cd`, `open-editor`, capture-pane) and paths. `pty/windows.rs`
+  adds prompt hooks that report the cwd with OSC 7: PowerShell's `-Command`,
+  cmd's `PROMPT`, bash's `PROMPT_COMMAND`/`PS0` (passed into WSL by `WSLENV`).
+  Git Bash and WSL programs aren't the shell's Windows children, so their
+  foreground check uses the bash hook's OSC 133 marks instead of the process tree.
 
 ### Persistence and profiles
 

@@ -896,7 +896,8 @@ impl SessionManager {
     ///
     /// The editor is resolved on the backend (`$VISUAL`/`$EDITOR`, else `vi`)
     /// rather than via shell expansion, because the line is fed to whatever shell
-    /// the pane runs and `${VISUAL:-…}` isn't portable (e.g. fish). This assumes
+    /// the pane runs and `${VISUAL:-…}` isn't portable (e.g. fish); under WSL,
+    /// `sh` resolves the Linux one. This assumes
     /// the pane is sitting at a shell prompt; if a full-screen app is running the
     /// keystrokes go to that app instead, same caveat as `send-keys`.
     pub fn capture_pane_to_editor(&self, pane_id: Uuid, content: String) {
@@ -927,13 +928,8 @@ impl SessionManager {
             .unwrap_or_else(|| if cfg!(windows) { "notepad" } else { "vi" }.to_string());
 
         // Leading space keeps it out of history in shells honouring that (bash
-        // HISTCONTROL, zsh HIST_IGNORE_SPACE, fish); trailing CR submits the line
-        // — `\r` is the exact byte the Enter key sends (the browser emulator emits
-        // it), so an interactive shell's line editor treats it as "run this".
-        let line = format!(
-            " {editor} {}\r",
-            shell_single_quote(&path.to_string_lossy())
-        );
+        // HISTCONTROL, zsh HIST_IGNORE_SPACE, fish).
+        let line = pane.pty.dialect().edit(&editor, &path.to_string_lossy());
         let _ = pane.pty.input_tx.send(line.into_bytes());
     }
 
@@ -1428,29 +1424,13 @@ fn unique_name_in(existing: &[&str], base: &str) -> String {
     }
 }
 
-/// Single-quote a string for safe interpolation into the pane's shell command
-/// line: wrap in `'…'` and replace each embedded `'` with `'\''` (bash, zsh,
-/// fish), or with `''` on Windows (PowerShell).
-pub(crate) fn shell_single_quote(s: &str) -> String {
-    let escaped = if cfg!(windows) { "''" } else { "'\\''" };
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for ch in s.chars() {
-        if ch == '\'' {
-            out.push_str(escaped);
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
-}
-
 fn shell_name(shell: &str) -> String {
-    std::path::Path::new(shell)
+    let program = crate::shell::argv(shell).into_iter().next();
+    let program = program.as_deref().unwrap_or(shell);
+    std::path::Path::new(program)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(shell)
+        .unwrap_or(program)
         .to_string()
 }
 

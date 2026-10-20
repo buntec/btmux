@@ -16,9 +16,11 @@ pub const DEFAULT_SHELL: &str = "powershell.exe";
 #[cfg(unix)]
 const SHELL_DEFAULT_HELP: &str = "Defaults to $SHELL / /bin/bash.";
 #[cfg(windows)]
-const SHELL_DEFAULT_HELP: &str = "Defaults to powershell.exe. btmux types
-# PowerShell commands into panes (file browser cd, open-editor, capture-pane),
-# so those don't work in other shells.";
+const SHELL_DEFAULT_HELP: &str = "Defaults to powershell.exe. A command line:
+# pwsh, cmd.exe, 'C:\\Program Files\\Git\\bin\\bash.exe', 'wsl.exe -d Ubuntu'.
+# Under bash (Git Bash, WSL), btmux tracks the directory and prompt with
+# PROMPT_COMMAND and PS0; if your bashrc replaces them, emit OSC 7 and OSC
+# 133 A/C marks yourself, or btmux can't open files in the pane's editor.";
 pub const DEFAULT_PTY_COLS: u16 = 80;
 pub const DEFAULT_PTY_ROWS: u16 = 24;
 

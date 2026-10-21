@@ -110,6 +110,9 @@ type DraftKey = keyof Draft;
 // Shell choices that aren't commands.
 const SHELL_DEFAULT = ':default';
 const SHELL_CUSTOM = ':custom';
+const FONT_CUSTOM = ':custom';
+// Typed font names preview after a pause: each change rebuilds terminals.
+const FONT_PREVIEW_DEBOUNCE_MS = 500;
 type ConfigUpdate = Extract<ClientMessage, { type: 'update_config' }>['update'];
 
 function initialDraft(config: ClientConfig): Draft {
@@ -277,7 +280,7 @@ function toToml(draft: Draft): string {
   const terminalLines = [
     boolLine('cursor-blink', draft.cursorBlink, TOML_DEFAULTS.cursorBlink),
     intLine('scrollback', draft.scrollback, TOML_DEFAULTS.scrollback),
-    strLine('font-family', draft.fontFamily, TOML_DEFAULTS.fontFamily),
+    strLine('font-family', draft.fontFamily.trim(), TOML_DEFAULTS.fontFamily),
     numLine('font-size', draft.fontSize, TOML_DEFAULTS.fontSize, 1),
     intLine('font-weight', draft.fontWeight, TOML_DEFAULTS.fontWeight),
     boolLine('allow-transparency', draft.allowTransparency, defaultAllowTransparency),
@@ -322,7 +325,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('appearance')) update.appearance = draft.appearance;
   if (dirty.has('colorsDark')) update.colors_dark = draft.colorsDark;
   if (dirty.has('colorsLight')) update.colors_light = draft.colorsLight;
-  if (dirty.has('fontFamily')) update.font_family = draft.fontFamily;
+  if (dirty.has('fontFamily')) update.font_family = draft.fontFamily.trim();
   if (dirty.has('fontWeight')) update.font_weight = draft.fontWeight;
   if (dirty.has('fontSize')) update.font_size = draft.fontSize;
   if (dirty.has('cursorBlink')) update.cursor_blink = draft.cursorBlink;
@@ -424,12 +427,24 @@ export function ConfigPage({ config, send }: Props) {
   const toast = useToast();
   const [draft, setDraft] = useState(() => initialDraft(config));
   const [customShell, setCustomShell] = useState(false);
+  const [customFont, setCustomFont] = useState(false);
+  const [typedFont, setTypedFont] = useState(draft.fontFamily);
   const wallpaperCheck = useWallpaperCheck(draft.wallpaper);
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
   const [copied, setCopied] = useState(false);
   const [showToml, setShowToml] = useState(false);
   const [clearBackdrop, setClearBackdrop] = useState(false);
   const toml = useMemo(() => toToml(draft), [draft]);
+
+  const knownFont = config.fonts.some((font) => font.family === draft.fontFamily);
+  const fontChoice = customFont || !knownFont ? FONT_CUSTOM : draft.fontFamily;
+  const fontInvalid =
+    fontChoice === FONT_CUSTOM && draft.fontFamily.trim() === '' ? 'Enter the name of an installed font.' : null;
+  useEffect(() => {
+    const timer = setTimeout(() => setTypedFont(draft.fontFamily.trim()), FONT_PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [draft.fontFamily]);
+  const previewFont = fontChoice === FONT_CUSTOM ? typedFont || getTerminalFontFamily(config) : draft.fontFamily;
 
   const previewConfig = useMemo<ClientConfig>(
     () => ({
@@ -441,7 +456,7 @@ export function ConfigPage({ config, send }: Props) {
         ...config.terminal,
         cursorBlink: draft.cursorBlink,
         scrollback: draft.scrollback,
-        fontFamily: draft.fontFamily,
+        fontFamily: previewFont,
         fontSize: draft.fontSize,
         fontWeight: draft.fontWeight,
         // Keep null until the user changes this control so a wallpaper can
@@ -474,7 +489,7 @@ export function ConfigPage({ config, send }: Props) {
       pane_switch_border: draft.paneSwitchBorderStyle || null,
       pane_switch_border_speed: draft.paneSwitchBorderSpeed,
     }),
-    [config, draft, dirty, wallpaperCheck.url],
+    [config, draft, dirty, wallpaperCheck.url, previewFont],
   );
 
   // The active session consumes this local layer directly, so draft changes
@@ -491,6 +506,7 @@ export function ConfigPage({ config, send }: Props) {
     setDraft(initialDraft(config));
     setDirty(new Set());
     setCustomShell(false);
+    setCustomFont(false);
   }, [config]);
 
   const update = <K extends DraftKey>(key: K, value: Draft[K]) => {
@@ -505,10 +521,18 @@ export function ConfigPage({ config, send }: Props) {
     if (value !== SHELL_CUSTOM) update('shell', value === SHELL_DEFAULT ? '' : value);
   };
 
+  const chooseFont = (value: string) => {
+    setCustomFont(value === FONT_CUSTOM);
+    if (value === FONT_CUSTOM) return;
+    const { min, max } = getFontWeightRange(config.fonts, value);
+    update('fontFamily', value);
+    update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
+  };
+
   const prefixInvalid = dirty.has('prefix') && draft.prefix.trim() !== '' ? prefixError(draft.prefix) : null;
 
   const apply = () => {
-    if (prefixInvalid) return;
+    if (prefixInvalid || fontInvalid) return;
     const update = toConfigUpdate(draft, dirty);
     if (Object.keys(update).length === 0) return;
     send({ type: 'update_config', update });
@@ -725,15 +749,20 @@ export function ConfigPage({ config, send }: Props) {
                         <Selector
                           label="Terminal font"
                           description="Also used for paths, names, and key hints in the UI."
-                          value={draft.fontFamily}
+                          value={fontChoice}
                           presentation="adaptive"
-                          options={config.fonts.map((font) => ({ value: font.family, label: font.family }))}
-                          onChange={(value) => {
-                            const { min, max } = getFontWeightRange(config.fonts, value);
-                            update('fontFamily', value);
-                            update('fontWeight', Math.min(max, Math.max(min, draft.fontWeight)));
-                          }}
+                          options={[
+                            {
+                              type: 'section',
+                              title: 'Bundled',
+                              options: config.fonts.map((font) => ({ value: font.family, label: font.family })),
+                            },
+                            { type: 'section', title: 'Custom', options: [{ value: FONT_CUSTOM, label: 'Custom…' }] },
+                          ]}
+                          onChange={chooseFont}
                         />
+                        {fontChoice === FONT_CUSTOM &&
+                          text('fontFamily', 'Font family', 'A font installed on this device.', fontInvalid)}
                         {text(
                           'prefix',
                           'Prefix key',
@@ -947,7 +976,7 @@ export function ConfigPage({ config, send }: Props) {
                       label="Apply"
                       variant="primary"
                       onClick={apply}
-                      isDisabled={dirty.size === 0 || !!prefixInvalid}
+                      isDisabled={dirty.size === 0 || !!prefixInvalid || !!fontInvalid}
                     />
                   </HStack>
                 </HStack>

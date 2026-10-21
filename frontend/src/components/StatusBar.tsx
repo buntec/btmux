@@ -7,15 +7,16 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Spinner } from '@astryxdesign/core/Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, FolderOpen, GitBranch, Zap, ZapOff } from 'lucide-react';
+import { Activity, FolderOpen, GitBranch } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { getAnimations, getWindowSort } from '../state/configDefaults';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
-import { activeShaderLayers } from '../lib/wallpaperCatalog';
 import type { ClientMessage } from '../protocol/messages';
 import { SysStatBar } from './SysStatBar';
+import { editorButton } from './EditorIcon';
+import { runAction } from '../hooks/useKeybindings';
 
 let mruVersion = 0;
 window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
@@ -37,18 +38,21 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
   const activeWindow = session.windows[session.active_window];
   const pane = activeWindow?.panes[activeWindow.active_pane];
   const state = useStore.getState;
-  const openFiles = (mode: FileBrowserMode) => {
-    if (!pane) return;
+  const closeModals = () => {
     state().setOverlay(null);
     state().setSettingsOpen(false);
     state().setSwitcherOpen(false);
     state().setWindowGridOpen(false);
     state().setAgentGridOpen(false);
+  };
+  const openFiles = (mode: FileBrowserMode) => {
+    if (!pane) return;
+    closeModals();
     if (mode === 'files') void openFileBrowserFiles(pane.id, pane.cwd ?? null);
     else state().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
   };
+  const editor = editorButton(config?.editor);
   const animations = getAnimations(config);
-  const hasShader = activeShaderLayers(config?.wallpaper_shaders).length > 0;
   return (
     <HStack
       gap={2}
@@ -118,16 +122,18 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       <HStack gap={1} className="hidden lg:flex">
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>
-      {hasShader && (
-        <IconButton
-          label={animations ? 'Pause shader effects' : 'Resume shader effects'}
-          tooltip={animations ? 'Pause shader effects (saves battery)' : 'Resume shader effects'}
-          variant="ghost"
-          size="sm"
-          icon={animations ? <Zap /> : <ZapOff />}
-          onClick={() => send({ type: 'update_config', update: { animations: !animations } })}
-        />
-      )}
+      <IconButton
+        label={editor.label}
+        tooltip={editor.label}
+        variant="ghost"
+        size="sm"
+        icon={editor.icon}
+        onClick={() => {
+          closeModals();
+          state().setFileBrowserOpen(false);
+          runAction('editor', session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
+        }}
+      />
       <IconButton
         label="File browser"
         tooltip="File browser"

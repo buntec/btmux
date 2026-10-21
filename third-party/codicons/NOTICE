@@ -1,0 +1,6 @@
+Codicons — https://github.com/microsoft/vscode-codicons
+Version: @vscode/codicons 0.0.46-24
+Icons licensed under CC BY 4.0; see LICENSE in this directory.
+
+The VS Code logo in frontend/src/components/EditorIcon.tsx is the "vscode"
+codicon. The logo is a trademark of Microsoft and identifies the editor.

@@ -1,0 +1,7 @@
+Neovim logo — https://commons.wikimedia.org/wiki/File:Neovim-mark.svg
+(neovim-mark.svg from https://neovim.io/logos/neovim-logos.zip)
+The Neovim logo by Jason Long is licensed under the Creative Commons
+Attribution 3.0 Unported License (https://creativecommons.org/licenses/by/3.0/).
+
+The Neovim mark in frontend/src/components/EditorIcon.tsx is adapted from it,
+recolored in shades of the current text color.

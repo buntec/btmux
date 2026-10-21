@@ -3,11 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from '@astryxdesign/core/AppShell';
 import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2 } from 'lucide-react';
+import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2, Zap, ZapOff } from 'lucide-react';
 import { useStore } from '../state/store';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
-import { getSessionSort, getWindowSort } from '../state/configDefaults';
+import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
 import { SessionNavItem } from './SessionNavItem';
 import { AgentNavItem } from './AgentNavItem';
 import { RailNavItem } from './RailNavItem';
@@ -62,6 +62,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
   );
   const appearance = APPEARANCES[appearanceIndex];
   const nextAppearance = APPEARANCES[(appearanceIndex + 1) % APPEARANCES.length];
+  const animations = getAnimations(config);
   const newSession = () => {
     closeSurfaces();
     setOverlay({ mode: 'prompt', title: 'New session', value: '', action: 'new-session' });
@@ -95,6 +96,13 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
                 variant="ghost"
                 icon={<appearance.icon />}
                 onClick={() => send({ type: 'update_config', update: { appearance: nextAppearance.value } })}
+              />
+              <IconButton
+                label={animations ? 'Pause animations' : 'Resume animations'}
+                tooltip={animations ? 'Pause animations (saves battery)' : 'Resume animations'}
+                variant="ghost"
+                icon={animations ? <Zap /> : <ZapOff />}
+                onClick={() => send({ type: 'update_config', update: { animations: !animations } })}
               />
               <IconButton
                 label="Settings"

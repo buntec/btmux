@@ -271,9 +271,11 @@ reports. Agent status is runtime-only and resets when btmux restarts.
 
 The bundled rules are adapted from Herdr revision
 `5da0a01e1eedda054db0c81dd3a780000c40d9f0`; attribution and the upstream license
-live in `third-party/herdr`. Codex's generic title-idle rule is omitted: an ordinary
-title or composer does not establish that a turn ended. Unmatched screens produce
-unknown activity rather than an inferred successful completion.
+live in `third-party/herdr`. Codex is idle when its title has no spinner,
+unless its working timer shows. Codex runs hooks in a shared app-server daemon,
+whose environment names the pane that started it, so only `codex --no-daemon`
+reports turns to the right pane. Unmatched screens produce unknown activity
+rather than an inferred successful completion.
 
 Local overrides replace each agent's bundled manifest:
 

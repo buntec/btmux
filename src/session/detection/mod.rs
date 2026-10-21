@@ -407,8 +407,15 @@ mod tests {
                 "codex",
                 "› next question",
                 "Codex",
-                AgentState::Unknown,
-                None,
+                AgentState::Idle,
+                Some("osc_title_idle"),
+            ),
+            (
+                "codex",
+                "• Working (3s • esc to interrupt)\n\n› next question",
+                "Codex",
+                AgentState::Working,
+                Some("screen_working_fallback"),
             ),
             (
                 "codex",

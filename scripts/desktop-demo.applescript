@@ -303,7 +303,8 @@ on playFiles(prefixSpec)
 end playFiles
 
 -- Built-in Neovim: open a Rust source, wait for rust-analyzer, then retype a
--- line with completion, docs, and signature help.
+-- line with completion, docs, and signature help, move around to show cursor
+-- animation and smooth scrolling, and show hover docs.
 on playNvim(prefixSpec)
 	chord(prefixSpec, "e")
 	pace(1.5)
@@ -345,6 +346,35 @@ on playNvim(prefixSpec)
 	typeSlowly(";")
 	pace(1)
 	escape()
+	pace(0.8)
+	-- Cursor slides and smooth scrolling
+	repeat with k in {"^", "$", "^"}
+		press(k as text)
+		pace(0.6)
+	end repeat
+	repeat 4 times
+		press("e")
+		pace(0.4)
+	end repeat
+	repeat 4 times
+		press("b")
+		pace(0.4)
+	end repeat
+	pace(0.3)
+	repeat with k in {"}", "}", "{", "{"}
+		press(k as text)
+		pace(0.6)
+	end repeat
+	repeat 2 times
+		ctrl("d")
+		pace(0.9)
+	end repeat
+	repeat 2 times
+		ctrl("u")
+		pace(0.9)
+	end repeat
+	press("g")
+	press(";") -- back to the edited line
 	pace(0.8)
 	-- Hover docs for extend
 	typeSlowly("^ww")

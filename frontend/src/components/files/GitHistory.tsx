@@ -95,19 +95,18 @@ export function GitHistory() {
     if (!list) return;
 
     const rows = Array.from(list.querySelectorAll<HTMLDivElement>('[data-git-log-index]'));
-    const updateRowHeights = () => {
-      const nextHeights = rows.map((row) => row.getBoundingClientRect().height);
+    const heights = new Map<Element, number>();
+    const observer = new ResizeObserver((entries) => {
+      // Border-box sizes exclude the dialog's animated transform.
+      for (const entry of entries) heights.set(entry.target, entry.borderBoxSize[0].blockSize);
+      const nextHeights = rows.map((row) => heights.get(row) ?? ROW_HEIGHT);
       setRowHeights((current) =>
-        current.length === nextHeights.length &&
-        current.every((height, index) => Math.abs(height - nextHeights[index]) < 0.5)
+        current.length === nextHeights.length && current.every((height, index) => height === nextHeights[index])
           ? current
           : nextHeights,
       );
-    };
-
-    const observer = new ResizeObserver(updateRowHeights);
-    rows.forEach((row) => observer.observe(row));
-    updateRowHeights();
+    });
+    rows.forEach((row) => observer.observe(row, { box: 'border-box' }));
     return () => observer.disconnect();
   }, [layout.rows]);
 

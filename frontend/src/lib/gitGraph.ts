@@ -34,17 +34,6 @@ function nextLaneColor(usedColors: readonly number[]): number {
   return 1 + (usedColors.length % (LANE_COLOR_COUNT - 1));
 }
 
-function normalizeLaneColors(rawColors: readonly number[], laneCount: number): number[] {
-  if (laneCount <= 1) return [BASE_LANE_COLOR];
-
-  const colors: number[] = [];
-  for (let lane = 0; lane < laneCount; lane += 1) {
-    const preferred = rawColors[lane] ?? BASE_LANE_COLOR;
-    colors.push(colors.includes(preferred) ? nextLaneColor(colors) : preferred);
-  }
-  return colors;
-}
-
 /** Assigns lanes using the same first-parent/merge-parent shape as git log --graph. */
 export function layoutGitGraph<T extends GitGraphCommit>(commits: readonly T[]): GitGraphLayout<T> {
   let lanes: string[] = [];
@@ -62,39 +51,25 @@ export function layoutGitGraph<T extends GitGraphCommit>(commits: readonly T[]):
       beforeColors.push(beforeColors.length === 0 ? BASE_LANE_COLOR : nextLaneColor(beforeColors));
     }
 
-    const rawNext: string[] = [];
-    const rawNextColors: number[] = [];
-    for (let index = 0; index < lane; index += 1) {
-      rawNext.push(before[index]);
-      rawNextColors.push(beforeColors[index] ?? BASE_LANE_COLOR);
-    }
-    for (let parentIndex = 0; parentIndex < commit.parents.length; parentIndex += 1) {
-      const parent = commit.parents[parentIndex];
-      const existingLane = before.indexOf(parent);
-      rawNext.push(parent);
-      rawNextColors.push(
-        existingLane === -1
-          ? parentIndex === 0
-            ? (beforeColors[lane] ?? BASE_LANE_COLOR)
-            : BASE_LANE_COLOR
-          : (beforeColors[existingLane] ?? BASE_LANE_COLOR),
-      );
-    }
-    for (let index = lane + 1; index < before.length; index += 1) {
-      rawNext.push(before[index]);
-      rawNextColors.push(beforeColors[index] ?? BASE_LANE_COLOR);
+    const nextLanes = [...new Set([...before.slice(0, lane), ...commit.parents, ...before.slice(lane + 1)])];
+    const colorsById = new Map(before.map((id, index) => [id, beforeColors[index]]));
+    const firstParent = commit.parents[0];
+    if (firstParent !== undefined && !colorsById.has(firstParent)) {
+      colorsById.set(firstParent, beforeColors[lane]);
     }
 
-    const nextLanes: string[] = [];
-    const deduplicatedColors: number[] = [];
-    for (let index = 0; index < rawNext.length; index += 1) {
-      const laneId = rawNext[index];
-      if (!nextLanes.includes(laneId)) {
-        nextLanes.push(laneId);
-        deduplicatedColors.push(rawNextColors[index]);
-      }
-    }
-    const nextLaneColors = normalizeLaneColors(deduplicatedColors, nextLanes.length);
+    // Reserve continuing colors before allocating new merge branches.
+    const usedColors = nextLanes.flatMap((id) => {
+      const color = colorsById.get(id);
+      return color === undefined ? [] : [color];
+    });
+    const nextLaneColors = nextLanes.map((id) => {
+      const color = colorsById.get(id);
+      if (color !== undefined) return color;
+      const nextColor = nextLaneColor(usedColors);
+      usedColors.push(nextColor);
+      return nextColor;
+    });
 
     const transitions: GitGraphTransition[] = [];
     for (let fromLane = 0; fromLane < before.length; fromLane += 1) {

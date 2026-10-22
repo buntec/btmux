@@ -17,6 +17,7 @@ const git = (...args: string[]) =>
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
   });
 git('init', '--initial-branch=main');
+for (let index = 0; index < 57; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
 writeFileSync(path.join(repo, 'README'), 'one\n');
 git('add', 'README');
 git('commit', '-m', 'Initial');
@@ -57,10 +58,50 @@ try {
     { pane, repo },
   );
   await page.getByText('main', { exact: true }).first().waitFor();
+  await page.getByRole('dialog', { name: 'Git', exact: true }).evaluate((dialog) => {
+    dialog.getAnimations().forEach((animation) => animation.finish());
+    const animation = dialog.animate([{ transform: 'scale(0.95)' }, { transform: 'scale(1)' }], {
+      duration: 1000,
+      fill: 'both',
+    });
+    animation.pause();
+    animation.currentTime = 0;
+  });
   await page
     .getByRole('button', { name: 'Close file browser' })
     .evaluate((button) => (button.closest('[tabindex="-1"]') as HTMLElement).focus());
   await page.keyboard.press('o');
+  const assertGraphAligned = () =>
+    waitForAsync(page, () => {
+      const list = document.querySelector('[aria-label="Git commit history"]');
+      if (!list) return false;
+      const rows = Array.from(list.querySelectorAll('[data-git-log-index]'));
+      const dots = Array.from(list.querySelectorAll('svg > g > circle:last-child'));
+      return (
+        rows.length === 60 &&
+        dots.length === rows.length &&
+        rows.every((row, index) => {
+          const rowRect = row.getBoundingClientRect();
+          const dotRect = dots[index].getBoundingClientRect();
+          return Math.abs(rowRect.y + rowRect.height / 2 - dotRect.y - dotRect.height / 2) < 0.5;
+        })
+      );
+    });
+  await assertGraphAligned();
+  await page.getByRole('dialog', { name: 'Git', exact: true }).evaluate((dialog) => {
+    dialog.getAnimations().forEach((animation) => animation.finish());
+  });
+  await assertGraphAligned();
+  console.log('PASS graph alignment during and after the dialog animation');
+  await page.locator('[data-git-log-index]').evaluateAll((rows) => {
+    rows.forEach((row) => ((row as HTMLElement).style.paddingBottom = '0.25px'));
+  });
+  await assertGraphAligned();
+  await page.locator('[data-git-log-index]').evaluateAll((rows) => {
+    rows.forEach((row) => ((row as HTMLElement).style.paddingBottom = ''));
+  });
+  await assertGraphAligned();
+  console.log('PASS graph alignment after fractional row height changes');
   const preview = page.getByRole('group', { name: 'Commit diff', exact: true });
   const summary = preview.getByRole('region', { name: 'Commit change summary', exact: true });
   const backToTop = page.getByRole('button', { name: 'Back to top', exact: true });

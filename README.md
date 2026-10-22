@@ -19,7 +19,7 @@ A terminal emulator and tmux-style session manager for the browser and desktop, 
 
 ### Sessions, windows, and panes
 
-https://github.com/user-attachments/assets/b297b31c-2744-4e90-91a5-f917f5736bf5
+https://github.com/user-attachments/assets/0e0ca159-226e-4762-b6a7-8ae255dde4f6
 
 ### File browser, Git mode, and process viewer
 
@@ -39,7 +39,7 @@ https://github.com/user-attachments/assets/64030ce9-b851-468b-90cf-433f481845c3
 
 ### Shader wallpapers
 
-https://github.com/user-attachments/assets/0e0ca159-226e-4762-b6a7-8ae255dde4f6
+https://github.com/user-attachments/assets/b297b31c-2744-4e90-91a5-f917f5736bf5
 
 ## Install
 

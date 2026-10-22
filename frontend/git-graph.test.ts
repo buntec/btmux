@@ -31,3 +31,22 @@ test('fans merge parents into separate lanes and folds them back', () => {
   expect(layout.rows[2]?.transitions).toContainEqual({ fromLane: 1, toLane: 0, colorIndex: 1 });
   expect(layout.rows[3]?.laneColors).toEqual([BASE_LANE_COLOR]);
 });
+
+test('opens a new tip to the right without moving open lanes', () => {
+  const layout = layoutGitGraph([
+    commit('topic', ['base']),
+    commit('merge', ['base', 'feature']),
+    commit('feature', ['base']),
+    commit('base'),
+  ]);
+
+  expect(layout.rows[0]?.nextLanes).toEqual(['base']);
+  expect(layout.rows[1]?.lane).toBe(1);
+  expect(layout.rows[1]?.lanes).toEqual(['base', 'merge']);
+  expect(layout.rows[1]?.transitions).toEqual([
+    { fromLane: 0, toLane: 0, colorIndex: BASE_LANE_COLOR },
+    { fromLane: 1, toLane: 0, colorIndex: BASE_LANE_COLOR },
+    { fromLane: 1, toLane: 1, colorIndex: 1 },
+  ]);
+  expect(layout.rows[2]?.lane).toBe(1);
+});

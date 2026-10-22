@@ -57,9 +57,9 @@ export function layoutGitGraph<T extends GitGraphCommit>(commits: readonly T[]):
     const beforeColors = laneColors.slice();
     let lane = before.indexOf(commit.id);
     if (lane === -1) {
-      lane = 0;
-      before.unshift(commit.id);
-      beforeColors.unshift(beforeColors.length === 0 ? BASE_LANE_COLOR : nextLaneColor(beforeColors));
+      lane = before.length;
+      before.push(commit.id);
+      beforeColors.push(beforeColors.length === 0 ? BASE_LANE_COLOR : nextLaneColor(beforeColors));
     }
 
     const rawNext: string[] = [];

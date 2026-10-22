@@ -838,7 +838,12 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("btmux-agent-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&directory).unwrap();
         let executable = directory.join("codex");
-        std::os::unix::fs::symlink("/bin/cat", &executable).unwrap();
+        // uutils' multicall cat (Ubuntu 26.04+) refuses to run as `codex`.
+        let cat = ["/usr/bin/gnucat", "/bin/cat"]
+            .into_iter()
+            .find(|path| std::path::Path::new(path).exists())
+            .unwrap();
+        std::os::unix::fs::symlink(cat, &executable).unwrap();
         let (exit_tx, _) = mpsc::unbounded_channel();
         let (meta_tx, _) = mpsc::unbounded_channel();
         let mut manager = SessionManager::new(

@@ -72,7 +72,9 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
       height="fill"
       contentPadding={0}
       variant="section"
-      className="isolate bg-transparent"
+      // Never scroll the main region: TabList's indicator bleed pokes 1px past
+      // the status bar, which shows a scrollbar where scrollbars are classic.
+      className="isolate bg-transparent [&_#astryx-app-shell-main]:overflow-clip"
       sideNav={
         <SideNav
           aria-label="Sessions and windows"

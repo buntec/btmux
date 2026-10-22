@@ -19,27 +19,27 @@ A terminal emulator and tmux-style session manager for the browser and desktop, 
 
 ### Sessions, windows, and panes
 
-https://github.com/user-attachments/assets/6d91655d-d595-480b-91d2-f08e491b78c4
+https://github.com/user-attachments/assets/b297b31c-2744-4e90-91a5-f917f5736bf5
 
 ### File browser, Git mode, and process viewer
 
-https://github.com/user-attachments/assets/c8a18d1d-022c-46dd-95b8-26c2ef60e20e
+https://github.com/user-attachments/assets/ac8185dd-c36f-41df-8dff-66529d03d6bb
 
 ### Neovim GUI
 
-https://github.com/user-attachments/assets/c97c4cd8-cbc8-45f8-a8d0-ed8b048b9e09
+https://github.com/user-attachments/assets/a9233ccb-ca09-4ff2-86a3-2383058d509f
 
 ### Coding agents
 
-https://github.com/user-attachments/assets/4333793e-220f-42a6-9a81-8bf48242d358
+https://github.com/user-attachments/assets/7d5310c6-c136-4ea3-add2-e60bbecdfcd5
 
 ### LaTeX overlay
 
-https://github.com/user-attachments/assets/bf0965ef-af31-4090-8b14-f14ae55dd710
+https://github.com/user-attachments/assets/64030ce9-b851-468b-90cf-433f481845c3
 
 ### Shader wallpapers
 
-https://github.com/user-attachments/assets/a26bbac8-c9fe-434a-9fbc-5063048c9d10
+https://github.com/user-attachments/assets/0e0ca159-226e-4762-b6a7-8ae255dde4f6
 
 ## Install
 

@@ -5,8 +5,8 @@
     "": {
       "name": "btmux-frontend",
       "dependencies": {
-        "@astryxdesign/core": "0.6.5",
-        "@astryxdesign/theme-neutral": "0.6.5",
+        "@astryxdesign/core": "0.7.3",
+        "@astryxdesign/theme-neutral": "0.7.3",
         "@fontsource-variable/geist": "^5.3.0",
         "@fontsource-variable/geist-mono": "^5.2.8",
         "@fontsource-variable/geist-pixel": "^5.3.1",
@@ -37,7 +37,7 @@
         "zustand": "^5.0.0",
       },
       "devDependencies": {
-        "@astryxdesign/cli": "0.6.5",
+        "@astryxdesign/cli": "0.7.3",
         "@types/papaparse": "^5.5.2",
         "@types/react": "^19.1.0",
         "@types/react-dom": "^19.1.0",
@@ -52,11 +52,11 @@
     },
   },
   "packages": {
-    "@astryxdesign/cli": ["@astryxdesign/cli@0.6.5", "", { "dependencies": { "@babel/core": "7.29.7", "@babel/parser": "7.29.8", "@babel/plugin-transform-typescript": "7.29.7", "@babel/types": "7.29.8", "ast-types": "0.16.3", "commander": "^12.1.0", "ignore": "^7.0.5", "jiti": "^2.7.0", "jscodeshift": "^17.3.0", "node-diff3": "3.2.1", "postcss": "^8.5.23", "postcss-selector-parser": "^7.1.5", "recast": "0.23.21", "zod": "^4.4.3" }, "peerDependencies": { "@astryxdesign/charts": "*", "@astryxdesign/core": "*", "@astryxdesign/lab": "*", "@astryxdesign/theme-neutral": "*" }, "optionalPeers": ["@astryxdesign/charts", "@astryxdesign/core", "@astryxdesign/lab", "@astryxdesign/theme-neutral"], "bin": { "cli": "./clients/cli/bin/astryx.mjs", "astryx": "./clients/cli/bin/astryx.mjs" } }, "sha512-TzX2nBcPeH2+6kWsba4046cdK7AkUWorViAVWbKn7qJEULTts+vRQ0BecwbtHP/1m6rZu3kWKtPKV/OVAQ864w=="],
+    "@astryxdesign/cli": ["@astryxdesign/cli@0.7.3", "", { "dependencies": { "@babel/core": "7.29.7", "@babel/parser": "7.29.8", "@babel/plugin-transform-typescript": "7.29.7", "@babel/types": "7.29.8", "ast-types": "0.16.3", "commander": "^12.1.0", "ignore": "^7.0.5", "jiti": "^2.7.0", "jscodeshift": "^17.3.0", "node-diff3": "3.2.1", "postcss": "^8.5.23", "postcss-selector-parser": "^7.1.6", "recast": "0.23.21", "zod": "^4.4.3" }, "peerDependencies": { "@astryxdesign/charts": "*", "@astryxdesign/core": "*", "@astryxdesign/lab": "*", "@astryxdesign/theme-neutral": "*" }, "optionalPeers": ["@astryxdesign/charts", "@astryxdesign/core", "@astryxdesign/lab", "@astryxdesign/theme-neutral"], "bin": { "cli": "./clients/cli/bin/astryx.mjs", "astryx": "./clients/cli/bin/astryx.mjs" } }, "sha512-B5dF5qeylGNXiZF1AfTgW/k414RuG9CUS3d5yMwS5gcZ4y92v42Tb5pKrLJpkSRxwDwyhLFvhaoFuiXqEhw22w=="],
 
-    "@astryxdesign/core": ["@astryxdesign/core@0.6.5", "", { "dependencies": { "intl-messageformat": "^11.2.9" }, "peerDependencies": { "@stylexjs/stylex": "^0.19.0", "react": ">=19.0.0", "react-dom": ">=19.0.0" } }, "sha512-fI2ELLMxoPHKOJWKYyoTWi31q9Dg0SLWjuBMrkl6tQY3WFf3TjTrDn4f7KyOF6mryjbTsf93uQNOUJKbay1o/A=="],
+    "@astryxdesign/core": ["@astryxdesign/core@0.7.3", "", { "dependencies": { "intl-messageformat": "^11.2.9" }, "peerDependencies": { "@stylexjs/stylex": "^0.19.0", "react": ">=19.0.0", "react-dom": ">=19.0.0" } }, "sha512-dDVg5pUE7IwpkSl46rw/Oahbwij2e26Imwbao0AK3mLBBZo7yVzibFdf6dLfFKN3p+zy7a2ZMQZeOIb+xSEKpg=="],
 
-    "@astryxdesign/theme-neutral": ["@astryxdesign/theme-neutral@0.6.5", "", { "dependencies": { "lucide-react": "^1.18.0" }, "peerDependencies": { "@astryxdesign/core": "0.6.5", "react": ">=19" } }, "sha512-8Ylen70//sYhVJvst2prflxng5t3ryRlsJJkS44vvY0/9A4KGjCs7bxfRAfSrFxF/dSXZ8sQHuGxbXZiRn7PHQ=="],
+    "@astryxdesign/theme-neutral": ["@astryxdesign/theme-neutral@0.7.3", "", { "dependencies": { "lucide-react": "^1.18.0" }, "peerDependencies": { "@astryxdesign/core": "0.7.3", "react": ">=19" } }, "sha512-nrPqOzcePy5whCcgSBTR80/WrKpSChYR3anfBuXc3pvutJUA4MMC0oqm6aBH57irFDDLZ6D4GIzOO9fBFYQaAA=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 

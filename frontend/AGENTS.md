@@ -3,33 +3,32 @@
 Project-specific guidance for AI coding agents.
 
 <!-- ASTRYX:START -->
-Astryx v0.6.5 · 166 components
+Astryx v0.7.3 · 173 components
 CLI: run every command as `npx astryx <cmd>` (shown below as `astryx ...`).
 
-SETUP (once, in your app entry e.g. main.tsx) — without these, components render unstyled:
+SETUP (once, in app entry e.g. main.tsx) — without these, components render unstyled:
   import "@astryxdesign/core/reset.css";
   import "@astryxdesign/core/astryx.css";
 
-WORKFLOW — start every page from a template. Never lay out a page from scratch:
-1. `astryx build "<idea>"` — START HERE: names the [page] template to start from (always one: the closest match, or the app shell), two other templates, and the [block]s + [component]s for parts it lacks. No args = full playbook.
-2. `astryx template <name> <path>` — scaffold that template into your project. Keep its frame, gap and padding; replace its data, copy and sections; delete sections you do not need.
-3. `astryx template <Block>` for a part the template lacks; `astryx component <Name>` for props + examples before you use or change a component.
-Changing a page you already have? Keep it: skip step 2 and add blocks and components inside its sections.
+WORKFLOW — start every page from a template, never from scratch:
+1. `astryx build "<idea>"` — names the template to scaffold from and the parts it lacks.
+2. `astryx template <name> <path>` — scaffold it; keep its frame, gap and padding; replace the content.
+3. `astryx template <Block>` for parts it lacks; `astryx component <Name>` to read props before using one.
+Changing an existing page? Keep it: skip step 2 and add blocks/components inside its sections.
 
 RULES:
-- No <div> — components do all layout/spacing, page frame included.
-- Frame first: the template you scaffold sets the page frame. Read `astryx docs layout` before you change it — region widths, breakpoint behavior.
-- Dense data = rows (Table, List/Item), never Card-wrapped list items; Card is for standalone widgets. Status = StatusDot/Token; Badge = counts only.
-- Custom styling: component props first; else Tailwind utilities backed by tokens (bg-surface, text-primary, rounded-lg) via tailwind-theme.css. No raw hex/px.
-- Tokens for every value (`astryx docs tokens`). Brand/accent belongs in the theme (`astryx theme list` / `theme add <slug>`, or `astryx theme template` for a custom one) — never override --color-* in :root.
-- SELF-CHECK before you finish: re-read the file and replace any style={{…}}, raw <div>/<span> layout, imported .css/@apply, or hardcoded/arbitrary value (e.g. bg-[#fff], p-[13px]) with the component or a token-backed utility. Confirm the page kept its template's frame, gap and padding. If unsure a component/prop exists, run `astryx component <Name>` / `astryx search "<thing>"`; don't hand-roll CSS.
+- No <div> — components handle all layout and spacing.
+- Read `astryx docs layout` before changing a template's frame.
+- Dense data = rows (Table, List/Item), not Card-wrapped lists. Badge = counts only.
+- Style with component props first, then Tailwind utilities backed by tokens. No raw hex/px.
+- Palettes and custom colors go through the theme, never :root overrides. Run `astryx theme add <slug>` to import; `theme eject <slug>` only forks source. See `astryx docs theme`.
+- SELF-CHECK: re-read the file; replace any style={{…}}, raw <div>/<span>, imported .css/@apply, or hardcoded/arbitrary value (bg-[#fff], p-[13px]) with the component or a token-backed utility.
 
-MORE CLI:
-  search "<query>"   find any component / hook / doc / template / block
-  component --list   166 components by category
-  template --list    page + block recipes
-  docs <topic>       authoring, browser-support, color, elevation, getting-started, icons, illustrations, internationalization, layout, migration, motion, principles, shape, spacing, styling-libraries, styling, theme, tokens, typography, working-with-ai
-  docs cli           commands, API reference, integration authoring (one level at a time)
-  swizzle <Name>     eject component source for deep customization
-  upgrade --from <old version> --apply   run after any Astryx or integration dependency bump
+`astryx help` lists every command. Key ones beyond the workflow:
+  search "<query>"   find any component / hook / doc / template
+  discover <words>   integrations you could add
+  docs <topic>       getting-started, principles, tokens, theme … (`astryx docs` lists all)
+  docs cli           commands and API reference
+  docs authoring     build an integration package, and every field it holds
+  upgrade --from <old version> --apply   run after a dependency bump
 <!-- ASTRYX:END -->

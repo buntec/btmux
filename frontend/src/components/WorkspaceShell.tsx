@@ -10,7 +10,6 @@ import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
 import { SessionNavItem } from './SessionNavItem';
 import { AgentNavItem } from './AgentNavItem';
-import { RailNavItem } from './RailNavItem';
 import { APPEARANCES } from '../lib/appearance';
 import type { ClientMessage } from '../protocol/messages';
 
@@ -140,7 +139,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
           }
         >
           <SideNavSection title="Workspace">
-            <RailNavItem
+            <SideNavItem
               label="Switch session"
               icon={Search}
               onClick={() => {
@@ -149,7 +148,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
               }}
             />
             {active && (
-              <RailNavItem
+              <SideNavItem
                 label="Window overview"
                 icon={Grid2X2}
                 onClick={() => {
@@ -165,7 +164,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
                 setAgentGridOpen(true);
               }}
             />
-            <RailNavItem
+            <SideNavItem
               label="Commands"
               icon={Command}
               onClick={() => {
@@ -218,7 +217,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
                 </SessionNavItem>
               ))}
             </div>
-            {collapsed && <RailNavItem label="New session" icon={Plus} onClick={newSession} />}
+            {collapsed && <SideNavItem label="New session" icon={Plus} onClick={newSession} />}
           </SideNavSection>
         </SideNav>
       }

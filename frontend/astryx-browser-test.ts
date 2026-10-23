@@ -115,6 +115,10 @@ try {
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
+  // The nav mounts collapsed; its rail items still get tooltips.
+  await page.getByRole('button', { name: 'Switch session', exact: true }).hover();
+  await page.getByRole('tooltip').filter({ hasText: 'Switch session' }).waitFor();
+  await page.mouse.move(0, 0);
   const theme = await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const config = useStore.getState().config;

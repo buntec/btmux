@@ -114,7 +114,7 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
             value={searchQuery}
             onChange={(value) => store.getState().setSearchQuery(value)}
             placeholder={searchMode === 'files' ? 'Search files…' : 'Search content…'}
-            className="min-w-0 flex-1"
+            controlClassName="min-w-0 flex-1"
           />
           {isLoading && <Spinner size="sm" aria-label="Searching" />}
         </HStack>

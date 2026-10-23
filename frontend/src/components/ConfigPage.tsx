@@ -667,7 +667,7 @@ export function ConfigPage({ config, send }: Props) {
               isReadOnly
               hasSpellCheck={false}
               statusVariant="detached"
-              className="h-full [&_textarea]:h-full [&_textarea]:resize-none [&_textarea]:font-mono"
+              controlClassName="h-full [&_textarea]:h-full [&_textarea]:resize-none [&_textarea]:font-mono"
             />
           </LayoutContent>
         }

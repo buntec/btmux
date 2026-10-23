@@ -1506,7 +1506,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               size="sm"
               value={renameValue}
               onChange={setRenameValue}
-              className="min-w-0 flex-1"
+              controlClassName="min-w-0 flex-1"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();

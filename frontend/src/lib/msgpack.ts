@@ -8,7 +8,7 @@ export interface MsgpackExt {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-export function encode(value: unknown): Uint8Array {
+export function encode(value: unknown): Uint8Array<ArrayBuffer> {
   const out: number[] = [];
   const u8 = (n: number) => out.push(n & 0xff);
   const u16 = (n: number) => out.push((n >> 8) & 0xff, n & 0xff);

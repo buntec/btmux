@@ -3,6 +3,7 @@
 //! state. Resize events live in the same ordered stream as output.
 use axum::body::Bytes;
 use std::collections::VecDeque;
+use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const PER_PANE_BYTES: usize = 8 * 1024 * 1024;
@@ -24,6 +25,17 @@ impl Output {
     }
 }
 
+/// vt100's `(rows, cols)`; it rejects empty sizes.
+pub(super) fn vt_size(cols: u16, rows: u16) -> (NonZeroU16, NonZeroU16) {
+    let size = |n| NonZeroU16::new(n).unwrap_or(NonZeroU16::MIN);
+    (size(rows), size(cols))
+}
+
+pub(super) fn set_size(screen: &mut vt100::Screen, cols: u16, rows: u16) {
+    let (rows, cols) = vt_size(cols, rows);
+    screen.set_size(rows, cols);
+}
+
 pub struct Replay {
     head: vt100::Parser,
     /// Present only while agent detection reads this pane.
@@ -40,7 +52,10 @@ pub struct Replay {
 impl Replay {
     pub fn new(cols: u16, rows: u16, cap: usize) -> Self {
         Self {
-            head: vt100::Parser::new(rows, cols, 0),
+            head: {
+                let (rows, cols) = vt_size(cols, rows);
+                vt100::Parser::new(rows, cols, 0)
+            },
             live: None,
             revision: 0,
             events: VecDeque::new(),
@@ -103,7 +118,7 @@ impl Replay {
 
     fn advance(&mut self, event: &Output) {
         match event {
-            Output::Size(cols, rows) => self.head.screen_mut().set_size(*rows, *cols),
+            Output::Size(cols, rows) => set_size(self.head.screen_mut(), *cols, *rows),
             Output::Data(bytes) => {
                 self.head.process(bytes);
                 for &byte in bytes {
@@ -140,7 +155,7 @@ impl Replay {
             return;
         }
         let (rows, cols) = self.head.screen().size();
-        let mut live = super::screen::LiveScreen::new(cols, rows);
+        let mut live = super::screen::LiveScreen::new(cols.get(), rows.get());
         for event in self.snapshot() {
             live.push(&event, self.revision);
         }
@@ -156,12 +171,15 @@ impl Replay {
             let mut normal = vt100::Parser::new(rows, cols, 0);
             *normal.screen_mut() = self.head.screen().clone();
             normal.process(b"\x1b[?1049l");
-            reset.extend(normal.screen().state_formatted());
+            reset.extend_from_slice(normal.screen().state_formatted().as_bytes());
             reset.extend_from_slice(b"\x1b[?1049h");
         }
-        reset.extend(self.head.screen().state_formatted());
+        reset.extend_from_slice(self.head.screen().state_formatted().as_bytes());
         reset.extend(&self.utf8_tail);
-        let mut result = vec![Output::Size(cols, rows), Output::Data(reset.into())];
+        let mut result = vec![
+            Output::Size(cols.get(), rows.get()),
+            Output::Data(reset.into()),
+        ];
         result.extend(self.events.iter().cloned());
         result
     }
@@ -177,11 +195,11 @@ impl Drop for Replay {
 mod tests {
     use super::*;
     fn restore(replay: &Replay) -> vt100::Parser {
-        let mut parser = vt100::Parser::new(24, 80, 0);
+        let mut parser = vt100::Parser::default();
         for event in replay.snapshot() {
             match event {
                 Output::Data(bytes) => parser.process(&bytes),
-                Output::Size(cols, rows) => parser.screen_mut().set_size(rows, cols),
+                Output::Size(cols, rows) => set_size(parser.screen_mut(), cols, rows),
             }
         }
         parser
@@ -226,7 +244,7 @@ mod tests {
         replay.push(Output::Size(100, 30));
         let parser = restore(&replay);
         assert_eq!(parser.screen().contents(), "a🙂b");
-        assert_eq!(parser.screen().size(), (30, 100));
+        assert_eq!(parser.screen().size(), vt_size(100, 30));
     }
     #[test]
     #[cfg(unix)]

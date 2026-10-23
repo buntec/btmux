@@ -336,8 +336,9 @@ fn branch_info(repo: &Repository, branch: &git2::Branch<'_>) -> Option<GitBranch
     let upstream = branch
         .get()
         .name()
+        .ok()
         .and_then(|name| repo.branch_upstream_name(name).ok())
-        .and_then(|name| name.as_str().map(str::to_string))
+        .and_then(|name| name.as_str().ok().map(str::to_string))
         .map(|name| {
             name.strip_prefix("refs/remotes/")
                 .or_else(|| name.strip_prefix("refs/heads/"))
@@ -357,7 +358,12 @@ fn branch_info(repo: &Repository, branch: &git2::Branch<'_>) -> Option<GitBranch
         ahead,
         behind,
         commit: commit.id().to_string(),
-        subject: commit.summary().unwrap_or_default().to_string(),
+        subject: commit
+            .summary()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -367,7 +373,7 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
         .head()
         .ok()
         .filter(|head| head.is_branch())
-        .and_then(|head| head.shorthand().map(str::to_string));
+        .and_then(|head| head.shorthand().ok().map(str::to_string));
 
     let mut local_branches = Vec::new();
     for entry in repo
@@ -392,7 +398,7 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
     {
         let Ok((remote, _)) = entry else { continue };
         // Skip symbolic refs like `origin/HEAD`.
-        if remote.get().symbolic_target().is_some() {
+        if remote.get().symbolic_target().ok().flatten().is_some() {
             continue;
         }
         if let Some(info) = branch_info(&repo, &remote) {
@@ -405,7 +411,7 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
         .remotes()
         .map_err(|e| format!("Failed to list remotes: {}", e))?
         .iter()
-        .flatten()
+        .filter_map(|name| name.ok().flatten())
         .map(str::to_string)
         .collect();
 

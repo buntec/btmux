@@ -572,7 +572,7 @@ impl OutputPipeline {
 
 /// Record an OSC 133 prompt or command mark.
 fn mark_prompt(state: &AtomicU32, command: bool) {
-    let _ = state.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |state| {
+    let _ = state.try_update(Ordering::Relaxed, Ordering::Relaxed, |state| {
         match (command, state % 2 == 1) {
             (true, false) if state == 0 => Some(2),
             (false, false) | (true, true) => Some(state + 1),

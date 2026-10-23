@@ -1,4 +1,4 @@
-use super::replay::Output;
+use super::replay::{set_size, vt_size, Output};
 
 #[derive(Default)]
 struct Signals {
@@ -45,7 +45,10 @@ pub struct LiveScreen {
 impl LiveScreen {
     pub fn new(cols: u16, rows: u16) -> Self {
         Self {
-            parser: vt100::Parser::new_with_callbacks(rows, cols, 0, Signals::default()),
+            parser: {
+                let (rows, cols) = vt_size(cols, rows);
+                vt100::Parser::new_with_callbacks(rows, cols, 0, Signals::default())
+            },
             revision: 0,
         }
     }
@@ -56,7 +59,7 @@ impl LiveScreen {
         self.parser.callbacks_mut().revision = revision;
         match event {
             Output::Data(bytes) => self.parser.process(bytes),
-            Output::Size(cols, rows) => self.parser.screen_mut().set_size(*rows, *cols),
+            Output::Size(cols, rows) => set_size(self.parser.screen_mut(), *cols, *rows),
         }
     }
 
@@ -80,7 +83,7 @@ impl LiveScreen {
 /// row ends in a non-blank cell (erasing that cell unwraps it), so `rows`
 /// dropping trailing blanks loses nothing.
 fn push_rows(screen: &vt100::Screen, take: usize, text: &mut String) {
-    let cols = screen.size().1;
+    let cols = screen.size().1.get();
     for (row, contents) in screen.rows(0, cols).take(take).enumerate() {
         text.push_str(&contents);
         if !screen.row_wrapped(row as u16) {
@@ -104,15 +107,19 @@ pub struct Capture {
 /// screen. Wrapped rows are joined, and trailing blank lines dropped.
 pub fn capture(events: &[Output], history: usize) -> Capture {
     let history = history.min(MAX_CAPTURE_HISTORY);
-    let mut parser = vt100::Parser::new(24, 80, history);
+    let mut parser = vt100::Parser::new(
+        vt100::Parser::DEFAULT_ROWS,
+        vt100::Parser::DEFAULT_COLS,
+        history,
+    );
     for event in events {
         match event {
             Output::Data(bytes) => parser.process(bytes),
-            Output::Size(cols, rows) => parser.screen_mut().set_size(*rows, *cols),
+            Output::Size(cols, rows) => set_size(parser.screen_mut(), *cols, *rows),
         }
     }
     let screen = parser.screen_mut();
-    let rows = usize::from(screen.size().0);
+    let rows = usize::from(screen.size().0.get());
     screen.set_scrollback(usize::MAX);
     let mut offset = screen.scrollback();
     let mut text = String::new();

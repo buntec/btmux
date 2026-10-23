@@ -357,7 +357,7 @@ fn git_log_sync(root: &Path, max_count: usize) -> Result<GitLogResult, String> {
         .map_err(|e| format!("Failed to read references: {}", e))?;
     for reference in references {
         let reference = reference.map_err(|e| format!("Failed to read reference: {}", e))?;
-        let Some(name) = reference.name() else {
+        let Ok(name) = reference.name() else {
             continue;
         };
         let Some((kind, display_name)) = display_ref_name(name) else {
@@ -430,7 +430,12 @@ fn git_log_sync(root: &Path, max_count: usize) -> Result<GitLogResult, String> {
             id: id.clone(),
             short_id,
             parents,
-            summary: commit.summary().unwrap_or("(no subject)").to_string(),
+            summary: commit
+                .summary()
+                .ok()
+                .flatten()
+                .unwrap_or("(no subject)")
+                .to_string(),
             author,
             timestamp: commit.time().seconds(),
             refs: refs_by_commit.remove(&oid).unwrap_or_default(),
@@ -602,7 +607,7 @@ fn get_head_info(repo: &Repository) -> GitHead {
     let head = repo.head().ok();
     let branch = head
         .as_ref()
-        .and_then(|r| r.shorthand().map(|s| s.to_string()));
+        .and_then(|r| r.shorthand().ok().map(|s| s.to_string()));
 
     let local_oid = head.as_ref().and_then(|r| r.target());
     let (ahead, behind) = local_oid
@@ -623,7 +628,7 @@ fn get_head_info(repo: &Repository) -> GitHead {
         .map(|c| {
             (
                 c.id().to_string()[..7].to_string(),
-                c.summary().unwrap_or("").to_string(),
+                c.summary().ok().flatten().unwrap_or("").to_string(),
             )
         })
         .unwrap_or_default();

@@ -12,17 +12,7 @@ import type { ServerFileMessage } from '@/protocol/file-messages';
 import { Placeholder } from './Placeholder';
 
 type PreviewType =
-  | 'code'
-  | 'image'
-  | 'markdown'
-  | 'json'
-  | 'csv'
-  | 'diff'
-  | 'pdf'
-  | 'video'
-  | 'audio'
-  | 'directory'
-  | 'unknown';
+  'code' | 'image' | 'markdown' | 'json' | 'csv' | 'diff' | 'pdf' | 'video' | 'audio' | 'directory' | 'unknown';
 
 const EXTENSION_MAP: Record<string, PreviewType> = {
   rs: 'code',

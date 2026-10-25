@@ -539,6 +539,14 @@ try {
   }
   console.log('PASS delayed italic and bold italic fonts are loaded before measuring the editor');
 
+  await rpc('nvim_set_option_value', ['guifont', await rpc('nvim_get_option_info2', ['guifont', {}]).then((i) => i.default), {}]);
+  await waitForAsync(page, async () => {
+    const { getTerminalFontFamily } = await import('/src/state/configDefaults.ts' as string);
+    const grid = (window as any).nvimGrid;
+    return grid.font.family.startsWith(getTerminalFontFamily((window as any).nvimStore.getState().config));
+  });
+  console.log("PASS Neovim's default 'guifont' keeps the btmux font");
+
   const update = (update: unknown) =>
     page.evaluate(async (update) => {
       const { useStore } = await import('/src/state/store.tsx' as string);

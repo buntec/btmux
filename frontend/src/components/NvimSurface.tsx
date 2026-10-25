@@ -171,10 +171,16 @@ export function NvimSurface({
     // 'mousemoveevent': hover moves; 'mousehide': hide the pointer while typing.
     let mouseMoves = false;
     let mouseHide = true;
+    // Neovim's default 'guifont' (e.g. "SF Mono,Menlo,…" on macOS) keeps the btmux font.
+    let guifontValue = '';
+    let guifontDefault: string | null = null;
+    const applyGuifont = () => setGuifont(parseGuifont(guifontValue === guifontDefault ? '' : guifontValue));
     grid.onEvent = (name, args) => {
       if (model.apply(name, args)) grid.cursorHidden = model.cmdlineActive;
-      else if (name === 'option_set' && args[0] === 'guifont') setGuifont(parseGuifont(String(args[1])));
-      else if (name === 'option_set' && args[0] === 'linespace') setLinespace(Number(args[1]) || 0);
+      else if (name === 'option_set' && args[0] === 'guifont') {
+        guifontValue = String(args[1]);
+        applyGuifont();
+      } else if (name === 'option_set' && args[0] === 'linespace') setLinespace(Number(args[1]) || 0);
       else if (name === 'option_set' && args[0] === 'pumblend') setPumblend(Number(args[1]) || 0);
       else if (name === 'option_set' && args[0] === 'mousemoveevent') mouseMoves = !!args[1];
       else if (name === 'option_set' && args[0] === 'mousehide') mouseHide = !!args[1];
@@ -274,20 +280,34 @@ export function NvimSurface({
       gridSize = grid.fit(container.clientWidth, container.clientHeight);
       applyTheme();
       if (openRef.current) changeDirRef.current();
+      // Answered before the attach's option_set events.
+      request('nvim_get_option_info2', ['guifont', {}], (info) => {
+        guifontDefault = String((info as { default?: unknown }).default ?? '');
+        applyGuifont();
+      });
       const ext = { rgb: true, ext_cmdline: true, ext_popupmenu: true, ext_messages: true };
-      // Neovim only sends window grid cells that differ from its own copy, so a
-      // UI attaching to a running Neovim gets no window contents. Attaching once
-      // without multigrid frees those grids, and the real attach gets them in full.
-      request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: false }]);
-      request('nvim_ui_detach', [], () => (resyncing = false));
-      // Report focus; unfocused only as the sole UI, since other tabs report their own.
-      request('nvim_ui_attach', [gridSize[0], gridSize[1], { ...ext, ext_multigrid: true }], () => {
-        if (hasFocus()) notify('nvim_ui_set_focus', [true]);
-        else {
-          request('nvim_list_uis', [], (uis) => {
-            if ((uis as unknown[]).length === 1 && !hasFocus()) notify('nvim_ui_set_focus', [false]);
-          });
-        }
+      request('nvim_get_option_value', ['columns', {}], (columns) => {
+        gridSize = grid.fit(container.clientWidth, container.clientHeight);
+        const [cols, rows] = gridSize;
+        // Neovim only sends window grid cells that differ from its own copy, so a
+        // UI attaching to a running Neovim gets no window contents. Attaching once
+        // without multigrid frees those grids, and the real attach gets them in full.
+        request('nvim_ui_attach', [cols, rows, { ...ext, ext_multigrid: false }]);
+        request('nvim_ui_detach', [], () => (resyncing = false));
+        // It sends win_pos only for windows that moved or resized, so the real
+        // attach narrows its screen and resizes back.
+        const narrow = Math.max(1, Math.min(cols, Number(columns)) - 1);
+        // Report focus; unfocused only as the sole UI, since other tabs report their own.
+        request('nvim_ui_attach', [narrow, rows, { ...ext, ext_multigrid: true }], () => {
+          if (hasFocus()) notify('nvim_ui_set_focus', [true]);
+          else {
+            request('nvim_list_uis', [], (uis) => {
+              if ((uis as unknown[]).length === 1 && !hasFocus()) notify('nvim_ui_set_focus', [false]);
+            });
+          }
+        });
+        notify('nvim_ui_try_resize', [cols, rows]);
+        attached = true;
       });
       // Kind icons from the btmux plugin (empty without mini.icons or the plugin).
       request(
@@ -304,7 +324,6 @@ export function NvimSurface({
           scrollLines[dir as 'ver' | 'hor'] = Math.max(1, Number(n));
         }
       });
-      attached = true;
       setStatus(null);
     };
     ws.onmessage = (e) => {

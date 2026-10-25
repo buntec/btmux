@@ -283,7 +283,7 @@ moves between cells and windows with an eased slide (`[terminal]
 cursor-animation-duration`; a cell or two along a row jumps). Unset `Normal` colors fall back to the btmux theme, as in a TUI,
 and 'background' is set from the theme's luminance. 'guifont' (Neovide format,
 `lib/nvimFont.ts`, with `:h`, `:b`, `:i`, and `:w`) and 'linespace' override
-the btmux terminal font. Keys go
+the btmux terminal font; 'guifont' at Neovim's default doesn't. Keys go
 through `lib/nvimKeys.ts` to `nvim_input`: F-keys and Cmd (`<D-…>`) reach
 Neovim, except Cmd shortcuts the browser or desktop app keeps; the global
 keybinding hook lets them through for the `data-nvim-input` textarea, which

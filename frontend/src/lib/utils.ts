@@ -20,3 +20,11 @@ export function getParent(path: string): string {
 export function joinPath(dir: string, name: string): string {
   return dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
 }
+
+/** Moves a list cursor by `delta`, clamped; with `wrap`, a step past an end it's on wraps to the other. */
+export function stepIndex(index: number, delta: number, count: number, wrap: boolean): number {
+  if (count <= 0) return 0;
+  if (wrap && delta > 0 && index >= count - 1) return 0;
+  if (wrap && delta < 0 && index <= 0) return count - 1;
+  return Math.max(0, Math.min(index + delta, count - 1));
+}

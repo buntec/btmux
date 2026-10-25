@@ -9,6 +9,7 @@ import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
 import { terminalTypeScale } from '@/lib/astryx-theme';
+import { stepIndex } from '@/lib/utils';
 import { buildPortRows } from '@/lib/portRows';
 import { buildProcessRows } from '@/lib/processTree';
 import { KeyHint } from './KeyHint';
@@ -154,10 +155,10 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
           store.toggleCollapsed(row.process.pid);
         }
       };
-      const move = (delta: number) => {
+      // A fresh step past an end wraps; a held key or a page jump stops there.
+      const move = (delta: number, wrap = !e.repeat) => {
         if (count === 0) return;
-        const next = Math.max(0, Math.min(currentIndex + delta, count - 1));
-        focusRow(next);
+        focusRow(stepIndex(currentIndex, delta, count, wrap));
       };
 
       if (store.filterActive) {
@@ -191,12 +192,12 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
 
       if (e.ctrlKey && e.key === 'd') {
         e.preventDefault();
-        move(Math.max(1, Math.floor(count / 2)));
+        move(Math.max(1, Math.floor(count / 2)), false);
         return;
       }
       if (e.ctrlKey && e.key === 'u') {
         e.preventDefault();
-        move(-Math.max(1, Math.floor(count / 2)));
+        move(-Math.max(1, Math.floor(count / 2)), false);
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;

@@ -22,7 +22,7 @@ import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
 import { KeyHint, type Hint } from './KeyHint';
-import { cn, getParent, joinPath } from '@/lib/utils';
+import { cn, getParent, joinPath, stepIndex } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
 import { smoothScrollBy } from '@/lib/smoothScroll';
 import { DEFAULT_TYPE_SCALE, terminalTypeScale } from '@/lib/astryx-theme';
@@ -713,6 +713,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Keyboard handler — only active while this overlay (or a child) has focus.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // A fresh press past an end wraps; a held key stops there.
+      const step = (index: number, delta: number, count: number) => stepIndex(index, delta, count, !e.repeat);
       if (commitModalOpen || createModalOpen || gitPopup || !rootRef.current?.contains(document.activeElement)) return;
 
       // Rename input eats its own keys — let it handle Escape/Enter only
@@ -824,12 +826,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           }
           if (e.ctrlKey && e.key === 'n') {
             e.preventDefault();
-            store.getState().setGitLogFocusedIndex(Math.min(gitLogFocusedIndex + 1, lastIndex));
+            store.getState().setGitLogFocusedIndex(step(gitLogFocusedIndex, 1, visibleCommits.length));
             return;
           }
           if (e.ctrlKey && e.key === 'p') {
             e.preventDefault();
-            store.getState().setGitLogFocusedIndex(Math.max(gitLogFocusedIndex - 1, 0));
+            store.getState().setGitLogFocusedIndex(step(gitLogFocusedIndex, -1, visibleCommits.length));
             return;
           }
 
@@ -837,12 +839,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             case 'j':
             case 'ArrowDown':
               e.preventDefault();
-              store.getState().setGitLogFocusedIndex(Math.min(gitLogFocusedIndex + 1, lastIndex));
+              store.getState().setGitLogFocusedIndex(step(gitLogFocusedIndex, 1, visibleCommits.length));
               break;
             case 'k':
             case 'ArrowUp':
               e.preventDefault();
-              store.getState().setGitLogFocusedIndex(Math.max(gitLogFocusedIndex - 1, 0));
+              store.getState().setGitLogFocusedIndex(step(gitLogFocusedIndex, -1, visibleCommits.length));
               break;
             case '/':
               e.preventDefault();
@@ -912,12 +914,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         }
         if (e.ctrlKey && e.key === 'n') {
           e.preventDefault();
-          store.getState().setGitFocusedIndex(Math.min(gitFocusedIndex + 1, count - 1));
+          store.getState().setGitFocusedIndex(step(gitFocusedIndex, 1, count));
           return;
         }
         if (e.ctrlKey && e.key === 'p') {
           e.preventDefault();
-          store.getState().setGitFocusedIndex(Math.max(gitFocusedIndex - 1, 0));
+          store.getState().setGitFocusedIndex(step(gitFocusedIndex, -1, count));
           return;
         }
 
@@ -925,12 +927,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           case 'j':
           case 'ArrowDown':
             e.preventDefault();
-            store.getState().setGitFocusedIndex(Math.min(gitFocusedIndex + 1, count - 1));
+            store.getState().setGitFocusedIndex(step(gitFocusedIndex, 1, count));
             break;
           case 'k':
           case 'ArrowUp':
             e.preventDefault();
-            store.getState().setGitFocusedIndex(Math.max(gitFocusedIndex - 1, 0));
+            store.getState().setGitFocusedIndex(step(gitFocusedIndex, -1, count));
             break;
           case 'Tab': {
             e.preventDefault();
@@ -1050,12 +1052,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         const results = searchMode === 'files' ? searchResults : contentSearchResults;
         if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) {
           e.preventDefault();
-          store.getState().setFocusedIndex(Math.min(focusedIndex + 1, results.length - 1));
+          store.getState().setFocusedIndex(step(focusedIndex, 1, results.length));
           return;
         }
         if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) {
           e.preventDefault();
-          store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
+          store.getState().setFocusedIndex(step(focusedIndex, -1, results.length));
           return;
         }
         if (e.key === 'Tab') {
@@ -1124,7 +1126,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             if (filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
             return true;
           });
-          const next = down ? Math.min(focusedIndex + 1, vis.length - 1) : Math.max(focusedIndex - 1, 0);
+          const next = step(focusedIndex, down ? 1 : -1, vis.length);
           store.getState().setFocusedIndex(next);
           return;
         }
@@ -1150,7 +1152,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           store.getState().setTreeDepth(newDepth);
           selectDir(focusedFullPath, newDepth);
         } else {
-          store.getState().setFocusedIndex(Math.min(focusedIndex + 1, visible.length - 1));
+          store.getState().setFocusedIndex(step(focusedIndex, 1, visible.length));
         }
         return;
       }
@@ -1161,7 +1163,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           store.getState().setTreeDepth(newDepth);
           selectDir(focusedFullPath, newDepth);
         } else {
-          store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
+          store.getState().setFocusedIndex(step(focusedIndex, -1, visible.length));
         }
         return;
       }
@@ -1180,12 +1182,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         case 'j':
         case 'ArrowDown':
           e.preventDefault();
-          store.getState().setFocusedIndex(Math.min(focusedIndex + 1, visible.length - 1));
+          store.getState().setFocusedIndex(step(focusedIndex, 1, visible.length));
           break;
         case 'k':
         case 'ArrowUp':
           e.preventDefault();
-          store.getState().setFocusedIndex(Math.max(focusedIndex - 1, 0));
+          store.getState().setFocusedIndex(step(focusedIndex, -1, visible.length));
           break;
         case ' ': {
           // Toggle selection on focused entry, advance cursor

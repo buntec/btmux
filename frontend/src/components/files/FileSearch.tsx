@@ -190,21 +190,19 @@ function FileResultRow({
     <div
       data-index={index}
       className={cn(
-        'flex items-center gap-2 px-2 leading-tight cursor-default select-none',
+        'flex items-start gap-2 px-2 leading-tight cursor-default select-none',
         focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
     >
-      <File className="size-3.5 text-secondary shrink-0" />
-      <span className="flex-1 truncate">
-        {segments.map((seg, k) =>
-          seg.hi ? (
-            <span key={k} className="text-yellow-vivid">
-              {seg.text}
-            </span>
-          ) : (
-            <span key={k}>{seg.text}</span>
-          ),
-        )}
+      <span className="flex h-[1lh] shrink-0 items-center">
+        <File className="size-3.5 text-secondary" />
+      </span>
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+        {segments.map((seg, k) => (
+          <span key={k} className={seg.hi ? 'text-yellow-vivid' : undefined}>
+            <BreakablePath path={seg.text} />
+          </span>
+        ))}
       </span>
     </div>
   );
@@ -231,10 +229,12 @@ function ContentResultRow({
         focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
     >
-      <div className="flex items-center gap-1.5 min-w-0 leading-tight">
-        <FileText className="size-3.5 text-secondary shrink-0" />
-        <span className="min-w-0 flex-1 truncate">
-          {displayPath}
+      <div className="flex items-start gap-1.5 min-w-0 leading-tight">
+        <span className="flex h-[1lh] shrink-0 items-center">
+          <FileText className="size-3.5 text-secondary" />
+        </span>
+        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+          <BreakablePath path={displayPath} />
           {result.line != null && (
             <span className={focused ? 'text-on-accent/60' : 'text-secondary'}>:{result.line}</span>
           )}
@@ -247,4 +247,18 @@ function ContentResultRow({
       )}
     </div>
   );
+}
+
+// Long paths wrap, preferably after a slash.
+function BreakablePath({ path }: { path: string }) {
+  return path.split('/').map((part, i, all) => (
+    <span key={i}>
+      {part}
+      {i < all.length - 1 && (
+        <>
+          /<wbr />
+        </>
+      )}
+    </span>
+  ));
 }

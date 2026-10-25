@@ -18,10 +18,11 @@ const git = (...args: string[]) =>
   });
 git('init', '--initial-branch=main');
 for (let index = 0; index < 57; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
-writeFileSync(path.join(repo, 'README'), 'one\n');
+const readmeContext = 'ctx1\nctx2\nctx3\nctx4\nctx5\n';
+writeFileSync(path.join(repo, 'README'), `${readmeContext}one\n`);
 git('add', 'README');
 git('commit', '-m', 'Initial');
-writeFileSync(path.join(repo, 'README'), 'new\nmore\n');
+writeFileSync(path.join(repo, 'README'), `${readmeContext}new\nmore\n`);
 writeFileSync(path.join(repo, 'added.txt'), 'two\nlines');
 writeFileSync(path.join(repo, 'image.bin'), new Uint8Array([0, 1, 2]));
 git('add', '.');
@@ -130,6 +131,25 @@ try {
   );
   console.log('PASS per-file counts, binary files, EOF markers, totals and full patch');
 
+  // Context lines only; the hunk header repeats the line before the hunk.
+  const assertContext = async (hint: string, expected: string) => {
+    await page.getByText(hint, { exact: true }).waitFor();
+    const shown = async () =>
+      (await preview.getByText(/^ctx\d\s*$/).allInnerTexts()).map((line) => line.trim()).join(' ');
+    for (let attempt = 0; attempt < 50 && (await shown()) !== expected; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(await shown(), expected);
+  };
+  await page.keyboard.press('+');
+  await assertContext('-U4', 'ctx2 ctx3 ctx4 ctx5');
+  await page.keyboard.press('-');
+  await page.keyboard.press('-');
+  await assertContext('-U2', 'ctx4 ctx5');
+  await page.keyboard.press('0');
+  await assertContext('-U3', 'ctx3 ctx4 ctx5');
+  console.log('PASS diff context keys');
+
   await page.setViewportSize({ width: 1440, height: 480 });
   const originalUrl = page.url();
   const history = page.getByRole('group', { name: 'Commit history', exact: true });
@@ -184,10 +204,10 @@ try {
   console.log('PASS summary jumps and back-to-top visibility, mouse, keyboard and manual scrolling');
 
   await page.keyboard.press('j');
-  await summary.getByRole('status').filter({ hasText: '1 file changed, 1 insertion(+), 0 deletions(−)' }).waitFor();
+  await summary.getByRole('status').filter({ hasText: '1 file changed, 6 insertions(+), 0 deletions(−)' }).waitFor();
   assert.equal(await summary.getByRole('listitem').count(), 1);
   assert(await summary.getByText('README', { exact: true }).isVisible());
-  assert(await summary.getByText('+1', { exact: true }).isVisible());
+  assert(await summary.getByText('+6', { exact: true }).isVisible());
   assert(await summary.getByText('−0', { exact: true }).isVisible());
   assert.equal(await backToTop.count(), 0, 'back to top resets on commit changes');
   await changedFile('README').getByRole('button').press('Enter');

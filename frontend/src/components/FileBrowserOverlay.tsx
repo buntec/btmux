@@ -124,6 +124,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const gitCommitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
   const [ignoreAllSpace, setIgnoreAllSpace] = useState(false);
+  const [diffContext, setDiffContext] = useState(DEFAULT_DIFF_CONTEXT);
   const [browserReady, setBrowserReady] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
     null,
@@ -524,7 +525,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     }
     const gen = ++gitPreviewGenRef.current;
     const staged = item.section === 'staged';
-    fileSend('git_diff', { path: item.path, staged, cwd: currentPath, ignore_all_space: ignoreAllSpace }).then(
+    fileSend('git_diff', {
+      path: item.path,
+      staged,
+      cwd: currentPath,
+      ignore_all_space: ignoreAllSpace,
+      context_lines: diffContext,
+    }).then(
       (resp) => {
         if (gitPreviewGenRef.current === gen) {
           store.getState().setGitDiff(resp.payload as unknown as FileDiff);
@@ -543,6 +550,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     fileSend,
     currentPath,
     ignoreAllSpace,
+    diffContext,
     store,
   ]);
 
@@ -559,8 +567,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     }
 
     const gen = ++gitCommitPreviewGenRef.current;
-    store.getState().setGitCommitDiff(null);
-    fileSend('git_commit_diff', { commit_id: commit.id, cwd: currentPath }).then(
+    // Keep the shown diff while only the context changes.
+    if (store.getState().gitCommitDiff?.commit_id !== commit.id) store.getState().setGitCommitDiff(null);
+    fileSend('git_commit_diff', { commit_id: commit.id, cwd: currentPath, context_lines: diffContext }).then(
       (resp) => {
         if (gitCommitPreviewGenRef.current === gen) {
           store.getState().setGitCommitDiff(resp.payload as unknown as GitCommitDiffResult);
@@ -568,7 +577,18 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       },
       () => {},
     );
-  }, [isGitMode, gitView, gitLog, gitLogFocusedIndex, isFilterActive, filterQuery, fileSend, currentPath, store]);
+  }, [
+    isGitMode,
+    gitView,
+    gitLog,
+    gitLogFocusedIndex,
+    isFilterActive,
+    filterQuery,
+    fileSend,
+    currentPath,
+    diffContext,
+    store,
+  ]);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -864,6 +884,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               store.getState().setGitView('status');
               store.getState().setGitCommitDiff(null);
               break;
+            case '+':
+            case '-':
+            case '0':
+              e.preventDefault();
+              setDiffContext((lines) => nextDiffContext(e.key, lines));
+              break;
             case 'q':
               e.preventDefault();
               exitGitMode();
@@ -1010,6 +1036,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           case 'w':
             e.preventDefault();
             setIgnoreAllSpace((enabled) => !enabled);
+            break;
+          case '+':
+          case '-':
+          case '0':
+            e.preventDefault();
+            setDiffContext((lines) => nextDiffContext(e.key, lines));
             break;
           case 'Enter': {
             e.preventDefault();
@@ -1365,6 +1397,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     renameValue,
     commitRename,
     setIgnoreAllSpace,
+    setDiffContext,
     selectedPaths,
     yankRegister,
     pasteEntries,
@@ -1387,13 +1420,28 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const selectionCount = selectedPaths.size;
 
+  const diffContextHint: Hint = {
+    keys: ['+', '-', '0'],
+    label: (
+      <Text
+        type="code"
+        size="sm"
+        color={diffContext !== DEFAULT_DIFF_CONTEXT ? 'inherit' : 'disabled'}
+        className={cn(diffContext !== DEFAULT_DIFF_CONTEXT && 'text-cyan-vivid')}
+        style={{ fontVariantLigatures: 'none' }}
+      >
+        -U{diffContext}
+      </Text>
+    ),
+  };
+
   const allHints: Hint[] = isGitMode
     ? gitStatus && !gitStatus.is_repo
       ? GIT_EXIT_HINTS
       : isFilterActive
         ? GIT_FILTER_HINTS
         : gitView === 'log'
-          ? GIT_LOG_HINTS
+          ? [...GIT_LOG_HINTS, diffContextHint, ...GIT_LOG_TAIL_HINTS]
           : [
               ...GIT_STATUS_HINTS,
               {
@@ -1410,6 +1458,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                   </Text>
                 ),
               },
+              diffContextHint,
               ...GIT_STATUS_TAIL_HINTS,
             ]
     : searchMode !== 'off'
@@ -1568,6 +1617,16 @@ const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
   z: 'stash',
 };
 
+const DEFAULT_DIFF_CONTEXT = 3;
+const MAX_DIFF_CONTEXT = 50;
+
+/** Magit's `+`/`-`/`0` diff context keys. */
+function nextDiffContext(key: string, lines: number): number {
+  if (key === '+') return Math.min(lines + 1, MAX_DIFF_CONTEXT);
+  if (key === '-') return Math.max(lines - 1, 0);
+  return DEFAULT_DIFF_CONTEXT;
+}
+
 const GIT_POPUP_HINTS: Hint[] = Object.entries(GIT_POPUP_KEYS).map(([key, kind]) => ({ keys: [key], label: kind }));
 
 const GIT_EXIT_HINTS: Hint[] = [{ keys: ['esc', 'q'], label: 'exit git' }];
@@ -1583,9 +1642,9 @@ const GIT_LOG_HINTS: Hint[] = [
   { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll diff' },
   { keys: ['/'], label: 'filter' },
   { keys: ['s'], label: 'status' },
-  ...GIT_POPUP_HINTS,
-  { keys: ['esc', 'q'], label: 'exit git' },
 ];
+
+const GIT_LOG_TAIL_HINTS: Hint[] = [...GIT_POPUP_HINTS, { keys: ['esc', 'q'], label: 'exit git' }];
 
 const GIT_STATUS_HINTS: Hint[] = [
   { keys: ['j', 'k'], label: 'navigate' },

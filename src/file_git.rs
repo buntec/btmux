@@ -119,10 +119,14 @@ pub async fn git_log(root: &Path, max_count: usize) -> Result<GitLogResult, Stri
         .map_err(|e| e.to_string())?
 }
 
-pub async fn git_commit_diff(root: &Path, commit_id: &str) -> Result<GitCommitDiff, String> {
+pub async fn git_commit_diff(
+    root: &Path,
+    commit_id: &str,
+    context_lines: u32,
+) -> Result<GitCommitDiff, String> {
     let root = root.to_path_buf();
     let commit_id = commit_id.to_string();
-    tokio::task::spawn_blocking(move || git_commit_diff_sync(&root, &commit_id))
+    tokio::task::spawn_blocking(move || git_commit_diff_sync(&root, &commit_id, context_lines))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -132,12 +136,15 @@ pub async fn git_diff_file(
     path: &str,
     staged: bool,
     ignore_all_space: bool,
+    context_lines: u32,
 ) -> Result<FileDiff, String> {
     let root = root.to_path_buf();
     let path = path.to_string();
-    tokio::task::spawn_blocking(move || git_diff_file_sync(&root, &path, staged, ignore_all_space))
-        .await
-        .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || {
+        git_diff_file_sync(&root, &path, staged, ignore_all_space, context_lines)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub async fn git_stage_file(root: &Path, path: &str) -> Result<(), String> {
@@ -459,7 +466,11 @@ fn display_ref_name(name: &str) -> Option<(&'static str, String)> {
     None
 }
 
-fn git_commit_diff_sync(root: &Path, commit_id: &str) -> Result<GitCommitDiff, String> {
+fn git_commit_diff_sync(
+    root: &Path,
+    commit_id: &str,
+    context_lines: u32,
+) -> Result<GitCommitDiff, String> {
     let repo = open_repo(root)?;
     let oid = Oid::from_str(commit_id).map_err(|e| format!("Invalid commit id: {}", e))?;
     let commit = repo
@@ -470,8 +481,14 @@ fn git_commit_diff_sync(root: &Path, commit_id: &str) -> Result<GitCommitDiff, S
         .map_err(|e| format!("Failed to read commit tree: {}", e))?;
     let parent_tree = commit.parent(0).ok().and_then(|parent| parent.tree().ok());
 
+    let mut diff_opts = DiffOptions::new();
+    diff_opts.context_lines(context_lines);
     let diff = repo
-        .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)
+        .diff_tree_to_tree(
+            parent_tree.as_ref(),
+            Some(&commit_tree),
+            Some(&mut diff_opts),
+        )
         .map_err(|e| format!("Failed to get commit diff: {}", e))?;
 
     Ok(GitCommitDiff {
@@ -717,6 +734,7 @@ fn git_diff_file_sync(
     path: &str,
     staged: bool,
     ignore_all_space: bool,
+    context_lines: u32,
 ) -> Result<FileDiff, String> {
     let repo = open_repo(root)?;
 
@@ -726,6 +744,7 @@ fn git_diff_file_sync(
         diff_opts.pathspec(path);
     }
     diff_opts.ignore_whitespace(ignore_all_space);
+    diff_opts.context_lines(context_lines);
 
     let workdir = repo.workdir().ok_or("Bare repository")?;
     let abs_path = workdir.join(path);
@@ -1103,7 +1122,7 @@ mod tests {
             super::FileStatus::Renamed
         ));
 
-        let diff = git_diff_file_sync(&root, "new.txt", true, false).unwrap();
+        let diff = git_diff_file_sync(&root, "new.txt", true, false, 3).unwrap();
         assert_eq!(diff.old_path.as_deref(), Some("old.txt"));
 
         git_unstage_file_sync(&root, "new.txt").unwrap();
@@ -1131,11 +1150,47 @@ mod tests {
 
         fs::write(&file, "one   two  \nunchanged\n").unwrap();
 
-        let diff = git_diff_file_sync(&root, "file.txt", false, false).unwrap();
+        let diff = git_diff_file_sync(&root, "file.txt", false, false, 3).unwrap();
         assert!(!diff.hunks.is_empty());
 
-        let whitespace_ignored = git_diff_file_sync(&root, "file.txt", false, true).unwrap();
+        let whitespace_ignored = git_diff_file_sync(&root, "file.txt", false, true, 3).unwrap();
         assert!(whitespace_ignored.hunks.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn diff_uses_requested_context_lines() {
+        let root = std::env::temp_dir().join(format!("btmux-git-context-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        let lines: Vec<String> = (1..=20).map(|n| format!("line {n}")).collect();
+        fs::write(&file, lines.join("\n") + "\n").unwrap();
+
+        let repo = Repository::init(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+
+        let mut changed = lines.clone();
+        changed[9] = "changed".to_string();
+        fs::write(&file, changed.join("\n") + "\n").unwrap();
+
+        let context = |n| {
+            let diff = git_diff_file_sync(&root, "file.txt", false, false, n).unwrap();
+            diff.hunks[0]
+                .lines
+                .iter()
+                .filter(|line| line.origin == ' ')
+                .count()
+        };
+        assert_eq!(context(0), 0);
+        assert_eq!(context(3), 6);
+        assert_eq!(context(5), 10);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1236,7 +1291,7 @@ mod tests {
             .iter()
             .any(|reference| reference.name == "feature"));
 
-        let diff = git_commit_diff_sync(&root, &oid.to_string()).unwrap();
+        let diff = git_commit_diff_sync(&root, &oid.to_string(), 3).unwrap();
         assert_eq!(diff.commit_id, oid.to_string());
         assert_eq!(diff.files.len(), 1);
         assert_eq!(diff.files[0].path, "file.txt");

@@ -291,7 +291,8 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .unwrap_or(".");
             let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
-            match file_git::git_commit_diff(&git_root, commit_id).await {
+            let context_lines = diff_context_lines(&request.payload);
+            match file_git::git_commit_diff(&git_root, commit_id, context_lines).await {
                 Ok(result) => ServerMessage {
                     id,
                     msg_type: "git_commit_diff_result".to_string(),
@@ -323,7 +324,10 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .unwrap_or(".");
             let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
-            match file_git::git_diff_file(&git_root, path, staged, ignore_all_space).await {
+            let context_lines = diff_context_lines(&request.payload);
+            match file_git::git_diff_file(&git_root, path, staged, ignore_all_space, context_lines)
+                .await
+            {
                 Ok(result) => ServerMessage {
                     id,
                     msg_type: "git_diff_result".to_string(),
@@ -617,6 +621,14 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
         }
         _ => error_response(id, &format!("Unknown message type: {}", request.msg_type)),
     }
+}
+
+/// `-U<n>` for diff requests; git's default is 3.
+fn diff_context_lines(payload: &serde_json::Value) -> u32 {
+    payload
+        .get("context_lines")
+        .and_then(|value| value.as_u64())
+        .map_or(3, |lines| lines.min(1000) as u32)
 }
 
 fn error_response(id: String, message: &str) -> ServerMessage {

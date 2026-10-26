@@ -26,6 +26,7 @@ const START_TIMEOUT: Duration = Duration::from_secs(15);
 const OUTPUT_QUIET: Duration = Duration::from_millis(200);
 const OUTPUT_SETTLE: Duration = Duration::from_secs(1);
 
+#[derive(Debug)]
 pub enum Error {
     PaneNotFound(Uuid),
     /// The request itself is wrong.

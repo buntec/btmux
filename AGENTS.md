@@ -125,7 +125,10 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   otherwise); changes signal `meta_tx`. Not persisted. Windows and sessions
   have no identity of their own: `lib/gitIdentity.ts` derives it from their
   panes for the session switcher's repo/branch tokens (colored per repo) and
-  its filter.
+  its filter. `worktree.rs` creates a worktree (`worktree-path`, default
+  `../<repo>-<branch>`) with a window and removes one, closing its panes, for
+  the control socket (`prefix + W`/`X`), REST, MCP, and `btmux
+  new-worktree`/`remove-worktree`; it runs the `git` CLI off the lock.
 - **Windows shells** (`shell.rs`): `shell` is a command line (`wsl.exe -d Ubuntu`)
   whose program picks a `Dialect` (PowerShell, cmd, POSIX for Git Bash, WSL) for
   typed commands (`cd`, `open-editor`, capture-pane) and paths. `pty/windows.rs`

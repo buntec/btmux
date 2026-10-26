@@ -6,6 +6,7 @@ use clap::Parser;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 
 use crate::session::NotificationLevel;
+use crate::worktree::DEFAULT_PATH as DEFAULT_WORKTREE_PATH;
 
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8004;
@@ -584,6 +585,10 @@ pub struct FileConfig {
     pub prefix: Option<String>,
     /// Shell override (CLI `--shell` still wins over this).
     pub shell: Option<String>,
+    /// Where `new-worktree` puts worktrees: `{repo}` and `{branch}` filled in,
+    /// relative to the main worktree's parent unless absolute or `~/`.
+    #[serde(rename = "worktree-path")]
+    pub worktree_path: Option<String>,
     /// Milliseconds after a repeatable key (pane navigation and resizing) during
     /// which another repeatable key runs without the prefix. 0 disables.
     #[serde(rename = "repeat-time")]
@@ -711,6 +716,7 @@ impl Default for FileConfig {
         Self {
             prefix: None,
             shell: None,
+            worktree_path: None,
             repeat_time: DEFAULT_REPEAT_TIME,
             animations: DEFAULT_ANIMATIONS,
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
@@ -1199,6 +1205,8 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("M-ArrowDown", "resize-pane-down-5"),
     (",", "rename-window"),
     ("&", "kill-window"),
+    ("W", "new-worktree"),
+    ("X", "remove-worktree"),
     ("C", "new-session"),
     ("s", "choose-session"),
     ("w", "window-grid"),
@@ -1537,6 +1545,11 @@ pub fn generate_config_toml() -> String {
 
 # Shell to spawn in new panes. {SHELL_DEFAULT_HELP}
 # shell = "{DEFAULT_SHELL}"
+
+# Where new-worktree creates a branch's worktree: {{repo}} and {{branch}} (with
+# slashes as dashes) are filled in. Relative paths are beside the repo's main
+# worktree; absolute and ~/ paths work too.
+# worktree-path = "{DEFAULT_WORKTREE_PATH}"
 
 # Milliseconds after a pane navigation or resize key during which another one
 # runs without pressing the prefix again (tmux repeat-time). 0 (default) disables.

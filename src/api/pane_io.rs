@@ -203,7 +203,7 @@ async fn api_agents(State(state): State<AppState>) -> Response {
     Json(state.read().await.agent_panes()).into_response()
 }
 
-fn error_response(error: automation::Error) -> Response {
+pub(super) fn error_response(error: automation::Error) -> Response {
     let status = match error {
         automation::Error::PaneNotFound(_) => StatusCode::NOT_FOUND,
         automation::Error::Invalid(_) => StatusCode::BAD_REQUEST,

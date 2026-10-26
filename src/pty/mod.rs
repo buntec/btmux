@@ -222,6 +222,13 @@ impl PtyHandle {
             .map(|p| p.to_string_lossy().into_owned())
     }
 
+    /// The name of a program in the foreground instead of the shell.
+    pub fn foreground_program(&self) -> Option<String> {
+        let foreground = self.foreground_pgrp()?;
+        (Some(foreground) != self.shell_pid)
+            .then(|| crate::process::name(foreground).unwrap_or_else(|| "a program".into()))
+    }
+
     /// `effective_cwd`, unless it's on another host.
     pub fn local_cwd(&self) -> Option<String> {
         if self.cwd_remote.load(Ordering::Relaxed) {

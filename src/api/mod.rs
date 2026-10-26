@@ -2,6 +2,7 @@ mod pane_io;
 mod panes;
 mod sessions;
 mod windows;
+mod worktrees;
 
 use axum::Router;
 use uuid::Uuid;
@@ -15,6 +16,7 @@ pub fn router() -> Router<AppState> {
         .merge(windows::router())
         .merge(panes::router())
         .merge(pane_io::router())
+        .merge(worktrees::router())
 }
 
 pub(crate) fn session_exists(mgr: &SessionManager, session_id: Uuid) -> bool {

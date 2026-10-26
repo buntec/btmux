@@ -182,6 +182,20 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return run_palette_command(command, *session_id, state).await;
     }
 
+    // Worktree commands run git off the lock and broadcast their own state.
+    if let ClientMessage::CreateWorktree { pane_id, branch } = &cmd {
+        return crate::worktree::create(state, *pane_id, branch, true)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+    }
+    if let ClientMessage::RemoveWorktree { pane_id } = &cmd {
+        return crate::worktree::remove(state, *pane_id)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+    }
+
     if let ClientMessage::WritePaneInput { pane_id, text, .. } = &cmd {
         let mgr = state.read().await;
         let result = if let Some(pane) = mgr.find_pane(*pane_id) {
@@ -358,6 +372,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         }
         // Handled (and returned) above, before this write lock.
         ClientMessage::RunCommand { .. }
+        | ClientMessage::CreateWorktree { .. }
+        | ClientMessage::RemoveWorktree { .. }
         | ClientMessage::UpdateConfig { .. }
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
@@ -911,6 +927,15 @@ pub(crate) enum ClientMessage {
     RunCommand {
         command: String,
         session_id: Uuid,
+    },
+    /// Create a worktree for `branch` in the pane's repo, with a window there.
+    CreateWorktree {
+        pane_id: Uuid,
+        branch: String,
+    },
+    /// Remove the linked worktree the pane is in, closing its panes.
+    RemoveWorktree {
+        pane_id: Uuid,
     },
     UpdateConfig {
         update: Box<crate::config::ConfigUpdate>,

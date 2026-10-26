@@ -594,6 +594,41 @@ impl SessionManager {
         None
     }
 
+    pub fn session_of_pane(&self, pane_id: Uuid) -> Option<Uuid> {
+        self.sessions
+            .iter()
+            .find(|s| {
+                s.windows
+                    .iter()
+                    .any(|w| w.panes.iter().any(|p| p.id == pane_id))
+            })
+            .map(|s| s.id)
+    }
+
+    /// Panes whose local directory is in one of `dirs`.
+    pub fn panes_under(&self, dirs: &[&std::path::Path]) -> Vec<Uuid> {
+        self.sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter(|p| {
+                p.pty.local_cwd().is_some_and(|cwd| {
+                    dirs.iter()
+                        .any(|dir| std::path::Path::new(&cwd).starts_with(dir))
+                })
+            })
+            .map(|p| p.id)
+            .collect()
+    }
+
+    /// `worktree-path`, where new worktrees go.
+    pub fn worktree_path_template(&self) -> String {
+        self.file_config
+            .worktree_path
+            .clone()
+            .unwrap_or_else(|| crate::worktree::DEFAULT_PATH.to_string())
+    }
+
     pub fn find_pane_mut(&mut self, pane_id: Uuid) -> Option<&mut Pane> {
         for session in &mut self.sessions {
             for window in &mut session.windows {

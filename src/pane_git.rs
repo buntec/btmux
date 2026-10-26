@@ -242,6 +242,11 @@ impl Worker {
     }
 }
 
+/// The identity and git dir of the worktree containing `dir`, uncached.
+pub(crate) fn worktree_of(dir: &Path) -> Option<(PaneGit, PathBuf)> {
+    resolve(dir).map(|(_, worktree)| (worktree.git, worktree.git_dir))
+}
+
 /// The worktree containing `dir`: its root and identity.
 fn resolve(dir: &Path) -> Option<(PathBuf, Worktree)> {
     let (root, dot_git) = dir.ancestors().find_map(|root| {
@@ -286,7 +291,7 @@ fn read_head(git_dir: &Path) -> Option<Option<String>> {
 
 /// `repo/.git` → `repo`, `repo.git` → `repo`, `repo/.bare` → `repo`,
 /// `super/.git/modules/sub` → `sub`.
-fn repo_name(common_dir: &Path) -> String {
+pub(crate) fn repo_name(common_dir: &Path) -> String {
     let name = |path: &Path| {
         path.file_name()
             .map(|n| n.to_string_lossy().into_owned())

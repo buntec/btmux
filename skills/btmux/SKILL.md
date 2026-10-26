@@ -42,6 +42,17 @@ last window closes the session.
 Other commands: `kill-window`, `kill-session`, `select-pane`, `select-window`,
 `rename-window`, `rename-session`.
 
+To work on a branch in its own git worktree, with a window there:
+
+```sh
+pane=$(btmux new-worktree -d feat/login)  # beside the repo: ../<repo>-feat-login
+btmux send-keys -t "$pane" 'npm test' Enter
+btmux remove-worktree -t "$pane"          # closes its panes; keeps the branch
+```
+
+`new-worktree` checks out an existing branch or creates one from your HEAD.
+`remove-worktree` refuses uncommitted changes and panes running a program.
+
 ## Typing and reading
 
 ```sh

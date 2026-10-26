@@ -36,6 +36,7 @@ mod tmux_cli;
 mod update_check;
 mod vscode;
 mod wallpaper;
+mod worktree;
 mod ws;
 
 use std::sync::Arc;

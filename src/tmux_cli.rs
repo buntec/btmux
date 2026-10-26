@@ -186,6 +186,28 @@ pub enum TmuxCommand {
         #[arg(short = 'J', hide = true)]
         _join: bool,
     },
+    /// Create a git worktree for BRANCH beside the target pane's repo (the
+    /// `worktree-path` setting), open a window there in its session, and
+    /// print its pane's ID. An existing local or remote branch is checked
+    /// out; a new one starts at the target pane's HEAD.
+    NewWorktree {
+        #[arg(short = 't', help = TARGET)]
+        target: Option<String>,
+        /// Don't make it the active window.
+        #[arg(short = 'd')]
+        detached: bool,
+        /// Print with this format instead of the pane ID.
+        #[arg(short = 'F')]
+        format: Option<String>,
+        branch: String,
+    },
+    /// Remove the linked git worktree the target pane is in, close every pane
+    /// in it, and print its path. Refuses uncommitted changes and panes
+    /// running a program; the branch is kept.
+    RemoveWorktree {
+        #[arg(short = 't', help = TARGET)]
+        target: Option<String>,
+    },
 }
 
 /// Runs the command. Returns the exit code.
@@ -328,6 +350,29 @@ impl Client<'_> {
                     format!("/api/windows/{}", window.window_id)
                 };
                 self.done(Method::DELETE, &path, None).await
+            }
+            NewWorktree {
+                target,
+                detached,
+                format,
+                branch,
+            } => {
+                let pane = self.target(target.as_deref()).await?.pane_id;
+                let body = json!({ "branch": branch, "select": !detached });
+                let path = format!("/api/panes/{pane}/worktree");
+                let created = self.call(Method::POST, &path, Some(body)).await?;
+                self.print_created(&created, format.as_deref()).await
+            }
+            RemoveWorktree { target } => {
+                let pane = self.target(target.as_deref()).await?.pane_id;
+                let path = format!("/api/panes/{pane}/worktree");
+                let removed: Value =
+                    serde_json::from_str(&self.call(Method::DELETE, &path, None).await?)
+                        .map_err(|e| e.to_string())?;
+                Ok(format!(
+                    "{}\n",
+                    removed["path"].as_str().unwrap_or_default()
+                ))
             }
             KillSession { target } => {
                 let session = self.target(target.as_deref()).await?.session_id;

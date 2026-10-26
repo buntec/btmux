@@ -10,17 +10,18 @@ import { Token } from '@astryxdesign/core/Token';
 import { AspectRatio } from '@astryxdesign/core/AspectRatio';
 import { Icon } from '@astryxdesign/core/Icon';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
-import { ChevronDown, ChevronRight, Maximize2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderGit2, GitBranch, Maximize2 } from 'lucide-react';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { chromePalette } from '../lib/chrome-colors';
-import { SessionState } from '../state/types';
+import { PaneGit, SessionState } from '../state/types';
 import { WindowThumbnail } from './WindowThumbnail';
 import { SessionIcon } from './SessionIcon';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
 import { KeyCap, KeyHint } from './KeyHint';
+import { gitMatches, labeledSessionRepos, repoColor, windowWorktrees, worktreeLabel } from '../lib/gitIdentity';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -109,11 +110,17 @@ export function SessionSwitcher({ send }: Props) {
         windowIndex: index,
         displayIndex,
       }));
-      // A session shows if it matches by name, or if any of its windows match.
-      // While filtering, matching sessions auto-expand so the matches are visible.
+      // A session shows if it matches by name, or if any of its windows match
+      // by name, repo, branch, or worktree. While filtering, matching sessions
+      // auto-expand so the matches are visible.
       const sessMatch = !query || sess.name.toLowerCase().includes(query);
       const matchingWindows = query
-        ? ordered.filter(({ win }) => sessMatch || win.name.toLowerCase().includes(query))
+        ? ordered.filter(
+            ({ win }) =>
+              sessMatch ||
+              win.name.toLowerCase().includes(query) ||
+              windowWorktrees(win).some((git) => gitMatches(git, query)),
+          )
         : ordered;
       if (query && !sessMatch && matchingWindows.length === 0) continue;
 
@@ -423,7 +430,7 @@ export function SessionSwitcher({ send }: Props) {
         <TextInput
           label="Filter sessions"
           isLabelHidden
-          placeholder="Filter sessions and windows"
+          placeholder="Filter sessions, windows, and branches"
           size="sm"
           value={filterQuery}
           hasAutoFocus
@@ -456,6 +463,7 @@ export function SessionSwitcher({ send }: Props) {
                   }
                   endContent={
                     <HStack gap={1} vAlign="center">
+                      <GitTokens gits={labeledSessionRepos(sess)} kind="repo" max={2} />
                       {sess.id === activeSession?.id && <Token label="attached" size="sm" color="blue" />}
                       <Badge variant="neutral" label={sess.windows.length} />
                     </HStack>
@@ -487,6 +495,7 @@ export function SessionSwitcher({ send }: Props) {
                 }
                 endContent={
                   <HStack gap={2} vAlign="center">
+                    <GitTokens gits={windowWorktrees(win)} kind="worktree" max={1} />
                     {win.zoomed_pane && <Icon icon={Maximize2} size="sm" color="secondary" label="Zoomed" />}
                     <Text color="secondary">
                       {paneCount} {paneCount === 1 ? 'pane' : 'panes'}
@@ -511,6 +520,7 @@ export function SessionSwitcher({ send }: Props) {
           {debouncedPreviewWindow?.name ?? '—'}
         </Text>
         <Text color="secondary">preview</Text>
+        {debouncedPreviewWindow && <GitTokens gits={windowWorktrees(debouncedPreviewWindow)} kind="worktree" max={3} />}
       </HStack>
       {debouncedPreviewWindow ? (
         <AspectRatio ratio={viewportAspect}>
@@ -599,6 +609,27 @@ export function SessionSwitcher({ send }: Props) {
         }
       />
     </Dialog>
+  );
+}
+
+/** Repo or worktree tokens, colored by repo; at most `max`, then a count. */
+function GitTokens({ gits, kind, max }: { gits: PaneGit[]; kind: 'repo' | 'worktree'; max: number }) {
+  if (gits.length === 0) return null;
+  const shown = gits.slice(0, max);
+  return (
+    <HStack gap={1} vAlign="center">
+      {shown.map((git) => (
+        <Token
+          key={kind === 'repo' ? git.repo_id : `${git.repo_id}\0${git.worktree_root}`}
+          size="sm"
+          color={repoColor(git.repo_id)}
+          icon={<Icon icon={kind === 'repo' ? FolderGit2 : GitBranch} size="sm" />}
+          label={kind === 'repo' ? git.repo_name : worktreeLabel(git)}
+          description={kind === 'repo' ? `Repo ${git.repo_id}` : `${git.repo_name} worktree ${git.worktree_root}`}
+        />
+      ))}
+      {gits.length > shown.length && <Token size="sm" label={`+${gits.length - shown.length}`} />}
+    </HStack>
   );
 }
 

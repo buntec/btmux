@@ -122,7 +122,10 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   and branch. `GitTracker` resolves local cwds from the filesystem on a worker
   thread, caches them, and watches each worktree's git dir (and, for linked
   worktrees, `worktrees/` and the common dir, since removal isn't reported
-  otherwise); changes signal `meta_tx`. Not persisted.
+  otherwise); changes signal `meta_tx`. Not persisted. Windows and sessions
+  have no identity of their own: `lib/gitIdentity.ts` derives it from their
+  panes for the session switcher's repo/branch tokens (colored per repo) and
+  its filter.
 - **Windows shells** (`shell.rs`): `shell` is a command line (`wsl.exe -d Ubuntu`)
   whose program picks a `Dialect` (PowerShell, cmd, POSIX for Git Bash, WSL) for
   typed commands (`cd`, `open-editor`, capture-pane) and paths. `pty/windows.rs`

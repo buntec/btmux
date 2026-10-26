@@ -2,6 +2,7 @@
 import type { Bind, Command } from '../generated/protocol';
 export type {
   PaneSnapshot as PaneState,
+  PaneGit,
   Layout as LayoutNode,
   WindowSnapshot as WindowState,
   SessionSnapshot as SessionState,

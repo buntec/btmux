@@ -193,6 +193,8 @@ fn tiled(pane_ids: &[Uuid]) -> Layout {
 }
 
 impl Layout {
+    /// Puts `new_pane_id` beside the target: `v`/`right` and `left` side by
+    /// side, `h`/`down` and `up` stacked.
     pub fn find_and_split(
         &mut self,
         target_pane_id: Uuid,
@@ -206,19 +208,31 @@ impl Layout {
                     let new_leaf = Box::new(Layout::Leaf {
                         pane_id: new_pane_id,
                     });
-                    *self = match direction {
-                        "v" => Layout::VSplit {
+                    let (side_by_side, before) = match direction {
+                        "v" | "right" => (true, false),
+                        "left" => (true, true),
+                        "up" => (false, true),
+                        _ => (false, false),
+                    };
+                    let (first, second) = if before {
+                        (new_leaf, old_leaf)
+                    } else {
+                        (old_leaf, new_leaf)
+                    };
+                    *self = if side_by_side {
+                        Layout::VSplit {
                             id: Uuid::new_v4(),
                             ratio: 0.5,
-                            left: old_leaf,
-                            right: new_leaf,
-                        },
-                        _ => Layout::HSplit {
+                            left: first,
+                            right: second,
+                        }
+                    } else {
+                        Layout::HSplit {
                             id: Uuid::new_v4(),
                             ratio: 0.5,
-                            top: old_leaf,
-                            bottom: new_leaf,
-                        },
+                            top: first,
+                            bottom: second,
+                        }
                     };
                     true
                 } else {

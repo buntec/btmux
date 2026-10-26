@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::pty::screen::MAX_CAPTURE_HISTORY;
 use crate::{automation, config, AppState};
 
 pub fn router() -> Router<AppState> {
@@ -110,6 +111,8 @@ struct PaneCaptureQuery {
     /// Include retained scrollback above the screen.
     #[serde(default)]
     scrollback: bool,
+    /// Include at most this many rows of history (`tmux capture-pane -S -N`).
+    history: Option<usize>,
     /// Only the last N lines.
     lines: Option<usize>,
 }
@@ -120,7 +123,12 @@ async fn api_pane_capture(
     Path(pane_id): Path<Uuid>,
     Query(query): Query<PaneCaptureQuery>,
 ) -> Response {
-    match automation::capture_pane(&state, pane_id, query.scrollback, query.lines).await {
+    let history = if query.scrollback {
+        MAX_CAPTURE_HISTORY
+    } else {
+        query.history.unwrap_or(0)
+    };
+    match automation::capture_pane(&state, pane_id, history, query.lines).await {
         Ok(text) => ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response(),
         Err(error) => error_response(error),
     }

@@ -8,7 +8,7 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::pty::replay::Output;
-use crate::pty::screen::{self, MAX_CAPTURE_HISTORY};
+use crate::pty::screen;
 use crate::pty::MAX_INPUT;
 use crate::session::manager::{PaneStatuses, SessionManager};
 use crate::session::{AgentState, AgentStatus};
@@ -130,12 +130,12 @@ pub async fn send_keys<S: AsRef<str>>(
     Ok(newly_spawned)
 }
 
-/// The pane's rendered screen, with retained history above it when `history`
-/// is set, cut to the last `lines`.
+/// The pane's rendered screen, with up to `history` rows of retained history
+/// above it, cut to the last `lines`.
 pub async fn capture_pane(
     state: &AppState,
     pane_id: Uuid,
-    history: bool,
+    history: usize,
     lines: Option<usize>,
 ) -> Result<String, Error> {
     let events = {
@@ -152,10 +152,9 @@ pub async fn capture_pane(
         .map_err(|e| Error::Failed(e.to_string()))
 }
 
-fn render(events: &[Output], history: bool, lines: Option<usize>) -> String {
-    // History counts rows, `lines` joined lines, so keep all history first.
-    let rows = if history { MAX_CAPTURE_HISTORY } else { 0 };
-    let text = screen::capture(events, rows).text;
+fn render(events: &[Output], history: usize, lines: Option<usize>) -> String {
+    // History counts rows, `lines` joined lines.
+    let text = screen::capture(events, history).text;
     match lines {
         Some(lines) => last_lines(&text, lines),
         None => text,
@@ -298,19 +297,19 @@ pub async fn send_prompt(
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
         let status = mgr.agent_status(pane_id).ok_or_else(|| {
-            Error::Conflict("no agent detected in this pane; use send_keys".into())
+            Error::Conflict("no agent detected in this pane; send keys instead".into())
         })?;
         if status.state == AgentState::Blocked {
             // Typed text would answer the pending dialog.
             return Err(Error::Conflict(
-                "the agent is waiting for a decision; read the pane and answer it with send_keys"
+                "the agent is waiting for a decision; read the pane and answer it by sending keys"
                     .into(),
             ));
         }
         if wait && status.state == AgentState::Working {
             // The next settle could end the current turn, not this prompt's.
             return Err(Error::Conflict(
-                "the agent is busy; wait_for_agent first, or pass wait=false to queue the prompt"
+                "the agent is busy; wait for it first, or submit without waiting to queue the prompt"
                     .into(),
             ));
         }
@@ -375,7 +374,7 @@ pub async fn send_prompt(
     }
     // Hooks report before the agent finishes drawing.
     let screen = match settle_output(state, pane_id).await {
-        Ok(()) => capture_pane(state, pane_id, false, None).await,
+        Ok(()) => capture_pane(state, pane_id, 0, None).await,
         Err(error) => Err(error),
     };
     let screen = match screen {
@@ -424,6 +423,11 @@ fn encode_keys<S: AsRef<str>>(keys: &[S], application: bool) -> Result<Vec<u8>, 
         bytes.extend(encode_key(key, application).ok_or_else(|| format!("unknown key: {key}"))?);
     }
     Ok(bytes)
+}
+
+/// Whether `name` is a key name `send_keys` accepts, as opposed to text.
+pub fn is_key(name: &str) -> bool {
+    encode_key(name, false).is_some()
 }
 
 /// The final byte of a cursor key, which DECCKM changes.
@@ -511,6 +515,7 @@ fn control(key: &str) -> Option<u8> {
 mod tests {
     use super::*;
     use crate::config::FileConfig;
+    use crate::pty::screen::MAX_CAPTURE_HISTORY;
     use crate::session::manager::SessionManager;
     use crate::ws::control::broadcast_state;
     use std::sync::Arc;
@@ -608,7 +613,7 @@ mod tests {
         assert!(outcome.started);
         assert!(!outcome.timed_out);
         assert_eq!(outcome.status.unwrap().state, AgentState::Idle);
-        let screen = capture_pane(&state, pane_id, true, None)
+        let screen = capture_pane(&state, pane_id, MAX_CAPTURE_HISTORY, None)
             .await
             .ok()
             .unwrap();
@@ -678,7 +683,7 @@ mod tests {
         assert!(right.await.unwrap().ok().unwrap().is_none());
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let screen = capture_pane(&state, pane_id, true, None)
+            let screen = capture_pane(&state, pane_id, MAX_CAPTURE_HISTORY, None)
                 .await
                 .ok()
                 .unwrap();
@@ -778,7 +783,7 @@ mod tests {
             Output::Data(b"aaaaaaaa\r\nbbbbbbbb\r\ncccccccc\r\ndddddddd\r\n"[..].into()),
         ];
         assert_eq!(
-            render(&events, true, Some(3)),
+            render(&events, MAX_CAPTURE_HISTORY, Some(3)),
             "bbbbbbbb\ncccccccc\ndddddddd\n"
         );
     }

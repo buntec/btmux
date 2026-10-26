@@ -74,7 +74,7 @@ async fn api_kill_session(State(state): State<AppState>, Path(session_id): Path<
         return StatusCode::NOT_FOUND.into_response();
     }
     if mgr.sessions.len() <= 1 {
-        return StatusCode::CONFLICT.into_response();
+        return (StatusCode::CONFLICT, "cannot kill the last session").into_response();
     }
     mgr.kill_session(session_id);
 

@@ -160,6 +160,7 @@ struct CreateSessionRequest {
 struct CreateSessionResponse {
     id: Uuid,
     name: String,
+    pane_id: Uuid,
 }
 
 async fn api_list_sessions(State(state): State<AppState>) -> impl IntoResponse {
@@ -176,16 +177,13 @@ async fn api_create_session(
     let id = mgr
         .create_session_with_cwd_and_window(body.name, cwd, body.window_name)
         .await;
-    let name = mgr
-        .sessions
-        .iter()
-        .find(|s| s.id == id)
-        .map(|s| s.name.clone())
-        .unwrap_or_default();
+    let session = mgr.sessions.iter().find(|s| s.id == id).unwrap();
+    let name = session.name.clone();
+    let pane_id = session.windows[0].panes[0].id;
 
     ws::control::broadcast_state(&mgr);
 
-    Json(CreateSessionResponse { id, name })
+    Json(CreateSessionResponse { id, name, pane_id })
 }
 
 /// Kill every session and reset to a single fresh default session. Destructive;
@@ -204,11 +202,14 @@ async fn api_clear_sessions(State(state): State<AppState>) -> impl IntoResponse 
 struct CreateWindowRequest {
     name: Option<String>,
     cwd: Option<String>,
+    /// Make it the active window. Default true.
+    select: Option<bool>,
 }
 
 #[derive(Serialize)]
 struct CreateWindowResponse {
     session_id: Uuid,
+    pane_id: Uuid,
 }
 
 async fn api_create_window(
@@ -221,11 +222,20 @@ async fn api_create_window(
     if !mgr.sessions.iter().any(|s| s.id == session_id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    mgr.create_window_named(session_id, body.name, cwd).await;
+    let Some(pane_id) = mgr
+        .create_window_named(session_id, body.name, cwd, body.select.unwrap_or(true))
+        .await
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
 
     ws::control::broadcast_state(&mgr);
 
-    Json(CreateWindowResponse { session_id }).into_response()
+    Json(CreateWindowResponse {
+        session_id,
+        pane_id,
+    })
+    .into_response()
 }
 
 #[derive(Deserialize)]

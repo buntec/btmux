@@ -13,7 +13,7 @@ A terminal emulator and tmux-style session manager for the browser and desktop, 
 - Interactive, composable shader wallpapers
 - Support for base16/base24 color schemes, dark/light mode
 - Highly configurable
-- REST API and MCP server
+- tmux-style CLI, REST API, MCP server, and an agent skill
 
 ## Demos
 
@@ -130,7 +130,7 @@ See [Editor](docs/configuration.md#editor) for details.
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization
 - [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux
 - [Neovim GUI](docs/neovim.md): the Neovim GUI, its plugin, and config tips
-- [Automation and AI agents](docs/automation.md): REST API, MCP, and agent notifications
+- [Automation and AI agents](docs/automation.md): tmux-style commands, agent skill, REST API, MCP, and agent notifications
 
 ## Development
 

@@ -49,6 +49,90 @@ pub fn router() -> Router<AppState> {
             "/api/sessions/{session_id}/layout/next",
             axum::routing::post(api_next_layout),
         )
+        .route("/api/panes", axum::routing::get(api_list_panes))
+        .route(
+            "/api/panes/{pane_id}",
+            axum::routing::delete(api_kill_pane_by_id),
+        )
+        .route(
+            "/api/panes/{pane_id}/split",
+            axum::routing::post(api_split_pane_by_id),
+        )
+        .route(
+            "/api/panes/{pane_id}/select",
+            axum::routing::post(api_select_pane_by_id),
+        )
+}
+
+async fn api_list_panes(State(state): State<AppState>) -> Response {
+    Json(state.read().await.pane_infos()).into_response()
+}
+
+#[derive(Deserialize)]
+struct SplitPaneByIdRequest {
+    /// Where the new pane goes: left, right, up, or down.
+    direction: String,
+    cwd: Option<String>,
+    /// Make the new pane active. Default true.
+    select: Option<bool>,
+}
+
+/// Splits a pane in any window, returning the new pane's ID.
+async fn api_split_pane_by_id(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+    Json(body): Json<SplitPaneByIdRequest>,
+) -> Response {
+    if !["left", "right", "up", "down"].contains(&body.direction.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "direction must be left, right, up, or down",
+        )
+            .into_response();
+    }
+    let mut mgr = state.write().await;
+    let cwd = body.cwd.map(std::path::PathBuf::from);
+    let Some(new_pane_id) = mgr
+        .split_pane(pane_id, &body.direction, cwd, body.select.unwrap_or(true))
+        .await
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    ws::control::broadcast_state(&mgr);
+
+    Json(serde_json::json!({ "pane_id": new_pane_id })).into_response()
+}
+
+/// Kills a pane in any window; its last pane closes the window, and the last
+/// window the session.
+async fn api_kill_pane_by_id(State(state): State<AppState>, Path(pane_id): Path<Uuid>) -> Response {
+    let mut mgr = state.write().await;
+    if mgr.find_pane(pane_id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if let Err(error) = mgr.kill_pane_by_id(pane_id) {
+        return (StatusCode::CONFLICT, error).into_response();
+    }
+
+    ws::control::broadcast_state(&mgr);
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Makes the pane active and its window the session's active window.
+async fn api_select_pane_by_id(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+) -> Response {
+    let mut mgr = state.write().await;
+    if !mgr.select_pane_by_id(pane_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    ws::control::broadcast_state(&mgr);
+
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Resolves session-not-found (404) vs. pane-not-in-active-window (409) for
@@ -79,7 +163,7 @@ async fn api_split_pane(
     if let Err(status) = check_pane(&mgr, session_id, pane_id) {
         return status.into_response();
     }
-    mgr.split_pane(session_id, pane_id, body.direction).await;
+    mgr.split_pane(pane_id, &body.direction, None, true).await;
 
     ws::control::broadcast_state(&mgr);
 

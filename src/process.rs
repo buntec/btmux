@@ -109,6 +109,18 @@ pub fn foreground(shell: Pid) -> Option<Pid> {
         .or(Some(shell))
 }
 
+/// Name of `pid`'s executable, without `.exe`.
+#[cfg(windows)]
+pub fn name(pid: Pid) -> Option<String> {
+    let name = windows::name(pid)?;
+    Some(
+        std::path::Path::new(&name)
+            .file_stem()?
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
 /// Block until `pid` exits; returns at once if it can't be watched.
 #[cfg(windows)]
 pub fn wait_exit(pid: Pid) {
@@ -129,24 +141,43 @@ mod windows {
         PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
     };
 
-    /// Parent of every running process.
-    pub fn parents() -> HashMap<Pid, Pid> {
-        let mut parents = HashMap::new();
+    /// Calls `f` with every running process.
+    fn each_process(mut f: impl FnMut(&PROCESSENTRY32W)) {
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
             if snapshot == INVALID_HANDLE_VALUE {
-                return parents;
+                return;
             }
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();
             entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
             let mut ok = Process32FirstW(snapshot, &mut entry);
             while ok != 0 {
-                parents.insert(entry.th32ProcessID as Pid, entry.th32ParentProcessID as Pid);
+                f(&entry);
                 ok = Process32NextW(snapshot, &mut entry);
             }
             CloseHandle(snapshot);
         }
+    }
+
+    /// Parent of every running process.
+    pub fn parents() -> HashMap<Pid, Pid> {
+        let mut parents = HashMap::new();
+        each_process(|entry| {
+            parents.insert(entry.th32ProcessID as Pid, entry.th32ParentProcessID as Pid);
+        });
         parents
+    }
+
+    pub fn name(pid: Pid) -> Option<String> {
+        let mut name = None;
+        each_process(|entry| {
+            if entry.th32ProcessID as Pid == pid {
+                let exe = &entry.szExeFile;
+                let len = exe.iter().position(|&c| c == 0).unwrap_or(exe.len());
+                name = Some(String::from_utf16_lossy(&exe[..len]));
+            }
+        });
+        name
     }
 
     pub fn wait_exit(pid: Pid) {

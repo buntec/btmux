@@ -69,8 +69,8 @@ pub async fn create(
 }
 
 /// Remove the linked worktree containing `pane_id`'s directory, closing every
-/// pane in it. Refuses a main, dirty, or locked worktree, and panes running a
-/// program. The branch is kept.
+/// pane in it. Refuses a main, dirty, or locked worktree, one with
+/// submodules, and panes running a program. The branch is kept.
 pub async fn remove(state: &AppState, pane_id: Uuid) -> Result<Removed, Error> {
     let cwd = {
         let mgr = state.read().await;
@@ -202,11 +202,31 @@ fn removable(dir: &Path) -> Result<Target, Error> {
             root.display()
         )));
     }
+    if has_submodules(&root, &git_dir)? {
+        return Err(Error::Conflict(format!(
+            "{} contains submodules",
+            root.display()
+        )));
+    }
     Ok(Target {
         canonical: root.canonicalize().unwrap_or_else(|_| root.clone()),
         root,
         branch: git_info.branch,
     })
+}
+
+/// Whether git refuses to remove the worktree for its submodules, as
+/// `validate_no_submodules` decides: a `modules` git dir, or a populated
+/// gitlink.
+fn has_submodules(root: &Path, git_dir: &Path) -> Result<bool, Error> {
+    if git_dir.join("modules").is_dir() {
+        return Ok(true);
+    }
+    let index = git(root, &[&"ls-files", &"--stage", &"-z"])?;
+    Ok(index
+        .split('\0')
+        .filter_map(|entry| entry.strip_prefix("160000 ")?.split_once('\t'))
+        .any(|(_, path)| root.join(path).join(".git").exists()))
 }
 
 /// Run git in `dir`. Returns trimmed stdout, or git's message.
@@ -233,6 +253,10 @@ fn git(dir: &Path, args: &[&dyn AsRef<OsStr>]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::FileConfig;
+    use crate::session::manager::SessionManager;
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, RwLock};
 
     struct Repo {
         dir: PathBuf,
@@ -260,6 +284,63 @@ mod tests {
         let mut all: Vec<&dyn AsRef<OsStr>> = vec![&"-c", &"user.name=t", &"-c", &"user.email=t@t"];
         all.extend(args.iter().map(|a| a as &dyn AsRef<OsStr>));
         git(dir, &all).unwrap();
+    }
+
+    /// A server with an unspawned pane in each of `dirs`.
+    async fn panes(dirs: &[&Path]) -> (AppState, Vec<Uuid>) {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let shell = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
+        let mut mgr = SessionManager::new(
+            shell.into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let mut panes = Vec::new();
+        for dir in dirs {
+            let pane = mgr.create_window_named(session, None, Some(dir.to_path_buf()), false);
+            panes.push(pane.await.unwrap());
+        }
+        (Arc::new(RwLock::new(mgr)), panes)
+    }
+
+    #[cfg(unix)]
+    async fn type_in(state: &AppState, pane: Uuid, input: &str) {
+        let mut mgr = state.write().await;
+        let pty = &mut mgr.find_pane_mut(pane).unwrap().pty;
+        pty.ensure_spawned(80, 24).unwrap();
+        pty.input_tx.send(input.as_bytes().to_vec()).unwrap();
+    }
+
+    #[cfg(unix)]
+    async fn wait_until(
+        state: &AppState,
+        pane: Uuid,
+        condition: impl Fn(&crate::pty::PtyHandle) -> bool,
+    ) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !condition(&state.read().await.find_pane(pane).unwrap().pty) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn assert_kept(state: &AppState, panes: &[Uuid], path: &Path, message: &str) {
+        let error = remove(state, panes[0]).await;
+        assert!(
+            matches!(&error, Err(Error::Conflict(m)) if m.contains(message)),
+            "{:?}",
+            error.err().map(|e| e.to_string())
+        );
+        assert!(path.exists());
+        let mgr = state.read().await;
+        assert!(panes.iter().all(|&pane| mgr.find_pane(pane).is_some()));
     }
 
     #[test]
@@ -336,5 +417,60 @@ mod tests {
         assert_eq!(target.branch.as_deref(), Some("feat"));
         run(&repo.main, &["worktree", "lock", path.to_str().unwrap()]);
         assert!(matches!(removable(&path), Err(Error::Conflict(_))));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn programs_that_replaced_the_shell_keep_the_worktree() {
+        let repo = Repo::new();
+        let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        let (state, panes) = panes(&[&path]).await;
+        type_in(&state, panes[0], "exec sleep 30\n").await;
+        wait_until(&state, panes[0], |pty| pty.foreground_program().is_some()).await;
+        assert_kept(&state, &panes, &path, "is running").await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn panes_in_the_worktree_through_symlinks_keep_it() {
+        let repo = Repo::new();
+        let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        let alias = repo.dir.join("alias");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        let (state, panes) = panes(&[&path, &alias]).await;
+        let alias = alias.to_str().unwrap().to_string();
+        let osc7 = format!("printf '\\033]7;file://localhost%s\\a' '{alias}'; sleep 30\n");
+        type_in(&state, panes[1], &osc7).await;
+        wait_until(&state, panes[1], |pty| {
+            pty.local_cwd().as_deref() == Some(&alias) && pty.foreground_program().is_some()
+        })
+        .await;
+        assert_kept(&state, &panes, &path, "is running").await;
+    }
+
+    #[tokio::test]
+    async fn submodules_keep_the_worktree() {
+        let repo = Repo::new();
+        let lib = repo.dir.join("lib");
+        std::fs::create_dir(&lib).unwrap();
+        run(&lib, &["init", "-q"]);
+        run(&lib, &["commit", "-q", "--allow-empty", "-m", "lib"]);
+        let file = ["-c", "protocol.file.allow=always"];
+        let lib = lib.to_str().unwrap();
+        run(
+            &repo.main,
+            &[&file[..], &["submodule", "add", "-q", lib, "lib"]].concat(),
+        );
+        run(&repo.main, &["commit", "-q", "-m", "lib"]);
+        let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        // git removes it while the submodule isn't checked out.
+        assert!(removable(&path).is_ok());
+        run(
+            &path,
+            &[&file[..], &["submodule", "update", "-q", "--init"]].concat(),
+        );
+        let (state, panes) = panes(&[&path]).await;
+        assert_kept(&state, &panes, &path, "submodules").await;
+        assert!(git(&path, &[&"worktree", &"remove", &"--", &path]).is_err());
     }
 }

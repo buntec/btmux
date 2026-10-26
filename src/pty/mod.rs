@@ -121,6 +121,9 @@ pub struct PtyHandle {
     size: Arc<Mutex<(u16, u16)>>,
     spawned: Arc<Mutex<bool>>,
     shell_pid: Option<Pid>,
+    /// The shell's executable when it started.
+    #[cfg(unix)]
+    shell_name: Option<String>,
     shell: String,
     dialect: crate::shell::Dialect,
     /// OSC 133 marks: 0 before the first, odd at a prompt, `2n` while
@@ -189,6 +192,8 @@ impl PtyHandle {
             size: Arc::new(Mutex::new((0, 0))),
             spawned: Arc::new(Mutex::new(false)),
             shell_pid: None,
+            #[cfg(unix)]
+            shell_name: None,
             shell: shell.to_string(),
             dialect: crate::shell::Dialect::of(shell),
             prompt: Arc::default(),
@@ -225,8 +230,15 @@ impl PtyHandle {
     /// The name of a program in the foreground instead of the shell.
     pub fn foreground_program(&self) -> Option<String> {
         let foreground = self.foreground_pgrp()?;
-        (Some(foreground) != self.shell_pid)
-            .then(|| crate::process::name(foreground).unwrap_or_else(|| "a program".into()))
+        let name = crate::process::name(foreground);
+        let shell = Some(foreground) == self.shell_pid;
+        // The shell can exec another program in its group (`exec nvim`).
+        #[cfg(unix)]
+        let shell = shell
+            && name.as_deref().is_none_or(|name| {
+                unix::is_shell(name) || self.shell_name.as_deref() == Some(name)
+            });
+        (!shell).then(|| name.unwrap_or_else(|| "a program".into()))
     }
 
     /// `effective_cwd`, unless it's on another host.
@@ -539,9 +551,7 @@ impl PtyHandle {
             output_tx: self.output_tx.clone(),
             pane_id: self.pane_id,
             #[cfg(unix)]
-            shell: self
-                .shell_pid
-                .and_then(|pid| Some((pid, crate::process::name(pid)?))),
+            shell: self.shell_pid.zip(self.shell_name.clone()),
             #[cfg(unix)]
             leader: None,
         }

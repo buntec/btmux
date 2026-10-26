@@ -605,16 +605,18 @@ impl SessionManager {
             .map(|s| s.id)
     }
 
-    /// Panes whose local directory is in one of `dirs`.
+    /// Panes whose local directory is in one of `dirs`, as named or through
+    /// symlinks. `dirs` should include the canonical path.
     pub fn panes_under(&self, dirs: &[&std::path::Path]) -> Vec<Uuid> {
+        let under = |path: &std::path::Path| dirs.iter().any(|dir| path.starts_with(dir));
         self.sessions
             .iter()
             .flat_map(|s| &s.windows)
             .flat_map(|w| &w.panes)
             .filter(|p| {
                 p.pty.local_cwd().is_some_and(|cwd| {
-                    dirs.iter()
-                        .any(|dir| std::path::Path::new(&cwd).starts_with(dir))
+                    let cwd = std::path::Path::new(&cwd);
+                    under(cwd) || cwd.canonicalize().is_ok_and(|cwd| under(&cwd))
                 })
             })
             .map(|p| p.id)

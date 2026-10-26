@@ -448,6 +448,7 @@ impl PtyHandle {
         set_size(master.as_raw_fd(), cols, rows);
 
         self.shell_pid = Some(pid);
+        self.shell_name = crate::process::name(pid);
         *self.child.lock().unwrap() = Some(pid);
         let child = self.child.clone();
         let child_exit_tx = self.exit_tx.clone();
@@ -683,7 +684,7 @@ impl OutputPipeline {
 
 /// Whether `name` is a shell's executable; login shells start with `-`, Nix
 /// wrappers with `.` and end in `-wrapped`.
-fn is_shell(name: &str) -> bool {
+pub(super) fn is_shell(name: &str) -> bool {
     let name = name.trim_start_matches(['-', '.']);
     let name = name.strip_suffix("-wrapped").unwrap_or(name);
     matches!(

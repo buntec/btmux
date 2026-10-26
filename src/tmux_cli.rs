@@ -495,13 +495,13 @@ fn resolve<'p>(
                 .window_id
         }
     } else {
-        let index = window.parse::<usize>().ok();
-        panes
-            .iter()
-            .find(|p| {
-                p.session_id == session_id
-                    && (Some(p.window_index) == index || p.window_name == window)
-            })
+        // An index wins over a window named like one, as in tmux.
+        let in_session = || panes.iter().filter(|p| p.session_id == session_id);
+        window
+            .parse::<usize>()
+            .ok()
+            .and_then(|index| in_session().find(|p| p.window_index == index))
+            .or_else(|| in_session().find(|p| p.window_name == window))
             .ok_or_else(|| format!("no window {window}"))?
             .window_id
     };
@@ -703,6 +703,15 @@ mod tests {
         assert!(id("nope", None).is_err());
         assert!(id(":0", None).is_err());
         assert!(resolve(&panes(), None, None).is_err());
+    }
+
+    #[test]
+    fn prefers_window_index_to_numeric_name() {
+        let mut panes = panes();
+        panes[0].window_name = "1".into();
+        let resolved = |target| resolve(&panes, None, Some(target)).map(|p| p.pane_id.as_u128());
+        assert_eq!(resolved("main:1"), Ok(111));
+        assert_eq!(resolved("main:w1"), Ok(111));
     }
 
     #[test]

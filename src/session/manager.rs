@@ -650,12 +650,11 @@ impl SessionManager {
     ) -> Option<Uuid> {
         self.find_pane(pane_id)?;
         let new_pane_id = Uuid::new_v4();
-        // Inherit the source pane's current working directory (tracked via OSC 7),
-        // so the new shell starts where the pane it was split from is — but only
-        // if that directory still exists.
+        // Inherit the source pane's working directory (its spawn cwd until the
+        // shell reports one), but only if that directory still exists.
         let cwd = cwd.or_else(|| {
             self.find_pane(pane_id)
-                .and_then(|p| p.pty.cwd.lock().unwrap().clone())
+                .and_then(|p| p.pty.effective_cwd())
                 .map(std::path::PathBuf::from)
                 .filter(|path| path.is_dir())
         });
@@ -1588,6 +1587,29 @@ fn resolve_index(current: usize, len: usize, index: i32) -> usize {
 #[cfg(test)]
 mod pane_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn splitting_an_unspawned_pane_inherits_its_spawn_cwd() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let dir = std::env::temp_dir();
+        mgr.create_session_with_cwd(None, Some(dir.clone())).await;
+        let first = mgr.sessions[0].windows[0].panes[0].id;
+        let second = mgr.split_pane(first, "v", None, false).await.unwrap();
+        let pane = mgr.find_pane(second).unwrap();
+        assert_eq!(
+            pane.pty.effective_cwd(),
+            Some(dir.to_string_lossy().into_owned())
+        );
+    }
 
     #[tokio::test]
     async fn selecting_a_pane_reveals_it_without_toggling_its_own_zoom() {

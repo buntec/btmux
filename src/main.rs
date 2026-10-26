@@ -21,6 +21,7 @@ mod handoff;
 #[path = "handoff_windows.rs"]
 mod handoff;
 mod mcp;
+mod pane_git;
 mod persistence;
 mod process;
 #[cfg(test)]

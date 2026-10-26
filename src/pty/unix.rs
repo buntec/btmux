@@ -30,6 +30,7 @@ pub struct Handoff {
     pub journal: Vec<Output>,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    pub cwd_remote: bool,
     pub spawn_cwd: Option<std::path::PathBuf>,
     pub color_reports: bool,
     pub colors: Vec<Option<colors::Rgb>>,
@@ -292,6 +293,7 @@ impl PtyHandle {
         set_cloexec(master.as_raw_fd(), true).map_err(|e| e.to_string())?;
         *self.title.lock().unwrap() = handoff.title;
         *self.cwd.lock().unwrap() = handoff.cwd;
+        self.cwd_remote.store(handoff.cwd_remote, Ordering::Relaxed);
         self.spawn_cwd = handoff.spawn_cwd;
         self.bin = handoff.bin;
         self.color_reports
@@ -365,6 +367,7 @@ impl PtyHandle {
                 journal,
                 title: self.title.lock().unwrap().clone(),
                 cwd: self.cwd.lock().unwrap().clone(),
+                cwd_remote: self.cwd_remote.load(Ordering::Relaxed),
                 spawn_cwd: self.spawn_cwd.clone(),
                 color_reports: self.color_reports.load(Ordering::Relaxed),
                 colors: reader.colors,

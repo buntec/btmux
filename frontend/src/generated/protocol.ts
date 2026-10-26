@@ -16,7 +16,22 @@ export type NotificationLevel = "info" | "attention" | "success" | "error";
 export type PaneAlert = { level: NotificationLevel, title: string | null, body: string | null, };
 
 // prettier-ignore
-export type PaneSnapshot = { id: string, title: string | null, cwd: string | null, agent_status: AgentStatus, unread: PaneAlert | null, };
+export type PaneGit = {
+/**
+ * The repo's common git dir, shared by all its worktrees.
+ */
+repo_id: string, repo_name: string, worktree_root: string,
+/**
+ * `None` when HEAD is detached.
+ */
+branch: string | null,
+/**
+ * The repo's main worktree rather than a linked one.
+ */
+main_worktree: boolean, };
+
+// prettier-ignore
+export type PaneSnapshot = { id: string, title: string | null, cwd: string | null, agent_status: AgentStatus, unread: PaneAlert | null, git: PaneGit | null, };
 
 // prettier-ignore
 export type WindowSnapshot = { id: string, name: string, panes: Array<PaneSnapshot>, active_pane: number, layout: Layout, zoomed_pane: string | null, };

@@ -113,6 +113,7 @@ fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> 
                     .expect("pane snapshots serialize as an object");
                 pane.remove("agent_status");
                 pane.remove("unread");
+                pane.remove("git");
             }
         }
     }
@@ -152,6 +153,13 @@ mod agent_status_tests {
                         title: Some("Done".to_string()),
                         body: Some("private reply".to_string()),
                     }),
+                    git: Some(crate::pane_git::PaneGit {
+                        repo_id: "/src/repo/.git".to_string(),
+                        repo_name: "repo".to_string(),
+                        worktree_root: "/src/repo".to_string(),
+                        branch: Some("main".to_string()),
+                        main_worktree: true,
+                    }),
                 }],
                 active_pane: 0,
                 layout: Layout::Leaf { pane_id },
@@ -163,6 +171,7 @@ mod agent_status_tests {
         assert!(!json.contains("agent_status"));
         assert!(!json.contains("private prompt"));
         assert!(!json.contains("private reply"));
+        assert!(!json.contains("worktree_root"));
         let restored: Vec<SessionSnapshot> = serde_json::from_str(&json).unwrap();
         assert_eq!(
             restored[0].windows[0].panes[0].agent_status.state,

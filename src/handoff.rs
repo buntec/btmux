@@ -25,7 +25,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -69,6 +69,7 @@ struct PaneHeader {
     journal: Vec<Event>,
     title: Option<String>,
     cwd: Option<String>,
+    cwd_remote: bool,
     spawn_cwd: Option<PathBuf>,
     color_reports: bool,
     colors: Vec<Option<[u8; 3]>>,
@@ -172,6 +173,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 journal,
                 title: pane.title,
                 cwd: pane.cwd,
+                cwd_remote: pane.cwd_remote,
                 spawn_cwd: pane.spawn_cwd,
                 color_reports: pane.color_reports,
                 colors: pane.colors,
@@ -398,6 +400,7 @@ fn write(
                     .collect(),
                 title: pane.title.clone(),
                 cwd: pane.cwd.clone(),
+                cwd_remote: pane.cwd_remote,
                 spawn_cwd: pane.spawn_cwd.clone(),
                 color_reports: pane.color_reports,
                 colors: pane.colors.clone(),
@@ -539,6 +542,7 @@ mod tests {
             SessionSnapshot::decl(&config),
             WindowSnapshot::decl(&config),
             PaneSnapshot::decl(&config),
+            crate::pane_git::PaneGit::decl(&config),
             PaneAlert::decl(&config),
             AgentStatus::decl(&config),
             AgentState::decl(&config),

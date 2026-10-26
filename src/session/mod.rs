@@ -185,6 +185,8 @@ pub struct PaneSnapshot {
     pub agent_status: AgentStatus,
     #[serde(default)]
     pub unread: Option<PaneAlert>,
+    #[serde(default)]
+    pub git: Option<crate::pane_git::PaneGit>,
 }
 
 /// A pane running an agent, as listed to automation.

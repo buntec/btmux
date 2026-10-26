@@ -115,7 +115,14 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 - **Working directory**: shells report it with OSC 7. On Unix, until one does,
   the reader takes it from the OS (`/proc/<pid>/cwd`, `proc_pidinfo`) after each
   output chunk while the foreground group's leader is a shell (the pane's or a
-  nested one, by name), so `make -C` doesn't move it.
+  nested one, by name), so `make -C` doesn't move it. An OSC 7 naming
+  another host marks the cwd remote (`local_cwd()` is then `None`).
+- **Git identity** (`pane_git.rs`): `PaneSnapshot.git` gives each pane's repo
+  (keyed by the common git dir, so worktrees of one repo match), worktree root,
+  and branch. `GitTracker` resolves local cwds from the filesystem on a worker
+  thread, caches them, and watches each worktree's git dir (and, for linked
+  worktrees, `worktrees/` and the common dir, since removal isn't reported
+  otherwise); changes signal `meta_tx`. Not persisted.
 - **Windows shells** (`shell.rs`): `shell` is a command line (`wsl.exe -d Ubuntu`)
   whose program picks a `Dialect` (PowerShell, cmd, POSIX for Git Bash, WSL) for
   typed commands (`cd`, `open-editor`, capture-pane) and paths. `pty/windows.rs`

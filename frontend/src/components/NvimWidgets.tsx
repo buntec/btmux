@@ -1,14 +1,17 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type ReactNode,
   type RefObject,
 } from 'react';
 import { X } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
+import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import remarkGfm from 'remark-gfm';
 import { Card } from '@astryxdesign/core/Card';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
@@ -20,6 +23,8 @@ import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { Spinner } from '@astryxdesign/core/Spinner';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { floatFrameZ, type FloatFrame, type NvimGrid } from '../lib/nvimGrid';
+import { buildSyntaxStyle, syntaxLanguage } from '../lib/syntax';
+import { useStore } from '../state/store';
 import type {
   Chunk,
   Cmdline,
@@ -297,9 +302,10 @@ function SignatureCard({
 function blendStyle(blend: number): CSSProperties | undefined {
   if (blend <= 0) return undefined;
   return {
+    '--btm-blend-alpha': `${100 - blend}%`,
     backgroundColor: `color-mix(in srgb, var(--color-background-card) ${100 - blend}%, transparent)`,
     backdropFilter: 'blur(var(--btm-backdrop-blur, 2px))',
-  };
+  } as CSSProperties;
 }
 
 /** Space between a float's content and its frame. */
@@ -359,10 +365,41 @@ export function NvimFloatFrames({
 function Markdown({ text }: { text: string }) {
   return (
     <VStack className="prose prose-sm dark:prose-invert max-h-40 max-w-none overflow-y-auto [&_pre]:whitespace-pre-wrap">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={DOC_COMPONENTS}>
+        {text}
+      </ReactMarkdown>
     </VStack>
   );
 }
+
+/** Fenced code in LSP docs, highlighted by its fence language in the terminal theme's colors. */
+function DocCodeBlock({ node, children, ...props }: ComponentProps<'pre'> & ExtraProps) {
+  const theme = useStore((s) => s.config?.theme ?? null);
+  const style = useMemo(
+    () =>
+      theme && {
+        ...buildSyntaxStyle(theme),
+        hljs: {
+          // Translucent with 'pumblend', like its card.
+          background: `color-mix(in srgb, ${theme.background} var(--btm-blend-alpha, 100%), transparent)`,
+          color: theme.foreground,
+        },
+      },
+    [theme],
+  );
+  const code = node?.children[0];
+  if (!style || code?.type !== 'element' || code.tagName !== 'code') return <pre {...props}>{children}</pre>;
+  const classes = code.properties.className;
+  const fence = Array.isArray(classes) ? classes.map(String).find((c) => c.startsWith('language-')) : undefined;
+  const text = code.children.map((c) => (c.type === 'text' ? c.value : '')).join('');
+  return (
+    <SyntaxHighlighter language={fence ? syntaxLanguage(fence.slice('language-'.length)) : 'plaintext'} style={style}>
+      {text.replace(/\n$/, '')}
+    </SyntaxHighlighter>
+  );
+}
+
+const DOC_COMPONENTS: Components = { pre: DocCodeBlock };
 
 function CmdlineCard({ cmdline, block, grid }: { cmdline: Cmdline; block: Chunk[][]; grid: NvimGrid }) {
   const label = FIRSTC_LABELS[cmdline.firstc] ?? (cmdline.prompt ? 'Input' : null);
@@ -549,7 +586,9 @@ function InfoCard({
       className="prose prose-sm dark:prose-invert max-h-80 min-w-0 overflow-y-auto [&_pre]:whitespace-pre-wrap"
       style={blendStyle(blend)}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{info}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={DOC_COMPONENTS}>
+        {info}
+      </ReactMarkdown>
     </Card>
   );
 }

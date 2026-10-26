@@ -298,7 +298,9 @@ publishes them once per `flush`; `NvimWidgets.tsx` renders them as Astryx
 components. Short messages (echo, `vim.notify`, errors) are expiring toasts;
 multi-line output (`:ls`, `:!cmd`, `:messages`, prompts) is a panel the next
 normal-mode key dismisses. Neovim never sends `msg_clear` in normal use, so
-btmux owns dismissal.
+btmux owns dismissal. Fenced code in completion and signature docs is
+highlighted by its fence language with highlight.js in the terminal theme's
+colors (`lib/syntax.ts`, shared with file previews).
 
 The plugin in `extras/nvim` (`require("btmux")`) sets itself up after user
 config unless the config called `setup()` first. It forwards completion docs

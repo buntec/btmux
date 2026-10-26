@@ -1,13 +1,10 @@
 import { useState, useMemo } from 'react';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomOneDark } from 'react-syntax-highlighter/dist/esm/styles/hljs';
-import { buildSyntaxStyle } from '../syntax-theme';
-import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
+import { buildSyntaxStyle } from '@/lib/syntax';
 import { useFileStore } from '@/state/fileStore';
 import { useStore } from '@/state/store';
 import { Button } from '@astryxdesign/core/Button';
-
-SyntaxHighlighter.registerLanguage('json', json);
 
 const MAX_HIGHLIGHT_BYTES = 100 * 1024;
 const MAX_LINES = 5000;

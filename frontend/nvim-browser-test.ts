@@ -721,7 +721,7 @@ try {
       line.length - 1,
       [
         { word: 'absolute_example_one', info: 'Documentation beside the completion menu.' },
-        { word: 'absolute_example_two', info: 'Another completion item.' },
+        { word: 'absolute_example_two', info: 'Another completion item.\n\n```rust\nfn probe() {}\n```' },
       ],
     ],
   ]);
@@ -762,6 +762,31 @@ try {
   await page.waitForTimeout(300);
   await assertPopupFits();
   console.log('PASS completion and documentation stay within the editor at the right edge and after resizing');
+  await page.keyboard.press('Control+n');
+  const keyword = page.locator('pre code span', { hasText: /^fn$/ });
+  await keyword.waitFor();
+  const codeColors = await keyword.evaluate((el) => {
+    const theme = (window as any).nvimStore.getState().config.theme;
+    const probe = document.createElement('span');
+    document.body.append(probe);
+    const resolve = (color: string) => ((probe.style.color = color), getComputedStyle(probe).color);
+    const colors = {
+      keyword: getComputedStyle(el).color,
+      background: getComputedStyle(el.closest('pre')!).backgroundColor,
+      expected: {
+        keyword: resolve(theme.magenta),
+        background: resolve(`color-mix(in srgb, ${theme.background} 100%, transparent)`),
+      },
+    };
+    probe.remove();
+    return colors;
+  });
+  assert.deepEqual(
+    { keyword: codeColors.keyword, background: codeColors.background },
+    codeColors.expected,
+    'fenced docs are highlighted in theme colors',
+  );
+  console.log('PASS fenced code in completion docs is syntax highlighted');
   await page.keyboard.press('Escape');
 
   await page.setViewportSize({ width: 1200, height: 800 });

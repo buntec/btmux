@@ -1,4 +1,4 @@
-//! `btmux agents` and `btmux wait`: agent state for shell scripts.
+//! `btmux agents`, `btmux wait`, and `btmux prompt`: agents for shell scripts.
 
 use std::time::Duration;
 
@@ -34,6 +34,51 @@ pub async fn wait(profile: Option<&str>, pane: &str, states: &[String], timeout:
     match get(profile, &path, timeout + Duration::from_secs(10)).await {
         Ok((outcome, body)) => {
             println!("{body}");
+            if outcome["timed_out"] == true {
+                2
+            } else {
+                0
+            }
+        }
+        Err(error) => fail(&error),
+    }
+}
+
+/// Submits a prompt and, with `wait`, prints the turn's outcome as JSON.
+/// Returns the exit code: 2 on timeout.
+pub async fn prompt(
+    profile: Option<&str>,
+    pane: &str,
+    prompt: Option<&str>,
+    wait: bool,
+    timeout: u64,
+) -> i32 {
+    let Ok(pane) = uuid::Uuid::parse_str(pane) else {
+        return fail(&format!("{pane} is not a pane ID"));
+    };
+    let prompt = match prompt {
+        Some(prompt) if prompt != "-" => prompt.to_owned(),
+        _ => match std::io::read_to_string(std::io::stdin()) {
+            Ok(prompt) => prompt,
+            Err(error) => return fail(&error.to_string()),
+        },
+    };
+    if prompt.trim().is_empty() {
+        return fail("the prompt is empty");
+    }
+    let timeout = Duration::from_secs(timeout).min(crate::automation::MAX_WAIT);
+    let body = serde_json::json!({
+        "prompt": prompt,
+        "wait": wait,
+        "timeout_ms": timeout.as_millis() as u64,
+    });
+    // Covers waiting for earlier prompts and for the turn to start.
+    let deadline = timeout + Duration::from_secs(60);
+    let path = format!("/api/panes/{pane}/prompt");
+    match request(profile, Method::POST, &path, Some(body), deadline).await {
+        Ok(body) => {
+            println!("{body}");
+            let outcome: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
             if outcome["timed_out"] == true {
                 2
             } else {

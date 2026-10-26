@@ -365,6 +365,20 @@ pub enum SubCommand {
         #[arg(long, default_value_t = 600)]
         timeout: u64,
     },
+    /// Submit PROMPT (or stdin) to the agent in PANE, wait for its turn to
+    /// finish, and print its status and screen as JSON. Exits 2 on timeout.
+    Prompt {
+        /// Pane ID, as `btmux agents` lists it.
+        pane: String,
+        /// Prompt text; read from stdin if omitted or `-`.
+        prompt: Option<String>,
+        /// Return once submitted instead of waiting for the turn.
+        #[arg(long)]
+        no_wait: bool,
+        /// Seconds to wait, at most 3600.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
     #[command(flatten)]
     Tmux(crate::tmux_cli::TmuxCommand),
     /// Print shell completions to stdout.

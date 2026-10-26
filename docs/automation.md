@@ -233,14 +233,17 @@ Over REST, `input`, `capture`, `wait`, and `prompt` return 400 for a bad
 request, 404 for an unknown pane, 409 when the pane's state doesn't allow it
 now (such as a busy agent), and 500 otherwise.
 
-From a shell, `btmux agents` prints the agent list as JSON, and `btmux wait`
-blocks until an agent settles, then prints its status. It exits 2 on timeout:
+From a shell, `btmux agents` prints the agent list as JSON, `btmux wait`
+blocks until an agent settles, then prints its status, and `btmux prompt`
+submits a prompt (an argument or stdin) like `send_prompt`, printing its
+outcome (`--no-wait` to only submit). `wait` and `prompt` exit 2 on timeout:
 
 ```sh
 btmux wait <pane-id> --state done --state blocked --timeout 1800
+btmux prompt <pane-id> 'Run the tests and fix any failures.'
 ```
 
-Like `send-notification`, both target the pane's server inside btmux, and
+Like `send-notification`, they target the pane's server inside btmux, and
 otherwise the running server of `--profile`.
 
 ## Semantic agent status

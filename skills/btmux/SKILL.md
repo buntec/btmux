@@ -71,15 +71,18 @@ btmux wait "$pane" --state done --timeout 1800
 States are `working`, `blocked` (waiting for approval or input), `done`
 (finished a turn), `idle`, and `unknown`. `btmux wait` exits 2 on timeout.
 
-To give an agent a prompt, use the prompt endpoint instead of `send-keys`: it
-pastes the text, presses Enter reliably, and waits for the turn to finish,
-returning the agent's state and screen.
+To give an agent a prompt, use `btmux prompt` instead of `send-keys`: it
+pastes the text, presses Enter reliably, waits for the turn to finish, and
+prints the agent's state and rendered screen as JSON. It exits 2 on timeout.
 
 ```sh
-curl -s -X POST "$BTMUX_API_URL/api/panes/$pane/prompt" \
-  -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg p 'Run the tests and fix any failures.' '{prompt: $p}')"
+btmux prompt "$pane" 'Run the tests and fix any failures.'
+btmux prompt "$pane" < task.md                 # prompt from stdin
+btmux prompt "$pane" --no-wait 'Also update the docs.'
 ```
+
+It refuses while the agent is `blocked` (read the pane and answer with
+`send-keys`) and, unless `--no-wait`, while it is `working`.
 
 To start an agent, launch it in a new pane with `send-keys`, then `btmux wait`
 for it before prompting.

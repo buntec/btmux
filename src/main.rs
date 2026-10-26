@@ -113,6 +113,21 @@ async fn main() {
         }) => std::process::exit(
             agent_cli::wait(args.profile.as_deref(), pane, states, *timeout).await,
         ),
+        Some(config::SubCommand::Prompt {
+            pane,
+            prompt,
+            no_wait,
+            timeout,
+        }) => std::process::exit(
+            agent_cli::prompt(
+                args.profile.as_deref(),
+                pane,
+                prompt.as_deref(),
+                !no_wait,
+                *timeout,
+            )
+            .await,
+        ),
         Some(config::SubCommand::Tmux(command)) => {
             std::process::exit(tmux_cli::run(args.profile.as_deref(), command.clone()).await)
         }

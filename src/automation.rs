@@ -297,19 +297,19 @@ pub async fn send_prompt(
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
         let status = mgr.agent_status(pane_id).ok_or_else(|| {
-            Error::Conflict("no agent detected in this pane; use send_keys".into())
+            Error::Conflict("no agent detected in this pane; send keys instead".into())
         })?;
         if status.state == AgentState::Blocked {
             // Typed text would answer the pending dialog.
             return Err(Error::Conflict(
-                "the agent is waiting for a decision; read the pane and answer it with send_keys"
+                "the agent is waiting for a decision; read the pane and answer it by sending keys"
                     .into(),
             ));
         }
         if wait && status.state == AgentState::Working {
             // The next settle could end the current turn, not this prompt's.
             return Err(Error::Conflict(
-                "the agent is busy; wait_for_agent first, or pass wait=false to queue the prompt"
+                "the agent is busy; wait for it first, or submit without waiting to queue the prompt"
                     .into(),
             ));
         }

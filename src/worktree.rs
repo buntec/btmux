@@ -364,14 +364,13 @@ mod tests {
     fn adds_new_and_existing_branches_beside_the_main_worktree() {
         let repo = Repo::new();
         run(&repo.main, &["branch", "existing"]);
-        // git lists worktrees by their canonical path.
         let dir = repo.dir.canonicalize().unwrap();
         let (path, branch) = add(&repo.main, "feat/new", DEFAULT_PATH).unwrap();
-        assert_eq!(path, dir.join("proj-feat-new"));
+        assert_eq!(path.canonicalize().unwrap(), dir.join("proj-feat-new"));
         assert_eq!(branch, "feat/new");
         // From a linked worktree, still beside the main one.
         let (path, _) = add(&path, "existing", DEFAULT_PATH).unwrap();
-        assert_eq!(path, dir.join("proj-existing"));
+        assert_eq!(path.canonicalize().unwrap(), dir.join("proj-existing"));
         let head = git(&path, &[&"branch", &"--show-current"]).unwrap();
         assert_eq!(head, "existing");
 

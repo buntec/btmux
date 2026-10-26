@@ -69,11 +69,14 @@ btmux wait "$pane" --state done --timeout 1800
 ```
 
 States are `working`, `blocked` (waiting for approval or input), `done`
-(finished a turn), `idle`, and `unknown`. `btmux wait` exits 2 on timeout.
+(finished a turn), `idle`, and `unknown`. `--timeout` is in seconds (default
+600, at most 3600); `btmux wait` exits 2 on timeout.
 
 To give an agent a prompt, use `btmux prompt` instead of `send-keys`: it
 pastes the text, presses Enter reliably, waits for the turn to finish, and
 prints the agent's state and rendered screen as JSON. It exits 2 on timeout.
+The status `message` is only the first line of the agent's last reply; read
+`screen`, or have the agent write longer results to a file.
 
 ```sh
 btmux prompt "$pane" 'Run the tests and fix any failures.'
@@ -85,7 +88,7 @@ It refuses while the agent is `blocked` (read the pane and answer with
 `send-keys`) and, unless `--no-wait`, while it is `working`.
 
 To start an agent, launch it in a new pane with `send-keys`, then `btmux wait`
-for it before prompting.
+for it before prompting. To stop one, kill its pane.
 
 ## Notifying the user
 

@@ -23,7 +23,7 @@ pub async fn wait(profile: Option<&str>, pane: &str, states: &[String], timeout:
     let Ok(pane) = uuid::Uuid::parse_str(pane) else {
         return fail(&format!("{pane} is not a pane ID"));
     };
-    if let Err(error) = crate::automation::parse_states(states) {
+    if let (false, Err(error)) = (states.is_empty(), crate::automation::parse_states(states)) {
         return fail(&error);
     }
     let timeout = Duration::from_secs(timeout).min(crate::automation::MAX_WAIT);

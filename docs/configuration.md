@@ -40,7 +40,7 @@ is the bottom layer, beneath the shaders (see [Shader wallpapers](shaders.md)).
 The server fetches remote images itself and serves them to the browser.
 
 btmux checks GitHub for newer releases about once a day and shows a toast when
-one is available. It never downloads or installs anything; upgrade with whatever
+one is available; About btmux also checks when it opens. It never downloads or installs anything; upgrade with whatever
 method you installed with. Set `check-for-updates = false` to turn the check off.
 
 btmux has a dark and a light color scheme. `appearance` picks which one is

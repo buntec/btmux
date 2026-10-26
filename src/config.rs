@@ -579,7 +579,7 @@ pub struct FileConfig {
     /// each pane. Defaults to false; set to true to show pane metadata.
     #[serde(rename = "show-pane-titles")]
     pub show_pane_titles: bool,
-    /// Periodically check GitHub for a newer release and show a toast. Never installs.
+    /// Check GitHub for a newer release: periodically (a toast) and in About. Never installs.
     #[serde(rename = "check-for-updates")]
     pub check_for_updates: bool,
     /// URL of a background image displayed behind all terminal panes.
@@ -1534,8 +1534,9 @@ pub fn generate_config_toml() -> String {
 # tag) above each pane. Disabled by default.
 # show-pane-titles = {DEFAULT_SHOW_PANE_TITLES}
 
-# Periodically check GitHub for a newer release and show a toast when one is
-# available. btmux never updates itself; upgrade with your usual package manager.
+# Check GitHub for a newer release: periodically, with a toast when one is
+# available, and when About btmux opens. btmux never updates itself; upgrade
+# with your usual package manager.
 # check-for-updates = {DEFAULT_CHECK_FOR_UPDATES}
 
 # Background wallpaper image displayed behind all terminal panes.

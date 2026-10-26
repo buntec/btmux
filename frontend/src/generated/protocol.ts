@@ -318,6 +318,9 @@ pid: number, };
 export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "state": "error", message: string, };
 
 // prettier-ignore
+export type UpdateStatus = { "state": "disabled" } | { "state": "current", latest: string, } | { "state": "available", latest: string, url: string, } | { "state": "error", message: string, };
+
+// prettier-ignore
 export type WallpaperCheck = { error: string | null,
 /**
  * What browsers load for a valid value, e.g. to preview it.

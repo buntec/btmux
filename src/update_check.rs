@@ -1,8 +1,10 @@
 //! Opt-out reminder that a newer release exists. Never downloads or installs.
 
+use std::sync::Mutex;
 use std::time::Duration;
 
-use serde::Deserialize;
+use axum::{extract::State, Json};
+use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
 use crate::config::VERSION;
@@ -16,6 +18,11 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// How often to look for a viewer when a toast could not be delivered.
 const TICK: Duration = Duration::from_secs(5 * 60);
+/// How old a fetched release may be when About asks for it.
+const STATUS_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+
+/// The last fetched release tag and when it was fetched.
+static LATEST: Mutex<Option<(Instant, String)>> = Mutex::new(None);
 
 #[derive(Deserialize)]
 struct Release {
@@ -52,7 +59,56 @@ async fn fetch_latest() -> Result<String, String> {
         .await
         .map_err(|e| e.to_string())?;
     let release: Release = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    *LATEST.lock().unwrap() = Some((Instant::now(), release.tag_name.clone()));
     Ok(release.tag_name)
+}
+
+/// For `/api/update`: how the running version compares to the latest release.
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum UpdateStatus {
+    /// `check-for-updates` is off.
+    Disabled,
+    Current {
+        latest: String,
+    },
+    Available {
+        latest: String,
+        url: String,
+    },
+    Error {
+        message: String,
+    },
+}
+
+/// `GET /api/update`: fetch the latest release unless a recent one is cached.
+pub async fn status(State(state): State<AppState>) -> Json<UpdateStatus> {
+    if !state.read().await.check_for_updates() {
+        return Json(UpdateStatus::Disabled);
+    }
+    let cached = LATEST
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(at, _)| at.elapsed() < STATUS_MAX_AGE)
+        .map(|(_, tag)| tag.clone());
+    let tag = match cached {
+        Some(tag) => tag,
+        None => match fetch_latest().await {
+            Ok(tag) => tag,
+            Err(message) => return Json(UpdateStatus::Error { message }),
+        },
+    };
+    let latest = tag.trim_start_matches('v').to_string();
+    Json(if is_newer(&tag, VERSION) {
+        UpdateStatus::Available {
+            latest,
+            url: RELEASES_URL.to_string(),
+        }
+    } else {
+        UpdateStatus::Current { latest }
+    })
 }
 
 pub fn spawn(state: AppState) {

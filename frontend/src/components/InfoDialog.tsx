@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { ServerInfo } from '../generated/protocol';
+import type { ServerInfo, UpdateStatus } from '../generated/protocol';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Banner } from '@astryxdesign/core/Banner';
+import { Link } from '@astryxdesign/core/Link';
 import { Text } from '@astryxdesign/core/Text';
 import { useDesktopVersion } from '../hooks/useDesktopVersion';
 import { desktopVersionMismatch } from '../lib/desktopApp';
@@ -10,6 +11,7 @@ import { Layout, LayoutContent, VStack } from '@astryxdesign/core/Layout';
 export function InfoDialog({ onClose }: { onClose: () => void }) {
   const [info, setInfo] = useState<ServerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const desktopVersion = useDesktopVersion();
 
   useEffect(() => {
@@ -22,6 +24,20 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
       .catch((error: unknown) => {
         if (!controller.signal.aborted)
           setError(error instanceof Error ? error.message : 'Could not load server information.');
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/update', { signal: controller.signal, cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setUpdate(await response.json());
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted)
+          setUpdate({ state: 'error', message: error instanceof Error ? error.message : String(error) });
       });
     return () => controller.abort();
   }, []);
@@ -64,6 +80,7 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
                     <Text type="code" className="break-all select-text">
                       {value ?? 'Unavailable'}
                     </Text>
+                    {label === 'Version' && <UpdateLine update={update} />}
                   </VStack>
                 ))}
               </VStack>
@@ -73,4 +90,25 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
       />
     </Dialog>
   );
+}
+
+function UpdateLine({ update }: { update: UpdateStatus | null }) {
+  if (!update) return <Text color="secondary">Checking for updates…</Text>;
+  switch (update.state) {
+    case 'disabled':
+      return null;
+    case 'current':
+      return <Text color="secondary">Up to date (latest release: {update.latest})</Text>;
+    case 'available':
+      return (
+        <Text>
+          btmux {update.latest} is available.{' '}
+          <Link href={update.url} isExternalLink>
+            Release notes
+          </Link>
+        </Text>
+      );
+    case 'error':
+      return <Text color="secondary">Could not check for updates: {update.message}</Text>;
+  }
 }

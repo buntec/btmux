@@ -22,6 +22,62 @@ client configurations and previously installed hook snippets also need this
 header. The token grants control of shells and access to files available to
 the btmux user.
 
+## tmux-style commands
+
+The `btmux` binary has a subset of tmux's commands, with the same names,
+aliases, and main flags, for scripts and agents. Inside a pane they target that
+pane's server; otherwise the running server of `--profile`.
+
+```sh
+btmux list-panes -F '#{pane_index} #{pane_id} #{pane_current_path}'
+pane=$(btmux split-window -h -d -c "$PWD")
+btmux send-keys -t "$pane" 'npm test' Enter
+btmux capture-pane -p -t "$pane" -S -200
+btmux kill-pane -t "$pane"
+```
+
+| Command                      | Flags                            |
+| ---------------------------- | -------------------------------- |
+| `list-sessions` (`ls`)       | `-F`                             |
+| `list-windows` (`lsw`)       | `-a -t -F`                       |
+| `list-panes` (`lsp`)         | `-a -s -t -F`                    |
+| `new-session` (`new`)        | `-s -n -c -F`                    |
+| `new-window` (`neww`)        | `-t -n -c -d -F`                 |
+| `split-window` (`splitw`)    | `-t -h -v -b -d -c -F`           |
+| `kill-pane` (`killp`)        | `-t`                             |
+| `kill-window` (`killw`)      | `-t`                             |
+| `kill-session`               | `-t`                             |
+| `select-pane` (`selectp`)    | `-t`                             |
+| `select-window` (`selectw`)  | `-t`                             |
+| `rename-window` (`renamew`)  | `-t NAME`                        |
+| `rename-session` (`rename`)  | `-t NAME`                        |
+| `send-keys` (`send`)         | `-t -l KEY...`                   |
+| `capture-pane` (`capturep`)  | `-t -S` (`-p`, `-J` are implied) |
+
+For coding agents, [`skills/btmux`](../skills/btmux/SKILL.md) is an
+[Agent Skill](https://agentskills.io) that teaches these commands. Install it
+with `npx skills add buntec/btmux`, or copy the folder into your agent's skills
+directory (`~/.claude/skills/` for Claude Code).
+
+Differences from tmux:
+
+- `-t` takes a pane, window, or session ID, or `SESSION[:WINDOW[.PANE]]` by
+  name or index. An empty part is the current one (`:1`, `:.2`, `work:`).
+  Without `-t`, the target is the pane the command runs in (`BTMUX_PANE_ID`).
+  Pane indexes follow the layout, as `prefix + q` shows them.
+- `new-session`, `new-window`, and `split-window` print the new pane's ID, as
+  tmux does with `-P -F '#{pane_id}'`. Sessions are always detached.
+- List commands print JSON unless given `-F`. Formats only substitute
+  `#{name}`: the `session_`, `window_`, and `pane_` fields of the JSON, plus
+  `session_windows` and `window_panes`. Flags print as `1` or `0`.
+- `send-keys` sends each argument as a key name (`Enter`, `C-c`, `M-x`, `Up`,
+  `F5`, ...) if it is one, else as text, without spaces between arguments.
+  `-l` sends them all as text.
+- `capture-pane` always prints, with wrapped lines joined and no escapes.
+  `-S -` includes all retained history and `-S -N` the last N rows of it.
+- `kill-pane` closes the window with its last pane, and the session with its
+  last window, but never the last session.
+
 ## REST API
 
 Sessions, windows, and panes can be controlled over HTTP under `/api`.
@@ -49,8 +105,13 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/
 `M-x`. Cursor keys follow the program's cursor key mode, as in tmux. `capture`
 returns the pane as rendered plain text, like `tmux capture-pane -pJ`: the
 visible screen, or with `scrollback=true` the retained history above it too,
-with wrapped lines joined. `lines=N` keeps the last N lines. `output` returns
+with wrapped lines joined. `history=N` includes at most N rows of history
+instead, and `lines=N` keeps the last N lines. `output` returns
 the raw bytes instead.
+
+`split` takes `direction` (`left`, `right`, `up`, or `down`: where the new
+pane goes), optional `cwd`, and `select` (default true), and returns the new
+`pane_id`. Creating a session or window also returns its `pane_id`.
 
 `focus` switches every connected browser tab to the pane's window and session
 (204, or 404 for an unknown pane).
@@ -78,6 +139,11 @@ shows an error and leaves that program's input untouched.
 | `POST/DELETE /api/sessions/<session-id>/panes/...`              | Split, kill, select, navigate, cycle, swap, or zoom panes     |
 | `POST /api/sessions/<session-id>/layout`                        | Select a named pane layout                                    |
 | `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                                 |
+| `GET /api/panes`                                                | List every pane with its window and session                   |
+| `POST /api/panes/<pane-id>/split`                               | Split a pane in any window                                    |
+| `POST /api/panes/<pane-id>/select`                              | Make a pane and its window active                             |
+| `DELETE /api/panes/<pane-id>`                                   | Kill a pane, closing its window or session if it was the last |
+| `POST /api/windows/<window-id>/{select,rename}`                 | Make a window active, or rename it                            |
 | `POST /api/panes/<pane-id>/input`                               | Send text and keys to a pane, spawning its shell if necessary |
 | `GET /api/panes/<pane-id>/capture`                              | Read the rendered screen or scrollback as text                |
 | `GET /api/panes/<pane-id>/output`                               | Read scrollback bytes, including ANSI escapes                 |

@@ -206,3 +206,22 @@ pub struct SessionSummary {
     pub id: Uuid,
     pub name: String,
 }
+
+/// One pane with its window and session, for `GET /api/panes` and the tmux-style
+/// CLI. Fields are named like tmux format variables.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PaneInfo {
+    pub session_id: Uuid,
+    pub session_name: String,
+    pub window_id: Uuid,
+    pub window_index: usize,
+    pub window_name: String,
+    pub window_active: bool,
+    pub window_zoomed_flag: bool,
+    pub pane_id: Uuid,
+    /// Layout order, as `prefix + q` numbers panes.
+    pub pane_index: usize,
+    pub pane_active: bool,
+    pub pane_current_path: Option<String>,
+    pub pane_title: Option<String>,
+}

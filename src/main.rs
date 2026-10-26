@@ -1,6 +1,7 @@
 mod agent_cli;
 mod agent_hooks;
 mod api;
+mod api_client;
 mod auth;
 mod automation;
 mod config;
@@ -30,6 +31,7 @@ mod server;
 mod service;
 mod session;
 mod shell;
+mod tmux_cli;
 mod update_check;
 mod vscode;
 mod wallpaper;
@@ -111,6 +113,9 @@ async fn main() {
         }) => std::process::exit(
             agent_cli::wait(args.profile.as_deref(), pane, states, *timeout).await,
         ),
+        Some(config::SubCommand::Tmux(command)) => {
+            std::process::exit(tmux_cli::run(args.profile.as_deref(), command.clone()).await)
+        }
         _ => {}
     }
 

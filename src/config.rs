@@ -365,6 +365,8 @@ pub enum SubCommand {
         #[arg(long, default_value_t = 600)]
         timeout: u64,
     },
+    #[command(flatten)]
+    Tmux(crate::tmux_cli::TmuxCommand),
     /// Print shell completions to stdout.
     Completions {
         /// Shell to generate completions for.

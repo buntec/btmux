@@ -307,10 +307,10 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
     validate_command(&cmd, &mgr)?;
     match cmd {
         ClientMessage::Split {
-            session_id,
-            pane_id,
-            direction,
-        } => mgr.split_pane(session_id, pane_id, direction).await,
+            pane_id, direction, ..
+        } => {
+            mgr.split_pane(pane_id, &direction, None, true).await;
+        }
         ClientMessage::KillPane {
             session_id,
             pane_id,

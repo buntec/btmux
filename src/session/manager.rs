@@ -7,7 +7,8 @@ use uuid::Uuid;
 use super::{
     agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority},
     layout::{Layout, LayoutPreset},
-    AgentPane, AgentState, AgentStatus, Pane, PaneSnapshot, Session, SessionSummary, Window,
+    AgentPane, AgentState, AgentStatus, Pane, PaneInfo, PaneSnapshot, Session, SessionSummary,
+    Window,
 };
 use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
@@ -638,16 +639,26 @@ impl SessionManager {
         self.sessions.iter_mut().find(|s| s.id == session_id)
     }
 
-    pub async fn split_pane(&mut self, session_id: Uuid, pane_id: Uuid, direction: String) {
+    /// Splits `pane_id` in whichever window holds it, returning the new pane.
+    /// `select` makes the new pane its window's active pane.
+    pub async fn split_pane(
+        &mut self,
+        pane_id: Uuid,
+        direction: &str,
+        cwd: Option<std::path::PathBuf>,
+        select: bool,
+    ) -> Option<Uuid> {
+        self.find_pane(pane_id)?;
         let new_pane_id = Uuid::new_v4();
         // Inherit the source pane's current working directory (tracked via OSC 7),
         // so the new shell starts where the pane it was split from is — but only
         // if that directory still exists.
-        let cwd = self
-            .find_pane(pane_id)
-            .and_then(|p| p.pty.cwd.lock().unwrap().clone())
-            .map(std::path::PathBuf::from)
-            .filter(|path| path.is_dir());
+        let cwd = cwd.or_else(|| {
+            self.find_pane(pane_id)
+                .and_then(|p| p.pty.cwd.lock().unwrap().clone())
+                .map(std::path::PathBuf::from)
+                .filter(|path| path.is_dir())
+        });
         let pty = PtyHandle::new_with_cwd(
             &self.shell,
             new_pane_id,
@@ -657,17 +668,21 @@ impl SessionManager {
         );
         let new_pane = Pane::new(new_pane_id, pty);
 
-        let Some(session) = self.session_mut(session_id) else {
-            return;
-        };
-        let window = &mut session.windows[session.active_window];
+        let window = self
+            .sessions
+            .iter_mut()
+            .flat_map(|s| s.windows.iter_mut())
+            .find(|w| w.panes.iter().any(|p| p.id == pane_id))?;
         window
             .layout
-            .find_and_split(pane_id, new_pane_id, &direction);
+            .find_and_split(pane_id, new_pane_id, direction);
         window.panes.push(new_pane);
-        window.active_pane = window.panes.len() - 1;
+        if select {
+            window.active_pane = window.panes.len() - 1;
+        }
         // A manual split breaks the preset arrangement; next-layout cycles fresh.
         window.last_preset = None;
+        Some(new_pane_id)
     }
 
     pub fn kill_pane(&mut self, session_id: Uuid, pane_id: Uuid) {
@@ -850,15 +865,17 @@ impl SessionManager {
     }
 
     pub async fn create_window(&mut self, session_id: Uuid) {
-        self.create_window_named(session_id, None, None).await;
+        self.create_window_named(session_id, None, None, true).await;
     }
 
+    /// Returns the new window's pane. `select` makes it the active window.
     pub async fn create_window_named(
         &mut self,
         session_id: Uuid,
         name: Option<String>,
         cwd: Option<std::path::PathBuf>,
-    ) {
+        select: bool,
+    ) -> Option<Uuid> {
         let pane_id = Uuid::new_v4();
         let pty = PtyHandle::new_with_cwd(
             &self.shell,
@@ -870,9 +887,7 @@ impl SessionManager {
         let pane = Pane::new(pane_id, pty);
         let base = name.unwrap_or_else(|| shell_name(&self.shell));
 
-        let Some(session) = self.session_mut(session_id) else {
-            return;
-        };
+        let session = self.session_mut(session_id)?;
         let existing: Vec<_> = session.windows.iter().map(|w| w.name.as_str()).collect();
         let wname = unique_name_in(&existing, &base);
         let window = Window {
@@ -886,7 +901,10 @@ impl SessionManager {
             last_preset: None,
         };
         session.windows.push(window);
-        session.active_window = session.windows.len() - 1;
+        if select {
+            session.active_window = session.windows.len() - 1;
+        }
+        Some(pane_id)
     }
 
     /// Write a pane's captured scrollback (clean text supplied by the frontend,
@@ -964,16 +982,93 @@ impl SessionManager {
         let Some(session) = self.session_mut(session_id) else {
             return;
         };
-        let active = session.active_window;
+        let window_id = session.windows[session.active_window].id;
+        self.rename_window_by_id(window_id, name);
+    }
+
+    pub fn rename_window_by_id(&mut self, window_id: Uuid, name: String) {
+        let Some(session) = self
+            .sessions
+            .iter_mut()
+            .find(|s| s.windows.iter().any(|w| w.id == window_id))
+        else {
+            return;
+        };
         let existing: Vec<_> = session
             .windows
             .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != active)
-            .map(|(_, w)| w.name.as_str())
+            .filter(|w| w.id != window_id)
+            .map(|w| w.name.as_str())
             .collect();
         let unique = unique_name_in(&existing, &name);
-        session.windows[active].name = unique;
+        if let Some(window) = session.windows.iter_mut().find(|w| w.id == window_id) {
+            window.name = unique;
+        }
+    }
+
+    /// Makes `window_id` its session's active window.
+    pub fn select_window_by_id(&mut self, window_id: Uuid) -> bool {
+        let Some((session_id, index)) = self.sessions.iter().find_map(|s| {
+            s.windows
+                .iter()
+                .position(|w| w.id == window_id)
+                .map(|i| (s.id, i))
+        }) else {
+            return false;
+        };
+        self.switch_window(session_id, index as i32);
+        true
+    }
+
+    /// Makes `pane_id` the active pane and its window the active window.
+    pub fn select_pane_by_id(&mut self, pane_id: Uuid) -> bool {
+        let Some((session_id, window_id)) = self.sessions.iter().find_map(|s| {
+            s.windows
+                .iter()
+                .find(|w| w.panes.iter().any(|p| p.id == pane_id))
+                .map(|w| (s.id, w.id))
+        }) else {
+            return false;
+        };
+        self.select_window_by_id(window_id);
+        self.select_pane(session_id, pane_id);
+        true
+    }
+
+    /// tmux's kill-pane, for any pane: the last pane closes its window and the
+    /// last window kills its session. Refuses the server's last pane.
+    pub fn kill_pane_by_id(&mut self, pane_id: Uuid) -> Result<(), String> {
+        let Some(session) = self.sessions.iter().find(|s| {
+            s.windows
+                .iter()
+                .any(|w| w.panes.iter().any(|p| p.id == pane_id))
+        }) else {
+            return Err(format!("pane {pane_id} not found"));
+        };
+        let window = session
+            .windows
+            .iter()
+            .find(|w| w.panes.iter().any(|p| p.id == pane_id))
+            .unwrap();
+        if window.panes.len() > 1 {
+            let window_id = window.id;
+            if let Some(window) = self
+                .sessions
+                .iter_mut()
+                .flat_map(|s| s.windows.iter_mut())
+                .find(|w| w.id == window_id)
+            {
+                window.remove_pane(pane_id);
+            }
+            self.agents.remove(&pane_id);
+        } else if session.windows.len() > 1 {
+            self.kill_window(window.id);
+        } else if self.sessions.len() > 1 {
+            self.kill_session(session.id);
+        } else {
+            return Err("cannot kill the last pane".into());
+        }
+        Ok(())
     }
 
     pub fn close_window(&mut self, session_id: Uuid) {
@@ -1115,8 +1210,13 @@ impl SessionManager {
             tracing::info!("created session '{}' ({})", layout.name, session_id);
 
             for (window_name, path) in extra {
-                self.create_window_named(session_id, Some(window_name.clone()), Some(path.clone()))
-                    .await;
+                self.create_window_named(
+                    session_id,
+                    Some(window_name.clone()),
+                    Some(path.clone()),
+                    true,
+                )
+                .await;
             }
         }
     }
@@ -1136,7 +1236,7 @@ impl SessionManager {
                 tracing::info!("window '{}' already exists, skipping", window_name);
                 continue;
             }
-            self.create_window_named(session_id, Some(window_name), Some(path))
+            self.create_window_named(session_id, Some(window_name), Some(path), true)
                 .await;
         }
     }
@@ -1151,7 +1251,9 @@ impl SessionManager {
                 for pane in removed.panes {
                     self.agents.remove(&pane.id);
                 }
-                if session.active_window >= session.windows.len() {
+                if wi < session.active_window {
+                    session.active_window -= 1;
+                } else if session.active_window >= session.windows.len() {
                     session.active_window = session.windows.len() - 1;
                 }
                 return;
@@ -1167,6 +1269,35 @@ impl SessionManager {
                 name: s.name.clone(),
             })
             .collect()
+    }
+
+    pub fn pane_infos(&self) -> Vec<PaneInfo> {
+        let mut infos = Vec::new();
+        for session in &self.sessions {
+            for (window_index, window) in session.windows.iter().enumerate() {
+                let active_pane = window.panes.get(window.active_pane).map(|p| p.id);
+                for (pane_index, pane_id) in window.layout.pane_ids().into_iter().enumerate() {
+                    let Some(pane) = window.panes.iter().find(|p| p.id == pane_id) else {
+                        continue;
+                    };
+                    infos.push(PaneInfo {
+                        session_id: session.id,
+                        session_name: session.name.clone(),
+                        window_id: window.id,
+                        window_index,
+                        window_name: window.name.clone(),
+                        window_active: window_index == session.active_window,
+                        window_zoomed_flag: window.zoomed_pane.is_some(),
+                        pane_id,
+                        pane_index,
+                        pane_active: active_pane == Some(pane_id),
+                        pane_current_path: pane.pty.effective_cwd(),
+                        pane_title: pane.pty.title.lock().unwrap().clone(),
+                    });
+                }
+            }
+        }
+        infos
     }
 
     pub fn all_snapshots(&self) -> Vec<SessionSnapshot> {
@@ -1472,7 +1603,7 @@ mod pane_tests {
         );
         let session_id = mgr.create_session(None).await;
         let first = mgr.sessions[0].windows[0].panes[0].id;
-        mgr.split_pane(session_id, first, "v".to_string()).await;
+        mgr.split_pane(first, "v", None, true).await;
         let second = mgr.sessions[0].windows[0].panes[1].id;
         mgr.select_pane(session_id, first);
         mgr.zoom_pane(session_id, first);
@@ -1519,11 +1650,11 @@ mod pane_tests {
         );
         let session_id = mgr.create_session(None).await;
         let top_left = mgr.sessions[0].windows[0].panes[0].id;
-        mgr.split_pane(session_id, top_left, "v".to_string()).await;
+        mgr.split_pane(top_left, "v", None, true).await;
         let top_right = mgr.sessions[0].windows[0].panes[1].id;
-        mgr.split_pane(session_id, top_left, "h".to_string()).await;
+        mgr.split_pane(top_left, "h", None, true).await;
         let bottom_left = mgr.sessions[0].windows[0].panes[2].id;
-        mgr.split_pane(session_id, top_right, "h".to_string()).await;
+        mgr.split_pane(top_right, "h", None, true).await;
         let bottom_right = mgr.sessions[0].windows[0].panes[3].id;
         mgr.select_pane(session_id, top_left);
 
@@ -1665,6 +1796,38 @@ mod kill_cascade_tests {
 
         mgr.close_window_cascading(second);
         assert_eq!(mgr.sessions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pane_operations_reach_inactive_windows() {
+        let mut mgr = manager().await;
+        let first = mgr.create_session(Some("a".into())).await;
+        let pane = mgr.sessions[0].windows[0].panes[0].id;
+        let second = mgr
+            .create_window_named(first, None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(mgr.sessions[0].active_window, 0);
+
+        let left = mgr.split_pane(second, "left", None, false).await.unwrap();
+        let window = &mgr.sessions[0].windows[1];
+        assert_eq!(window.layout.pane_ids(), vec![left, second]);
+        assert_eq!(window.panes[window.active_pane].id, second);
+        let infos = mgr.pane_infos();
+        let info = infos.iter().find(|p| p.pane_id == left).unwrap();
+        assert_eq!((info.window_index, info.pane_index), (1, 0));
+        assert!(!info.window_active && !info.pane_active);
+
+        assert!(mgr.select_pane_by_id(left));
+        assert_eq!(mgr.sessions[0].active_window, 1);
+        let window = &mgr.sessions[0].windows[1];
+        assert_eq!(window.panes[window.active_pane].id, left);
+
+        mgr.kill_pane_by_id(pane).unwrap();
+        assert_eq!(mgr.sessions[0].windows.len(), 1);
+        assert_eq!(mgr.sessions[0].active_window, 0);
+        mgr.kill_pane_by_id(left).unwrap();
+        assert!(mgr.kill_pane_by_id(second).is_err());
     }
 }
 

@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use crate::send_notification::server;
+use reqwest::Method;
+
+use crate::api_client::request;
 
 /// Prints the agent panes as JSON. Returns the exit code.
 pub async fn agents(profile: Option<&str>) -> i32 {
@@ -52,25 +54,7 @@ async fn get(
     path: &str,
     timeout: Duration,
 ) -> Result<(serde_json::Value, String), String> {
-    let (url, token) = server(profile)?;
-    let response = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()
-        .map_err(|e| e.to_string())?
-        .get(format!("{url}{path}"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let status = response.status();
-    let body = response.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(if body.is_empty() {
-            status.to_string()
-        } else {
-            body
-        });
-    }
+    let body = request(profile, Method::GET, path, None, timeout).await?;
     let value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     Ok((value, body))
 }

@@ -8,6 +8,7 @@ use uuid::Uuid;
 use super::BtmuxMcpServer;
 use crate::api;
 use crate::automation;
+use crate::pty::screen::MAX_CAPTURE_HISTORY;
 use crate::ws::control::broadcast_state;
 
 fn parse_uuid(s: &str, field: &str) -> Result<Uuid, ErrorData> {
@@ -165,14 +166,11 @@ impl BtmuxMcpServer {
         let id = mgr
             .create_session_with_cwd_and_window(name, cwd, window_name)
             .await;
-        let name = mgr
-            .sessions
-            .iter()
-            .find(|s| s.id == id)
-            .map(|s| s.name.clone())
-            .unwrap_or_default();
+        let session = mgr.sessions.iter().find(|s| s.id == id).unwrap();
+        let name = session.name.clone();
+        let pane_id = session.windows[0].panes[0].id;
         broadcast_state(&mgr);
-        ok_json(serde_json::json!({"id": id, "name": name}))
+        ok_json(serde_json::json!({"id": id, "name": name, "pane_id": pane_id}))
     }
 
     #[tool(
@@ -192,12 +190,14 @@ impl BtmuxMcpServer {
         if !api::session_exists(&mgr, session_id) {
             return tool_error(format!("session {session_id} not found"));
         }
-        mgr.create_window_named(session_id, name, cwd).await;
+        let pane_id = mgr.create_window_named(session_id, name, cwd, true).await;
         broadcast_state(&mgr);
-        ok_json(serde_json::json!({"session_id": session_id}))
+        ok_json(serde_json::json!({"session_id": session_id, "pane_id": pane_id}))
     }
 
-    #[tool(description = "Split a pane. direction must be one of: left, right, up, down.")]
+    #[tool(
+        description = "Split a pane, returning the new pane's ID. direction is where the new pane goes: left, right, up, or down."
+    )]
     async fn split_pane(
         &self,
         Parameters(SplitPaneParams {
@@ -224,9 +224,9 @@ impl BtmuxMcpServer {
             }
             Some(true) => {}
         }
-        mgr.split_pane(session_id, pane_id, direction).await;
+        let pane_id = mgr.split_pane(pane_id, &direction, None, true).await;
         broadcast_state(&mgr);
-        ok_text("ok")
+        ok_json(serde_json::json!({"pane_id": pane_id}))
     }
 
     #[tool(description = "Kill a pane.")]
@@ -330,9 +330,12 @@ impl BtmuxMcpServer {
         }): Parameters<ReadPaneOutputParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let pane_id = parse_uuid(&pane_id, "pane_id")?;
-        match automation::capture_pane(&self.state, pane_id, scrollback.unwrap_or(false), lines)
-            .await
-        {
+        let history = if scrollback.unwrap_or(false) {
+            MAX_CAPTURE_HISTORY
+        } else {
+            0
+        };
+        match automation::capture_pane(&self.state, pane_id, history, lines).await {
             Ok(text) => ok_text(text),
             Err(error) => automation_error(error),
         }

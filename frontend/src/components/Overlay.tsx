@@ -135,15 +135,17 @@ function sectionBinds(actions: string[], binds: Bind[]): { action: string; keys:
   });
 }
 
-/** Palette input that keeps the first result highlighted whenever the results change. */
+/** Palette input that keeps the first result highlighted whenever the query or results change. */
 function TopHighlightedInput() {
   const palette = useCommandPaletteContext();
+  // The palette clears its highlight on every keystroke, even if the results stay the same.
+  const search = palette?.search;
   const resultsKey = palette?.selectableItems.map((item) => item.value).join('\n') ?? '';
   const count = palette?.selectableItems.length ?? 0;
   const setHighlightedIndex = palette?.setHighlightedIndex;
   useEffect(() => {
     setHighlightedIndex?.(count > 0 ? 0 : -1);
-  }, [resultsKey, count, setHighlightedIndex]);
+  }, [search, resultsKey, count, setHighlightedIndex]);
   return <CommandPaletteInput />;
 }
 

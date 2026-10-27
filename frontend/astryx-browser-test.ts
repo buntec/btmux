@@ -537,6 +537,24 @@ try {
     .click();
   console.log('PASS toast stacking and interaction across modal transitions');
 
+  // Typing that keeps the same results must keep the top one highlighted.
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  const aboutHighlighted = () =>
+    page.waitForFunction(() => {
+      const options = document.querySelectorAll('dialog[open] [role="option"]');
+      const active = document.querySelector('dialog[open] input')?.getAttribute('aria-activedescendant');
+      return options.length === 1 && options[0].getAttribute('data-value') === 'about' && options[0].id === active;
+    });
+  await page.keyboard.type('ab');
+  await aboutHighlighted();
+  await page.keyboard.type('o');
+  await aboutHighlighted();
+  await page.keyboard.press('Backspace');
+  await aboutHighlighted();
+  await page.keyboard.press('Escape');
+  await page.locator('dialog[open]').waitFor({ state: 'hidden' });
+  console.log('PASS command palette keeps the top result highlighted');
+
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const state = useStore.getState();

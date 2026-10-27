@@ -25,7 +25,11 @@ export function BtmuxTheme({ children }: { children: ReactNode }) {
   const palette = useTerminalPalette();
   const family = getTerminalFontFamily(effective);
   const animations = getAnimations(effective);
-  const theme = useMemo(() => createBtmuxTheme(palette, family, animations), [palette, family, animations]);
+  const scheme = effective?.color_palette;
+  const theme = useMemo(
+    () => createBtmuxTheme(palette, family, animations, scheme),
+    [palette, family, animations, scheme],
+  );
   return (
     <Theme theme={theme} mode={terminalColorMode(palette)}>
       <ToastLayer>{children}</ToastLayer>

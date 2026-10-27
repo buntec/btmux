@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { defineTheme, type TokenName, type TokenValue } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral';
-import type { Theme } from '../state/types';
+import type { BaseTheme, Theme } from '../state/types';
 import { mix, withAlpha } from './chrome-colors';
 
 function luminance(color: string): number {
@@ -39,7 +39,7 @@ const FONT_FALLBACKS = 'Symbols Nerd Font Mono, monospace';
 const SANS_FALLBACKS = 'system-ui, sans-serif, Symbols Nerd Font Mono';
 const UI_SANS = 'Geist Variable';
 
-export function createBtmuxTheme(palette: Theme, fontFamily: string, animations: boolean) {
+export function createBtmuxTheme(palette: Theme, fontFamily: string, animations: boolean, scheme?: BaseTheme | null) {
   const background = palette.background;
   const surface = mix(background, palette.foreground, 0.05);
   const popover = mix(background, palette.foreground, 0.08);
@@ -89,7 +89,8 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, animations:
     cyan: palette.cyan,
     gray: palette.brightBlack,
     green: palette.green,
-    orange: palette.brightRed,
+    // base09; base16 bright colors repeat the normal ones.
+    orange: scheme?.base09 ?? palette.brightRed,
     pink: palette.magenta,
     purple: palette.brightMagenta,
     red: palette.red,

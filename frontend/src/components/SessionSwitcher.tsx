@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { type ComponentProps, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Layout, LayoutContent, LayoutFooter, LayoutPanel, HStack, VStack } from '@astryxdesign/core/Layout';
@@ -21,7 +21,14 @@ import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
 import { KeyCap, KeyHint } from './KeyHint';
-import { gitMatches, labeledSessionRepos, repoColor, windowWorktrees, worktreeLabel } from '../lib/gitIdentity';
+import {
+  gitMatches,
+  repoColors,
+  sessionRepos,
+  windowWorktrees,
+  worktreeLabel,
+  type RepoColor,
+} from '../lib/gitIdentity';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -136,6 +143,10 @@ export function SessionSwitcher({ send }: Props) {
   }, [sortedSessions, expanded, query, windowSort]);
 
   const sessionById = useMemo(() => new Map(allSessions.map((s) => [s.id, s])), [allSessions]);
+  const colors = useMemo(
+    () => repoColors(allSessions.flatMap((s) => sessionRepos(s).map((git) => git.repo_id))),
+    [allSessions],
+  );
 
   // On open: reset the filter and select the active session's row (the tree
   // starts collapsed, so windows aren't shown).
@@ -453,7 +464,7 @@ export function SessionSwitcher({ send }: Props) {
                 <ListItem
                   key={`s-${row.sessionId}`}
                   ref={isSelected ? selectedRef : null}
-                  label={<span className="btm-mono">{sess.name}</span>}
+                  label={<RowLabel name={sess.name} gits={sessionRepos(sess)} kind="repo" max={2} colors={colors} />}
                   isSelected={isSelected}
                   startContent={
                     <HStack gap={2} vAlign="center">
@@ -463,7 +474,6 @@ export function SessionSwitcher({ send }: Props) {
                   }
                   endContent={
                     <HStack gap={1} vAlign="center">
-                      <GitTokens gits={labeledSessionRepos(sess)} kind="repo" max={2} />
                       {sess.id === activeSession?.id && <Token label="attached" size="sm" color="blue" />}
                       <Badge variant="neutral" label={sess.windows.length} />
                     </HStack>
@@ -483,21 +493,21 @@ export function SessionSwitcher({ send }: Props) {
               <ListItem
                 key={`w-${row.windowId}`}
                 ref={isSelected ? selectedRef : null}
-                label={<span className="btm-mono">{win.name}</span>}
+                label={<RowLabel name={win.name} gits={windowWorktrees(win)} kind="worktree" max={1} colors={colors} />}
                 isSelected={isSelected}
                 className="pl-8"
                 startContent={
                   <Token
                     label={String(row.displayIndex)}
                     size="sm"
+                    className="tabular-nums"
                     color={win.id === activeWindowId ? 'blue' : 'gray'}
                   />
                 }
                 endContent={
                   <HStack gap={2} vAlign="center">
-                    <GitTokens gits={windowWorktrees(win)} kind="worktree" max={1} />
                     {win.zoomed_pane && <Icon icon={Maximize2} size="sm" color="secondary" label="Zoomed" />}
-                    <Text color="secondary">
+                    <Text color="secondary" className="min-w-[4.5em] text-end">
                       {paneCount} {paneCount === 1 ? 'pane' : 'panes'}
                     </Text>
                   </HStack>
@@ -520,7 +530,9 @@ export function SessionSwitcher({ send }: Props) {
           {debouncedPreviewWindow?.name ?? '—'}
         </Text>
         <Text color="secondary">preview</Text>
-        {debouncedPreviewWindow && <GitTokens gits={windowWorktrees(debouncedPreviewWindow)} kind="worktree" max={3} />}
+        {debouncedPreviewWindow && (
+          <GitTokens gits={windowWorktrees(debouncedPreviewWindow)} kind="worktree" max={3} colors={colors} />
+        )}
       </HStack>
       {debouncedPreviewWindow ? (
         <AspectRatio ratio={viewportAspect}>
@@ -573,7 +585,7 @@ export function SessionSwitcher({ send }: Props) {
         }
         start={
           isNarrow ? undefined : (
-            <LayoutPanel width={340} hasDivider padding={2}>
+            <LayoutPanel width={400} hasDivider padding={2}>
               {tree}
             </LayoutPanel>
           )
@@ -612,23 +624,47 @@ export function SessionSwitcher({ send }: Props) {
   );
 }
 
+/** A row's name, then its tokens in the space left, at least 6rem of it. */
+function RowLabel({ name, ...tokens }: { name: string } & ComponentProps<typeof GitTokens>) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className={`btm-mono shrink-0 truncate ${tokens.gits.length ? 'max-w-[calc(100%-6.5rem)]' : 'max-w-full'}`}>
+        {name}
+      </span>
+      <span className="ms-auto flex min-w-0 justify-end">
+        <GitTokens {...tokens} />
+      </span>
+    </span>
+  );
+}
+
 /** Repo or worktree tokens, colored by repo; at most `max`, then a count. */
-function GitTokens({ gits, kind, max }: { gits: PaneGit[]; kind: 'repo' | 'worktree'; max: number }) {
+function GitTokens({
+  gits,
+  kind,
+  max,
+  colors,
+}: {
+  gits: PaneGit[];
+  kind: 'repo' | 'worktree';
+  max: number;
+  colors: Map<string, RepoColor>;
+}) {
   if (gits.length === 0) return null;
   const shown = gits.slice(0, max);
   return (
-    <HStack gap={1} vAlign="center">
+    <HStack gap={1} vAlign="center" className="min-w-0">
       {shown.map((git) => (
         <Token
           key={kind === 'repo' ? git.repo_id : `${git.repo_id}\0${git.worktree_root}`}
           size="sm"
-          color={repoColor(git.repo_id)}
+          color={colors.get(git.repo_id)}
           icon={<Icon icon={kind === 'repo' ? FolderGit2 : GitBranch} size="sm" />}
           label={kind === 'repo' ? git.repo_name : worktreeLabel(git)}
           description={kind === 'repo' ? `Repo ${git.repo_id}` : `${git.repo_name} worktree ${git.worktree_root}`}
         />
       ))}
-      {gits.length > shown.length && <Token size="sm" label={`+${gits.length - shown.length}`} />}
+      {gits.length > shown.length && <Token size="sm" className="shrink-0" label={`+${gits.length - shown.length}`} />}
     </HStack>
   );
 }

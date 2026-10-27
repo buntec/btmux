@@ -2,8 +2,7 @@
 import { expect, test } from 'bun:test';
 import {
   gitMatches,
-  labeledSessionRepos,
-  repoColor,
+  repoColors,
   sessionRepos,
   windowWorktrees,
   worktreeLabel,
@@ -32,15 +31,17 @@ test('window worktrees are distinct, active pane first, ignoring panes outside r
 test('session repos group worktrees of one repo', () => {
   const sess = { name: 'proj', windows: [win([main]), win([feat, null]), win([null])] };
   expect(sessionRepos(sess)).toEqual([main]);
-  // The repo it is named after is not labeled.
-  expect(labeledSessionRepos(sess)).toEqual([]);
-  expect(labeledSessionRepos({ ...sess, name: 'work' })).toEqual([main]);
-  expect(labeledSessionRepos({ ...sess, windows: [...sess.windows, win([other])] })).toEqual([other]);
+  expect(sessionRepos({ ...sess, windows: [...sess.windows, win([other])] })).toEqual([main, other]);
 });
 
-test('worktrees share their repo color', () => {
-  expect(repoColor(feat.repo_id)).toBe(repoColor(main.repo_id));
-  expect(repoColor(main.repo_id)).not.toBe('blue');
+test('repos get distinct colors while there are enough', () => {
+  const ids = Array.from({ length: 6 }, (_, i) => `/src/repo${i}/.git`);
+  const colors = repoColors([...ids, feat.repo_id, main.repo_id]);
+  expect(colors.size).toBe(7);
+  expect(new Set([...colors.values()].slice(0, 6)).size).toBe(6);
+  expect([...colors.values()]).not.toContain('blue');
+  // Independent of input order.
+  expect(repoColors([...ids].reverse())).toEqual(repoColors(ids));
 });
 
 test('labels and filter matches', () => {

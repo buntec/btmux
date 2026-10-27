@@ -11,6 +11,7 @@ export type {
   Command,
   TerminalOptions,
   Theme,
+  BaseTheme,
   Appearance,
   ColorMode,
   SessionSort,

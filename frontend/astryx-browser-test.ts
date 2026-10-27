@@ -555,6 +555,29 @@ try {
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });
   console.log('PASS command palette keeps the top result highlighted');
 
+  // Ctrl-N/P cycle through the filtered results.
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await page.keyboard.type('window');
+  const waitForHighlight = (index: number) =>
+    page.waitForFunction((index) => {
+      const options = [...document.querySelectorAll('dialog[open] [role="option"]')];
+      const active = document.querySelector('dialog[open] input')?.getAttribute('aria-activedescendant');
+      return options.length > 1 && options.findIndex((option) => option.id === active) === index;
+    }, index);
+  await waitForHighlight(0);
+  const windowCount = await page.locator('dialog[open] [role="option"]').count();
+  await page.keyboard.press('Control+n');
+  await waitForHighlight(1);
+  await page.keyboard.press('Control+p');
+  await waitForHighlight(0);
+  await page.keyboard.press('Control+p');
+  await waitForHighlight(windowCount - 1);
+  await page.keyboard.press('Control+n');
+  await waitForHighlight(0);
+  await page.keyboard.press('Escape');
+  await page.locator('dialog[open]').waitFor({ state: 'hidden' });
+  console.log('PASS command palette cycles results with Ctrl-N/P');
+
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const state = useStore.getState();

@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { AlertDialog } from '@astryxdesign/core/AlertDialog';
-import { CommandPalette, CommandPaletteInput, useCommandPaletteContext } from '@astryxdesign/core/CommandPalette';
+import {
+  CommandPalette,
+  CommandPaletteFooter,
+  CommandPaletteInput,
+  useCommandPaletteContext,
+} from '@astryxdesign/core/CommandPalette';
 import { createStaticSource } from '@astryxdesign/core/Typeahead';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
@@ -16,7 +21,7 @@ import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
 import type { Bind, ClientConfig, Command } from '../state/types';
 import { getPrefix, getSmoothScrollDuration } from '../state/configDefaults';
-import { KeyCap } from './KeyHint';
+import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
 import { smoothScrollBy } from '../lib/smoothScroll';
@@ -135,7 +140,10 @@ function sectionBinds(actions: string[], binds: Bind[]): { action: string; keys:
   });
 }
 
-/** Palette input that keeps the first result highlighted whenever the query or results change. */
+/**
+ * Palette input that keeps the first result highlighted whenever the query or results change,
+ * and cycles through the results with Ctrl-N/P.
+ */
 function TopHighlightedInput() {
   const palette = useCommandPaletteContext();
   // The palette clears its highlight on every keystroke, even if the results stay the same.
@@ -146,7 +154,16 @@ function TopHighlightedInput() {
   useEffect(() => {
     setHighlightedIndex?.(count > 0 ? 0 : -1);
   }, [search, resultsKey, count, setHighlightedIndex]);
-  return <CommandPaletteInput />;
+  return (
+    <CommandPaletteInput
+      onKeyDown={(event) => {
+        if (!palette || !count || !event.ctrlKey || (event.key !== 'n' && event.key !== 'p')) return;
+        event.preventDefault();
+        const step = event.key === 'n' ? 1 : -1;
+        setHighlightedIndex?.((Math.max(palette.highlightedIndex, step > 0 ? -1 : 0) + step + count) % count);
+      }}
+    />
+  );
 }
 
 export function Overlay({ sessionId, send, config }: Props) {
@@ -219,6 +236,14 @@ export function Overlay({ sessionId, send, config }: Props) {
         className="h-120"
         searchSource={source}
         input={<TopHighlightedInput />}
+        footer={
+          <CommandPaletteFooter>
+            <KeyHint keys={['up', 'down']} label="navigate" />
+            <KeyHint keys={['ctrl+n', 'ctrl+p']} label="cycle" />
+            <KeyHint keys={['enter']} label="run" />
+            <KeyHint keys={['esc']} label="close" />
+          </CommandPaletteFooter>
+        }
         onOpenChange={(open) => {
           if (!open && useStore.getState().overlay === overlay) setOverlay(null);
         }}

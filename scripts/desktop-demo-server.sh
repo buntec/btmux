@@ -116,6 +116,8 @@ EOF
         done
         echo "}"
         cat <<'EOF'
+-- The VM has no clipboard provider; don't toast about it.
+require("btmux").setup({ check = false })
 vim.o.number = true
 vim.o.signcolumn = "yes"
 vim.o.completeopt = "menuone,noselect,popup"

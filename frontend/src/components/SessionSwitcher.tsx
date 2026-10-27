@@ -585,7 +585,7 @@ export function SessionSwitcher({ send }: Props) {
         }
         start={
           isNarrow ? undefined : (
-            <LayoutPanel width={400} hasDivider padding={2}>
+            <LayoutPanel width="50%" hasDivider padding={2}>
               {tree}
             </LayoutPanel>
           )

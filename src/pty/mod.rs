@@ -1031,6 +1031,30 @@ mod lifecycle_tests {
     }
 
     #[tokio::test]
+    async fn handoff_keeps_programs_that_replaced_the_shell() {
+        let mut old = pane("/bin/sh");
+        old.ensure_spawned(80, 24).unwrap();
+        old.input_tx.send(b"exec sleep 30\r".to_vec()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while old.foreground_program().is_none() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        old.stop_io();
+        let (fd, handoff) = old.export_handoff(deadline()).unwrap().unwrap();
+        let master = unsafe { BorrowedFd::borrow_raw(fd) }
+            .try_clone_to_owned()
+            .unwrap();
+        std::mem::forget(old);
+
+        let mut new = pane("/bin/sh");
+        new.adopt(master, handoff).unwrap();
+        assert!(new.foreground_program().is_some());
+    }
+
+    #[tokio::test]
     async fn replies_racing_a_handoff_keep_the_shell() {
         let palette = colors::SharedPalette::default();
         palette.set(colors::Palette::from_theme(&crate::config::default_theme()));

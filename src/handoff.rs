@@ -25,7 +25,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -78,6 +78,7 @@ struct PaneHeader {
     /// Length of the unwritten input, which follows the pending bytes.
     input: usize,
     bin: Option<PathBuf>,
+    shell_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -180,6 +181,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 pending,
                 input,
                 bin: pane.bin,
+                shell_name: pane.shell_name,
             },
         ));
     }
@@ -407,6 +409,7 @@ fn write(
                 pending: pane.pending.len(),
                 input: pane.input.len(),
                 bin: pane.bin.clone(),
+                shell_name: pane.shell_name.clone(),
             })
             .collect(),
     };

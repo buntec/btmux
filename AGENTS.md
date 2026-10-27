@@ -120,9 +120,11 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 - **Git identity** (`pane_git.rs`): `PaneSnapshot.git` gives each pane's repo
   (keyed by the common git dir, so worktrees of one repo match), worktree root,
   and branch. `GitTracker` resolves local cwds from the filesystem on a worker
-  thread, caches them, and watches each worktree's git dir (and, for linked
-  worktrees, `worktrees/` and the common dir, since removal isn't reported
-  otherwise); changes signal `meta_tx`. Not persisted. Windows and sessions
+  thread (symlinks resolved on Unix, as git does), caches them (stale entries
+  are served while revalidated after 10 s, for `git init` or a removed `.git`),
+  and watches each worktree's git dir (and, for linked worktrees, `worktrees/`
+  and the common dir, since removal isn't reported otherwise); changes signal
+  `meta_tx`. Not persisted. Windows and sessions
   have no identity of their own: `lib/gitIdentity.ts` derives it from their
   panes for the session switcher's repo/branch tokens (colored per repo) and
   its filter. `worktree.rs` creates a worktree (`worktree-path`, default

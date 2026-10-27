@@ -85,7 +85,7 @@ pub async fn remove(state: &AppState, pane_id: Uuid) -> Result<Removed, Error> {
     // Close the panes first: a shell's directory blocks removal on Windows.
     let closed_panes = {
         let mut mgr = state.write().await;
-        let panes = mgr.panes_under(&[&target.root, &target.canonical]);
+        let panes = mgr.panes_under(&[&target.root]);
         for &id in &panes {
             let pane = mgr.find_pane(id).unwrap();
             if let Some(program) = pane.pty.foreground_program() {
@@ -176,9 +176,7 @@ fn worktree_path(template: &str, main: &Path, repo: &str, branch: &str) -> PathB
 }
 
 struct Target {
-    /// As found above the pane's directory.
     root: PathBuf,
-    canonical: PathBuf,
     branch: Option<String>,
 }
 
@@ -196,7 +194,13 @@ fn removable(dir: &Path) -> Result<Target, Error> {
     if git_dir.join("locked").exists() {
         return Err(Error::Conflict(format!("{} is locked", root.display())));
     }
-    if !git(&root, &[&"status", &"--porcelain"])?.is_empty() {
+    // Explicit, as `status.showUntrackedFiles=no` would hide untracked files
+    // that removal deletes.
+    let status = git(
+        &root,
+        &[&"status", &"--porcelain", &"--untracked-files=normal"],
+    )?;
+    if !status.is_empty() {
         return Err(Error::Conflict(format!(
             "{} has uncommitted changes",
             root.display()
@@ -209,7 +213,6 @@ fn removable(dir: &Path) -> Result<Target, Error> {
         )));
     }
     Ok(Target {
-        canonical: root.canonicalize().unwrap_or_else(|_| root.clone()),
         root,
         branch: git_info.branch,
     })
@@ -266,8 +269,11 @@ mod tests {
     impl Repo {
         fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("btmux-worktree-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(dir.join("proj")).unwrap();
+            // Worktree roots are canonical on Unix.
+            #[cfg(unix)]
+            let dir = dir.canonicalize().unwrap();
             let main = dir.join("proj");
-            std::fs::create_dir_all(&main).unwrap();
             run(&main, &["init", "-q", "-b", "main"]);
             run(&main, &["commit", "-q", "--allow-empty", "-m", "init"]);
             Self { dir, main }
@@ -406,6 +412,7 @@ mod tests {
         assert!(matches!(removable(&repo.main), Err(Error::Conflict(_))));
         std::fs::create_dir(path.join("sub")).unwrap();
         std::fs::write(path.join("sub/new.txt"), "x").unwrap();
+        run(&path, &["config", "status.showUntrackedFiles", "no"]);
         assert!(matches!(
             removable(&path.join("sub")),
             Err(Error::Conflict(_))
@@ -414,6 +421,12 @@ mod tests {
         let target = removable(&path.join("sub")).unwrap();
         assert_eq!(target.root, path);
         assert_eq!(target.branch.as_deref(), Some("feat"));
+        #[cfg(unix)]
+        {
+            let alias = repo.dir.join("alias");
+            std::os::unix::fs::symlink(path.join("sub"), &alias).unwrap();
+            assert_eq!(removable(&alias).unwrap().root, path);
+        }
         run(&repo.main, &["worktree", "lock", path.to_str().unwrap()]);
         assert!(matches!(removable(&path), Err(Error::Conflict(_))));
     }

@@ -1,7 +1,7 @@
 //! The git repo, worktree, and branch of pane working directories. Resolved
 //! from the filesystem (no `git` subprocess) on a worker thread and cached per
-//! directory; each worktree's `HEAD` is watched for branch switches. Changes
-//! signal `meta_tx`, which rebroadcasts state.
+//! directory, revalidated after `REVALIDATE`; each worktree's `HEAD` is watched
+//! for branch switches. Changes signal `meta_tx`, which rebroadcasts state.
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -24,8 +24,9 @@ pub struct PaneGit {
     pub main_worktree: bool,
 }
 
-/// How long a directory found outside any repo stays cached (`git init`).
-const NEGATIVE_TTL: Duration = Duration::from_secs(10);
+/// When a cached directory is resolved again, for repo boundaries that
+/// changed (`git init`, a removed `.git`).
+const REVALIDATE: Duration = Duration::from_secs(10);
 /// Cached directories before the cache is cleared.
 const MAX_DIRS: usize = 4096;
 
@@ -79,16 +80,25 @@ impl GitTracker {
     }
 
     /// The cached identity of `cwd`. A miss queues resolution and returns
-    /// `None`; `changed` fires once a repo is found.
+    /// `None`; a stale entry is returned while it's resolved again. `changed`
+    /// fires when the result differs.
     pub fn lookup(&self, cwd: &str) -> Option<PaneGit> {
         let mut state = self.state.lock().unwrap();
-        match state.dirs.get(cwd) {
+        let State { dirs, worktrees } = &mut *state;
+        match dirs.get_mut(cwd) {
             Some(Lookup::Pending) => return None,
-            Some(Lookup::Resolved(Some(root), _)) => {
-                return state.worktrees.get(root).map(|w| w.git.clone())
+            Some(Lookup::Resolved(root, at)) => {
+                let git = root
+                    .as_ref()
+                    .and_then(|root| worktrees.get(root))
+                    .map(|w| w.git.clone());
+                if at.elapsed() >= REVALIDATE {
+                    *at = Instant::now();
+                    let _ = self.jobs.send(Job::Resolve(cwd.to_string()));
+                }
+                return git;
             }
-            Some(Lookup::Resolved(None, at)) if at.elapsed() < NEGATIVE_TTL => return None,
-            _ => {}
+            None => {}
         }
         if state.dirs.len() >= MAX_DIRS {
             state
@@ -141,16 +151,19 @@ impl Worker {
             }
         }
         let mut state = self.state.lock().unwrap();
+        let State { dirs, worktrees } = &mut *state;
+        let before = match dirs.get(&cwd) {
+            Some(Lookup::Resolved(Some(root), _)) => worktrees.get(root).map(|w| w.git.clone()),
+            _ => None,
+        };
+        let after = found.as_ref().map(|(_, worktree)| worktree.git.clone());
         let root = found.map(|(root, worktree)| {
-            state.worktrees.insert(root.clone(), worktree);
+            worktrees.insert(root.clone(), worktree);
             root
         });
-        let found = root.is_some();
-        state
-            .dirs
-            .insert(cwd, Lookup::Resolved(root, Instant::now()));
+        dirs.insert(cwd, Lookup::Resolved(root, Instant::now()));
         drop(state);
-        if found {
+        if before != after {
             let _ = self.changed.send(());
         }
     }
@@ -249,6 +262,7 @@ pub(crate) fn worktree_of(dir: &Path) -> Option<(PaneGit, PathBuf)> {
 
 /// The worktree containing `dir`: its root and identity.
 fn resolve(dir: &Path) -> Option<(PathBuf, Worktree)> {
+    let dir = real_path(dir);
     let (root, dot_git) = dir.ancestors().find_map(|root| {
         let dot_git = root.join(".git");
         dot_git.exists().then(|| (root.to_path_buf(), dot_git))
@@ -277,6 +291,16 @@ fn resolve(dir: &Path) -> Option<(PathBuf, Worktree)> {
     };
     let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
     Some((root, Worktree { git, git_dir }))
+}
+
+/// `dir` with symlinks resolved, as git finds its repo. Unchanged on Windows,
+/// where a UNC path (WSL) would become a verbatim `\\?\UNC\` one.
+fn real_path(dir: &Path) -> PathBuf {
+    #[cfg(unix)]
+    if let Ok(real) = dir.canonicalize() {
+        return real;
+    }
+    dir.to_path_buf()
 }
 
 /// The branch `HEAD` names; `None` inside when detached, `None` outside when
@@ -330,8 +354,9 @@ mod tests {
     impl Repo {
         fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("btmux-pane-git-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(dir.join("proj")).unwrap();
+            let dir = real_path(&dir);
             let main = dir.join("proj");
-            std::fs::create_dir_all(&main).unwrap();
             git(&main, &["init", "-q", "-b", "main"]);
             git(&main, &["commit", "-q", "--allow-empty", "-m", "init"]);
             Self { dir, main }
@@ -380,6 +405,17 @@ mod tests {
         assert!(resolve(&repo.dir).is_none());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_resolve_like_git() {
+        let repo = Repo::new();
+        std::fs::create_dir(repo.main.join("sub")).unwrap();
+        let alias = repo.dir.join("alias");
+        std::os::unix::fs::symlink(repo.main.join("sub"), &alias).unwrap();
+        let (root, _) = resolve(&alias).unwrap();
+        assert_eq!(root, repo.main);
+    }
+
     #[test]
     fn detached_head_has_no_branch() {
         let repo = Repo::new();
@@ -425,6 +461,31 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn lookups_follow_new_repos_inside_repos() {
+        let repo = Repo::new();
+        let sub = repo.main.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tracker = GitTracker::new(tx);
+        let cwd = sub.to_str().unwrap();
+        assert_eq!(tracker.lookup(cwd), None);
+        changed(&mut rx).await;
+        assert_eq!(tracker.lookup(cwd).unwrap().branch.as_deref(), Some("main"));
+
+        git(&sub, &["init", "-q", "-b", "inner"]);
+        match tracker.state.lock().unwrap().dirs.get_mut(cwd) {
+            Some(Lookup::Resolved(_, at)) => *at -= REVALIDATE,
+            _ => panic!("not resolved"),
+        }
+        // Stale until resolved again.
+        assert_eq!(tracker.lookup(cwd).unwrap().branch.as_deref(), Some("main"));
+        changed(&mut rx).await;
+        let found = tracker.lookup(cwd).unwrap();
+        assert_eq!(found.branch.as_deref(), Some("inner"));
+        assert_eq!(Path::new(&found.worktree_root), sub);
     }
 
     async fn changed(rx: &mut tokio::sync::mpsc::UnboundedReceiver<()>) {

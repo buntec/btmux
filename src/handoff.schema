@@ -1,9 +1,9 @@
-// handoff version 3
+// handoff version 4
 type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, panes: Array<PaneHeader>, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>,
 pending: number,
-input: number, bin: string | null, };
+input: number, bin: string | null, shell_name: string | null, };
 type Event = { "Data": number } | { "Size": [number, number] };
 type SessionSnapshot = { id: string, name: string, windows: Array<WindowSnapshot>, active_window: number, };
 type WindowSnapshot = { id: string, name: string, panes: Array<PaneSnapshot>, active_pane: number, layout: Layout, zoomed_pane: string | null, };

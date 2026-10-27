@@ -40,6 +40,8 @@ pub struct Handoff {
     pub input: Vec<u8>,
     /// The `BTMUX_BIN` the shell was started with.
     pub bin: Option<std::path::PathBuf>,
+    /// The shell's program name, which `exec` may since have replaced.
+    pub shell_name: Option<String>,
 }
 
 /// What a reader stopped for a handoff leaves behind.
@@ -278,6 +280,7 @@ impl PtyHandle {
         self.start(
             master,
             pid,
+            crate::process::name(pid),
             cols,
             rows,
             replay,
@@ -312,6 +315,7 @@ impl PtyHandle {
         self.start(
             master,
             handoff.pid,
+            handoff.shell_name,
             handoff.cols,
             handoff.rows,
             replay,
@@ -374,6 +378,7 @@ impl PtyHandle {
                 pending: reader.pending,
                 input,
                 bin: self.bin.clone(),
+                shell_name: self.shell_name.clone(),
             },
         )))
     }
@@ -435,6 +440,7 @@ impl PtyHandle {
         &mut self,
         master: OwnedFd,
         pid: libc::pid_t,
+        shell_name: Option<String>,
         cols: u16,
         rows: u16,
         replay: Replay,
@@ -448,7 +454,7 @@ impl PtyHandle {
         set_size(master.as_raw_fd(), cols, rows);
 
         self.shell_pid = Some(pid);
-        self.shell_name = crate::process::name(pid);
+        self.shell_name = shell_name;
         *self.child.lock().unwrap() = Some(pid);
         let child = self.child.clone();
         let child_exit_tx = self.exit_tx.clone();

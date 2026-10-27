@@ -318,7 +318,8 @@ screen it reads. A confirmed process exit clears status even when Ctrl-C skips
 the end hook. Suspended or background agents remain present with unknown activity.
 When another agent takes the foreground, a suspended agent keeps its hook session
 and resumes it after `fg`.
-Press `prefix + a` to open the agent grid.
+Press `prefix + a` to open the agent grid. Drag a tile, or press Shift with an
+arrow key, to reorder it; each browser remembers the order.
 
 While a pane has a detected agent, the backend reconstructs its live terminal
 screen from ordered PTY output and resize events, independently of browser

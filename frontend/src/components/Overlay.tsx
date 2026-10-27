@@ -71,6 +71,8 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'window-grid',
       'agent-grid',
       'kill-window',
+      'new-worktree',
+      'remove-worktree',
     ],
   },
   {
@@ -265,7 +267,10 @@ export function Overlay({ sessionId, send, config }: Props) {
       const name = overlay.value.trim();
       const target = overlay.targetSessionId ?? sessionId;
       if (overlay.action === 'new-session') send({ type: 'create_session', name: name || null });
-      else if (name && overlay.action === 'rename-window') send({ type: 'rename_window', session_id: target, name });
+      else if (overlay.action === 'new-worktree') {
+        if (name && overlay.targetPaneId)
+          send({ type: 'create_worktree', pane_id: overlay.targetPaneId, branch: name });
+      } else if (name && overlay.action === 'rename-window') send({ type: 'rename_window', session_id: target, name });
       else if (name) {
         send({ type: 'rename_session', session_id: target, name });
         if (target === sessionId) navigate(`/s/${encodeURIComponent(name)}`, { replace: true });
@@ -279,7 +284,7 @@ export function Overlay({ sessionId, send, config }: Props) {
           content={
             <LayoutContent padding={4}>
               <TextInput
-                label="Name"
+                label={overlay.action === 'new-worktree' ? 'Branch' : 'Name'}
                 value={overlay.value}
                 hasAutoFocus
                 onChange={(value) => setOverlay({ ...overlay, value })}

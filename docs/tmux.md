@@ -24,6 +24,7 @@ last session, `[` capture scrollback, `/` search, `]` paste, `?` key list, `:` p
 | `C`     | (unbound)   | new session (prompts for name)                    |
 | `g` `a` | (unbound)   | git view, agent grid                              |
 | `e`     | (unbound)   | editor (`editor` setting)                         |
+| `W` `X` | (unbound)   | new git worktree (prompts for branch), remove it  |
 | `[`     | copy mode   | opens the scrollback in `$EDITOR` inside the pane |
 | `l`     | last-window | pane right (`h` `j` `k` too); last-window unbound |
 

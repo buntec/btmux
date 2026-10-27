@@ -2,6 +2,7 @@
 import type { Bind, Command } from '../generated/protocol';
 export type {
   PaneSnapshot as PaneState,
+  PaneGit,
   Layout as LayoutNode,
   WindowSnapshot as WindowState,
   SessionSnapshot as SessionState,
@@ -61,7 +62,15 @@ export interface PickerItem {
 export type Overlay =
   | { mode: 'info'; title: string }
   | { mode: 'config-error'; title: string }
-  | { mode: 'prompt'; title: string; value: string; action: PromptAction; targetSessionId?: string }
+  | {
+      mode: 'prompt';
+      title: string;
+      value: string;
+      action: PromptAction;
+      targetSessionId?: string;
+      /** The pane `new-worktree` branches from. */
+      targetPaneId?: string;
+    }
   | { mode: 'keys'; title: string; binds: Bind[] }
   | { mode: 'command'; title: string; commands: Command[] }
   | {
@@ -77,7 +86,7 @@ export type Overlay =
       onSelect: (id: string) => void;
     };
 
-export type PromptAction = 'rename-window' | 'rename-session' | 'new-session';
+export type PromptAction = 'rename-window' | 'rename-session' | 'new-session' | 'new-worktree';
 
 export interface LayoutRect {
   paneId: string;

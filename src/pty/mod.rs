@@ -121,6 +121,9 @@ pub struct PtyHandle {
     size: Arc<Mutex<(u16, u16)>>,
     spawned: Arc<Mutex<bool>>,
     shell_pid: Option<Pid>,
+    /// The shell's executable when it started.
+    #[cfg(unix)]
+    shell_name: Option<String>,
     shell: String,
     dialect: crate::shell::Dialect,
     /// OSC 133 marks: 0 before the first, odd at a prompt, `2n` while
@@ -145,6 +148,8 @@ pub struct PtyHandle {
     pub title: Arc<Mutex<Option<String>>>,
     /// The shell's working directory: its last OSC 7, or on Unix, from the OS.
     pub cwd: Arc<Mutex<Option<String>>>,
+    /// The last OSC 7 named another host (an ssh session).
+    pub cwd_remote: Arc<AtomicBool>,
     /// Server port, injected as BTMUX_API_URL into the shell environment.
     port: u16,
     /// Maximum backend replay buffer size in bytes, derived from the config's
@@ -187,6 +192,8 @@ impl PtyHandle {
             size: Arc::new(Mutex::new((0, 0))),
             spawned: Arc::new(Mutex::new(false)),
             shell_pid: None,
+            #[cfg(unix)]
+            shell_name: None,
             shell: shell.to_string(),
             dialect: crate::shell::Dialect::of(shell),
             prompt: Arc::default(),
@@ -198,6 +205,7 @@ impl PtyHandle {
             probe: Arc::new(Mutex::new(None)),
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
+            cwd_remote: Arc::default(),
             port: env.port,
             scrollback_bytes: scrollback_lines as usize * 1000,
             palette: env.palette.clone(),
@@ -217,6 +225,28 @@ impl PtyHandle {
         self.spawn_cwd
             .as_ref()
             .map(|p| p.to_string_lossy().into_owned())
+    }
+
+    /// The name of a program in the foreground instead of the shell.
+    pub fn foreground_program(&self) -> Option<String> {
+        let foreground = self.foreground_pgrp()?;
+        let name = crate::process::name(foreground);
+        let shell = Some(foreground) == self.shell_pid;
+        // The shell can exec another program in its group (`exec nvim`).
+        #[cfg(unix)]
+        let shell = shell
+            && name.as_deref().is_none_or(|name| {
+                unix::is_shell(name) || self.shell_name.as_deref() == Some(name)
+            });
+        (!shell).then(|| name.unwrap_or_else(|| "a program".into()))
+    }
+
+    /// `effective_cwd`, unless it's on another host.
+    pub fn local_cwd(&self) -> Option<String> {
+        if self.cwd_remote.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.effective_cwd()
     }
 
     pub fn screen_revision(&self) -> u64 {
@@ -507,7 +537,11 @@ impl PtyHandle {
     ) -> OutputPipeline {
         OutputPipeline {
             interceptor,
-            osc_parser: OscParser::new(self.meta_tx.clone(), self.prompt.clone()),
+            osc_parser: OscParser::new(
+                self.meta_tx.clone(),
+                self.prompt.clone(),
+                self.cwd_remote.clone(),
+            ),
             response_tx,
             pending_cpr_pgrps: self.pending_cpr_pgrps.clone(),
             probe: self.probe.clone(),
@@ -517,9 +551,7 @@ impl PtyHandle {
             output_tx: self.output_tx.clone(),
             pane_id: self.pane_id,
             #[cfg(unix)]
-            shell: self
-                .shell_pid
-                .and_then(|pid| Some((pid, crate::process::name(pid)?))),
+            shell: self.shell_pid.zip(self.shell_name.clone()),
             #[cfg(unix)]
             leader: None,
         }
@@ -605,6 +637,35 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
 
+/// Whether an OSC 7 host names this machine. Shells disagree on a `.local`
+/// suffix, so only the first label is compared.
+fn is_local_host(host: &str) -> bool {
+    let label = |name: &str| {
+        name.split('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    };
+    host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || local_hostname().is_none_or(|local| label(host) == label(&local))
+}
+
+#[cfg(unix)]
+fn local_hostname() -> Option<String> {
+    let mut buf = [0u8; 256];
+    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8(buf[..len].to_vec()).ok()
+}
+
+#[cfg(windows)]
+fn local_hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME").ok()
+}
+
 /// Incremental OSC sequence parser. Handles sequences split across read() chunks.
 /// Parses OSC 0/2 (window title), OSC 7 (working directory URI), and OSC 133
 /// prompt (`A`) and command (`C`) marks.
@@ -615,16 +676,22 @@ struct OscParser {
     reported_cwd: bool,
     meta_tx: mpsc::UnboundedSender<()>,
     prompt: Arc<AtomicU32>,
+    cwd_remote: Arc<AtomicBool>,
 }
 
 impl OscParser {
-    fn new(meta_tx: mpsc::UnboundedSender<()>, prompt: Arc<AtomicU32>) -> Self {
+    fn new(
+        meta_tx: mpsc::UnboundedSender<()>,
+        prompt: Arc<AtomicU32>,
+        cwd_remote: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             buf: Vec::new(),
             in_osc: false,
             reported_cwd: false,
             meta_tx,
             prompt,
+            cwd_remote,
         }
     }
 
@@ -688,10 +755,13 @@ impl OscParser {
                 // `scheme://` rather than `file://` specifically. Only `file`
                 // URIs are percent-encoded (`kitty-shell-cwd` is raw). A bare
                 // path (no scheme) is taken as-is.
+                let mut host = "";
                 let path = if let Some(scheme_end) = payload.find("://") {
                     let rest = &payload[scheme_end + 3..];
                     // Strip optional hostname (everything up to next '/').
-                    let path = rest.find('/').map_or(rest, |slash| &rest[slash..]);
+                    let slash = rest.find('/').unwrap_or(rest.len());
+                    host = &rest[..slash];
+                    let path = &rest[slash..];
                     if payload[..scheme_end].eq_ignore_ascii_case("file") {
                         percent_decode(path)
                     } else {
@@ -709,6 +779,8 @@ impl OscParser {
                 };
                 if !path.is_empty() {
                     *cwd.lock().unwrap() = Some(path);
+                    self.cwd_remote
+                        .store(!is_local_host(host), Ordering::Relaxed);
                     self.reported_cwd = true;
                     true
                 } else {
@@ -1182,12 +1254,30 @@ mod osc_tests {
         assert_eq!(seen, [2, 3, 3, 4, 4, 5]);
     }
 
-    fn cwd_of(seq: &[u8]) -> Option<String> {
-        let mut parser = OscParser::new(mpsc::unbounded_channel().0, Arc::default());
+    fn osc7(seq: &[u8]) -> (Option<String>, bool) {
+        let remote = Arc::<AtomicBool>::default();
+        let mut parser =
+            OscParser::new(mpsc::unbounded_channel().0, Arc::default(), remote.clone());
         let (title, cwd) = Default::default();
         parser.feed(seq, &title, &cwd);
         let cwd = cwd.lock().unwrap().clone();
-        cwd
+        (cwd, remote.load(Ordering::Relaxed))
+    }
+
+    fn cwd_of(seq: &[u8]) -> Option<String> {
+        osc7(seq).0
+    }
+
+    #[test]
+    fn marks_cwds_on_other_hosts_remote() {
+        let local = local_hostname().unwrap();
+        let short = local.split('.').next().unwrap();
+        for host in ["", "localhost", &local, &short.to_uppercase()] {
+            let seq = format!("\x1b]7;file://{host}/x\x07");
+            assert!(!osc7(seq.as_bytes()).1, "{host}");
+        }
+        assert!(!osc7(b"\x1b]7;/x\x07").1);
+        assert!(osc7(b"\x1b]7;file://btmux-remote-host/x\x07").1);
     }
 
     #[test]

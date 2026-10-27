@@ -30,6 +30,7 @@ pub struct Handoff {
     pub journal: Vec<Output>,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    pub cwd_remote: bool,
     pub spawn_cwd: Option<std::path::PathBuf>,
     pub color_reports: bool,
     pub colors: Vec<Option<colors::Rgb>>,
@@ -292,6 +293,7 @@ impl PtyHandle {
         set_cloexec(master.as_raw_fd(), true).map_err(|e| e.to_string())?;
         *self.title.lock().unwrap() = handoff.title;
         *self.cwd.lock().unwrap() = handoff.cwd;
+        self.cwd_remote.store(handoff.cwd_remote, Ordering::Relaxed);
         self.spawn_cwd = handoff.spawn_cwd;
         self.bin = handoff.bin;
         self.color_reports
@@ -365,6 +367,7 @@ impl PtyHandle {
                 journal,
                 title: self.title.lock().unwrap().clone(),
                 cwd: self.cwd.lock().unwrap().clone(),
+                cwd_remote: self.cwd_remote.load(Ordering::Relaxed),
                 spawn_cwd: self.spawn_cwd.clone(),
                 color_reports: self.color_reports.load(Ordering::Relaxed),
                 colors: reader.colors,
@@ -445,6 +448,7 @@ impl PtyHandle {
         set_size(master.as_raw_fd(), cols, rows);
 
         self.shell_pid = Some(pid);
+        self.shell_name = crate::process::name(pid);
         *self.child.lock().unwrap() = Some(pid);
         let child = self.child.clone();
         let child_exit_tx = self.exit_tx.clone();
@@ -680,7 +684,7 @@ impl OutputPipeline {
 
 /// Whether `name` is a shell's executable; login shells start with `-`, Nix
 /// wrappers with `.` and end in `-wrapped`.
-fn is_shell(name: &str) -> bool {
+pub(super) fn is_shell(name: &str) -> bool {
     let name = name.trim_start_matches(['-', '.']);
     let name = name.strip_suffix("-wrapped").unwrap_or(name);
     matches!(

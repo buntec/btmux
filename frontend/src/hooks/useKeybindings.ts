@@ -23,6 +23,7 @@ import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { sendToNvim } from '../components/NvimSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
+import { worktreeLabel } from '../lib/gitIdentity';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -357,6 +358,14 @@ export function runAction(
     case 'kill-window':
       confirmKill('window', sessionId, send);
       break;
+    case 'new-worktree':
+      if (paneId) {
+        openOverlay({ mode: 'prompt', title: 'new-worktree', value: '', action: 'new-worktree', targetPaneId: paneId });
+      }
+      break;
+    case 'remove-worktree':
+      if (paneId) confirmRemoveWorktree(paneId, send);
+      break;
     case 'new-session':
       openOverlay({
         mode: 'prompt',
@@ -580,6 +589,26 @@ function confirmKill(target: 'pane' | 'window', sessionId: string, send: (msg: C
   } else {
     store.showToast('Cannot kill the last session', 'error');
   }
+}
+
+function confirmRemoveWorktree(paneId: string, send: (msg: ClientMessage) => void) {
+  const store = useStore.getState();
+  const panes = store.allSessions.flatMap((s) => s.windows.flatMap((w) => w.panes));
+  const git = panes.find((p) => p.id === paneId)?.git;
+  if (!git) {
+    store.showToast("The pane isn't in a git worktree", 'error');
+    return;
+  }
+  if (git.main_worktree) {
+    store.showToast(`Can't remove the main worktree of ${git.repo_name}`, 'error');
+    return;
+  }
+  const count = panes.filter((p) => p.git?.repo_id === git.repo_id && p.git.worktree_root === git.worktree_root).length;
+  store.setOverlay({
+    mode: 'confirm',
+    title: `Remove worktree "${worktreeLabel(git)}" and close its ${count === 1 ? 'pane' : `${count} panes`}?`,
+    onConfirm: () => send({ type: 'remove_worktree', pane_id: paneId }),
+  });
 }
 
 /** Ratios sent by resize-pane that the server may not have echoed yet. */

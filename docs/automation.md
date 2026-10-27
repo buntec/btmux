@@ -53,6 +53,8 @@ btmux kill-pane -t "$pane"
 | `rename-session` (`rename`)  | `-t NAME`                        |
 | `send-keys` (`send`)         | `-t -l KEY...`                   |
 | `capture-pane` (`capturep`)  | `-t -S` (`-p`, `-J` are implied) |
+| `new-worktree`               | `-t -d -F BRANCH`                |
+| `remove-worktree`            | `-t`                             |
 
 For coding agents, [`skills/btmux`](../skills/btmux/SKILL.md) is an
 [Agent Skill](https://agentskills.io) that teaches these commands. Install it
@@ -77,6 +79,17 @@ Differences from tmux:
   `-S -` includes all retained history and `-S -N` the last N rows of it.
 - `kill-pane` closes the window with its last pane, and the session with its
   last window, but never the last session.
+
+`new-worktree` and `remove-worktree` aren't tmux commands. `new-worktree
+BRANCH` adds a git worktree for the target pane's repo, beside its main
+worktree (`../<repo>-<branch>`, or the `worktree-path` setting), and opens a
+window there in the pane's session, printing its pane ID. An existing local
+branch, or a remote one (as a tracking branch), is checked out; a new branch
+starts at the target pane's HEAD. `remove-worktree` removes the linked
+worktree the target pane is in and closes every pane in it, printing its path.
+It refuses the main worktree, uncommitted changes, a locked worktree, and panes
+running a program, and keeps the branch. `prefix + W` and `prefix + X` do the
+same in the browser.
 
 ## REST API
 
@@ -141,6 +154,7 @@ shows an error and leaves that program's input untouched.
 | `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                                 |
 | `GET /api/panes`                                                | List every pane with its window and session                   |
 | `POST /api/panes/<pane-id>/split`                               | Split a pane in any window                                    |
+| `POST/DELETE /api/panes/<pane-id>/worktree`                     | Create a git worktree with a window, or remove the pane's     |
 | `POST /api/panes/<pane-id>/select`                              | Make a pane and its window active                             |
 | `DELETE /api/panes/<pane-id>`                                   | Kill a pane, closing its window or session if it was the last |
 | `POST /api/windows/<window-id>/{select,rename}`                 | Make a window active, or rename it                            |
@@ -159,8 +173,9 @@ shows an error and leaves that program's input untouched.
 ## MCP server
 
 The MCP server at `/mcp` exposes tools for creating and inspecting sessions,
-splitting panes, running commands, sending text and keys, reading pane output,
-and [driving agents](#orchestrating-agents). `read_pane_output` returns the
+splitting panes, creating and removing git worktrees (`create_worktree`,
+`remove_worktree`), running commands, sending text and keys, reading pane
+output, and [driving agents](#orchestrating-agents). `read_pane_output` returns the
 rendered screen (with `scrollback` and `lines` like `/capture`), and
 `send_keys` takes `text` and tmux-style `keys`.
 

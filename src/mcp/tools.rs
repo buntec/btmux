@@ -63,6 +63,22 @@ struct CreateWindowParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct CreateWorktreeParams {
+    /// A pane in the repo; the window opens in its session.
+    pane_id: String,
+    /// An existing local or remote branch, or a new one from the pane's HEAD.
+    branch: String,
+    /// Make the new window active. Default true.
+    select: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct RemoveWorktreeParams {
+    /// A pane in the worktree.
+    pane_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct SplitPaneParams {
     session_id: String,
     pane_id: String,
@@ -193,6 +209,38 @@ impl BtmuxMcpServer {
         let pane_id = mgr.create_window_named(session_id, name, cwd, true).await;
         broadcast_state(&mgr);
         ok_json(serde_json::json!({"session_id": session_id, "pane_id": pane_id}))
+    }
+
+    #[tool(
+        description = "Create a git worktree for a branch beside the repo's main worktree (the `worktree-path` setting) and open a window there in the pane's session. Returns the new pane's ID and the worktree path."
+    )]
+    async fn create_worktree(
+        &self,
+        Parameters(CreateWorktreeParams {
+            pane_id,
+            branch,
+            select,
+        }): Parameters<CreateWorktreeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pane_id = parse_uuid(&pane_id, "pane_id")?;
+        match crate::worktree::create(&self.state, pane_id, &branch, select.unwrap_or(true)).await {
+            Ok(created) => ok_json(created),
+            Err(error) => automation_error(error),
+        }
+    }
+
+    #[tool(
+        description = "Remove the linked git worktree a pane is in and close every pane in it. Refuses the main worktree, uncommitted changes, a locked worktree, and panes running a program. The branch is kept."
+    )]
+    async fn remove_worktree(
+        &self,
+        Parameters(RemoveWorktreeParams { pane_id }): Parameters<RemoveWorktreeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pane_id = parse_uuid(&pane_id, "pane_id")?;
+        match crate::worktree::remove(&self.state, pane_id).await {
+            Ok(removed) => ok_json(removed),
+            Err(error) => automation_error(error),
+        }
     }
 
     #[tool(

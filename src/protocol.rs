@@ -19,6 +19,7 @@ fn generated_protocol_is_current() {
         AgentStatus::decl(&config),
         NotificationLevel::decl(&config),
         PaneAlert::decl(&config),
+        crate::pane_git::PaneGit::decl(&config),
         PaneSnapshot::decl(&config),
         WindowSnapshot::decl(&config),
         SessionSnapshot::decl(&config),

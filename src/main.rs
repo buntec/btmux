@@ -21,6 +21,7 @@ mod handoff;
 #[path = "handoff_windows.rs"]
 mod handoff;
 mod mcp;
+mod pane_git;
 mod persistence;
 mod process;
 #[cfg(test)]
@@ -35,6 +36,7 @@ mod tmux_cli;
 mod update_check;
 mod vscode;
 mod wallpaper;
+mod worktree;
 mod ws;
 
 use std::sync::Arc;

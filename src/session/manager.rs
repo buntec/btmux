@@ -12,6 +12,7 @@ use super::{
 };
 use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
+use crate::pane_git::GitTracker;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
 
@@ -44,6 +45,8 @@ pub struct SessionManager {
     /// Live agent state is runtime-only and is never included in persistence.
     agents: HashMap<Uuid, AgentLifecycle>,
     pty_env: PtyEnv,
+    /// Repo, worktree, and branch of pane working directories.
+    git: GitTracker,
     next_client: u32,
     /// The control client the user focused most recently; it alone shows OS notifications.
     alert_client: Option<u32>,
@@ -104,6 +107,7 @@ impl SessionManager {
             agents: HashMap::new(),
             next_client: 0,
             alert_client: None,
+            git: GitTracker::new(pty_env.meta_tx.clone()),
             pty_env,
         }
     }
@@ -588,6 +592,43 @@ impl SessionManager {
             }
         }
         None
+    }
+
+    pub fn session_of_pane(&self, pane_id: Uuid) -> Option<Uuid> {
+        self.sessions
+            .iter()
+            .find(|s| {
+                s.windows
+                    .iter()
+                    .any(|w| w.panes.iter().any(|p| p.id == pane_id))
+            })
+            .map(|s| s.id)
+    }
+
+    /// Panes whose local directory is in one of `dirs`, as named or through
+    /// symlinks. `dirs` should include the canonical path.
+    pub fn panes_under(&self, dirs: &[&std::path::Path]) -> Vec<Uuid> {
+        let under = |path: &std::path::Path| dirs.iter().any(|dir| path.starts_with(dir));
+        self.sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter(|p| {
+                p.pty.local_cwd().is_some_and(|cwd| {
+                    let cwd = std::path::Path::new(&cwd);
+                    under(cwd) || cwd.canonicalize().is_ok_and(|cwd| under(&cwd))
+                })
+            })
+            .map(|p| p.id)
+            .collect()
+    }
+
+    /// `worktree-path`, where new worktrees go.
+    pub fn worktree_path_template(&self) -> String {
+        self.file_config
+            .worktree_path
+            .clone()
+            .unwrap_or_else(|| crate::worktree::DEFAULT_PATH.to_string())
     }
 
     pub fn find_pane_mut(&mut self, pane_id: Uuid) -> Option<&mut Pane> {
@@ -1514,6 +1555,7 @@ impl SessionManager {
                             cwd: p.pty.effective_cwd(),
                             agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
                             unread: p.unread.clone(),
+                            git: p.pty.local_cwd().and_then(|cwd| self.git.lookup(&cwd)),
                         })
                         .collect(),
                     active_pane: w.active_pane,

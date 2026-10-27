@@ -1,4 +1,5 @@
 // Browser keyboard events → Neovim `nvim_input` key notation.
+import { macOptionText, physicalKey } from './macOption';
 
 export const NVIM_SPECIAL_KEYS: Record<string, string> = {
   Enter: 'CR',
@@ -45,12 +46,9 @@ export function nvimKey(e: KeyboardEvent, mac = IS_MAC): string | null {
   // macOS Option produces composed characters; use the physical key instead,
   // unless the layout types ASCII with it (`@`, `[`, `|` on German or French).
   if (mac && e.altKey) {
-    const m = e.code.match(/^(?:Key([A-Z])|Digit(\d))$/);
-    const physical = m && (m[1] ? (e.shiftKey ? m[1] : m[1].toLowerCase()) : m[2]);
-    if (!e.ctrlKey && !e.metaKey && /^[!-~]$/.test(key) && key.toLowerCase() !== physical?.toLowerCase()) {
-      return escapeNvimText(key);
-    }
-    if (physical) key = physical;
+    const text = macOptionText(e);
+    if (text !== null) return escapeNvimText(text);
+    key = physicalKey(e) ?? key;
   }
 
   const fkey = /^F\d{1,2}$/.test(key);

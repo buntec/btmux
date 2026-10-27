@@ -286,6 +286,63 @@ try {
   assert.equal(link.underlinesAfterOutput, 2, 'output must not drop the hovered URL underline');
   console.log('PASS wrapped URL clicks, focus, outside releases, focus loss, resize, and output hover');
 
+  // macOS Option types `@` with G on Swiss German; that is text, not Meta.
+  const mac = await browser.newPage();
+  await mac.addInitScript(() => Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' }));
+  await mac.goto(url);
+  await mac.getByLabel('Access token').fill(token);
+  await mac.getByRole('button', { name: 'Connect', exact: true }).click();
+  await waitForAsync(mac, async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return useStore.getState().terminals.size > 0;
+  });
+  const option = await mac.evaluate(async () => {
+    const { PaneTerminal } = await import('/src/lib/paneTerminal.ts' as string);
+    const { buildTerminalOptions } = await import('/src/components/TerminalPane.tsx' as string);
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:300px;z-index:9999';
+    document.body.appendChild(host);
+    const term = await PaneTerminal.open(host, buildTerminalOptions(useStore.getState().config), {
+      cols: 80,
+      rows: 5,
+    });
+    const data: string[] = [];
+    const off = term.onData((bytes: Uint8Array) => data.push(new TextDecoder().decode(bytes)));
+    const textarea = term.element.querySelector('textarea')!;
+    const press = (init: KeyboardEventInit) => {
+      for (const type of ['keydown', 'keyup'])
+        textarea.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }));
+      return data.splice(0).join('');
+    };
+    try {
+      const at = { key: '@', code: 'KeyG', altKey: true };
+      const legacy = {
+        at: press(at),
+        hash: press({ key: '#', code: 'Digit3', altKey: true }),
+        backslash: press({ key: '\\', code: 'Digit7', altKey: true, shiftKey: true }),
+        meta: press({ key: '∫', code: 'KeyB', altKey: true }),
+        ctrl: press({ ...at, ctrlKey: true }),
+      };
+      term.write('\x1b[>1u');
+      const kitty = press(at);
+      return { platform: navigator.platform, legacy, kitty };
+    } finally {
+      off();
+      term.dispose();
+      host.remove();
+    }
+  });
+  await mac.close();
+  assert.equal(option.platform, 'MacIntel');
+  assert.equal(option.legacy.at, '@', 'Option text must not be sent as Meta');
+  assert.equal(option.legacy.hash, '#');
+  assert.equal(option.legacy.backslash, '\\');
+  assert(option.legacy.meta.startsWith('\x1b'), `Option without ASCII text must stay Meta: ${JSON.stringify(option)}`);
+  assert.notEqual(option.legacy.ctrl, '@', 'Ctrl+Option must stay a chord');
+  assert.equal(option.kitty, '@', 'Option text must not be a kitty Alt chord');
+  console.log('PASS macOS Option text is sent as text, with and without the kitty protocol');
+
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const store = useStore.getState();

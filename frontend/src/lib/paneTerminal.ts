@@ -2,6 +2,7 @@ import { WTerm, type CellData, type SearchState } from '@wterm/dom';
 import { GhosttyCore } from '@wterm/ghostty';
 import '@wterm/dom/css';
 import type { Theme } from '../state/types';
+import { macOptionText } from './macOption';
 import { findUrls } from './urlDetect';
 
 export interface PaneTerminalOptions {
@@ -116,9 +117,10 @@ const fontRowHeight = (family: string, size: number, weight: number) => {
 // Soft-wrapped rows joined to find a URL under the pointer.
 const MAX_URL_ROWS = 32;
 
+const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
+
 /** wterm's OSC 8 link modifier: Command on macOS, Control elsewhere. */
-const linkModifier = (event: { metaKey: boolean; ctrlKey: boolean }) =>
-  navigator.platform.startsWith('Mac') ? event.metaKey : event.ctrlKey;
+const linkModifier = (event: { metaKey: boolean; ctrlKey: boolean }) => (IS_MAC ? event.metaKey : event.ctrlKey);
 
 const cellText = (cell: CellData) => cell.chars ?? (cell.char > 32 ? String.fromCodePoint(cell.char) : ' ');
 
@@ -152,6 +154,7 @@ export class PaneTerminal {
     element.addEventListener('mousedown', this.onMouseDown, true);
     window.addEventListener('mouseup', this.onMouseUp, true);
     element.addEventListener('click', this.onClick, true);
+    element.addEventListener('keydown', this.onKeyDown, true);
     window.addEventListener('blur', this.onWindowBlur);
     element.addEventListener('mousemove', this.onMouseMove);
     element.addEventListener('mouseleave', this.onMouseLeave);
@@ -362,6 +365,16 @@ export class PaneTerminal {
   private onMouseLeave = () => {
     this.pointer = null;
     this.updateUrlHover();
+  };
+
+  /** wterm sends ESC + key for Option; text that Option types on the layout (`@` on Swiss German) goes as text. */
+  private onKeyDown = (event: KeyboardEvent) => {
+    if (!IS_MAC || event.isComposing) return;
+    const text = macOptionText(event);
+    if (text === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.emit(text);
   };
 
   private onLinkModifier = (event: Event) => {
@@ -603,6 +616,7 @@ export class PaneTerminal {
     this.element.removeEventListener('mousedown', this.onMouseDown, true);
     window.removeEventListener('mouseup', this.onMouseUp, true);
     this.element.removeEventListener('click', this.onClick, true);
+    this.element.removeEventListener('keydown', this.onKeyDown, true);
     cancelAnimationFrame(this.hoverFrame);
     window.removeEventListener('blur', this.onWindowBlur);
     this.element.removeEventListener('mousemove', this.onMouseMove);

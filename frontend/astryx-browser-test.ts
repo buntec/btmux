@@ -85,6 +85,9 @@ try {
         if (this.url.endsWith('/ws/processes') && typeof data === 'string') {
           (window as any).processTestCommands.push(JSON.parse(data));
         }
+        if (this.url.includes('/ws/pane/') && typeof data !== 'string') {
+          (window as any).paneTestInput = ((window as any).paneTestInput ?? '') + new TextDecoder().decode(data as any);
+        }
         super.send(data);
       }
     };
@@ -560,6 +563,16 @@ try {
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });
 
   console.log('PASS Astryx forms, command confirmation, and picker');
+
+  // Enter in the new-session prompt must not reach the pane it refocuses.
+  await page.evaluate(() => ((window as any).paneTestInput = ''));
+  await page.getByRole('button', { name: 'New session', exact: true }).first().click();
+  await page.getByRole('textbox', { name: 'Name' }).fill(`prompt-${Date.now()}`);
+  await page.keyboard.press('Enter');
+  await page.locator('dialog[open]').waitFor({ state: 'hidden' });
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => (window as any).paneTestInput), '');
+  console.log('PASS prompt Enter stays out of the pane');
   await page.getByRole('button', { name: 'Window overview', exact: true }).first().click();
   await page.locator('dialog[open]').waitFor();
   await page.keyboard.press('Escape');

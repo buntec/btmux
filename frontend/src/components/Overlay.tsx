@@ -289,6 +289,11 @@ export function Overlay({ sessionId, send, config }: Props) {
                 hasAutoFocus
                 onChange={(value) => setOverlay({ ...overlay, value })}
                 onEnter={submit}
+                // Closing refocuses the pane before Enter's default action,
+                // which would then type a newline into it.
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.nativeEvent.isComposing) event.preventDefault();
+                }}
               />
             </LayoutContent>
           }

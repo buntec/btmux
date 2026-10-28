@@ -75,7 +75,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
         size="sm"
         className="min-w-0 flex-1"
       >
-        {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }) => {
+        {sortWindows(session.windows, getWindowSort(config)).map(({ win }, displayIndex) => {
           const notification = win.panes
             .map((pane) => pane.unread)
             .filter((item) => item != null)
@@ -102,7 +102,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
             <Tab
               key={win.id}
               value={win.id}
-              label={`${index} · ${win.name}${win.zoomed_pane ? ' ⛶' : ''}`}
+              label={`${displayIndex} · ${win.name}${win.zoomed_pane ? ' ⛶' : ''}`}
               endContent={
                 animations && !notification && agent?.agent_status.state === 'working' ? (
                   <Spinner size="sm" aria-label="Agent working" />

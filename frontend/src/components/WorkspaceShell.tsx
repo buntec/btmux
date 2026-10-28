@@ -202,10 +202,10 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
                     navigate(`/s/${encodeURIComponent(session.name)}`);
                   }}
                 >
-                  {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }) => (
+                  {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }, displayIndex) => (
                     <SideNavItem
                       key={win.id}
-                      label={`${index} · ${win.name}`}
+                      label={`${displayIndex} · ${win.name}`}
                       isSelected={session.id === active?.id && index === session.active_window}
                       onClick={() => {
                         closeSurfaces();

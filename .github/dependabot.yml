@@ -1,0 +1,33 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    ignore:
+      # Branches named by Rust version; bumped with rust-toolchain.toml.
+      - dependency-name: dtolnay/rust-toolchain
+
+  - package-ecosystem: cargo
+    directories: [/, /desktop/src-tauri]
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        update-types: [minor, patch]
+
+  - package-ecosystem: bun
+    directories: [/frontend, /desktop]
+    schedule:
+      interval: monthly
+    groups:
+      bun:
+        update-types: [minor, patch]
+    ignore:
+      # Pinned; bumps need manual checks (see AGENTS.md).
+      - dependency-name: "@wterm/*"
+      - dependency-name: "@astryxdesign/*"
+      - dependency-name: shaders

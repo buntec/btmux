@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "btmux"
-version = "0.0.170"
+version = "0.0.171"
 dependencies = [
  "axum",
  "base64 0.23.1",

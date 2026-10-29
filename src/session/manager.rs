@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use super::{
     agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority},
+    detection::DetectionInput,
     layout::{Layout, LayoutPreset},
     AgentPane, AgentState, AgentStatus, Pane, PaneInfo, PaneSnapshot, Session, SessionSummary,
     Window,
@@ -15,6 +16,9 @@ use crate::git::RepoLayout;
 use crate::pane_git::GitTracker;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
+
+/// The detector scans every 300 ms; much longer means it stopped.
+const DETECTION_STALE: Duration = Duration::from_secs(3);
 
 /// Every pane's agent status, sent with each state broadcast.
 pub type PaneStatuses = std::sync::Arc<HashMap<Uuid, Option<AgentStatus>>>;
@@ -44,6 +48,10 @@ pub struct SessionManager {
     statuses: broadcast::Sender<PaneStatuses>,
     /// Live agent state is runtime-only and is never included in persistence.
     agents: HashMap<Uuid, AgentLifecycle>,
+    /// The detector's current rules, for automation's own screen checks.
+    detector: Option<super::detection::Detector>,
+    /// When the detector last scanned screens.
+    detection_tick: Option<Instant>,
     pty_env: PtyEnv,
     /// Repo, worktree, and branch of pane working directories.
     git: GitTracker,
@@ -105,6 +113,8 @@ impl SessionManager {
             events,
             statuses,
             agents: HashMap::new(),
+            detector: None,
+            detection_tick: None,
             next_client: 0,
             alert_client: None,
             git: GitTracker::new(pty_env.meta_tx.clone()),
@@ -178,6 +188,53 @@ impl SessionManager {
             .map(|agent| &agent.status)
     }
 
+    pub fn agent_process(&self, pane_id: Uuid) -> Option<AgentProcess> {
+        self.agents
+            .get(&pane_id)
+            .filter(|agent| agent.is_active())
+            .and_then(AgentLifecycle::process)
+    }
+
+    /// Why typed text could reach something other than the agent's prompt,
+    /// judged from the current screen rather than the settled status, whose
+    /// transitions can lag a dialog.
+    pub fn prompt_conflict(&self, pane_id: Uuid, now: Instant) -> Option<&'static str> {
+        const BLOCKED: &str =
+            "the agent is waiting for a decision; read the pane and answer it by sending keys";
+        let pane = self.find_pane(pane_id)?;
+        let agent = self
+            .agents
+            .get(&pane_id)
+            .filter(|agent| agent.is_active())?;
+        if agent.status.state == AgentState::Blocked {
+            return Some(BLOCKED);
+        }
+        let name = agent.screen_manifest()?;
+        let (Some(detector), Some(tick)) = (&self.detector, self.detection_tick) else {
+            return Some("agent detection isn't running; send keys instead");
+        };
+        if now.saturating_duration_since(tick) > DETECTION_STALE {
+            return Some("agent detection has stalled; send keys instead");
+        }
+        let detection = pane.pty.screen_snapshot().and_then(|screen| {
+            detector.detect(
+                name,
+                DetectionInput {
+                    screen: &screen.text,
+                    osc_title: &screen.title,
+                    osc_progress: &screen.progress,
+                },
+            )
+        });
+        if detection.is_some_and(|detection| detection.state == AgentState::Blocked) {
+            return Some(BLOCKED);
+        }
+        // Agents without idle rules stay unknown at their prompt.
+        (agent.status.state == AgentState::Unknown && detector.reports_idle(name)).then_some(
+            "the agent's state is unknown, so typed text could answer a prompt; read the pane and send keys instead",
+        )
+    }
+
     /// The agent state and blocked tool, while the last hook report still owns them.
     pub fn hook_agent_state(&self, pane_id: Uuid) -> Option<(AgentState, Option<String>)> {
         self.agents
@@ -248,12 +305,17 @@ impl SessionManager {
         changed
     }
 
+    pub fn set_detector(&mut self, detector: super::detection::Detector) {
+        self.detector = Some(detector);
+    }
+
     pub fn scan_agent_screens(
         &mut self,
         detector: &super::detection::Detector,
         now: Instant,
         reload: bool,
     ) -> bool {
+        self.detection_tick = Some(now);
         let mut changed = false;
         let panes = self
             .sessions

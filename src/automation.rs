@@ -294,18 +294,15 @@ pub async fn send_prompt(
         (None, Some(lock.turn.clone().read_owned().await))
     };
     let submitting = lock.submit.lock().await;
-    let (status, input, journal, mut events) = {
+    let (status, process, input, journal, mut events) = {
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
         let status = mgr.agent_status(pane_id).ok_or_else(|| {
             Error::Conflict("no agent detected in this pane; send keys instead".into())
         })?;
-        if status.state == AgentState::Blocked {
-            // Typed text would answer the pending dialog.
-            return Err(Error::Conflict(
-                "the agent is waiting for a decision; read the pane and answer it by sending keys"
-                    .into(),
-            ));
+        // Typed text would answer a pending dialog.
+        if let Some(conflict) = mgr.prompt_conflict(pane_id, std::time::Instant::now()) {
+            return Err(Error::Conflict(conflict.into()));
         }
         if wait && status.state == AgentState::Working {
             // The next settle could end the current turn, not this prompt's.
@@ -317,6 +314,7 @@ pub async fn send_prompt(
         // Subscribed with the check, so no earlier turn is seen as this one.
         (
             Some(status.clone()),
+            mgr.agent_process(pane_id),
             pane.pty.input_tx.clone(),
             pane.pty.journal(),
             mgr.statuses().subscribe(),
@@ -343,6 +341,20 @@ pub async fn send_prompt(
     let deadline = Instant::now() + timeout;
     input.send_wait(paste.into_bytes()).await?;
     tokio::time::sleep(SUBMIT_DELAY).await;
+    {
+        // A dialog drawn since the check would take the Enter as its answer.
+        let mgr = state.read().await;
+        let conflict = if mgr.agent_process(pane_id) != process {
+            Some("the agent was replaced")
+        } else {
+            mgr.prompt_conflict(pane_id, std::time::Instant::now())
+        };
+        if let Some(conflict) = conflict {
+            return Err(Error::Conflict(format!(
+                "{conflict}; the prompt was pasted but not submitted"
+            )));
+        }
+    }
     input.send_wait(b"\r".to_vec()).await?;
     drop(submitting);
     if !wait {
@@ -619,6 +631,119 @@ mod tests {
             .ok()
             .unwrap();
         assert!(screen.contains("btmux-42"), "{screen}");
+    }
+
+    /// Makes the pane's shell a detected `agent` whose screen the detector reads.
+    async fn detected(state: &AppState, pane_id: Uuid, agent: &str) {
+        use crate::session::agent::AgentProcess;
+        use crate::session::detection::Detector;
+        let mut mgr = state.write().await;
+        let pid = mgr.find_pane(pane_id).unwrap().pty.shell_pid().unwrap();
+        let process = AgentProcess { pid, start_time: 1 };
+        mgr.update_detected_agents(&[(pane_id, process, agent.into())], |_| true);
+        let detector = Detector::new(None);
+        mgr.scan_agent_screens(&detector, std::time::Instant::now(), false);
+        mgr.set_detector(detector);
+    }
+
+    async fn turn_start(state: &AppState, pane_id: Uuid) {
+        use crate::session::agent::{AgentEvent, AgentReport};
+        let report = AgentReport {
+            event: AgentEvent::TurnStart,
+            session_id: Some("s".into()),
+            turn_id: None,
+            tool_use_id: None,
+            process: None,
+            agent: None,
+            source: Some("hook".into()),
+            message: None,
+        };
+        let mut mgr = state.write().await;
+        mgr.apply_agent_report(pane_id, report, std::time::Instant::now());
+        assert_eq!(
+            mgr.agent_status(pane_id).unwrap().state,
+            AgentState::Working
+        );
+    }
+
+    async fn screen_contains(state: &AppState, pane_id: Uuid, text: &str) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !capture_pane(state, pane_id, 0, None)
+            .await
+            .ok()
+            .unwrap()
+            .contains(text)
+        {
+            assert!(Instant::now() < deadline, "{text}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prompts_need_positive_readiness_from_agents_that_can_show_it() {
+        let (state, pane_id) = pane().await;
+        detected(&state, pane_id, "claude").await;
+        let error = send_prompt(&state, pane_id, "true", false, DEFAULT_WAIT).await;
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("unknown")));
+        // gemini has no idle rule, so unknown is all it shows at its prompt.
+        detected(&state, pane_id, "gemini").await;
+        assert!(send_prompt(&state, pane_id, "true", false, DEFAULT_WAIT)
+            .await
+            .ok()
+            .unwrap()
+            .is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_stalled_detector_blocks_prompts() {
+        let (state, pane_id) = pane().await;
+        detected(&state, pane_id, "gemini").await;
+        let mgr = state.read().await;
+        let now = std::time::Instant::now();
+        assert_eq!(mgr.prompt_conflict(pane_id, now), None);
+        let conflict = mgr.prompt_conflict(pane_id, now + Duration::from_secs(4));
+        assert!(conflict.unwrap().contains("stalled"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_visible_dialog_stops_a_prompt_before_its_status_does() {
+        let (state, pane_id) = pane().await;
+        detected(&state, pane_id, "claude").await;
+        turn_start(&state, pane_id).await;
+        // `%s` keeps the dialog text out of the echoed command.
+        let command = "printf 'Do%s you want to continue?\\n1. Yes\\n' ''";
+        send_keys(&state, pane_id, command, &["Enter"], None)
+            .await
+            .ok()
+            .unwrap();
+        screen_contains(&state, pane_id, "Do you want to continue?").await;
+        let error = send_prompt(&state, pane_id, "true", false, DEFAULT_WAIT).await;
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("decision")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dialog_drawn_after_the_paste_keeps_the_enter() {
+        let (state, pane_id) = pane().await;
+        detected(&state, pane_id, "claude").await;
+        turn_start(&state, pane_id).await;
+        // The shell echoes the paste, which reads as a dialog.
+        let prompt = "echo do you want to continue? yes";
+        let error = send_prompt(&state, pane_id, prompt, false, DEFAULT_WAIT).await;
+        assert!(
+            matches!(error, Err(Error::Conflict(message)) if message.contains("not submitted"))
+        );
+        tokio::time::sleep(SUBMIT_DELAY).await;
+        let screen = capture_pane(&state, pane_id, 0, None).await.ok().unwrap();
+        // Submitted, the echo would print the text a second time.
+        assert_eq!(
+            screen.matches("do you want to continue?").count(),
+            1,
+            "{screen}"
+        );
     }
 
     #[cfg(unix)]

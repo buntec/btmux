@@ -325,6 +325,13 @@ impl AgentLifecycle {
         self.observed
     }
 
+    /// The manifest that reads this agent's screen, if any does.
+    pub fn screen_manifest(&self) -> Option<&str> {
+        self.observed_name
+            .as_deref()
+            .filter(|_| self.reads_screen())
+    }
+
     pub fn blocked_tool_id(&self) -> Option<&str> {
         self.blocked_tool_id.as_deref()
     }

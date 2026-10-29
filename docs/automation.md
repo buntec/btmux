@@ -228,6 +228,16 @@ returns `{submitted: true}` once Enter is sent. It refuses while
 the agent is `blocked`: typed text would answer the dialog, which `send_keys`
 can do deliberately. With `wait`, it also refuses while the agent is
 `working`, since the turn that ends next would not be this prompt's.
+
+For an agent detected from its screen, it rechecks the screen itself before
+pasting and again before the Enter, since a status can lag a dialog by a
+settling period. It refuses when a dialog is visible, when the agent's state
+is `unknown` (unless its rules can't recognize an idle prompt: currently
+Gemini CLI and OpenCode), or when detection has stalled. If the check before
+the Enter fails, or the agent was replaced meanwhile, the error says the
+prompt was pasted but not submitted; the text stays in the agent's input.
+This narrows the race but can't close it: a dialog can still appear between
+the last check and the Enter.
 Prompts to one pane are submitted one at a time, and a waited prompt first
 waits (up to 15 s) for earlier prompts' turns to start, so it then finds the
 agent `working` instead of claiming another prompt's turn. It can't tell its

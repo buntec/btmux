@@ -2,6 +2,7 @@ mod regions;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -274,8 +275,9 @@ impl CompiledManifest {
     }
 }
 
+#[derive(Clone)]
 pub struct Detector {
-    manifests: HashMap<String, CompiledManifest>,
+    manifests: HashMap<String, Arc<CompiledManifest>>,
     directory: Option<PathBuf>,
     overrides: HashMap<String, Option<std::time::SystemTime>>,
 }
@@ -287,8 +289,10 @@ impl Detector {
             .map(|(name, text)| {
                 (
                     (*name).into(),
-                    CompiledManifest::parse(name, text, "bundled".into())
-                        .expect("bundled manifest"),
+                    Arc::new(
+                        CompiledManifest::parse(name, text, "bundled".into())
+                            .expect("bundled manifest"),
+                    ),
                 )
             })
             .collect();
@@ -324,10 +328,21 @@ impl Detector {
                 .unwrap_or_else(|| {
                 CompiledManifest::parse(name, bundled, "bundled".into()).expect("bundled manifest")
             });
-            self.manifests.insert((*name).into(), loaded);
+            self.manifests.insert((*name).into(), Arc::new(loaded));
             changed = true;
         }
         changed
+    }
+
+    /// Whether `agent`'s rules can positively recognize its prompt.
+    pub fn reports_idle(&self, agent: &str) -> bool {
+        self.manifests.get(agent).is_some_and(|manifest| {
+            manifest
+                .manifest
+                .rules
+                .iter()
+                .any(|rule| rule.state == AgentState::Idle)
+        })
     }
 
     pub fn detect(&self, agent: &str, input: DetectionInput<'_>) -> Option<Detection> {
@@ -502,6 +517,21 @@ mod tests {
         }
         let transcript = detect("codex", "› show history\n↑/↓ to scroll pgup/pgdn to home/end to jump q to quit esc to edit prev", "");
         assert!(transcript.skip_state_update);
+    }
+
+    #[test]
+    fn knows_which_agents_can_report_idle() {
+        let detector = Detector::new(None);
+        for (agent, idle) in [
+            ("claude", true),
+            ("codex", true),
+            ("agy", true),
+            ("gemini", false),
+            ("opencode", false),
+            ("custom", false),
+        ] {
+            assert_eq!(detector.reports_idle(agent), idle, "{agent}");
+        }
     }
 
     #[test]

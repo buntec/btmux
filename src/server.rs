@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::file_search::FileIndex;
 use crate::session::{
-    agent::{AgentEvent, AgentProcess, AgentReport, ToolCall},
+    agent::{AgentEvent, AgentProcess, AgentReport, ToolCall, ToolInput},
     AgentState, AgentStatus, PaneAlert,
 };
 use crate::ws;
@@ -410,16 +410,11 @@ impl PaneNotifyRequest {
 impl PaneNotifyRequest {
     /// Identifies a tool call across its permission and completion hooks.
     fn tool(&self) -> Option<ToolCall> {
-        use std::hash::{Hash, Hasher};
         let input = self
             .tool_name
             .as_ref()
             .zip(self.tool_input.as_ref())
-            .map(|(name, input)| {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                input.to_string().hash(&mut hasher);
-                format!("{}:{:016x}", truncate_msg(name, 64), hasher.finish())
-            });
+            .map(|(name, input)| ToolInput::new(truncate_msg(name, 64), input));
         let id = clean_status_field(self.tool_use_id.clone(), 128);
         (id.is_some() || input.is_some()).then_some(ToolCall { id, input })
     }
@@ -438,7 +433,7 @@ impl PaneNotifyRequest {
         match state {
             AgentState::Blocked => match event {
                 "PermissionRequest" => match (self.tool(), blocked_tool) {
-                    (Some(tool), Some(blocked)) => tool.matches(&blocked),
+                    (Some(tool), Some(blocked)) => blocked.matches(&tool),
                     _ => true,
                 },
                 _ => {
@@ -1162,6 +1157,12 @@ mod pane_notification_tests {
         let app = create_app(state.clone());
         let bash = serde_json::json!({"command": "ls"});
         let read = serde_json::json!({"file_path": "a.txt"});
+        let question = |text: &str| {
+            serde_json::json!([{"question": text, "header": "Pick", "multiSelect": false,
+                "options": [{"label": "A", "description": "a"}, {"label": "B", "description": "b"}]}])
+        };
+        let (questions, other_questions) = (question("Pick one?"), question("Pick two?"));
+        let answers = serde_json::json!({"Pick one?": "A"});
         // Payload shapes from Claude Code 2.1.312: PermissionRequest has no tool_use_id.
         let hooks = [
             (
@@ -1202,6 +1203,19 @@ mod pane_notification_tests {
             ),
             (
                 serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt_id": "p2"}),
+                AgentState::Working,
+            ),
+            // Answering AskUserQuestion adds answers and annotations to its input.
+            (
+                serde_json::json!({"hook_event_name": "PermissionRequest", "prompt_id": "p2", "tool_name": "AskUserQuestion", "tool_input": {"questions": questions}}),
+                AgentState::Blocked,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PostToolUse", "prompt_id": "p2", "tool_name": "AskUserQuestion", "tool_input": {"questions": other_questions, "answers": answers}, "tool_use_id": "t3"}),
+                AgentState::Blocked,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PostToolUse", "prompt_id": "p2", "tool_name": "AskUserQuestion", "tool_input": {"questions": questions, "answers": answers, "annotations": {"Pick one?": {"notes": "n"}}}, "tool_use_id": "t4"}),
                 AgentState::Working,
             ),
         ];

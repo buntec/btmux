@@ -23,18 +23,56 @@ fn next_incarnation() -> u64 {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolCall {
     pub id: Option<String>,
-    /// The tool name and a hash of its input, for hooks without an id
-    /// (Claude Code's PermissionRequest).
-    pub input: Option<String>,
+    /// For hooks without an id (Claude Code's PermissionRequest).
+    pub input: Option<ToolInput>,
 }
 
 impl ToolCall {
-    /// By id when both have one, else by input.
-    pub fn matches(&self, other: &ToolCall) -> bool {
-        match (&self.id, &other.id) {
-            (Some(id), Some(other)) => id == other,
-            _ => self.input.is_some() && self.input == other.input,
+    /// Whether `later` is this call: by id when both have one, else by input.
+    pub fn matches(&self, later: &ToolCall) -> bool {
+        match (&self.id, &later.id) {
+            (Some(id), Some(later)) => id == later,
+            _ => self
+                .input
+                .as_ref()
+                .zip(later.input.as_ref())
+                .is_some_and(|(input, later)| input.covered_by(later)),
         }
+    }
+}
+
+/// A tool name and a hash of each top-level input field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolInput {
+    name: String,
+    fields: Vec<u64>,
+}
+
+impl ToolInput {
+    pub fn new(name: String, input: &serde_json::Value) -> Self {
+        use std::hash::{Hash, Hasher};
+        let hash = |key: &str, value: &serde_json::Value| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (key, value.to_string()).hash(&mut hasher);
+            hasher.finish()
+        };
+        let mut fields: Vec<u64> = match input {
+            serde_json::Value::Object(map) => map.iter().map(|(k, v)| hash(k, v)).collect(),
+            other => vec![hash("", other)],
+        };
+        fields.sort_unstable();
+        fields.dedup();
+        Self { name, fields }
+    }
+
+    /// Whether `later` has every field of this input. Approval can add fields
+    /// (AskUserQuestion's answers) before the completion hook.
+    fn covered_by(&self, later: &ToolInput) -> bool {
+        self.name == later.name
+            && self
+                .fields
+                .iter()
+                .all(|field| later.fields.binary_search(field).is_ok())
     }
 }
 
@@ -1460,7 +1498,10 @@ mod tests {
     fn tool_ids_outrank_matching_inputs() {
         let call = |id: Option<&str>| ToolCall {
             id: id.map(str::to_string),
-            input: Some("Bash:1".into()),
+            input: Some(ToolInput::new(
+                "Bash".into(),
+                &serde_json::json!({"command": "ls"}),
+            )),
         };
         let now = Instant::now();
         let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
@@ -1478,6 +1519,22 @@ mod tests {
         finished.tool = Some(call(Some("t2")));
         agent.apply(finished, 0, now);
         assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn tool_inputs_match_when_approval_adds_fields() {
+        let input = |name: &str, value| ToolInput::new(name.into(), &value);
+        let asked = input("Ask", serde_json::json!({"questions": ["q"]}));
+        let answered = input(
+            "Ask",
+            serde_json::json!({"questions": ["q"], "answers": {"q": "a"}}),
+        );
+        assert!(asked.covered_by(&answered));
+        assert!(!answered.covered_by(&asked));
+        assert!(!asked.covered_by(&input("Ask", serde_json::json!({"questions": ["r"]}))));
+        assert!(!asked.covered_by(&input("Bash", serde_json::json!({"questions": ["q"]}))));
+        // A key's hash includes its name.
+        assert!(!asked.covered_by(&input("Ask", serde_json::json!({"answers": ["q"]}))));
     }
 
     #[test]

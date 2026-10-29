@@ -2,6 +2,7 @@ import { WTerm, type CellData, type SearchState } from '@wterm/dom';
 import { GhosttyCore } from '@wterm/ghostty';
 import '@wterm/dom/css';
 import type { Theme } from '../state/types';
+import { macEditKey } from './macEditKeys';
 import { macOptionText } from './macOption';
 import { findUrls } from './urlDetect';
 
@@ -367,10 +368,13 @@ export class PaneTerminal {
     this.updateUrlHover();
   };
 
-  /** wterm sends ESC + key for Option; text that Option types on the layout (`@` on Swiss German) goes as text. */
+  /**
+   * wterm sends ESC + key for Option; text that Option types on the layout (`@` on Swiss German) goes as text.
+   * Cmd editing chords arrive only with `macos-edit-keys` (useKeybindings swallows them otherwise).
+   */
   private onKeyDown = (event: KeyboardEvent) => {
     if (!IS_MAC || event.isComposing) return;
-    const text = macOptionText(event);
+    const text = macEditKey(event) ?? macOptionText(event);
     if (text === null) return;
     event.preventDefault();
     event.stopPropagation();

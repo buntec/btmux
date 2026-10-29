@@ -324,6 +324,71 @@ try {
   console.log('PASS dimension ownership transfers on disconnect');
   assert.deepEqual(errors, []);
   await context.close();
+
+  // macOS Cmd editing chords reach the pane as readline keys unless disabled.
+  const macContext = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  await macContext.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' });
+    (window as any).testSockets = [];
+    const Original = window.WebSocket;
+    window.WebSocket = class extends Original {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        (window as any).testSockets.push(this);
+      }
+    };
+  });
+  const mac = await macContext.newPage();
+  const macErrors: string[] = [];
+  mac.on('pageerror', (error) => macErrors.push(error.message));
+  await mac.goto(url);
+  await mac.getByLabel('Access token').fill(token);
+  await mac.getByRole('button', { name: 'Connect', exact: true }).click();
+  await mac.waitForFunction(() => !document.querySelector('#access-token'));
+  await mac.goto(`${url}/s/${encodeURIComponent(session.name)}`);
+  await waitForAsync(
+    mac,
+    async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const term = useStore.getState().terminals.get(id);
+      if (!term) return false;
+      (window as any).testInput = [];
+      term.onData((data: Uint8Array) => (window as any).testInput.push(new TextDecoder().decode(data)));
+      return true;
+    },
+    pane,
+  );
+  const macInput = mac.locator('textarea[aria-label="Terminal"]').first();
+  const chords = async () => {
+    await mac.evaluate(() => ((window as any).testInput.length = 0));
+    for (const chord of ['Meta+ArrowLeft', 'Meta+ArrowRight', 'Meta+Backspace', 'Meta+Delete', 'Meta+Shift+ArrowLeft'])
+      await macInput.press(chord);
+    return mac.evaluate(() => (window as any).testInput.join(''));
+  };
+  assert.equal(await chords(), '\x01\x05\x15\x0b\x1b[1;10D');
+  const setEditKeys = async (value: boolean) => {
+    await mac.evaluate(
+      (value) =>
+        (window as any).testSockets
+          .findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control')
+          .send(JSON.stringify({ type: 'update_config', update: { macos_edit_keys: value } })),
+      value,
+    );
+    await waitForAsync(
+      mac,
+      async (value) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        return useStore.getState().config.terminal.macosEditKeys === value;
+      },
+      value,
+    );
+  };
+  await setEditKeys(false);
+  assert.equal(await chords(), '');
+  await setEditKeys(true);
+  console.log('PASS macOS Cmd editing keys');
+  assert.deepEqual(macErrors, []);
+  await macContext.close();
 } finally {
   await browser.close();
   await fetch(`${url}/api/sessions/${session.id}`, { method: 'DELETE', headers });

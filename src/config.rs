@@ -775,6 +775,8 @@ pub struct TerminalOptions {
     pub font_weight: Option<u16>,
     pub allow_transparency: Option<bool>,
     pub disable_stdin: Option<bool>,
+    /// macOS Cmd editing chords (Cmd+arrows, Cmd+Backspace) as readline keys.
+    pub macos_edit_keys: Option<bool>,
     /// Neovim and file preview scroll animations, in ms.
     pub smooth_scroll_duration: Option<f32>,
     /// Neovim cursor movement animation, in ms.
@@ -794,6 +796,7 @@ impl Default for TerminalOptions {
             font_weight: Some(DEFAULT_FONT_WEIGHT),
             allow_transparency: None,
             disable_stdin: None,
+            macos_edit_keys: None,
             smooth_scroll_duration: None,
             cursor_animation_duration: None,
             cell_background_opacity: None,
@@ -1667,6 +1670,7 @@ pub fn generate_config_toml() -> String {
 #                              # (paths, names, key hints); other UI text uses Geist Sans.
 # allow-transparency = false
 # disable-stdin = false
+# macos-edit-keys = true   # Cmd+Left/Right = C-a/C-e, Cmd+Backspace = C-u, Cmd+Delete = C-k
 # smooth-scroll-duration = 120.0   # ms, Neovim and file preview scrolling; 0 = instant
 # cursor-animation-duration = 120.0   # ms, Neovim cursor moves; 0 = instant
 # cell-background-opacity = 1.0   # 0-1, colored cell backgrounds over a transparent background (Neovim)
@@ -1997,6 +2001,7 @@ pub struct ConfigUpdate {
     pub scrollback: Option<u32>,
     pub allow_transparency: Option<bool>,
     pub disable_stdin: Option<bool>,
+    pub macos_edit_keys: Option<bool>,
     pub smooth_scroll_duration: Option<f32>,
     pub cursor_animation_duration: Option<f32>,
     pub cell_background_opacity: Option<f32>,
@@ -2084,6 +2089,9 @@ impl ConfigUpdate {
         }
         if other.disable_stdin.is_some() {
             self.disable_stdin = other.disable_stdin;
+        }
+        if other.macos_edit_keys.is_some() {
+            self.macos_edit_keys = other.macos_edit_keys;
         }
         if other.smooth_scroll_duration.is_some() {
             self.smooth_scroll_duration = other.smooth_scroll_duration;
@@ -2228,6 +2236,9 @@ pub fn resolve_with_overrides(
     }
     if let Some(disable_stdin) = overrides.disable_stdin {
         file.terminal.disable_stdin = Some(disable_stdin);
+    }
+    if let Some(macos_edit_keys) = overrides.macos_edit_keys {
+        file.terminal.macos_edit_keys = Some(macos_edit_keys);
     }
     if let Some(smooth_scroll_duration) = overrides.smooth_scroll_duration {
         file.terminal.smooth_scroll_duration = Some(smooth_scroll_duration.max(0.0));
@@ -2648,6 +2659,7 @@ palette:
                 scrollback: Some(42),
                 allow_transparency: Some(true),
                 disable_stdin: Some(true),
+                macos_edit_keys: Some(false),
                 smooth_scroll_duration: Some(0.4),
                 cursor_animation_duration: Some(-5.0),
                 cell_background_opacity: Some(1.5),
@@ -2675,6 +2687,7 @@ palette:
         assert_eq!(resolved.terminal.scrollback, Some(42));
         assert_eq!(resolved.terminal.allow_transparency, Some(true));
         assert_eq!(resolved.terminal.disable_stdin, Some(true));
+        assert_eq!(resolved.terminal.macos_edit_keys, Some(false));
         assert_eq!(resolved.terminal.smooth_scroll_duration, Some(0.4));
         assert_eq!(resolved.terminal.cursor_animation_duration, Some(0.0));
         assert_eq!(resolved.terminal.cell_background_opacity, Some(1.0));

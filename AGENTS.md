@@ -424,7 +424,9 @@ config error, so update `generate_config_toml` and tests when adding fields.
 
 `[terminal]` holds `cursor-blink`, `scrollback` (lines; libghostty's limit is
 bytes, so `lib/paneTerminal.ts` converts it), `font-size`, `font-family`,
-`font-weight`, `allow-transparency`, `disable-stdin`, `smooth-scroll-duration` (Neovim and file preview scrolling), `cursor-animation-duration` (Neovim cursor moves), and
+`font-weight`, `allow-transparency`, `disable-stdin`, `macos-edit-keys` (Cmd
+editing chords as readline keys, `lib/macEditKeys.ts`; `useKeybindings.ts`
+lets them through), `smooth-scroll-duration` (Neovim and file preview scrolling), `cursor-animation-duration` (Neovim cursor moves), and
 `cell-background-opacity` (the Neovim surface's colored cell backgrounds over a
 transparent background). Keys are **kebab-case in TOML but camelCase on the wire**
 — `TerminalOptions` uses `rename_all(serialize = "camelCase", deserialize = "kebab-case")`

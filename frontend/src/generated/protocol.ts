@@ -107,6 +107,10 @@ export type BaseTheme = { base00: string, base01: string, base02: string, base03
 // prettier-ignore
 export type TerminalOptions = { cursorBlink: boolean | null, scrollback: number | null, fontSize: number | null, fontFamily: string | null, fontWeight: number | null, allowTransparency: boolean | null, disableStdin: boolean | null,
 /**
+ * macOS Cmd editing chords (Cmd+arrows, Cmd+Backspace) as readline keys.
+ */
+macosEditKeys: boolean | null,
+/**
  * Neovim and file preview scroll animations, in ms.
  */
 smoothScrollDuration: number | null,
@@ -343,7 +347,7 @@ export type WallpaperCheck = { error: string | null,
 url: string | null, };
 
 // prettier-ignore
-export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, smooth_scroll_duration?: number, cursor_animation_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shaders?: ShaderLayers, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
+export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, macos_edit_keys?: boolean, smooth_scroll_duration?: number, cursor_animation_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shaders?: ShaderLayers, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number,
 /**
  * Border-draw style name; `"none"` (or the empty string) disables it.
  */

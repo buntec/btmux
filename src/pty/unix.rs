@@ -1,6 +1,7 @@
 // Unix PTYs: the server owns the master fd, polls it with a stop pipe,
 // and reaps the shell with waitpid.
 
+use super::kitty_keyboard::KittyKeyboard;
 use super::*;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -34,6 +35,7 @@ pub struct Handoff {
     pub spawn_cwd: Option<std::path::PathBuf>,
     pub color_reports: bool,
     pub colors: Vec<Option<colors::Rgb>>,
+    pub kitty: KittyKeyboard,
     /// An escape sequence the reader had only partly seen.
     pub pending: Vec<u8>,
     /// Accepted input not yet written to the PTY.
@@ -47,6 +49,7 @@ pub struct Handoff {
 /// What a reader stopped for a handoff leaves behind.
 pub(super) struct ReaderState {
     colors: Vec<Option<colors::Rgb>>,
+    kitty: KittyKeyboard,
     pending: Vec<u8>,
     /// Replies that reached the input queue after the writer stopped.
     unsent: Vec<u8>,
@@ -305,13 +308,14 @@ impl PtyHandle {
             self.palette.clone(),
             self.color_reports.clone(),
         );
-        interceptor.set_overrides(&handoff.colors);
-        let replay = Replay::restore(
+        interceptor.restore(&handoff.colors, handoff.kitty);
+        let mut replay = Replay::restore(
             handoff.cols,
             handoff.rows,
             self.scrollback_bytes,
             handoff.journal,
         );
+        replay.set_kitty(handoff.kitty);
         self.start(
             master,
             handoff.pid,
@@ -375,6 +379,7 @@ impl PtyHandle {
                 spawn_cwd: self.spawn_cwd.clone(),
                 color_reports: self.color_reports.load(Ordering::Relaxed),
                 colors: reader.colors,
+                kitty: reader.kitty,
                 pending: reader.pending,
                 input,
                 bin: self.bin.clone(),
@@ -385,7 +390,12 @@ impl PtyHandle {
 
     /// Restart the reader and writer stopped for a handoff that failed.
     pub fn resume(&mut self, handoff: Handoff) -> Result<(), String> {
-        self.restart(&handoff.colors, handoff.pending, handoff.input)
+        self.restart(
+            &handoff.colors,
+            handoff.kitty,
+            handoff.pending,
+            handoff.input,
+        )
     }
 
     /// Restart a reader and writer that `export_handoff` gave up on. One that
@@ -402,8 +412,8 @@ impl PtyHandle {
         };
         let stopped = stopping.wait(deadline);
         let input = stopping.input();
-        let (colors, pending) = match stopping.reader.take() {
-            Some(reader) => (reader.colors, reader.pending),
+        let (colors, kitty, pending) = match stopping.reader.take() {
+            Some(reader) => (reader.colors, reader.kitty, reader.pending),
             // Ended at EOF: the shell exited.
             None if stopped => return Ok(()),
             None => {
@@ -411,17 +421,19 @@ impl PtyHandle {
                 Default::default()
             }
         };
-        self.restart(&colors, pending, input).inspect_err(|_| {
-            if let Some(pid) = *self.child.lock().unwrap() {
-                // Its waiter reaps it and removes the pane.
-                unsafe { libc::kill(pid, libc::SIGHUP) };
-            }
-        })
+        self.restart(&colors, kitty, pending, input)
+            .inspect_err(|_| {
+                if let Some(pid) = *self.child.lock().unwrap() {
+                    // Its waiter reaps it and removes the pane.
+                    unsafe { libc::kill(pid, libc::SIGHUP) };
+                }
+            })
     }
 
     fn restart(
         &mut self,
         colors: &[Option<colors::Rgb>],
+        kitty: KittyKeyboard,
         pending: Vec<u8>,
         input: Vec<u8>,
     ) -> Result<(), String> {
@@ -430,7 +442,7 @@ impl PtyHandle {
             self.palette.clone(),
             self.color_reports.clone(),
         );
-        interceptor.set_overrides(colors);
+        interceptor.restore(colors, kitty);
         self.run_io(io, interceptor, pending, input);
         Ok(())
     }
@@ -550,9 +562,10 @@ impl PtyHandle {
             }
             // The writer also closes the queue when it stops for a handoff.
             if stopped || (unsent.is_some() && is_readable(stop_rx.as_raw_fd())) {
-                let (colors, pending) = output.interceptor.export();
+                let (colors, kitty, pending) = output.interceptor.export();
                 let _ = stopped_tx.send(Stopped::Reader(ReaderState {
                     colors,
+                    kitty,
                     pending,
                     unsent: unsent.unwrap_or_default(),
                 }));

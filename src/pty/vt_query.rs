@@ -7,6 +7,7 @@
 // split across read() chunk boundaries.
 
 use super::colors::{parse_spec, x11_spec, Overrides, SharedPalette, Slot};
+use super::kitty_keyboard::KittyKeyboard;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -76,6 +77,7 @@ pub struct VtQueryInterceptor {
     overrides: Overrides,
     /// Whether the OSC being dispatched ended with ST rather than BEL.
     osc_st: bool,
+    kitty: KittyKeyboard,
 }
 
 impl VtQueryInterceptor {
@@ -94,21 +96,29 @@ impl VtQueryInterceptor {
             color_reports,
             overrides: Overrides::default(),
             osc_st: false,
+            kitty: KittyKeyboard::default(),
         }
     }
 
-    /// Program-set colors and the unfinished sequence, for an in-place upgrade.
-    pub fn export(&self) -> (Vec<Option<super::colors::Rgb>>, Vec<u8>) {
+    /// Program-set colors, keyboard flags, and the unfinished sequence, for
+    /// an in-place upgrade.
+    pub fn export(&self) -> (Vec<Option<super::colors::Rgb>>, KittyKeyboard, Vec<u8>) {
         let pending = if self.state == State::Ground {
             Vec::new()
         } else {
             self.raw_seq.clone()
         };
-        (self.overrides.to_vec(), pending)
+        (self.overrides.to_vec(), self.kitty, pending)
     }
 
-    pub fn set_overrides(&mut self, colors: &[Option<super::colors::Rgb>]) {
+    pub fn restore(&mut self, colors: &[Option<super::colors::Rgb>], kitty: KittyKeyboard) {
         self.overrides = Overrides::from_slice(colors);
+        self.kitty = kitty;
+    }
+
+    /// Keyboard flags after the output fed so far.
+    pub fn kitty(&self) -> KittyKeyboard {
+        self.kitty
     }
 
     /// Feed a chunk of PTY output through the interceptor.
@@ -214,6 +224,7 @@ impl VtQueryInterceptor {
             b'c' => {
                 self.color_reports.store(false, Ordering::Relaxed);
                 self.overrides.clear();
+                self.kitty = KittyKeyboard::default();
                 self.emit_raw(result);
                 self.enter_ground();
             }
@@ -373,7 +384,7 @@ impl VtQueryInterceptor {
 
     /// Classify a CSI sequence by its parameter prefix, parameters, intermediate
     /// bytes, and final byte.
-    fn classify_csi(&self, final_byte: u8) -> Action {
+    fn classify_csi(&mut self, final_byte: u8) -> Action {
         let params = &self.param_buf;
         let interm = &self.interm_buf;
 
@@ -384,7 +395,25 @@ impl VtQueryInterceptor {
             (None, params.as_slice())
         };
 
+        // The alternate screen has its own keyboard flags.
+        if prefix == Some(b'?')
+            && matches!(final_byte, b'h' | b'l' | b's' | b'r')
+            && interm.is_empty()
+        {
+            if let Some(params) = csi_params(param_body) {
+                self.kitty.private_modes(final_byte, &params);
+            }
+        }
+
         match (prefix, final_byte, interm.as_slice()) {
+            // ── Kitty keyboard: CSI ? u queries, CSI > / < / = u change flags ──
+            (Some(p @ (b'?' | b'>' | b'<' | b'=')), b'u', []) => {
+                match csi_params(param_body).and_then(|params| self.kitty.csi(p, &params)) {
+                    Some(reply) => Action::Answer(reply),
+                    None => Action::Pass,
+                }
+            }
+
             // ── DA1: CSI c  or  CSI 0 c ──
             (None, b'c', []) if param_body.is_empty() || param_body == b"0" => {
                 Action::Answer(b"\x1b[?62;22c".to_vec())
@@ -766,6 +795,26 @@ fn parse_index(index: &[u8]) -> Option<u8> {
     std::str::from_utf8(index).ok()?.parse().ok()
 }
 
+/// CSI parameters as libghostty parses them: empty ones are 0, except a
+/// trailing one, which is dropped. It rejects colons outside SGR.
+fn csi_params(params: &[u8]) -> Option<Vec<u16>> {
+    if params.contains(&b':') {
+        return None;
+    }
+    let mut values: Vec<u16> = params
+        .split(|&b| b == b';')
+        .map(|param| {
+            param.iter().fold(0u16, |n, &b| {
+                n.saturating_mul(10).saturating_add(u16::from(b - b'0'))
+            })
+        })
+        .collect();
+    if params.last().is_none_or(|&b| b == b';') {
+        values.pop();
+    }
+    Some(values)
+}
+
 fn has_param(params: &[u8], param: &[u8]) -> bool {
     params.split(|&b| b == b';').any(|p| p == param)
 }
@@ -809,6 +858,74 @@ mod tests {
         assert_eq!(result.scrollback, b"");
         assert_eq!(result.broadcast, b"");
         assert_eq!(result.responses, vec![b"\x1b[?62;22c" as &[u8]]);
+    }
+
+    #[test]
+    fn answers_kitty_keyboard_query_before_da1_fence() {
+        let mut interceptor = VtQueryInterceptor::new();
+        let result = interceptor.feed(b"\x1b[>5u\x1b[?u\x1b[c");
+        // Flag changes still reach the emulators, which encode keys with them.
+        assert_eq!(result.scrollback, b"\x1b[>5u");
+        assert_eq!(result.broadcast, b"\x1b[>5u");
+        assert_eq!(
+            result.responses,
+            vec![b"\x1b[?5u" as &[u8], b"\x1b[?62;22c"]
+        );
+    }
+
+    #[test]
+    fn kitty_keyboard_flags_follow_screens_and_reset() {
+        let mut interceptor = VtQueryInterceptor::new();
+        let mut query = |input: &[u8]| {
+            let mut input = input.to_vec();
+            input.extend_from_slice(b"\x1b[?u");
+            interceptor.feed(&input).responses.concat()
+        };
+        assert_eq!(query(b"\x1b[=3;1u"), b"\x1b[?3u");
+        assert_eq!(query(b"\x1b[?1049h"), b"\x1b[?0u");
+        assert_eq!(query(b"\x1b[>1;2u\x1b[>31u"), b"\x1b[?31u");
+        assert_eq!(query(b"\x1b[?25;1049l"), b"\x1b[?3u");
+        assert_eq!(query(b"\x1b[?47h"), b"\x1b[?31u");
+        assert_eq!(query(b"\x1b[<u"), b"\x1b[?0u");
+        assert_eq!(query(b"\x1b[?47l\x1bc"), b"\x1b[?0u");
+        assert_eq!(interceptor.kitty(), KittyKeyboard::default());
+    }
+
+    #[test]
+    fn kitty_keyboard_params_parse_as_in_libghostty() {
+        // Flags after each sequence, measured with the bundled libghostty.
+        for (input, flags) in [
+            (&b"\x1b[>1;u"[..], 1),
+            (b"\x1b[=5;u", 5),
+            (b"\x1b[>31:1u", 0),
+            (b"\x1b[>3u\x1b[>5u\x1b[<;u", 5),
+            (b"\x1b[>3u\x1b[>5u\x1b[<2;u", 0),
+            (b"\x1b[>3u\x1b[>5u\x1b[<;1u", 3),
+            (b"\x1b[>5u\x1b[=;1u", 0),
+            (b"\x1b[>1u\x1b[=5;;u", 1),
+            (b"\x1b[>1u\x1b[=4;2:1u", 1),
+            (b"\x1b[>1u\x1b[>3u\x1b[<1:2u", 3),
+        ] {
+            let mut interceptor = VtQueryInterceptor::new();
+            let mut input = input.to_vec();
+            input.extend_from_slice(b"\x1b[?u");
+            let reply = format!("\x1b[?{flags}u");
+            assert_eq!(
+                interceptor.feed(&input).responses.concat(),
+                reply.as_bytes(),
+                "{}",
+                String::from_utf8_lossy(&input).escape_debug()
+            );
+        }
+    }
+
+    #[test]
+    fn kitty_keyboard_follows_restored_screen_modes() {
+        let mut interceptor = VtQueryInterceptor::new();
+        let result = interceptor.feed(b"\x1b[>1u\x1b[?1049s\x1b[?1049h\x1b[>5u\x1b[?1049r\x1b[?u");
+        assert_eq!(result.responses, vec![b"\x1b[?1u" as &[u8]]);
+        let result = interceptor.feed(b"\x1b[?1049h\x1b[?25;1049s\x1b[?1049l\x1b[?1049r\x1b[?u");
+        assert_eq!(result.responses, vec![b"\x1b[?5u" as &[u8]]);
     }
 
     #[test]

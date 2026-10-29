@@ -1,4 +1,5 @@
 pub mod colors;
+pub mod kitty_keyboard;
 pub mod replay;
 pub mod screen;
 #[cfg(unix)]
@@ -291,6 +292,9 @@ impl PtyHandle {
         cmd.args(args);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Not the server's own terminal, which panes would otherwise inherit.
+        cmd.env("TERM_PROGRAM", "btmux");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());
         self.bin = server_exe().map(Path::to_path_buf);
         if let Some(exe) = &self.bin {
@@ -449,7 +453,7 @@ impl PtyHandle {
 
     pub fn subscribe_replay(&self) -> (broadcast::Receiver<Output>, Vec<Output>) {
         let replay = self.scrollback.lock().unwrap();
-        (self.output_tx.subscribe(), replay.snapshot())
+        (self.output_tx.subscribe(), replay.viewer_snapshot())
     }
 
     // The first interactive viewer owns the shared PTY dimensions until it
@@ -595,6 +599,7 @@ impl OutputPipeline {
         self.poll_cwd();
         let mut sb = self.scrollback.lock().unwrap();
         sb.push(Output::Data(Bytes::from(result.scrollback)));
+        sb.set_kitty(self.interceptor.kitty());
         let _ = self
             .output_tx
             .send(Output::Data(Bytes::from(result.broadcast)));
@@ -959,9 +964,12 @@ mod lifecycle_tests {
         old.ensure_spawned(80, 24).unwrap();
         let pid = old.shell_pid.unwrap();
         let (mut rx, _) = old.subscribe_replay();
-        // A program-set color, then a sequence split across the handoff.
+        // A program-set color and keyboard flags, then a sequence split
+        // across the handoff.
         old.input_tx
-            .send(b"printf '\\033]10;#123456\\007BEFORE_''HANDOFF\\n\\033]2;ti'\r".to_vec())
+            .send(
+                b"printf '\\033]10;#123456\\007\\033[>5uBEFORE_''HANDOFF\\n\\033]2;ti'\r".to_vec(),
+            )
             .unwrap();
         read_until(&mut rx, "BEFORE_HANDOFF").await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -988,6 +996,7 @@ mod lifecycle_tests {
             .flatten()
             .collect();
         assert!(String::from_utf8_lossy(&replay).contains("BEFORE_HANDOFF"));
+        assert!(replay.ends_with(b"\x1b[<8u\x1b[>5u"));
         new.input_tx
             .send(b"printf 'tle\\007AFTER_''HANDOFF:%s\\n' $$\r".to_vec())
             .unwrap();
@@ -1000,6 +1009,9 @@ mod lifecycle_tests {
         new.stop_io();
         let (_, handoff) = new.export_handoff(deadline()).unwrap().unwrap();
         assert_eq!(handoff.colors[256], Some([0x12, 0x34, 0x56]));
+        let mut kitty = kitty_keyboard::KittyKeyboard::default();
+        kitty.csi(b'>', &[5]);
+        assert_eq!(handoff.kitty, kitty);
     }
     #[tokio::test]
     async fn handoff_keeps_unwritten_input() {

@@ -707,6 +707,7 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
             tracing::error!("agent detection failed to start");
             return;
         };
+        state.write().await.set_detector(detector.clone());
         let mut interval = tokio::time::interval(Duration::from_millis(300));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut process_checked = None;
@@ -716,17 +717,25 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
             let now = std::time::Instant::now();
             let reload = if now.duration_since(manifests_checked) >= Duration::from_secs(5) {
                 manifests_checked = now;
+                let mut next = detector.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    let changed = detector.reload();
-                    (detector, changed)
+                    let changed = next.reload();
+                    (next, changed)
                 })
                 .await;
-                let Ok((loaded, changed)) = result else {
-                    tracing::error!("agent manifest reload failed; detection stopped");
-                    return;
-                };
-                detector = loaded;
-                changed
+                match result {
+                    Ok((loaded, changed)) => {
+                        if changed {
+                            state.write().await.set_detector(loaded.clone());
+                        }
+                        detector = loaded;
+                        changed
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "agent manifest reload failed; keeping current rules");
+                        false
+                    }
+                }
             } else {
                 false
             };

@@ -1,7 +1,7 @@
 id = "agy"
-version = "2026.06.24.1"
+version = "2026.10.29.1"
 min_engine_version = 1
-updated_at = "2026-06-24T00:00:00Z"
+updated_at = "2026-10-29T00:00:00Z"
 aliases = ["antigravity", "antigravity-cli"]
 
 [[rules]]
@@ -14,6 +14,7 @@ contains = ["requesting permission for:"]
 any = [
   { contains = ["do you want to proceed?"] },
   { contains = ["tab amend", "edit command"] },
+  { contains = ["run this command?", "tab amend"] },
 ]
 
 [[rules]]
@@ -31,3 +32,14 @@ priority = 90
 region = "bottom_non_empty_lines(5)"
 visible_working = true
 line_regex = ['(?i)·\s*[1-9][0-9]*\s+task']
+
+# The prompt box's lower rule sits above the footer, which reads "esc to
+# cancel" while working or in a dialog.
+[[rules]]
+id = "prompt_box_idle"
+state = "idle"
+priority = 80
+region = "bottom_non_empty_lines(2)"
+visible_idle = true
+line_regex = ['^─{20,}']
+not = [{ contains = ["esc to cancel"] }]

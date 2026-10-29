@@ -12,6 +12,70 @@ pub const UNVERIFIED_AGENT_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 const MAX_RETIRED: usize = 8;
 const MAX_PARKED: usize = 4;
 
+/// Numbers each agent instance a lifecycle tracks.
+static NEXT_INCARNATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_incarnation() -> u64 {
+    NEXT_INCARNATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Names a tool call across its permission and completion hooks.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolCall {
+    pub id: Option<String>,
+    /// For hooks without an id (Claude Code's PermissionRequest).
+    pub input: Option<ToolInput>,
+}
+
+impl ToolCall {
+    /// Whether `later` is this call: by id when both have one, else by input.
+    pub fn matches(&self, later: &ToolCall) -> bool {
+        match (&self.id, &later.id) {
+            (Some(id), Some(later)) => id == later,
+            _ => self
+                .input
+                .as_ref()
+                .zip(later.input.as_ref())
+                .is_some_and(|(input, later)| input.covered_by(later)),
+        }
+    }
+}
+
+/// A tool name and a hash of each top-level input field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolInput {
+    name: String,
+    fields: Vec<u64>,
+}
+
+impl ToolInput {
+    pub fn new(name: String, input: &serde_json::Value) -> Self {
+        use std::hash::{Hash, Hasher};
+        let hash = |key: &str, value: &serde_json::Value| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (key, value.to_string()).hash(&mut hasher);
+            hasher.finish()
+        };
+        let mut fields: Vec<u64> = match input {
+            serde_json::Value::Object(map) => map.iter().map(|(k, v)| hash(k, v)).collect(),
+            other => vec![hash("", other)],
+        };
+        fields.sort_unstable();
+        fields.dedup();
+        Self { name, fields }
+    }
+
+    /// Whether `later` has every field of this input. Approval can add fields
+    /// (AskUserQuestion's answers) before the completion hook.
+    fn covered_by(&self, later: &ToolInput) -> bool {
+        self.name == later.name
+            && self
+                .fields
+                .iter()
+                .all(|field| later.fields.binary_search(field).is_ok())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct AgentProcess {
     pub pid: u32,
@@ -162,7 +226,8 @@ pub struct AgentReport {
     pub event: AgentEvent,
     pub session_id: Option<String>,
     pub turn_id: Option<String>,
-    pub tool_use_id: Option<String>,
+    /// The tool call a permission or completion belongs to.
+    pub tool: Option<ToolCall>,
     pub process: Option<AgentProcess>,
     pub agent: Option<String>,
     pub source: Option<String>,
@@ -194,7 +259,9 @@ pub struct AgentLifecycle {
     session_id: Option<String>,
     turn_id: Option<String>,
     turn_complete: bool,
-    blocked_tool_id: Option<String>,
+    blocked_tool: Option<ToolCall>,
+    /// Changes whenever another agent instance takes over this lifecycle.
+    incarnation: u64,
     /// Identity reported by hooks (may be a wrapper's child).
     process: Option<AgentProcess>,
     /// Identity selected by the process scan; also keys the manifest.
@@ -205,6 +272,8 @@ pub struct AgentLifecycle {
     ended: bool,
     ended_process: Option<AgentProcess>,
     retired_sessions: Vec<String>,
+    /// Finished or replaced turns of this session.
+    retired_turns: Vec<String>,
     /// Other live agents in the pane, outside the foreground.
     parked: Vec<AgentLifecycle>,
     pub detection: Option<Detection>,
@@ -253,7 +322,8 @@ impl AgentLifecycle {
             session_id: None,
             turn_id: None,
             turn_complete: false,
-            blocked_tool_id: None,
+            blocked_tool: None,
+            incarnation: next_incarnation(),
             process: None,
             observed: None,
             observed_name: None,
@@ -262,6 +332,7 @@ impl AgentLifecycle {
             ended: false,
             ended_process: None,
             retired_sessions: Vec::new(),
+            retired_turns: Vec::new(),
             parked: Vec::new(),
             detection: None,
             screen_revision: None,
@@ -325,8 +396,21 @@ impl AgentLifecycle {
         self.observed
     }
 
-    pub fn blocked_tool_id(&self) -> Option<&str> {
-        self.blocked_tool_id.as_deref()
+    /// The manifest that reads this agent's screen, if any does.
+    pub fn screen_manifest(&self) -> Option<&str> {
+        self.observed_name
+            .as_deref()
+            .filter(|_| self.reads_screen())
+    }
+
+    pub fn blocked_tool(&self) -> Option<&ToolCall> {
+        self.blocked_tool.as_ref()
+    }
+
+    /// Stays the same while one agent instance runs, though its reported
+    /// process may change from a hook's child to the scanned wrapper.
+    pub fn incarnation(&self) -> u64 {
+        self.incarnation
     }
 
     pub fn authority(&self) -> Authority {
@@ -374,25 +458,7 @@ impl AgentLifecycle {
         }
         self.screen_floor = None;
         self.screen_revision = Some(screen.revision);
-        let Some(name) = self.observed_name.as_deref() else {
-            return false;
-        };
-        let Some(mut detection) = detector.detect(
-            name,
-            DetectionInput {
-                screen: &screen.text,
-                osc_title: if screen.title_revision > self.signal_floor {
-                    &screen.title
-                } else {
-                    ""
-                },
-                osc_progress: if screen.progress_revision > self.signal_floor {
-                    &screen.progress
-                } else {
-                    ""
-                },
-            },
-        ) else {
+        let Some(mut detection) = self.detect(detector, screen) else {
             return false;
         };
         detection.screen_revision = screen.revision;
@@ -421,6 +487,27 @@ impl AgentLifecycle {
         self.status.message = None;
         self.authority = Authority::Screen;
         self.status != previous
+    }
+
+    /// Detects `screen`, ignoring OSC signals a prior program left.
+    pub fn detect(&self, detector: &Detector, screen: &ScreenSnapshot) -> Option<Detection> {
+        let name = self.screen_manifest()?;
+        detector.detect(
+            name,
+            DetectionInput {
+                screen: &screen.text,
+                osc_title: if screen.title_revision > self.signal_floor {
+                    &screen.title
+                } else {
+                    ""
+                },
+                osc_progress: if screen.progress_revision > self.signal_floor {
+                    &screen.progress
+                } else {
+                    ""
+                },
+            },
+        )
     }
 
     /// The state a detection may impose, and how long it must persist first.
@@ -571,6 +658,15 @@ impl AgentLifecycle {
         if turn_sensitive && self.turn_id.is_some() && self.turn_id != report.turn_id {
             return None;
         }
+        // Late or repeated reports of a turn that already ended.
+        if same_session
+            && report
+                .turn_id
+                .as_ref()
+                .is_some_and(|turn| self.retired_turns.contains(turn))
+        {
+            return None;
+        }
         if same_session
             && self.turn_complete
             && matches!(
@@ -593,9 +689,11 @@ impl AgentLifecycle {
                 ..AgentStatus::default()
             };
             self.process = report.process;
+            self.incarnation = next_incarnation();
             self.turn_id = None;
             self.turn_complete = false;
-            self.blocked_tool_id = None;
+            self.blocked_tool = None;
+            self.retired_turns.clear();
         }
         if let Some(process) = report.process {
             if self.process.is_none() {
@@ -617,36 +715,47 @@ impl AgentLifecycle {
                 Some((AgentState::Idle, None))
             }
             AgentEvent::SessionStart => None,
+            // A repeated start, or input queued into the running turn.
+            AgentEvent::TurnStart if report.turn_id.is_some() && report.turn_id == self.turn_id => {
+                None
+            }
             AgentEvent::TurnStart => {
+                self.retire_turn();
                 self.turn_id = report.turn_id;
                 self.turn_complete = false;
-                self.blocked_tool_id = None;
+                self.blocked_tool = None;
                 Some((AgentState::Working, None))
             }
             AgentEvent::PermissionRequest => {
-                self.blocked_tool_id = report.tool_use_id;
+                self.blocked_tool = report.tool;
                 Some((AgentState::Blocked, report.message))
             }
             AgentEvent::ToolFinished => {
-                let matches_tool =
-                    self.blocked_tool_id.is_none() || self.blocked_tool_id == report.tool_use_id;
+                let matches_tool = self.blocked_tool.as_ref().is_none_or(|blocked| {
+                    report
+                        .tool
+                        .as_ref()
+                        .is_some_and(|tool| blocked.matches(tool))
+                });
                 // A finished tool says nothing about a dialog only the screen saw.
                 (self.status.state == AgentState::Blocked
                     && self.authority == Authority::Hook
                     && matches_tool)
                     .then(|| {
-                        self.blocked_tool_id = None;
+                        self.blocked_tool = None;
                         (AgentState::Working, None)
                     })
             }
             AgentEvent::TurnFinished => {
+                self.retire_turn();
                 self.turn_complete = true;
-                self.blocked_tool_id = None;
+                self.blocked_tool = None;
                 Some((AgentState::Done, report.message))
             }
             AgentEvent::Interrupt => {
+                self.retire_turn();
                 self.turn_complete = true;
-                self.blocked_tool_id = None;
+                self.blocked_tool = None;
                 Some((AgentState::Idle, None))
             }
             AgentEvent::SessionEnd => unreachable!("session end is handled by the manager"),
@@ -659,6 +768,15 @@ impl AgentLifecycle {
             self.suppress_old_screen(revision);
         }
         Some(self.status != previous)
+    }
+
+    fn retire_turn(&mut self) {
+        let Some(turn) = &self.turn_id else { return };
+        if !self.retired_turns.contains(turn) {
+            self.retired_turns.push(turn.clone());
+            self.retired_turns
+                .drain(..self.retired_turns.len().saturating_sub(MAX_RETIRED));
+        }
     }
 
     pub fn matches_session(&self, session_id: Option<&str>) -> bool {
@@ -682,7 +800,8 @@ impl AgentLifecycle {
         self.named_by_report = false;
         self.turn_id = None;
         self.turn_complete = true;
-        self.blocked_tool_id = None;
+        self.blocked_tool = None;
+        self.incarnation = next_incarnation();
         self.process = None;
         self.observed = None;
         self.observed_name = None;
@@ -1042,12 +1161,233 @@ mod tests {
         assert_eq!(agent.status.state, AgentState::Idle);
     }
 
+    #[test]
+    fn prompt_checks_ignore_a_prior_programs_title() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let process = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        let mut agent = AgentLifecycle::detected(process, "codex".into(), now);
+        let blocked = |agent: &AgentLifecycle, revision| {
+            agent
+                .detect(&detector, &screen("", "Action Required", revision))
+                .is_some_and(|detection| detection.state == AgentState::Blocked)
+        };
+        assert!(blocked(&agent, 1));
+        agent.suppress_old_signals(1);
+        assert!(!blocked(&agent, 1));
+        assert!(blocked(&agent, 2));
+    }
+
+    #[test]
+    fn incarnation_survives_the_scan_naming_a_hook_reported_agent() {
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::reported(now);
+        let child = AgentProcess {
+            pid: 11,
+            start_time: 6,
+        };
+        let mut start = report(AgentEvent::SessionStart, "s", None);
+        start.process = Some(child);
+        agent.apply(start, 0, now);
+        let incarnation = agent.incarnation();
+        let wrapper = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        agent.observe_process(wrapper, "claude", 1, now, |_| true);
+        assert_eq!(agent.process(), Some(wrapper));
+        assert_eq!(agent.incarnation(), incarnation);
+        let next = AgentProcess {
+            pid: 12,
+            start_time: 7,
+        };
+        agent.observe_process(next, "claude", 2, now, |_| true);
+        assert_ne!(agent.incarnation(), incarnation);
+    }
+
+    /// Claude Code 2.1.312 recordings at 120x40, made with
+    /// `scripts/record-agent-replay.py`: one `[seconds, kind, base64]` per
+    /// line; kind is `out` (PTY output), `in`, or `note`. Each accepts the
+    /// trust dialog, submits a prompt, and answers one dialog. A named session
+    /// (`claude -n`) draws its name in a rule below the dialog's footer.
+    const CLAUDE_DIALOGS: [&str; 3] = [
+        include_str!("detection/fixtures/claude-2.1.312-bash-approval.jsonl"),
+        include_str!("detection/fixtures/claude-2.1.312-ask-question.jsonl"),
+        include_str!("detection/fixtures/claude-2.1.312-named-ask-question.jsonl"),
+    ];
+
+    struct Recording {
+        output: Vec<(Duration, Vec<u8>)>,
+        notes: HashMap<String, Duration>,
+    }
+
+    impl Recording {
+        fn parse(text: &str) -> Self {
+            use base64::Engine;
+            let mut recording = Self {
+                output: Vec::new(),
+                notes: HashMap::new(),
+            };
+            for line in text.lines() {
+                let (at, kind, data): (f64, String, String) = serde_json::from_str(line).unwrap();
+                let at = Duration::from_secs_f64(at);
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap();
+                match kind.as_str() {
+                    "out" => recording.output.push((at, data)),
+                    "note" => {
+                        recording.notes.insert(String::from_utf8(data).unwrap(), at);
+                    }
+                    _ => {}
+                }
+            }
+            recording
+        }
+
+        fn note(&self, name: &str) -> Duration {
+            self.notes[name]
+        }
+
+        /// Samples the screen every 300 ms (the detector tick) from `offset`.
+        fn replay(&self, offset: Duration, mut tick: impl FnMut(Duration, &ScreenSnapshot)) {
+            let end = self.output.last().unwrap().0 + Duration::from_secs(2);
+            let mut screen = crate::pty::screen::LiveScreen::new(120, 40);
+            let mut pending = self.output.iter().enumerate().peekable();
+            let mut at = offset;
+            while at <= end {
+                while let Some((index, (_, bytes))) = pending.next_if(|(_, (t, _))| *t <= at) {
+                    let data = crate::pty::replay::Output::Data(bytes.clone().into());
+                    screen.push(&data, index as u64 + 1);
+                }
+                tick(at, &screen.snapshot());
+                at += Duration::from_millis(300);
+            }
+        }
+    }
+
+    #[test]
+    fn recorded_claude_dialogs_block_with_and_without_hooks() {
+        let detector = Detector::new(None);
+        for text in CLAUDE_DIALOGS {
+            let recording = Recording::parse(text);
+            let dialog = recording.note("dialog wait: hit");
+            let answered = recording.note("approve");
+            // Claude fires PermissionRequest for every dialog, AskUserQuestion included.
+            let hooks = [
+                (recording.note("submit"), AgentEvent::TurnStart),
+                (dialog, AgentEvent::PermissionRequest),
+                (answered, AgentEvent::ToolFinished),
+                (
+                    answered + Duration::from_millis(1700),
+                    AgentEvent::TurnFinished,
+                ),
+            ];
+            for with_hooks in [false, true] {
+                for offset in (0..300).step_by(50).map(Duration::from_millis) {
+                    let start = Instant::now();
+                    let mut agent = claude(start);
+                    let mut events = hooks.iter().filter(|_| with_hooks).peekable();
+                    let mut states: Vec<AgentState> = Vec::new();
+                    recording.replay(offset, |at, screen| {
+                        while let Some((_, event)) = events.next_if(|(t, _)| *t <= at) {
+                            agent.apply(report(*event, "s", None), screen.revision, start + at);
+                        }
+                        agent.scan_screen(&detector, screen, start + at);
+                        let state = agent.status.state.clone();
+                        if at >= dialog + Duration::from_millis(300) && at < answered {
+                            assert_eq!(state, AgentState::Blocked, "{offset:?} {at:?}");
+                            // So `osc_title_working`, which outranks every blocker,
+                            // cannot hide a dialog.
+                            assert!(screen.title.starts_with('✳'), "{:?}", screen.title);
+                        }
+                        if states.last() != Some(&state) && state != AgentState::Unknown {
+                            states.push(state);
+                        }
+                    });
+                    let last = if with_hooks {
+                        AgentState::Done
+                    } else {
+                        AgentState::Idle
+                    };
+                    // The trust dialog, its prompt, the turn, its dialog, and the end.
+                    assert_eq!(
+                        states,
+                        [
+                            AgentState::Blocked,
+                            AgentState::Idle,
+                            AgentState::Working,
+                            AgentState::Blocked,
+                            AgentState::Working,
+                            last,
+                        ],
+                        "hooks: {with_hooks}, offset: {offset:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn recorded_agy_turns_settle_idle_and_block_on_approval() {
+        let detector = Detector::new(None);
+        let recording = Recording::parse(include_str!(
+            "detection/fixtures/agy-1.4.10-command-approval.jsonl"
+        ));
+        let trusted = recording.note("trust: sent");
+        let dialog = recording.note("requesting permission for:: hit");
+        let answered = recording.note("approve: sent");
+        for offset in (0..300).step_by(50).map(Duration::from_millis) {
+            let start = Instant::now();
+            let process = AgentProcess {
+                pid: 10,
+                start_time: 5,
+            };
+            let mut agent = AgentLifecycle::detected(process, "agy".into(), start);
+            let mut states: Vec<AgentState> = Vec::new();
+            recording.replay(offset, |at, screen| {
+                agent.scan_screen(&detector, screen, start + at);
+                let state = agent.status.state.clone();
+                if at >= dialog + Duration::from_millis(300) && at < answered {
+                    assert_eq!(state, AgentState::Blocked, "{offset:?} {at:?}");
+                }
+                if at > trusted && states.last() != Some(&state) && state != AgentState::Unknown {
+                    states.push(state);
+                }
+            });
+            // Two turns, the second with a command approval.
+            assert_eq!(
+                states,
+                [
+                    AgentState::Idle,
+                    AgentState::Working,
+                    AgentState::Idle,
+                    AgentState::Working,
+                    AgentState::Blocked,
+                    AgentState::Working,
+                    AgentState::Idle,
+                ],
+                "offset: {offset:?}"
+            );
+        }
+    }
+
+    fn tool_call(id: &str) -> ToolCall {
+        ToolCall {
+            id: Some(id.to_string()),
+            input: None,
+        }
+    }
+
     fn report(event: AgentEvent, session: &str, turn: Option<&str>) -> AgentReport {
         AgentReport {
             event,
             session_id: Some(session.to_string()),
             turn_id: turn.map(str::to_string),
-            tool_use_id: None,
+            tool: None,
             process: None,
             agent: None,
             source: Some("hook".to_string()),
@@ -1116,12 +1456,97 @@ mod tests {
     }
 
     #[test]
+    fn repeated_and_late_turn_starts_cannot_revive_a_turn() {
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let apply = |agent: &mut AgentLifecycle, event, turn| {
+            agent.apply(report(event, "s", Some(turn)), 0, now)
+        };
+        apply(&mut agent, AgentEvent::TurnStart, "a");
+        apply(&mut agent, AgentEvent::PermissionRequest, "a");
+        // Claude reuses the turn's prompt_id for input queued into it.
+        assert_eq!(apply(&mut agent, AgentEvent::TurnStart, "a"), Some(false));
+        assert_eq!(agent.status.state, AgentState::Blocked);
+        apply(&mut agent, AgentEvent::TurnFinished, "a");
+        assert_eq!(apply(&mut agent, AgentEvent::TurnStart, "a"), None);
+        assert_eq!(agent.status.state, AgentState::Done);
+
+        apply(&mut agent, AgentEvent::TurnStart, "b");
+        apply(&mut agent, AgentEvent::TurnStart, "c");
+        for event in [
+            AgentEvent::TurnStart,
+            AgentEvent::PermissionRequest,
+            AgentEvent::TurnFinished,
+        ] {
+            assert_eq!(apply(&mut agent, event, "b"), None, "{event:?}");
+        }
+        assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn retired_turns_stay_bounded_and_reset_with_the_session() {
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        for turn in 0..20 {
+            let turn = turn.to_string();
+            agent.apply(report(AgentEvent::TurnStart, "s", Some(&turn)), 0, now);
+            agent.apply(report(AgentEvent::TurnFinished, "s", Some(&turn)), 0, now);
+        }
+        assert_eq!(agent.retired_turns.len(), MAX_RETIRED);
+        agent.apply(report(AgentEvent::SessionStart, "next", None), 0, now);
+        assert!(agent.retired_turns.is_empty());
+    }
+
+    #[test]
+    fn tool_ids_outrank_matching_inputs() {
+        let call = |id: Option<&str>| ToolCall {
+            id: id.map(str::to_string),
+            input: Some(ToolInput::new(
+                "Bash".into(),
+                &serde_json::json!({"command": "ls"}),
+            )),
+        };
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
+        let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
+        permission.tool = Some(call(Some("t2")));
+        agent.apply(permission, 0, now);
+        let mut other = report(AgentEvent::ToolFinished, "s", Some("t"));
+        other.tool = Some(call(Some("t1")));
+        agent.apply(other, 0, now);
+        assert_eq!(agent.status.state, AgentState::Blocked);
+        // Without an id on either side, the input pairs them.
+        assert!(call(None).matches(&call(Some("t1"))));
+        let mut finished = report(AgentEvent::ToolFinished, "s", Some("t"));
+        finished.tool = Some(call(Some("t2")));
+        agent.apply(finished, 0, now);
+        assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn tool_inputs_match_when_approval_adds_fields() {
+        let input = |name: &str, value| ToolInput::new(name.into(), &value);
+        let asked = input("Ask", serde_json::json!({"questions": ["q"]}));
+        let answered = input(
+            "Ask",
+            serde_json::json!({"questions": ["q"], "answers": {"q": "a"}}),
+        );
+        assert!(asked.covered_by(&answered));
+        assert!(!answered.covered_by(&asked));
+        assert!(!asked.covered_by(&input("Ask", serde_json::json!({"questions": ["r"]}))));
+        assert!(!asked.covered_by(&input("Bash", serde_json::json!({"questions": ["q"]}))));
+        // A key's hash includes its name.
+        assert!(!asked.covered_by(&input("Ask", serde_json::json!({"answers": ["q"]}))));
+    }
+
+    #[test]
     fn completed_tool_resumes_only_the_matching_blocked_turn() {
         let now = Instant::now();
         let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
-        permission.tool_use_id = Some("approval".to_string());
+        permission.tool = Some(tool_call("approval"));
         agent.apply(permission, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         assert_eq!(
@@ -1130,11 +1555,11 @@ mod tests {
         );
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut other_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
-        other_tool.tool_use_id = Some("other".to_string());
+        other_tool.tool = Some(tool_call("other"));
         agent.apply(other_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut approved_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
-        approved_tool.tool_use_id = Some("approval".to_string());
+        approved_tool.tool = Some(tool_call("approval"));
         agent.apply(approved_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Working);
         agent.apply(report(AgentEvent::TurnFinished, "s", Some("t")), 0, now);

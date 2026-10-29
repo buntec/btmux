@@ -228,6 +228,16 @@ returns `{submitted: true}` once Enter is sent. It refuses while
 the agent is `blocked`: typed text would answer the dialog, which `send_keys`
 can do deliberately. With `wait`, it also refuses while the agent is
 `working`, since the turn that ends next would not be this prompt's.
+
+For an agent detected from its screen, it rechecks the screen itself before
+pasting and again before the Enter, since a status can lag a dialog by a
+settling period. It refuses when a dialog is visible, when the agent's state
+is `unknown` (unless its rules can't recognize an idle prompt: currently
+Gemini CLI and OpenCode), or when detection has stalled. If the check before
+the Enter fails, or the agent was replaced meanwhile, the error says the
+prompt was pasted but not submitted; the text stays in the agent's input.
+This narrows the race but can't close it: a dialog can still appear between
+the last check and the Enter.
 Prompts to one pane are submitted one at a time, and a waited prompt first
 waits (up to 15 s) for earlier prompts' turns to start, so it then finds the
 agent `working` instead of claiming another prompt's turn. It can't tell its
@@ -278,7 +288,14 @@ The supported states are `unknown`, `idle`, `working`, `blocked`, and `done`.
 `done` becomes `idle` when the pane is viewed. A tool completion or new turn
 moves a blocked agent back to `working`; terminal input alone does not prove
 that an approval was resolved. The existing `/notify` endpoint maps known hook
-events to these transitions. Intermediate `TaskCompleted` events only notify;
+events to these transitions. A report's `turn_id` (Claude Code's `prompt_id`)
+ties it to a turn: reports for a finished or replaced turn are ignored, and a
+repeated start of the running turn, such as input queued into it, changes
+nothing. Reports without turn identities can't be ordered this way. A
+completion unblocks only the tool its permission named, by `tool_use_id` when
+both send one, else by `tool_name` and `tool_input`. The completion's input
+may add fields, as answering `AskUserQuestion` adds its answers, but must keep
+every field of the permission's. Intermediate `TaskCompleted` events only notify;
 they do not mark the whole turn done.
 
 Use `DELETE` on the same endpoint when the reporter no longer knows which agent
@@ -355,7 +372,8 @@ reports. Agent status is runtime-only and resets when btmux restarts.
 ### Detection manifests and diagnostics
 
 The bundled rules are adapted from Herdr revision
-`5da0a01e1eedda054db0c81dd3a780000c40d9f0`; attribution and the upstream license
+`5da0a01e1eedda054db0c81dd3a780000c40d9f0` (Claude's from
+`bc8c28988f75c538d4ca058b702f5adbea30566e`); attribution and the upstream license
 live in `third-party/herdr`. Codex is idle when its title has no spinner,
 unless its working timer shows. Codex runs hooks in a shared app-server daemon,
 whose environment names the pane that started it, so only `codex --no-daemon`

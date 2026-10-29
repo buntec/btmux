@@ -1,5 +1,6 @@
 Herdr — https://github.com/herdrdev/herdr
 Revision: 5da0a01e1eedda054db0c81dd3a780000c40d9f0
+(Claude manifest: bc8c28988f75c538d4ca058b702f5adbea30566e)
 Licensed under Apache-2.0; see LICENSE in this directory.
 
 The bundled Claude, Codex, Gemini, Antigravity, and OpenCode detection manifests and region helpers

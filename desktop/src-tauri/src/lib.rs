@@ -400,26 +400,26 @@ async fn stop_server(
         .as_ref()
         .is_some_and(|private| private.address == server.address);
     tauri::async_runtime::spawn_blocking(move || {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        if private {
-            let state = app.state::<Server>();
-            let child = state.child.lock().unwrap().take();
-            *state.private.lock().unwrap() = None;
-            if let Some(child) = child {
-                let pid = child.pid();
-                terminate(child);
-                while process_running(pid) && Instant::now() < deadline {
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            }
-            return Ok(());
-        }
-        servers::shutdown(&server)?;
-        // Stopped once its registration is gone and the profile is free.
         let registration = discovery::state_dir()
             .map(|dir| dir.join(DESKTOP_PROFILE).join("state.server"))
             .ok_or("Could not find the btmux state directory.")?;
-        while discovery::read_registration(&registration).is_some_and(|r| r.pid == server.pid) {
+        // Lets it save state and stop editors; a signal on Windows can't.
+        servers::shutdown(&server)?;
+        let state = app.state::<Server>();
+        // A private server stops once its exit handler forgets it, which keeps
+        // it owned until then; a registered one once its registration is gone.
+        let running = || {
+            if private {
+                let child = state.child.lock().unwrap();
+                child
+                    .as_ref()
+                    .is_some_and(|child| child.pid() == server.pid)
+            } else {
+                discovery::read_registration(&registration).is_some_and(|r| r.pid == server.pid)
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while running() {
             if Instant::now() >= deadline {
                 return Err("The server did not stop.".into());
             }
@@ -431,15 +431,10 @@ async fn stop_server(
     .map_err(|_| "Could not stop btmux.".to_string())?
 }
 
-fn process_running(pid: u32) -> bool {
-    #[cfg(unix)]
-    return unsafe { libc::kill(pid as i32, 0) } == 0;
-    // `kill` uses TerminateProcess, which doesn't let it linger.
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        false
-    }
+// Lets connected btmux pages return to the picker on every platform.
+#[tauri::command]
+fn switch_server(window: WebviewWindow) {
+    show_picker(&window, "switch");
 }
 
 #[cfg(target_os = "macos")]
@@ -526,6 +521,7 @@ pub fn run() {
             connect_server,
             start_server,
             stop_server,
+            switch_server,
             notify,
             desktop_info
         ])

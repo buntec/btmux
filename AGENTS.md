@@ -185,7 +185,8 @@ owned; only a bundled private server is stopped when the desktop app exits.
 With "Keep it running after btmux quits", the launcher starts the bundled server
 detached (own session, no parent watch, null stdio) so it registers and
 outlives the app; the picker stops desktop-profile servers through
-`POST /api/server/shutdown`.
+`POST /api/server/shutdown`. Connected pages return to the picker through
+`switch_server` (the palette's "desktop: switch server").
 
 ### UI and theme
 

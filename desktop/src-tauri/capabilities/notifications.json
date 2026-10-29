@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "notifications",
-  "description": "allows connected btmux servers to post OS notifications and read the app version",
+  "description": "allows connected btmux servers to post OS notifications, read the app version, and return to the picker",
   "windows": [
     "main"
   ],
@@ -14,6 +14,7 @@
   },
   "permissions": [
     "allow-notify",
-    "allow-desktop-info"
+    "allow-desktop-info",
+    "allow-switch-server"
   ]
 }

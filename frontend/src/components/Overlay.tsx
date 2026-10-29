@@ -25,6 +25,7 @@ import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
 import { smoothScrollBy } from '../lib/smoothScroll';
+import { isDesktopApp, switchDesktopServer } from '../lib/desktopApp';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -113,6 +114,14 @@ interface Props {
 
 const ACTION_ID_PREFIX = 'action:';
 
+// Desktop app only, where just macOS has a menu for it.
+const SWITCH_SERVER: Command = {
+  id: 'switch-server',
+  label: 'desktop: switch server',
+  description: "Return to the desktop app's server picker.",
+  confirm: null,
+};
+
 /** Keybinding actions as palette entries, after the server's own commands. */
 function actionCommands(commands: Command[], config: ClientConfig | null): Command[] {
   const keys = new Map<string, string[]>();
@@ -175,7 +184,10 @@ export function Overlay({ sessionId, send, config }: Props) {
   const pickerRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef<HTMLDivElement>(null);
   const commands = useMemo(
-    () => (overlay?.mode === 'command' ? [...overlay.commands, ...actionCommands(overlay.commands, config)] : []),
+    () =>
+      overlay?.mode === 'command'
+        ? [...overlay.commands, ...(isDesktopApp() ? [SWITCH_SERVER] : []), ...actionCommands(overlay.commands, config)]
+        : [],
     [overlay, config],
   );
   const source = useMemo(() => createStaticSource(commands), [commands]);
@@ -262,6 +274,11 @@ export function Overlay({ sessionId, send, config }: Props) {
           if (id === 'open-config') {
             setOverlay(null);
             state.setSettingsOpen(true);
+            return;
+          }
+          if (id === SWITCH_SERVER.id) {
+            setOverlay(null);
+            switchDesktopServer();
             return;
           }
           if (id === 'about') {

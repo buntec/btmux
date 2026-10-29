@@ -5,6 +5,7 @@ fn main() {
             "connect_server",
             "start_server",
             "stop_server",
+            "switch_server",
             "notify",
             "desktop_info",
         ]),

@@ -292,8 +292,8 @@ events to these transitions. A report's `turn_id` (Claude Code's `prompt_id`)
 ties it to a turn: reports for a finished or replaced turn are ignored, and a
 repeated start of the running turn, such as input queued into it, changes
 nothing. Reports without turn identities can't be ordered this way. A
-completion unblocks only the tool its permission named, by `tool_name` and
-`tool_input` when both are sent, else by `tool_use_id`. Intermediate `TaskCompleted` events only notify;
+completion unblocks only the tool its permission named, by `tool_use_id` when
+both send one, else by `tool_name` and `tool_input`. Intermediate `TaskCompleted` events only notify;
 they do not mark the whole turn done.
 
 Use `DELETE` on the same endpoint when the reporter no longer knows which agent

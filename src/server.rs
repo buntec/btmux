@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::file_search::FileIndex;
 use crate::session::{
-    agent::{AgentEvent, AgentProcess, AgentReport},
+    agent::{AgentEvent, AgentProcess, AgentReport, ToolCall},
     AgentState, AgentStatus, PaneAlert,
 };
 use crate::ws;
@@ -409,22 +409,19 @@ impl PaneNotifyRequest {
 
 impl PaneNotifyRequest {
     /// Identifies a tool call across its permission and completion hooks.
-    /// Claude Code's PermissionRequest has no `tool_use_id`, so the tool and
-    /// its input name the call instead.
-    fn tool(&self) -> Option<String> {
+    fn tool(&self) -> Option<ToolCall> {
         use std::hash::{Hash, Hasher};
-        match (&self.tool_name, &self.tool_input) {
-            (Some(name), Some(input)) => {
+        let input = self
+            .tool_name
+            .as_ref()
+            .zip(self.tool_input.as_ref())
+            .map(|(name, input)| {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 input.to_string().hash(&mut hasher);
-                Some(format!(
-                    "{}:{:016x}",
-                    truncate_msg(name, 64),
-                    hasher.finish()
-                ))
-            }
-            _ => clean_status_field(self.tool_use_id.clone(), 128),
-        }
+                format!("{}:{:016x}", truncate_msg(name, 64), hasher.finish())
+            });
+        let id = clean_status_field(self.tool_use_id.clone(), 128);
+        (id.is_some() || input.is_some()).then_some(ToolCall { id, input })
     }
 
     /// Whether an earlier hook already announced this prompt. Claude Code sends
@@ -433,17 +430,17 @@ impl PaneNotifyRequest {
     fn repeats_hook_state(
         &self,
         event: &str,
-        before: Option<(AgentState, Option<String>)>,
+        before: Option<(AgentState, Option<ToolCall>)>,
     ) -> bool {
         let Some((state, blocked_tool)) = before else {
             return false;
         };
         match state {
             AgentState::Blocked => match event {
-                "PermissionRequest" => {
-                    let tool = self.tool();
-                    tool.is_none() || blocked_tool.is_none() || tool == blocked_tool
-                }
+                "PermissionRequest" => match (self.tool(), blocked_tool) {
+                    (Some(tool), Some(blocked)) => tool.matches(&blocked),
+                    _ => true,
+                },
                 _ => {
                     infer_agent_event(event, self.notification_type.as_deref())
                         == Some(AgentEvent::PermissionRequest)

@@ -12,6 +12,32 @@ pub const UNVERIFIED_AGENT_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 const MAX_RETIRED: usize = 8;
 const MAX_PARKED: usize = 4;
 
+/// Numbers each agent instance a lifecycle tracks.
+static NEXT_INCARNATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_incarnation() -> u64 {
+    NEXT_INCARNATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Names a tool call across its permission and completion hooks.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolCall {
+    pub id: Option<String>,
+    /// The tool name and a hash of its input, for hooks without an id
+    /// (Claude Code's PermissionRequest).
+    pub input: Option<String>,
+}
+
+impl ToolCall {
+    /// By id when both have one, else by input.
+    pub fn matches(&self, other: &ToolCall) -> bool {
+        match (&self.id, &other.id) {
+            (Some(id), Some(other)) => id == other,
+            _ => self.input.is_some() && self.input == other.input,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct AgentProcess {
     pub pid: u32,
@@ -163,7 +189,7 @@ pub struct AgentReport {
     pub session_id: Option<String>,
     pub turn_id: Option<String>,
     /// The tool call a permission or completion belongs to.
-    pub tool: Option<String>,
+    pub tool: Option<ToolCall>,
     pub process: Option<AgentProcess>,
     pub agent: Option<String>,
     pub source: Option<String>,
@@ -195,7 +221,9 @@ pub struct AgentLifecycle {
     session_id: Option<String>,
     turn_id: Option<String>,
     turn_complete: bool,
-    blocked_tool: Option<String>,
+    blocked_tool: Option<ToolCall>,
+    /// Changes whenever another agent instance takes over this lifecycle.
+    incarnation: u64,
     /// Identity reported by hooks (may be a wrapper's child).
     process: Option<AgentProcess>,
     /// Identity selected by the process scan; also keys the manifest.
@@ -257,6 +285,7 @@ impl AgentLifecycle {
             turn_id: None,
             turn_complete: false,
             blocked_tool: None,
+            incarnation: next_incarnation(),
             process: None,
             observed: None,
             observed_name: None,
@@ -336,8 +365,14 @@ impl AgentLifecycle {
             .filter(|_| self.reads_screen())
     }
 
-    pub fn blocked_tool(&self) -> Option<&str> {
-        self.blocked_tool.as_deref()
+    pub fn blocked_tool(&self) -> Option<&ToolCall> {
+        self.blocked_tool.as_ref()
+    }
+
+    /// Stays the same while one agent instance runs, though its reported
+    /// process may change from a hook's child to the scanned wrapper.
+    pub fn incarnation(&self) -> u64 {
+        self.incarnation
     }
 
     pub fn authority(&self) -> Authority {
@@ -385,25 +420,7 @@ impl AgentLifecycle {
         }
         self.screen_floor = None;
         self.screen_revision = Some(screen.revision);
-        let Some(name) = self.observed_name.as_deref() else {
-            return false;
-        };
-        let Some(mut detection) = detector.detect(
-            name,
-            DetectionInput {
-                screen: &screen.text,
-                osc_title: if screen.title_revision > self.signal_floor {
-                    &screen.title
-                } else {
-                    ""
-                },
-                osc_progress: if screen.progress_revision > self.signal_floor {
-                    &screen.progress
-                } else {
-                    ""
-                },
-            },
-        ) else {
+        let Some(mut detection) = self.detect(detector, screen) else {
             return false;
         };
         detection.screen_revision = screen.revision;
@@ -432,6 +449,27 @@ impl AgentLifecycle {
         self.status.message = None;
         self.authority = Authority::Screen;
         self.status != previous
+    }
+
+    /// Detects `screen`, ignoring OSC signals a prior program left.
+    pub fn detect(&self, detector: &Detector, screen: &ScreenSnapshot) -> Option<Detection> {
+        let name = self.screen_manifest()?;
+        detector.detect(
+            name,
+            DetectionInput {
+                screen: &screen.text,
+                osc_title: if screen.title_revision > self.signal_floor {
+                    &screen.title
+                } else {
+                    ""
+                },
+                osc_progress: if screen.progress_revision > self.signal_floor {
+                    &screen.progress
+                } else {
+                    ""
+                },
+            },
+        )
     }
 
     /// The state a detection may impose, and how long it must persist first.
@@ -613,6 +651,7 @@ impl AgentLifecycle {
                 ..AgentStatus::default()
             };
             self.process = report.process;
+            self.incarnation = next_incarnation();
             self.turn_id = None;
             self.turn_complete = false;
             self.blocked_tool = None;
@@ -654,7 +693,12 @@ impl AgentLifecycle {
                 Some((AgentState::Blocked, report.message))
             }
             AgentEvent::ToolFinished => {
-                let matches_tool = self.blocked_tool.is_none() || self.blocked_tool == report.tool;
+                let matches_tool = self.blocked_tool.as_ref().is_none_or(|blocked| {
+                    report
+                        .tool
+                        .as_ref()
+                        .is_some_and(|tool| blocked.matches(tool))
+                });
                 // A finished tool says nothing about a dialog only the screen saw.
                 (self.status.state == AgentState::Blocked
                     && self.authority == Authority::Hook
@@ -719,6 +763,7 @@ impl AgentLifecycle {
         self.turn_id = None;
         self.turn_complete = true;
         self.blocked_tool = None;
+        self.incarnation = next_incarnation();
         self.process = None;
         self.observed = None;
         self.observed_name = None;
@@ -1078,6 +1123,53 @@ mod tests {
         assert_eq!(agent.status.state, AgentState::Idle);
     }
 
+    #[test]
+    fn prompt_checks_ignore_a_prior_programs_title() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let process = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        let mut agent = AgentLifecycle::detected(process, "codex".into(), now);
+        let blocked = |agent: &AgentLifecycle, revision| {
+            agent
+                .detect(&detector, &screen("", "Action Required", revision))
+                .is_some_and(|detection| detection.state == AgentState::Blocked)
+        };
+        assert!(blocked(&agent, 1));
+        agent.suppress_old_signals(1);
+        assert!(!blocked(&agent, 1));
+        assert!(blocked(&agent, 2));
+    }
+
+    #[test]
+    fn incarnation_survives_the_scan_naming_a_hook_reported_agent() {
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::reported(now);
+        let child = AgentProcess {
+            pid: 11,
+            start_time: 6,
+        };
+        let mut start = report(AgentEvent::SessionStart, "s", None);
+        start.process = Some(child);
+        agent.apply(start, 0, now);
+        let incarnation = agent.incarnation();
+        let wrapper = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        agent.observe_process(wrapper, "claude", 1, now, |_| true);
+        assert_eq!(agent.process(), Some(wrapper));
+        assert_eq!(agent.incarnation(), incarnation);
+        let next = AgentProcess {
+            pid: 12,
+            start_time: 7,
+        };
+        agent.observe_process(next, "claude", 2, now, |_| true);
+        assert_ne!(agent.incarnation(), incarnation);
+    }
+
     /// Claude Code 2.1.312 recordings at 120x40: one `[seconds, kind, base64]`
     /// per line; kind is `out` (PTY output), `in`, or `note`. Each accepts the
     /// trust dialog, submits a prompt, and answers one dialog.
@@ -1242,6 +1334,13 @@ mod tests {
         }
     }
 
+    fn tool_call(id: &str) -> ToolCall {
+        ToolCall {
+            id: Some(id.to_string()),
+            input: None,
+        }
+    }
+
     fn report(event: AgentEvent, session: &str, turn: Option<&str>) -> AgentReport {
         AgentReport {
             event,
@@ -1358,12 +1457,36 @@ mod tests {
     }
 
     #[test]
+    fn tool_ids_outrank_matching_inputs() {
+        let call = |id: Option<&str>| ToolCall {
+            id: id.map(str::to_string),
+            input: Some("Bash:1".into()),
+        };
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
+        let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
+        permission.tool = Some(call(Some("t2")));
+        agent.apply(permission, 0, now);
+        let mut other = report(AgentEvent::ToolFinished, "s", Some("t"));
+        other.tool = Some(call(Some("t1")));
+        agent.apply(other, 0, now);
+        assert_eq!(agent.status.state, AgentState::Blocked);
+        // Without an id on either side, the input pairs them.
+        assert!(call(None).matches(&call(Some("t1"))));
+        let mut finished = report(AgentEvent::ToolFinished, "s", Some("t"));
+        finished.tool = Some(call(Some("t2")));
+        agent.apply(finished, 0, now);
+        assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
     fn completed_tool_resumes_only_the_matching_blocked_turn() {
         let now = Instant::now();
         let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
-        permission.tool = Some("approval".to_string());
+        permission.tool = Some(tool_call("approval"));
         agent.apply(permission, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         assert_eq!(
@@ -1372,11 +1495,11 @@ mod tests {
         );
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut other_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
-        other_tool.tool = Some("other".to_string());
+        other_tool.tool = Some(tool_call("other"));
         agent.apply(other_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut approved_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
-        approved_tool.tool = Some("approval".to_string());
+        approved_tool.tool = Some(tool_call("approval"));
         agent.apply(approved_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Working);
         agent.apply(report(AgentEvent::TurnFinished, "s", Some("t")), 0, now);

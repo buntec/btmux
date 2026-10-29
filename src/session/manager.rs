@@ -5,8 +5,7 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 use super::{
-    agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority},
-    detection::DetectionInput,
+    agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority, ToolCall},
     layout::{Layout, LayoutPreset},
     AgentPane, AgentState, AgentStatus, Pane, PaneInfo, PaneSnapshot, Session, SessionSummary,
     Window,
@@ -188,11 +187,12 @@ impl SessionManager {
             .map(|agent| &agent.status)
     }
 
-    pub fn agent_process(&self, pane_id: Uuid) -> Option<AgentProcess> {
+    /// Identifies the pane's running agent instance; explicit reports name none.
+    pub fn agent_incarnation(&self, pane_id: Uuid) -> Option<u64> {
         self.agents
             .get(&pane_id)
-            .filter(|agent| agent.is_active())
-            .and_then(AgentLifecycle::process)
+            .filter(|agent| agent.is_active() && agent.process().is_some())
+            .map(AgentLifecycle::incarnation)
     }
 
     /// Why typed text could reach something other than the agent's prompt,
@@ -216,16 +216,10 @@ impl SessionManager {
         if now.saturating_duration_since(tick) > DETECTION_STALE {
             return Some("agent detection has stalled; send keys instead");
         }
-        let detection = pane.pty.screen_snapshot().and_then(|screen| {
-            detector.detect(
-                name,
-                DetectionInput {
-                    screen: &screen.text,
-                    osc_title: &screen.title,
-                    osc_progress: &screen.progress,
-                },
-            )
-        });
+        let detection = pane
+            .pty
+            .screen_snapshot()
+            .and_then(|screen| agent.detect(detector, &screen));
         if detection.is_some_and(|detection| detection.state == AgentState::Blocked) {
             return Some(BLOCKED);
         }
@@ -236,16 +230,11 @@ impl SessionManager {
     }
 
     /// The agent state and blocked tool, while the last hook report still owns them.
-    pub fn hook_agent_state(&self, pane_id: Uuid) -> Option<(AgentState, Option<String>)> {
+    pub fn hook_agent_state(&self, pane_id: Uuid) -> Option<(AgentState, Option<ToolCall>)> {
         self.agents
             .get(&pane_id)
             .filter(|agent| agent.is_active() && agent.authority() == Authority::Hook)
-            .map(|agent| {
-                (
-                    agent.status.state.clone(),
-                    agent.blocked_tool().map(str::to_owned),
-                )
-            })
+            .map(|agent| (agent.status.state.clone(), agent.blocked_tool().cloned()))
     }
 
     pub fn pane_shells(&self) -> Vec<(Uuid, u32, Option<u32>)> {

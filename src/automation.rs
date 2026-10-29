@@ -294,7 +294,7 @@ pub async fn send_prompt(
         (None, Some(lock.turn.clone().read_owned().await))
     };
     let submitting = lock.submit.lock().await;
-    let (status, process, input, journal, mut events) = {
+    let (status, incarnation, input, journal, mut events) = {
         let mgr = state.read().await;
         let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
         let status = mgr.agent_status(pane_id).ok_or_else(|| {
@@ -314,7 +314,7 @@ pub async fn send_prompt(
         // Subscribed with the check, so no earlier turn is seen as this one.
         (
             Some(status.clone()),
-            mgr.agent_process(pane_id),
+            mgr.agent_incarnation(pane_id),
             pane.pty.input_tx.clone(),
             pane.pty.journal(),
             mgr.statuses().subscribe(),
@@ -344,7 +344,7 @@ pub async fn send_prompt(
     {
         // A dialog drawn since the check would take the Enter as its answer.
         let mgr = state.read().await;
-        let conflict = if mgr.agent_process(pane_id) != process {
+        let conflict = if mgr.agent_incarnation(pane_id) != incarnation {
             Some("the agent was replaced")
         } else {
             mgr.prompt_conflict(pane_id, std::time::Instant::now())

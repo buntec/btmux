@@ -147,6 +147,7 @@ export class PaneTerminal {
     this.core = core;
     this.element = element;
     this.inputDisabled = inputDisabled;
+    element.dataset.paneTerminal = '';
     // Never null: wterm echoes input locally without a handler.
     wterm.onData = (data) => this.emit(data);
     wterm.onBinary = (data) => this.emit(data);

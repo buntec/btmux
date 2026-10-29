@@ -366,6 +366,16 @@ try {
     return mac.evaluate(() => (window as any).testInput.join(''));
   };
   assert.equal(await chords(), '\x01\x05\x15\x0b\x1b[1;10D');
+  // Outside panes, the chords never reach the page's handlers.
+  await mac.evaluate(() => {
+    const input = document.createElement('input');
+    input.id = 'cmd-chord-probe';
+    input.addEventListener('keydown', () => ((window as any).probeKeys = ((window as any).probeKeys ?? 0) + 1));
+    document.body.append(input);
+  });
+  await mac.locator('#cmd-chord-probe').press('Meta+ArrowLeft');
+  assert.equal(await mac.evaluate(() => (window as any).probeKeys ?? 0), 0);
+  await mac.evaluate(() => document.getElementById('cmd-chord-probe')!.remove());
   const setEditKeys = async (value: boolean) => {
     await mac.evaluate(
       (value) =>

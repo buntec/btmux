@@ -111,7 +111,8 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   arriving before the DA1 reply. Flag changes still pass through to the
   emulators, which encode keys with them; replays end with the current
   stack (`Replay::viewer_snapshot`), since eviction can drop the pushes.
-  Shells get `TERM=xterm-256color` and `TERM_PROGRAM=btmux`.
+  Shells get `TERM=xterm-256color` and `TERM_PROGRAM=btmux`, without the
+  server's own terminal or multiplexer variables (`OUTER_TERMINAL_ENV`).
   Color queries (OSC 4/10/11/12, `CSI ? 996 n`) are answered the same way from the
   shared `pty/colors.rs` palette, overlaid with colors the program set in that
   pane (OSC 104/110–112 and RIS reset them; mixed set/query OSCs are split);

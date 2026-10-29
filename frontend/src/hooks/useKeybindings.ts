@@ -22,7 +22,7 @@ import { matchesPrefix, parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey
 import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { pasteImage } from '../lib/pasteImage';
-import { macEditKey } from '../lib/macEditKeys';
+import { inPaneTerminal, macEditKey } from '../lib/macEditKeys';
 import { sendToNvim } from '../components/NvimSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
@@ -133,8 +133,8 @@ export function useKeybindings(
       // The built-in Neovim decides itself which of these to keep (see nvimKey).
       const fromNvim = (e.target as HTMLElement | null)?.dataset?.nvimInput !== undefined;
       if ((e.metaKey || isFKey) && !fromNvim) {
-        // PaneTerminal translates Cmd editing chords.
-        if (macosEditKeysRef.current && macEditKey(e) !== null) return;
+        // PaneTerminal translates Cmd editing chords; other surfaces never see them.
+        if (macosEditKeysRef.current && macEditKey(e) !== null && inPaneTerminal(e.target)) return;
         e.stopPropagation();
         return;
       }

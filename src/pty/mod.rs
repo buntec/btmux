@@ -29,6 +29,40 @@ use windows::{foreground, resize_master, Master, Probe};
 /// Largest single write to a PTY's input queue.
 pub const MAX_INPUT: usize = 64 * 1024;
 
+/// What the server's own terminal or multiplexer sets; programs detect
+/// features (and tmux/screen passthrough) from them.
+const OUTER_TERMINAL_ENV: [&str; 29] = [
+    "TERM_SESSION_ID",
+    "TERMINFO",
+    "LC_TERMINAL",
+    "LC_TERMINAL_VERSION",
+    "COLORFGBG",
+    "GHOSTTY_BIN_DIR",
+    "GHOSTTY_RESOURCES_DIR",
+    "GHOSTTY_SHELL_FEATURES",
+    "KITTY_INSTALLATION_DIR",
+    "KITTY_LISTEN_ON",
+    "KITTY_PID",
+    "KITTY_PUBLIC_KEY",
+    "KITTY_WINDOW_ID",
+    "ITERM_PROFILE",
+    "ITERM_SESSION_ID",
+    "WEZTERM_EXECUTABLE",
+    "WEZTERM_EXECUTABLE_DIR",
+    "WEZTERM_PANE",
+    "WEZTERM_UNIX_SOCKET",
+    "ALACRITTY_SOCKET",
+    "ALACRITTY_WINDOW_ID",
+    "VTE_VERSION",
+    "KONSOLE_VERSION",
+    "WT_SESSION",
+    "WT_PROFILE_ID",
+    "TMUX",
+    "TMUX_PANE",
+    "STY",
+    "ZELLIJ",
+];
+
 /// This server's binary, read at startup: once it is replaced on disk, Linux
 /// reports `<path> (deleted)`.
 pub fn server_exe() -> Option<&'static Path> {
@@ -293,6 +327,9 @@ impl PtyHandle {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         // Not the server's own terminal, which panes would otherwise inherit.
+        for var in OUTER_TERMINAL_ENV {
+            cmd.env_remove(var);
+        }
         cmd.env("TERM_PROGRAM", "btmux");
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());

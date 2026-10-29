@@ -1,4 +1,5 @@
 use std::net::TcpListener;
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -13,7 +14,7 @@ use tauri::webview::cookie::SameSite;
 use tauri::webview::{Cookie, NewWindowResponse, WebviewWindowBuilder};
 use tauri::{AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow};
 use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
 
 // Shared with the backend; only the launcher reads registrations.
 #[allow(dead_code)]
@@ -23,6 +24,7 @@ mod discovery;
 mod servers;
 
 const SWITCH_SERVER: &str = "switch-server";
+const DESKTOP_PROFILE: &str = "desktop";
 
 #[derive(Default)]
 struct Server {
@@ -41,6 +43,8 @@ struct ServerChoice {
     profile: String,
     url: String,
     bundled: bool,
+    // A desktop-profile server the app may stop.
+    desktop: bool,
 }
 
 #[tauri::command]
@@ -61,6 +65,7 @@ async fn discover_servers(state: State<'_, Server>) -> Result<Vec<ServerChoice>,
             profile: server.profile.clone().unwrap_or_else(|| "default".into()),
             url: format!("http://{}/", server.address),
             bundled: Some(server.address) == bundled,
+            desktop: server.profile.as_deref() == Some(DESKTOP_PROFILE),
         })
         .collect();
     *state.choices.lock().unwrap() = servers;
@@ -155,7 +160,7 @@ async fn connect_server(
     .map_err(|_| "Could not connect to btmux.".to_string())?
 }
 
-fn stop_server(child: CommandChild) {
+fn terminate(child: CommandChild) {
     #[cfg(unix)]
     if unsafe { libc::kill(child.pid() as i32, libc::SIGTERM) } != 0 {
         let _ = child.kill();
@@ -164,26 +169,15 @@ fn stop_server(child: CommandChild) {
     let _ = child.kill();
 }
 
-fn start_private_server(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    let state = app.state::<Server>();
-    let running = state.private.lock().unwrap().clone();
-    if let Some(server) = running
-        && servers::ready(&server)
-    {
-        return open_server(&window, &server);
-    }
+// The bundled server's command, with the desktop profile and a free port.
+fn sidecar(app: &AppHandle) -> Result<(Command, u16), String> {
     let port = unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?;
-    let token = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut sidecar = app
         .shell()
         .sidecar("btmux")
         .map_err(|_| "Could not find the bundled btmux server.".to_string())?;
-    // Probe the login shell before locking; it can take seconds.
+    // Can take seconds: probe before taking locks.
     #[cfg(target_os = "macos")]
     if let Some(shell) = login_shell() {
         // GUI launches miss PATH additions from interactive shell startup.
@@ -194,22 +188,66 @@ fn start_private_server(app: AppHandle, window: WebviewWindow) -> Result<(), Str
             sidecar = sidecar.env("SHELL", shell);
         }
     }
+    let sidecar = sidecar.args([
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port.to_string(),
+        "--profile",
+        DESKTOP_PROFILE,
+        "--no-browser",
+    ]);
+    Ok((sidecar, port))
+}
+
+fn start_desktop_server(
+    app: AppHandle,
+    window: WebviewWindow,
+    persistent: bool,
+) -> Result<(), String> {
+    let state = app.state::<Server>();
+    let running = state.private.lock().unwrap().clone();
+    if let Some(server) = running
+        && servers::ready(&server)
+    {
+        if persistent {
+            return Err("The desktop server is running and stops when you quit. Stop it first to start one that keeps running.".into());
+        }
+        return open_server(&window, &server);
+    }
+    // A server that kept running owns the desktop profile.
+    if let Some(server) = servers::discover()?
+        .into_iter()
+        .find(|server| server.profile.as_deref() == Some(DESKTOP_PROFILE))
+    {
+        return open_server(&window, &server);
+    }
+    let (sidecar, port) = sidecar(&app)?;
+    if persistent {
+        start_persistent_server(sidecar, &window)
+    } else {
+        start_private_server(&app, sidecar, port, &window)
+    }
+}
+
+fn start_private_server(
+    app: &AppHandle,
+    sidecar: Command,
+    port: u16,
+    window: &WebviewWindow,
+) -> Result<(), String> {
+    let state = app.state::<Server>();
+    let token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
     let mut owned = state.child.lock().unwrap();
     if owned.is_some() {
         return Err("The desktop server is already starting.".into());
     }
     let (mut events, child) = sidecar
-        .args([
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-            "--profile",
-            "desktop",
-            "--no-browser",
-            "--desktop-parent-pid",
-            &std::process::id().to_string(),
-        ])
+        .args(["--desktop-parent-pid", &std::process::id().to_string()])
         .env("BTMUX_AUTH_TOKEN", &token)
         .spawn()
         .map_err(|_| "Could not start the bundled btmux server.".to_string())?;
@@ -243,18 +281,18 @@ fn start_private_server(app: AppHandle, window: WebviewWindow) -> Result<(), Str
     let server = discovery::RunningServer {
         pid,
         address: format!("127.0.0.1:{port}").parse().unwrap(),
-        profile: Some("desktop".into()),
+        profile: Some(DESKTOP_PROFILE.into()),
         token,
     };
     let result = (|| {
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
             if exited_rx.try_recv().is_ok() {
-                return Err("The bundled server exited. Another btmux app or server may be using the desktop profile.".into());
+                return Err(PROFILE_IN_USE.into());
             }
             if servers::ready(&server) {
                 *state.private.lock().unwrap() = Some(server.clone());
-                return open_server(&window, &server);
+                return open_server(window, &server);
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -264,16 +302,144 @@ fn start_private_server(app: AppHandle, window: WebviewWindow) -> Result<(), Str
         && let Some(child) = state.child.lock().unwrap().take()
     {
         *state.private.lock().unwrap() = None;
-        stop_server(child);
+        terminate(child);
     }
     result
 }
 
+const PROFILE_IN_USE: &str =
+    "The bundled server exited. Another btmux app or server may be using the desktop profile.";
+
+// Detached from the app: no parent watch, pipes, or shared session. It
+// registers like a CLI server, so later launches discover it.
+fn start_persistent_server(sidecar: Command, window: &WebviewWindow) -> Result<(), String> {
+    let registration = discovery::state_dir()
+        .ok_or("Could not find the btmux state directory.")?
+        .join(DESKTOP_PROFILE)
+        .join("state.server");
+    let mut command = std::process::Command::from(sidecar);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|_| "Could not start the bundled btmux server.".to_string())?;
+    let pid = child.id();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let server = loop {
+        if !matches!(child.try_wait(), Ok(None)) {
+            return Err(PROFILE_IN_USE.into());
+        }
+        if let Some(server) = discovery::read_registration(&registration)
+            && server.pid == pid
+            && servers::ready(&server)
+        {
+            break server;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Could not start btmux. Check the btmux logs.".into());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    // Reap it if it stops while the app runs.
+    std::thread::spawn(move || child.wait());
+    open_server(window, &server)
+}
+
 #[tauri::command]
-async fn start_server(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || start_private_server(app, window))
+async fn start_server(
+    app: AppHandle,
+    window: WebviewWindow,
+    persistent: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || start_desktop_server(app, window, persistent))
         .await
         .map_err(|_| "Could not start btmux.".to_string())?
+}
+
+#[tauri::command]
+async fn stop_server(
+    app: AppHandle,
+    state: State<'_, Server>,
+    address: String,
+) -> Result<(), String> {
+    let server = state
+        .choices
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|server| server.address.to_string() == address)
+        .cloned()
+        .ok_or("This server is no longer listed. Refresh the server list.")?;
+    if server.profile.as_deref() != Some(DESKTOP_PROFILE) {
+        return Err("Only desktop servers can be stopped here.".into());
+    }
+    let private = state
+        .private
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|private| private.address == server.address);
+    tauri::async_runtime::spawn_blocking(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        if private {
+            let state = app.state::<Server>();
+            let child = state.child.lock().unwrap().take();
+            *state.private.lock().unwrap() = None;
+            if let Some(child) = child {
+                let pid = child.pid();
+                terminate(child);
+                while process_running(pid) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+            return Ok(());
+        }
+        servers::shutdown(&server)?;
+        // Stopped once its registration is gone and the profile is free.
+        let registration = discovery::state_dir()
+            .map(|dir| dir.join(DESKTOP_PROFILE).join("state.server"))
+            .ok_or("Could not find the btmux state directory.")?;
+        while discovery::read_registration(&registration).is_some_and(|r| r.pid == server.pid) {
+            if Instant::now() >= deadline {
+                return Err("The server did not stop.".into());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "Could not stop btmux.".to_string())?
+}
+
+fn process_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    return unsafe { libc::kill(pid as i32, 0) } == 0;
+    // `kill` uses TerminateProcess, which doesn't let it linger.
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -359,6 +525,7 @@ pub fn run() {
             discover_servers,
             connect_server,
             start_server,
+            stop_server,
             notify,
             desktop_info
         ])
@@ -421,7 +588,7 @@ pub fn run() {
                 && let Some(server) = app.try_state::<Server>()
                 && let Some(child) = server.child.lock().unwrap().take()
             {
-                stop_server(child);
+                terminate(child);
             }
         });
 }

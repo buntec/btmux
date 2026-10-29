@@ -78,6 +78,7 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/notify", axum::routing::post(api_notify))
         .route("/api/server/upgrade", axum::routing::post(api_upgrade))
+        .route("/api/server/shutdown", axum::routing::post(api_shutdown))
         .route(
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify)
@@ -147,6 +148,20 @@ async fn api_upgrade(
         Err(Refusal::Incompatible(error)) => (StatusCode::CONFLICT, error).into_response(),
         Err(Refusal::Busy(error)) => (StatusCode::LOCKED, error).into_response(),
     }
+}
+
+static SHUTDOWN: std::sync::LazyLock<tokio::sync::Notify> =
+    std::sync::LazyLock::new(tokio::sync::Notify::new);
+
+/// Resolves once a client asks the server to stop.
+pub async fn shutdown_requested() {
+    SHUTDOWN.notified().await;
+}
+
+async fn api_shutdown() -> StatusCode {
+    tracing::info!("shutdown requested over the API");
+    SHUTDOWN.notify_one();
+    StatusCode::ACCEPTED
 }
 
 #[derive(Deserialize)]
@@ -960,6 +975,35 @@ mod pane_notification_tests {
         let event: serde_json::Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
         assert_eq!(event["type"], "focus_pane");
         assert_eq!(event["pane_id"], pane.to_string());
+    }
+
+    #[tokio::test]
+    async fn shutdown_request_signals_the_server() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        let response = app
+            .oneshot(
+                Request::post("/api/server/shutdown")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        tokio::time::timeout(std::time::Duration::from_secs(1), shutdown_requested())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

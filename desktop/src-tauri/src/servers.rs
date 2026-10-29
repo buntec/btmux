@@ -43,6 +43,24 @@ pub fn ready(server: &RunningServer) -> bool {
         .is_some_and(|info| info.profile == server.profile)
 }
 
+pub fn shutdown(server: &RunningServer) -> Result<(), String> {
+    let response = client()
+        .and_then(|client| {
+            client
+                .post(format!("http://{}/api/server/shutdown", server.address))
+                .bearer_auth(&server.token)
+                .send()
+        })
+        .map_err(|_| "Could not stop this server.".to_string())?;
+    match response.status() {
+        status if status.is_success() => Ok(()),
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED => {
+            Err("This server's version can't be stopped from the app.".into())
+        }
+        _ => Err("Could not stop this server.".into()),
+    }
+}
+
 fn discover_in(dir: &Path, client: &Client) -> Vec<RunningServer> {
     let mut servers = Vec::new();
     let mut addresses = HashSet::new();

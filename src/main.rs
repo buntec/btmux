@@ -506,6 +506,7 @@ async fn shutdown_signal(parent_pid: Option<u32>) {
             _ = tokio::signal::ctrl_c() => {},
             _ = term.recv() => {},
             _ = desktop_parent_exit(parent_pid) => {},
+            _ = server::shutdown_requested() => {},
         }
     }
     #[cfg(windows)]
@@ -518,6 +519,7 @@ async fn shutdown_signal(parent_pid: Option<u32>) {
             _ = close.recv() => {},
             _ = shutdown.recv() => {},
             _ = desktop_parent_exit(parent_pid) => {},
+            _ = server::shutdown_requested() => {},
         }
     }
 }

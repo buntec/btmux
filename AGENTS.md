@@ -182,6 +182,10 @@ credential; normal shutdown removes it. The desktop
 startup picker probes these records through the authenticated API and installs
 an HTTP-only cookie before connecting. Reused servers remain independently
 owned; only a bundled private server is stopped when the desktop app exits.
+With "Keep it running after btmux quits", the launcher starts the bundled server
+detached (own session, no parent watch, null stdio) so it registers and
+outlives the app; the picker stops desktop-profile servers through
+`POST /api/server/shutdown`.
 
 ### UI and theme
 

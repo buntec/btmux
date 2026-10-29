@@ -293,7 +293,9 @@ ties it to a turn: reports for a finished or replaced turn are ignored, and a
 repeated start of the running turn, such as input queued into it, changes
 nothing. Reports without turn identities can't be ordered this way. A
 completion unblocks only the tool its permission named, by `tool_use_id` when
-both send one, else by `tool_name` and `tool_input`. Intermediate `TaskCompleted` events only notify;
+both send one, else by `tool_name` and `tool_input`. The completion's input
+may add fields, as answering `AskUserQuestion` adds its answers, but must keep
+every field of the permission's. Intermediate `TaskCompleted` events only notify;
 they do not mark the whole turn done.
 
 Use `DELETE` on the same endpoint when the reporter no longer knows which agent
@@ -370,7 +372,8 @@ reports. Agent status is runtime-only and resets when btmux restarts.
 ### Detection manifests and diagnostics
 
 The bundled rules are adapted from Herdr revision
-`5da0a01e1eedda054db0c81dd3a780000c40d9f0`; attribution and the upstream license
+`5da0a01e1eedda054db0c81dd3a780000c40d9f0` (Claude's from
+`bc8c28988f75c538d4ca058b702f5adbea30566e`); attribution and the upstream license
 live in `third-party/herdr`. Codex is idle when its title has no spinner,
 unless its working timer shows. Codex runs hooks in a shared app-server daemon,
 whose environment names the pane that started it, so only `codex --no-daemon`

@@ -14,6 +14,7 @@ use axum::{
 };
 use uuid::Uuid;
 
+use crate::shell::Dialect;
 use crate::ws::nvim::PrivateDir;
 use crate::AppState;
 
@@ -44,6 +45,21 @@ fn save(ext: &str, bytes: &[u8]) -> Result<std::path::PathBuf, String> {
         .and_then(|mut file| file.write_all(bytes))
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
+}
+
+/// `path` as the shell names it, quoted only if needed: agents attach a path
+/// that parses as one shell word, and a bare one is the most widely accepted.
+fn pasted_path(dialect: Dialect, path: &str) -> String {
+    let path = dialect.path(path);
+    let windows = matches!(dialect, Dialect::PowerShell | Dialect::Cmd);
+    let bare = path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-:".contains(c) || (windows && c == '\\'));
+    if bare {
+        path.into_owned()
+    } else {
+        dialect.quote(&path)
+    }
 }
 
 /// `POST /api/panes/{id}/paste-image`: save the body (PNG, JPEG, GIF, or
@@ -77,7 +93,7 @@ pub async fn api_paste_image(
     }
     match tokio::task::spawn_blocking(move || save(ext, &body)).await {
         Ok(Ok(path)) => {
-            let path = dialect.path(&path.to_string_lossy()).into_owned();
+            let path = pasted_path(dialect, &path.to_string_lossy());
             Json(serde_json::json!({ "path": path })).into_response()
         }
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
@@ -100,5 +116,21 @@ mod tests {
         assert_eq!(extension("image/webp"), Some("webp"));
         assert_eq!(extension("image/svg+xml"), None);
         assert_eq!(extension(""), None);
+    }
+
+    #[test]
+    fn quotes_pasted_paths_only_if_needed() {
+        let p = "/var/folders/x_y/T/btmux-1/paste-2.png";
+        assert_eq!(pasted_path(Dialect::Posix, p), p);
+        assert_eq!(
+            pasted_path(Dialect::Posix, "/tmp/a b/paste.png"),
+            "'/tmp/a b/paste.png'"
+        );
+        let win = r"C:\Users\Ann\AppData\Local\Temp\paste.png";
+        assert_eq!(pasted_path(Dialect::PowerShell, win), win);
+        assert_eq!(
+            pasted_path(Dialect::Cmd, r"C:\Users\A B\paste.png"),
+            r#""C:\Users\A B\paste.png""#
+        );
     }
 }

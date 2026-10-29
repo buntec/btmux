@@ -319,21 +319,21 @@ export function runAction(
         blocked();
         break;
       }
-      const readImage = async () => {
-        if (!navigator.clipboard.read) return null;
+      // One read: WebKit rejects a second clipboard read after an await.
+      const read = async (): Promise<Blob | string> => {
+        if (!navigator.clipboard.read) return navigator.clipboard.readText();
         for (const item of await navigator.clipboard.read()) {
-          if (item.types.includes('text/plain')) return null;
+          if (item.types.includes('text/plain')) return (await item.getType('text/plain')).text();
           const type = item.types.find((t) => t.startsWith('image/'));
           if (type) return item.getType(type);
         }
-        return null;
+        return '';
       };
-      readImage()
-        .catch(() => null)
-        .then(async (image) => {
-          if (image) return pasteImage(paneId!, term, image);
-          const text = await navigator.clipboard.readText();
-          if (text) term.paste(text);
+      read()
+        .catch(() => navigator.clipboard.readText())
+        .then((data) => {
+          if (typeof data !== 'string') return pasteImage(paneId!, term, data);
+          if (data) term.paste(data);
         })
         .catch(blocked);
       break;

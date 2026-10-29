@@ -1037,7 +1037,8 @@ mod pane_notification_tests {
             .await
             .unwrap();
         let reply: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let path = std::path::PathBuf::from(reply["path"].as_str().unwrap());
+        // `/bin/sh` quotes Windows paths.
+        let path = std::path::PathBuf::from(reply["path"].as_str().unwrap().trim_matches('\''));
         assert_eq!(path.extension().unwrap(), "png");
         assert_eq!(std::fs::read(&path).unwrap(), b"PNG");
         #[cfg(unix)]

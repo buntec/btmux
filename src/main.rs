@@ -575,7 +575,7 @@ fn spawn_config_watcher(path: std::path::PathBuf, state: AppState) {
 
     let mut watcher =
         match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if res.is_ok() {
+            if res.is_ok_and(|event| changes_config(event.kind)) {
                 let _ = tx.send(());
             }
         }) {
@@ -602,6 +602,15 @@ fn spawn_config_watcher(path: std::path::PathBuf, state: AppState) {
             handle_config_reload(&path, &state).await;
         }
     });
+}
+
+/// inotify reports reads, so a reload would otherwise trigger the next one.
+fn changes_config(kind: notify::EventKind) -> bool {
+    use notify::event::{AccessKind, AccessMode};
+    match kind {
+        notify::EventKind::Access(kind) => kind == AccessKind::Close(AccessMode::Write),
+        _ => true,
+    }
 }
 
 fn install_agent_hooks(target: agent_hooks::Target) {
@@ -843,7 +852,23 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{log_directives, resolve_log_level};
+    use super::{changes_config, log_directives, resolve_log_level};
+    use notify::event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind};
+
+    #[test]
+    fn config_reads_do_not_reload() {
+        assert!(!changes_config(EventKind::Access(AccessKind::Open(
+            AccessMode::Any
+        ))));
+        assert!(!changes_config(EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(changes_config(EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        assert!(changes_config(EventKind::Modify(ModifyKind::Any)));
+        assert!(changes_config(EventKind::Create(CreateKind::File)));
+    }
 
     #[test]
     fn environment_log_level_overrides_config_when_non_empty() {

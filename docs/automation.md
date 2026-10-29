@@ -169,6 +169,7 @@ shows an error and leaves that program's input untouched.
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session        |
 | `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session             |
 | `GET/POST/DELETE /api/panes/<pane-id>/agent-status`             | Explain, set, or clear semantic agent status                  |
+| `POST /api/server/shutdown`                                     | Stop the server, closing every shell                          |
 
 ## MCP server
 

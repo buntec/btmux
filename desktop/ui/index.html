@@ -8,57 +8,111 @@
       :root { color-scheme: dark; }
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #171717; color: #ddd; font: 14px system-ui, sans-serif; }
       main { width: min(480px, calc(100vw - 64px)); padding: 32px; }
-      h1 { font-size: 24px; font-weight: 600; margin: 0 0 12px; }
-      p { color: #aaa; line-height: 1.5; }
-      ul { list-style: none; padding: 0; margin: 24px 0; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 24px; }
+      h2 { font-size: 13px; font-weight: 600; margin: 0; color: #aaa; text-transform: uppercase; letter-spacing: 0.04em; }
+      p { color: #aaa; line-height: 1.5; margin: 0; }
+      section { margin-bottom: 28px; }
+      .head { display: flex; align-items: center; justify-content: space-between; min-height: 28px; margin-bottom: 8px; }
+      .card { border: 1px solid #333; border-radius: 8px; padding: 16px; }
+      .row { display: flex; align-items: center; gap: 8px; }
+      .info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .info strong, .info small { display: block; }
+      .info small { margin-top: 4px; color: #aaa; line-height: 1.4; }
+      ul { list-style: none; padding: 0; margin: 0; }
       li + li { margin-top: 8px; }
-      button { background: #252525; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 12px 16px; cursor: pointer; font: inherit; }
+      button { background: #252525; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px 14px; cursor: pointer; font: inherit; white-space: nowrap; }
       button:hover { background: #333; }
       button:focus-visible { outline: 2px solid #b4c9ff; outline-offset: 3px; }
       button:disabled { opacity: 0.5; cursor: wait; }
-      .server { width: 100%; text-align: left; }
-      .server strong, .server small { display: block; }
-      .server small { margin-top: 4px; color: #aaa; }
-      .actions { display: flex; gap: 8px; }
-      .hint { font-size: 12px; }
+      .primary { background: #b4c9ff; border-color: #b4c9ff; color: #171717; font-weight: 600; }
+      .primary:hover { background: #c8d7ff; }
+      .link { background: none; border: 0; padding: 4px 6px; color: #b4c9ff; }
+      .link:hover { background: none; text-decoration: underline; }
+      .stop.confirm { border-color: #ffb4b4; color: #ffb4b4; }
+      fieldset { border: 0; padding: 0; margin: 12px 0 16px; }
+      label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+      label + label { margin-top: 10px; }
+      label small { display: block; margin-top: 2px; color: #aaa; line-height: 1.4; }
+      input { margin: 2px 0 0; accent-color: #b4c9ff; }
+      code { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
       #error { color: #ffb4b4; }
-      [hidden] { display: none; }
+      #status:empty, #error:empty { display: none; }
+      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
     <main>
-      <h1 id="heading">Looking for btmux servers…</h1>
-      <p id="description"></p>
-      <ul id="servers" aria-label="Running btmux servers"></ul>
+      <h1>btmux</h1>
+      <section id="desktop" aria-labelledby="desktop-title" hidden>
+        <div class="head"><h2 id="desktop-title">Desktop server</h2></div>
+        <div class="card">
+          <div id="desktop-running" class="row" hidden>
+            <div class="info">
+              <strong>Running</strong>
+              <small id="desktop-detail"></small>
+            </div>
+            <button id="desktop-stop" class="stop" type="button">Stop</button>
+            <button id="desktop-connect" class="primary" type="button" aria-label="Connect to the desktop server">Connect</button>
+          </div>
+          <div id="desktop-stopped">
+            <div class="info"><strong>Not running</strong></div>
+            <fieldset id="lifetime">
+              <legend hidden>When btmux quits</legend>
+              <label>
+                <input type="radio" name="lifetime" value="private" checked />
+                <span>Stop it when btmux quits<small>Its shells close with the app.</small></span>
+              </label>
+              <label>
+                <input id="persistent" type="radio" name="lifetime" value="persistent" />
+                <span>Keep it running after btmux quits<small>Its shells keep running until you stop it here or log out.</small></span>
+              </label>
+            </fieldset>
+            <button id="start" class="primary" type="button">Start desktop server</button>
+          </div>
+        </div>
+      </section>
+      <section id="others" aria-labelledby="others-title" hidden>
+        <div class="head">
+          <h2 id="others-title">Command-line servers</h2>
+          <button id="refresh" class="link" type="button">Refresh</button>
+        </div>
+        <ul id="servers" aria-labelledby="others-title"></ul>
+        <p id="none">None running. Servers you start with the <code>btmux</code> command appear here.</p>
+      </section>
       <p id="status" role="status" aria-live="polite"></p>
       <p id="error" role="alert" hidden></p>
-      <section id="controls" hidden>
-        <div class="actions">
-          <button id="start" type="button">Start desktop server</button>
-          <button id="refresh" type="button">Refresh</button>
-        </div>
-        <p class="hint">New desktop servers stop when you quit.</p>
-      </section>
     </main>
     <script>
       const invoke = (command, args) => window.__TAURI__.core.invoke(command, args);
-      const heading = document.getElementById("heading");
-      const description = document.getElementById("description");
-      const servers = document.getElementById("servers");
-      const status = document.getElementById("status");
-      const error = document.getElementById("error");
-      const controls = document.getElementById("controls");
+      const element = (id) => document.getElementById(id);
+      const servers = element("servers");
+      const status = element("status");
+      const error = element("error");
+      const persistent = element("persistent");
+      const stopButton = element("desktop-stop");
+      let desktopServer = null;
+      let stopTimer;
+
+      try {
+        persistent.checked = localStorage.getItem("btmux-persistent") === "1";
+      } catch {}
+      element("lifetime").addEventListener("change", () => {
+        try {
+          localStorage.setItem("btmux-persistent", persistent.checked ? "1" : "0");
+        } catch {}
+      });
 
       function busy(message) {
         status.textContent = message;
         error.hidden = true;
-        document.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+        document.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
       }
 
       function idle() {
         status.textContent = "";
-        controls.hidden = false;
-        document.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+        element("desktop").hidden = false;
+        element("others").hidden = false;
+        document.querySelectorAll("button, input").forEach((control) => { control.disabled = false; });
       }
 
       function showError(message) {
@@ -68,17 +122,16 @@
       }
 
       async function start() {
-        busy("Starting btmux…");
+        busy("Starting the desktop server…");
         try {
-          await invoke("start_server");
+          await invoke("start_server", { persistent: persistent.checked });
         } catch (message) {
-          heading.textContent = "Could not start btmux";
           showError(message);
         }
       }
 
       async function connect(server) {
-        busy(`Connecting to ${server.profile}…`);
+        busy("Connecting…");
         try {
           await invoke("connect_server", { address: server.address });
         } catch (message) {
@@ -86,43 +139,92 @@
         }
       }
 
-      async function refresh(autoStart = false) {
-        busy("Looking for running servers…");
+      async function stop() {
+        busy("Stopping the desktop server…");
         try {
-          const choices = await invoke("discover_servers");
-          servers.replaceChildren();
-          for (const server of choices) {
-            const item = document.createElement("li");
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "server";
-            const name = document.createElement("strong");
-            name.textContent = `Connect to ${server.profile}`;
-            const address = document.createElement("small");
-            address.textContent = server.bundled ? `${server.url} · stops when you quit` : server.url;
-            button.append(name, address);
-            button.addEventListener("click", () => connect(server));
-            item.append(button);
-            servers.append(item);
-          }
-          heading.textContent = choices.length ? "Connect to btmux" : "No running servers found";
-          description.textContent = choices.length
-            ? "Servers started outside the app keep running when you quit."
-            : "Start a desktop server or refresh.";
-          if (autoStart && !choices.length) {
-            await start();
-          } else {
-            idle();
-            servers.querySelector("button")?.focus();
-          }
+          await invoke("stop_server", { address: desktopServer.address });
+          await refresh();
         } catch (message) {
-          heading.textContent = "Could not look for servers";
           showError(message);
         }
       }
 
-      document.getElementById("start").addEventListener("click", start);
-      document.getElementById("refresh").addEventListener("click", () => refresh());
+      function disarmStop() {
+        clearTimeout(stopTimer);
+        stopButton.classList.remove("confirm");
+        stopButton.textContent = "Stop";
+        stopButton.setAttribute("aria-label", "Stop the desktop server");
+      }
+
+      // The first click arms the button; a second within 5 seconds stops the server.
+      stopButton.addEventListener("click", () => {
+        if (stopButton.classList.contains("confirm")) {
+          disarmStop();
+          stop();
+          return;
+        }
+        stopButton.classList.add("confirm");
+        stopButton.textContent = "Close its shells?";
+        stopButton.setAttribute("aria-label", "Confirm stopping the desktop server and closing its shells");
+        stopTimer = setTimeout(disarmStop, 5000);
+      });
+
+      function render(choices) {
+        // The desktop profile allows one server, bundled or kept running.
+        desktopServer = choices.find((server) => server.desktop) ?? null;
+        element("desktop-running").hidden = !desktopServer;
+        element("desktop-stopped").hidden = !!desktopServer;
+        disarmStop();
+        if (desktopServer) {
+          const lifetime = desktopServer.bundled ? "Stops when btmux quits" : "Keeps running after btmux quits";
+          element("desktop-detail").textContent = `${lifetime} · ${desktopServer.address}`;
+        }
+        const others = choices.filter((server) => !server.desktop);
+        servers.replaceChildren(
+          ...others.map((server) => {
+            const item = document.createElement("li");
+            item.className = "card row";
+            const info = document.createElement("div");
+            info.className = "info";
+            // The command that starts it, which names its profile.
+            const name = document.createElement("strong");
+            const command = document.createElement("code");
+            command.textContent = server.profile === "default" ? "btmux" : `btmux --profile ${server.profile}`;
+            name.append(command);
+            const address = document.createElement("small");
+            address.textContent = server.address;
+            info.append(name, address);
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = "Connect";
+            button.setAttribute("aria-label", `Connect to ${server.profile}`);
+            button.addEventListener("click", () => connect(server));
+            item.append(info, button);
+            return item;
+          }),
+        );
+        element("none").hidden = others.length > 0;
+      }
+
+      async function refresh(autoStart = false) {
+        busy("Looking for running servers…");
+        try {
+          const choices = await invoke("discover_servers");
+          render(choices);
+          if (autoStart && !choices.length) {
+            await start();
+          } else {
+            idle();
+            (desktopServer ? element("desktop-connect") : servers.querySelector("button") ?? element("start")).focus();
+          }
+        } catch (message) {
+          showError(message);
+        }
+      }
+
+      element("start").addEventListener("click", start);
+      element("refresh").addEventListener("click", () => refresh());
+      element("desktop-connect").addEventListener("click", () => connect(desktopServer));
       // Set when returning from a server; only a fresh launch starts one.
       const returned = new URLSearchParams(location.search).get("return");
       refresh(!returned).then(() => {

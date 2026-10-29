@@ -22,3 +22,13 @@ export function getDesktopVersion(): Promise<string | null> {
 export function desktopVersionMismatch(desktop: string | null, server: string | undefined): boolean {
   return desktop !== null && server !== undefined && desktop !== server;
 }
+
+/** Whether btmux runs in the desktop app. */
+export function isDesktopApp(): boolean {
+  return !!(window as TauriWindow).__TAURI_INTERNALS__;
+}
+
+/** Returns the desktop app to its server picker. */
+export function switchDesktopServer(): void {
+  (window as TauriWindow).__TAURI_INTERNALS__?.invoke('switch_server').catch(() => {});
+}

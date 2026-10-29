@@ -1208,8 +1208,9 @@ mod tests {
         assert_ne!(agent.incarnation(), incarnation);
     }
 
-    /// Claude Code 2.1.312 recordings at 120x40: one `[seconds, kind, base64]`
-    /// per line; kind is `out` (PTY output), `in`, or `note`. Each accepts the
+    /// Claude Code 2.1.312 recordings at 120x40, made with
+    /// `scripts/record-agent-replay.py`: one `[seconds, kind, base64]` per
+    /// line; kind is `out` (PTY output), `in`, or `note`. Each accepts the
     /// trust dialog, submits a prompt, and answers one dialog. A named session
     /// (`claude -n`) draws its name in a rule below the dialog's footer.
     const CLAUDE_DIALOGS: [&str; 3] = [

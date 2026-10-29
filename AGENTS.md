@@ -239,6 +239,10 @@ sets it from the font's ascent and descent before `init()` measures it.
 wterm's `onData` stays non-null (null makes wterm echo input locally);
 `disable-stdin` drops input in `PaneTerminal`. `paste()` dispatches a
 paste event so wterm's paste path (bracketed paste, ESC stripping) applies.
+A paste with an image and no text (which wterm ignores) is uploaded to
+`POST /api/panes/{id}/paste-image` (`paste_image.rs`), saved in a private
+temp dir removed on shutdown, and its path pasted instead; Claude Code and
+Codex attach a pasted image path as an image.
 wterm keeps cell measurement private, so `measureCell()` reads its CSS cell
 dimensions; the decoration overlay uses the same geometry. `open()` waits for
 fonts before measuring, including for mirrors. Recheck measurement when bumping

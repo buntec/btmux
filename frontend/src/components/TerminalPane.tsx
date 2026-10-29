@@ -11,6 +11,7 @@ import { PaneBorderDraw } from './PaneBorderDraw';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
 import { LatexOverlay } from './LatexOverlay';
+import { clipboardImage, pasteImage } from '../lib/pasteImage';
 import { PaneSearch } from './PaneSearch';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
 import { cn } from '../lib/utils';
@@ -226,6 +227,15 @@ export function TerminalPane({
       container.addEventListener('keydown', claim, true);
       container.addEventListener('paste', claim, true);
       container.addEventListener('mousedown', claim, true);
+      // wterm ignores pastes without text.
+      const onPaste = (e: ClipboardEvent) => {
+        const image = clipboardImage(e.clipboardData);
+        if (!image) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void pasteImage(paneId, term, image);
+      };
+      container.addEventListener('paste', onPaste, true);
 
       let reconnectTimer = 0;
       let attempts = 0;
@@ -331,6 +341,7 @@ export function TerminalPane({
         offResize();
         container.removeEventListener('keydown', claim, true);
         container.removeEventListener('paste', claim, true);
+        container.removeEventListener('paste', onPaste, true);
         container.removeEventListener('mousedown', claim, true);
         cancelAnimationFrame(connectRaf);
         cancelAnimationFrame(revealRaf);

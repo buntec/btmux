@@ -1162,6 +1162,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn recorded_agy_turns_settle_idle_and_block_on_approval() {
+        let detector = Detector::new(None);
+        let recording = Recording::parse(include_str!(
+            "detection/fixtures/agy-1.4.10-command-approval.jsonl"
+        ));
+        let trusted = recording.note("trust: sent");
+        let dialog = recording.note("requesting permission for:: hit");
+        let answered = recording.note("approve: sent");
+        for offset in (0..300).step_by(50).map(Duration::from_millis) {
+            let start = Instant::now();
+            let process = AgentProcess {
+                pid: 10,
+                start_time: 5,
+            };
+            let mut agent = AgentLifecycle::detected(process, "agy".into(), start);
+            let mut states: Vec<AgentState> = Vec::new();
+            recording.replay(offset, |at, screen| {
+                agent.scan_screen(&detector, screen, start + at);
+                let state = agent.status.state.clone();
+                if at >= dialog + Duration::from_millis(300) && at < answered {
+                    assert_eq!(state, AgentState::Blocked, "{offset:?} {at:?}");
+                }
+                if at > trusted && states.last() != Some(&state) && state != AgentState::Unknown {
+                    states.push(state);
+                }
+            });
+            // Two turns, the second with a command approval.
+            assert_eq!(
+                states,
+                [
+                    AgentState::Idle,
+                    AgentState::Working,
+                    AgentState::Idle,
+                    AgentState::Working,
+                    AgentState::Blocked,
+                    AgentState::Working,
+                    AgentState::Idle,
+                ],
+                "offset: {offset:?}"
+            );
+        }
+    }
+
     fn report(event: AgentEvent, session: &str, turn: Option<&str>) -> AgentReport {
         AgentReport {
             event,

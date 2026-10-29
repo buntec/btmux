@@ -1042,6 +1042,126 @@ mod tests {
         assert_eq!(agent.status.state, AgentState::Idle);
     }
 
+    /// Claude Code 2.1.312 recordings at 120x40: one `[seconds, kind, base64]`
+    /// per line; kind is `out` (PTY output), `in`, or `note`. Each accepts the
+    /// trust dialog, submits a prompt, and answers one dialog.
+    const CLAUDE_DIALOGS: [&str; 2] = [
+        include_str!("detection/fixtures/claude-2.1.312-bash-approval.jsonl"),
+        include_str!("detection/fixtures/claude-2.1.312-ask-question.jsonl"),
+    ];
+
+    struct Recording {
+        output: Vec<(Duration, Vec<u8>)>,
+        notes: HashMap<String, Duration>,
+    }
+
+    impl Recording {
+        fn parse(text: &str) -> Self {
+            use base64::Engine;
+            let mut recording = Self {
+                output: Vec::new(),
+                notes: HashMap::new(),
+            };
+            for line in text.lines() {
+                let (at, kind, data): (f64, String, String) = serde_json::from_str(line).unwrap();
+                let at = Duration::from_secs_f64(at);
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap();
+                match kind.as_str() {
+                    "out" => recording.output.push((at, data)),
+                    "note" => {
+                        recording.notes.insert(String::from_utf8(data).unwrap(), at);
+                    }
+                    _ => {}
+                }
+            }
+            recording
+        }
+
+        fn note(&self, name: &str) -> Duration {
+            self.notes[name]
+        }
+
+        /// Samples the screen every 300 ms (the detector tick) from `offset`.
+        fn replay(&self, offset: Duration, mut tick: impl FnMut(Duration, &ScreenSnapshot)) {
+            let end = self.output.last().unwrap().0 + Duration::from_secs(2);
+            let mut screen = crate::pty::screen::LiveScreen::new(120, 40);
+            let mut pending = self.output.iter().enumerate().peekable();
+            let mut at = offset;
+            while at <= end {
+                while let Some((index, (_, bytes))) = pending.next_if(|(_, (t, _))| *t <= at) {
+                    let data = crate::pty::replay::Output::Data(bytes.clone().into());
+                    screen.push(&data, index as u64 + 1);
+                }
+                tick(at, &screen.snapshot());
+                at += Duration::from_millis(300);
+            }
+        }
+    }
+
+    #[test]
+    fn recorded_claude_dialogs_block_with_and_without_hooks() {
+        let detector = Detector::new(None);
+        for text in CLAUDE_DIALOGS {
+            let recording = Recording::parse(text);
+            let dialog = recording.note("dialog wait: hit");
+            let answered = recording.note("approve");
+            // Claude fires PermissionRequest for every dialog, AskUserQuestion included.
+            let hooks = [
+                (recording.note("submit"), AgentEvent::TurnStart),
+                (dialog, AgentEvent::PermissionRequest),
+                (answered, AgentEvent::ToolFinished),
+                (
+                    answered + Duration::from_millis(1700),
+                    AgentEvent::TurnFinished,
+                ),
+            ];
+            for with_hooks in [false, true] {
+                for offset in (0..300).step_by(50).map(Duration::from_millis) {
+                    let start = Instant::now();
+                    let mut agent = claude(start);
+                    let mut events = hooks.iter().filter(|_| with_hooks).peekable();
+                    let mut states: Vec<AgentState> = Vec::new();
+                    recording.replay(offset, |at, screen| {
+                        while let Some((_, event)) = events.next_if(|(t, _)| *t <= at) {
+                            agent.apply(report(*event, "s", None), screen.revision, start + at);
+                        }
+                        agent.scan_screen(&detector, screen, start + at);
+                        let state = agent.status.state.clone();
+                        if at >= dialog + Duration::from_millis(300) && at < answered {
+                            assert_eq!(state, AgentState::Blocked, "{offset:?} {at:?}");
+                            // So `osc_title_working`, which outranks every blocker,
+                            // cannot hide a dialog.
+                            assert!(screen.title.starts_with('✳'), "{:?}", screen.title);
+                        }
+                        if states.last() != Some(&state) && state != AgentState::Unknown {
+                            states.push(state);
+                        }
+                    });
+                    let last = if with_hooks {
+                        AgentState::Done
+                    } else {
+                        AgentState::Idle
+                    };
+                    // The trust dialog, its prompt, the turn, its dialog, and the end.
+                    assert_eq!(
+                        states,
+                        [
+                            AgentState::Blocked,
+                            AgentState::Idle,
+                            AgentState::Working,
+                            AgentState::Blocked,
+                            AgentState::Working,
+                            last,
+                        ],
+                        "hooks: {with_hooks}, offset: {offset:?}"
+                    );
+                }
+            }
+        }
+    }
+
     fn report(event: AgentEvent, session: &str, turn: Option<&str>) -> AgentReport {
         AgentReport {
             event,

@@ -243,7 +243,7 @@ impl SessionManager {
             .map(|agent| {
                 (
                     agent.status.state.clone(),
-                    agent.blocked_tool_id().map(str::to_owned),
+                    agent.blocked_tool().map(str::to_owned),
                 )
             })
     }
@@ -1966,7 +1966,7 @@ mod agent_tests {
             event,
             session_id: Some(session.to_string()),
             turn_id: None,
-            tool_use_id: None,
+            tool: None,
             process: None,
             agent: Some("codex".to_string()),
             source: Some("hook".to_string()),

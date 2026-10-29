@@ -652,7 +652,7 @@ mod tests {
             event: AgentEvent::TurnStart,
             session_id: Some("s".into()),
             turn_id: None,
-            tool_use_id: None,
+            tool: None,
             process: None,
             agent: None,
             source: Some("hook".into()),

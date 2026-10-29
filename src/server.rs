@@ -261,6 +261,8 @@ struct PaneNotifyRequest {
     session_id: Option<String>,
     /// Turn identity, when the harness provides one.
     turn_id: Option<String>,
+    /// Claude Code: shared by every event of one turn.
+    prompt_id: Option<String>,
     tool_use_id: Option<String>,
     /// Explicit event field (custom callers).
     event: Option<String>,
@@ -383,8 +385,8 @@ impl PaneNotifyRequest {
         Some(AgentReport {
             event: infer_agent_event(event, self.notification_type.as_deref())?,
             session_id: clean_status_field(self.session_id.clone(), 128),
-            turn_id: clean_status_field(self.turn_id.clone(), 128),
-            tool_use_id: clean_status_field(self.tool_use_id.clone(), 128),
+            turn_id: clean_status_field(self.turn_id.clone().or(self.prompt_id.clone()), 128),
+            tool: self.tool(),
             process,
             agent: clean_status_field(self.agent.clone(), 48),
             source: clean_status_field(
@@ -406,6 +408,25 @@ impl PaneNotifyRequest {
 }
 
 impl PaneNotifyRequest {
+    /// Identifies a tool call across its permission and completion hooks.
+    /// Claude Code's PermissionRequest has no `tool_use_id`, so the tool and
+    /// its input name the call instead.
+    fn tool(&self) -> Option<String> {
+        use std::hash::{Hash, Hasher};
+        match (&self.tool_name, &self.tool_input) {
+            (Some(name), Some(input)) => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                input.to_string().hash(&mut hasher);
+                Some(format!(
+                    "{}:{:016x}",
+                    truncate_msg(name, 64),
+                    hasher.finish()
+                ))
+            }
+            _ => clean_status_field(self.tool_use_id.clone(), 128),
+        }
+    }
+
     /// Whether an earlier hook already announced this prompt. Claude Code sends
     /// both PermissionRequest and a permission Notification for one dialog, and
     /// an idle reminder after Stop.
@@ -420,9 +441,8 @@ impl PaneNotifyRequest {
         match state {
             AgentState::Blocked => match event {
                 "PermissionRequest" => {
-                    self.tool_use_id.is_none()
-                        || blocked_tool.is_none()
-                        || self.tool_use_id == blocked_tool
+                    let tool = self.tool();
+                    tool.is_none() || blocked_tool.is_none() || tool == blocked_tool
                 }
                 _ => {
                     infer_agent_event(event, self.notification_type.as_deref())
@@ -1122,6 +1142,87 @@ mod pane_notification_tests {
                 }
             }
             assert_eq!(titles, expected.into_iter().collect::<Vec<_>>(), "{hook}");
+        }
+    }
+
+    #[tokio::test]
+    async fn claude_hooks_pair_turns_by_prompt_id_and_tools_by_input() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let state = Arc::new(tokio::sync::RwLock::new(manager));
+        let app = create_app(state.clone());
+        let bash = serde_json::json!({"command": "ls"});
+        let read = serde_json::json!({"file_path": "a.txt"});
+        // Payload shapes from Claude Code 2.1.312: PermissionRequest has no tool_use_id.
+        let hooks = [
+            (
+                serde_json::json!({"hook_event_name": "SessionStart"}),
+                AgentState::Idle,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt_id": "p1"}),
+                AgentState::Working,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PermissionRequest", "prompt_id": "p1", "tool_name": "Bash", "tool_input": bash}),
+                AgentState::Blocked,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt_id": "p1"}),
+                AgentState::Blocked,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PostToolUse", "prompt_id": "p1", "tool_name": "Read", "tool_input": read, "tool_use_id": "t1"}),
+                AgentState::Blocked,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PostToolUse", "prompt_id": "p1", "tool_name": "Bash", "tool_input": bash, "tool_use_id": "t2"}),
+                AgentState::Working,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "Stop", "prompt_id": "p1"}),
+                AgentState::Done,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt_id": "p1"}),
+                AgentState::Done,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "PermissionRequest", "prompt_id": "p1", "tool_name": "Bash", "tool_input": bash}),
+                AgentState::Done,
+            ),
+            (
+                serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt_id": "p2"}),
+                AgentState::Working,
+            ),
+        ];
+        for (mut hook, expected) in hooks {
+            hook["session_id"] = "s".into();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/api/panes/{pane}/notify"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(hook.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            let mgr = state.read().await;
+            assert_eq!(mgr.agent_status(pane).unwrap().state, expected, "{hook}");
         }
     }
 

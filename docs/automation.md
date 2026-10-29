@@ -288,7 +288,12 @@ The supported states are `unknown`, `idle`, `working`, `blocked`, and `done`.
 `done` becomes `idle` when the pane is viewed. A tool completion or new turn
 moves a blocked agent back to `working`; terminal input alone does not prove
 that an approval was resolved. The existing `/notify` endpoint maps known hook
-events to these transitions. Intermediate `TaskCompleted` events only notify;
+events to these transitions. A report's `turn_id` (Claude Code's `prompt_id`)
+ties it to a turn: reports for a finished or replaced turn are ignored, and a
+repeated start of the running turn, such as input queued into it, changes
+nothing. Reports without turn identities can't be ordered this way. A
+completion unblocks only the tool its permission named, by `tool_name` and
+`tool_input` when both are sent, else by `tool_use_id`. Intermediate `TaskCompleted` events only notify;
 they do not mark the whole turn done.
 
 Use `DELETE` on the same endpoint when the reporter no longer knows which agent

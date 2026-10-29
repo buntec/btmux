@@ -162,7 +162,8 @@ pub struct AgentReport {
     pub event: AgentEvent,
     pub session_id: Option<String>,
     pub turn_id: Option<String>,
-    pub tool_use_id: Option<String>,
+    /// The tool call a permission or completion belongs to.
+    pub tool: Option<String>,
     pub process: Option<AgentProcess>,
     pub agent: Option<String>,
     pub source: Option<String>,
@@ -194,7 +195,7 @@ pub struct AgentLifecycle {
     session_id: Option<String>,
     turn_id: Option<String>,
     turn_complete: bool,
-    blocked_tool_id: Option<String>,
+    blocked_tool: Option<String>,
     /// Identity reported by hooks (may be a wrapper's child).
     process: Option<AgentProcess>,
     /// Identity selected by the process scan; also keys the manifest.
@@ -205,6 +206,8 @@ pub struct AgentLifecycle {
     ended: bool,
     ended_process: Option<AgentProcess>,
     retired_sessions: Vec<String>,
+    /// Finished or replaced turns of this session.
+    retired_turns: Vec<String>,
     /// Other live agents in the pane, outside the foreground.
     parked: Vec<AgentLifecycle>,
     pub detection: Option<Detection>,
@@ -253,7 +256,7 @@ impl AgentLifecycle {
             session_id: None,
             turn_id: None,
             turn_complete: false,
-            blocked_tool_id: None,
+            blocked_tool: None,
             process: None,
             observed: None,
             observed_name: None,
@@ -262,6 +265,7 @@ impl AgentLifecycle {
             ended: false,
             ended_process: None,
             retired_sessions: Vec::new(),
+            retired_turns: Vec::new(),
             parked: Vec::new(),
             detection: None,
             screen_revision: None,
@@ -332,8 +336,8 @@ impl AgentLifecycle {
             .filter(|_| self.reads_screen())
     }
 
-    pub fn blocked_tool_id(&self) -> Option<&str> {
-        self.blocked_tool_id.as_deref()
+    pub fn blocked_tool(&self) -> Option<&str> {
+        self.blocked_tool.as_deref()
     }
 
     pub fn authority(&self) -> Authority {
@@ -578,6 +582,15 @@ impl AgentLifecycle {
         if turn_sensitive && self.turn_id.is_some() && self.turn_id != report.turn_id {
             return None;
         }
+        // Late or repeated reports of a turn that already ended.
+        if same_session
+            && report
+                .turn_id
+                .as_ref()
+                .is_some_and(|turn| self.retired_turns.contains(turn))
+        {
+            return None;
+        }
         if same_session
             && self.turn_complete
             && matches!(
@@ -602,7 +615,8 @@ impl AgentLifecycle {
             self.process = report.process;
             self.turn_id = None;
             self.turn_complete = false;
-            self.blocked_tool_id = None;
+            self.blocked_tool = None;
+            self.retired_turns.clear();
         }
         if let Some(process) = report.process {
             if self.process.is_none() {
@@ -624,36 +638,42 @@ impl AgentLifecycle {
                 Some((AgentState::Idle, None))
             }
             AgentEvent::SessionStart => None,
+            // A repeated start, or input queued into the running turn.
+            AgentEvent::TurnStart if report.turn_id.is_some() && report.turn_id == self.turn_id => {
+                None
+            }
             AgentEvent::TurnStart => {
+                self.retire_turn();
                 self.turn_id = report.turn_id;
                 self.turn_complete = false;
-                self.blocked_tool_id = None;
+                self.blocked_tool = None;
                 Some((AgentState::Working, None))
             }
             AgentEvent::PermissionRequest => {
-                self.blocked_tool_id = report.tool_use_id;
+                self.blocked_tool = report.tool;
                 Some((AgentState::Blocked, report.message))
             }
             AgentEvent::ToolFinished => {
-                let matches_tool =
-                    self.blocked_tool_id.is_none() || self.blocked_tool_id == report.tool_use_id;
+                let matches_tool = self.blocked_tool.is_none() || self.blocked_tool == report.tool;
                 // A finished tool says nothing about a dialog only the screen saw.
                 (self.status.state == AgentState::Blocked
                     && self.authority == Authority::Hook
                     && matches_tool)
                     .then(|| {
-                        self.blocked_tool_id = None;
+                        self.blocked_tool = None;
                         (AgentState::Working, None)
                     })
             }
             AgentEvent::TurnFinished => {
+                self.retire_turn();
                 self.turn_complete = true;
-                self.blocked_tool_id = None;
+                self.blocked_tool = None;
                 Some((AgentState::Done, report.message))
             }
             AgentEvent::Interrupt => {
+                self.retire_turn();
                 self.turn_complete = true;
-                self.blocked_tool_id = None;
+                self.blocked_tool = None;
                 Some((AgentState::Idle, None))
             }
             AgentEvent::SessionEnd => unreachable!("session end is handled by the manager"),
@@ -666,6 +686,15 @@ impl AgentLifecycle {
             self.suppress_old_screen(revision);
         }
         Some(self.status != previous)
+    }
+
+    fn retire_turn(&mut self) {
+        let Some(turn) = &self.turn_id else { return };
+        if !self.retired_turns.contains(turn) {
+            self.retired_turns.push(turn.clone());
+            self.retired_turns
+                .drain(..self.retired_turns.len().saturating_sub(MAX_RETIRED));
+        }
     }
 
     pub fn matches_session(&self, session_id: Option<&str>) -> bool {
@@ -689,7 +718,7 @@ impl AgentLifecycle {
         self.named_by_report = false;
         self.turn_id = None;
         self.turn_complete = true;
-        self.blocked_tool_id = None;
+        self.blocked_tool = None;
         self.process = None;
         self.observed = None;
         self.observed_name = None;
@@ -1218,7 +1247,7 @@ mod tests {
             event,
             session_id: Some(session.to_string()),
             turn_id: turn.map(str::to_string),
-            tool_use_id: None,
+            tool: None,
             process: None,
             agent: None,
             source: Some("hook".to_string()),
@@ -1287,12 +1316,54 @@ mod tests {
     }
 
     #[test]
+    fn repeated_and_late_turn_starts_cannot_revive_a_turn() {
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let apply = |agent: &mut AgentLifecycle, event, turn| {
+            agent.apply(report(event, "s", Some(turn)), 0, now)
+        };
+        apply(&mut agent, AgentEvent::TurnStart, "a");
+        apply(&mut agent, AgentEvent::PermissionRequest, "a");
+        // Claude reuses the turn's prompt_id for input queued into it.
+        assert_eq!(apply(&mut agent, AgentEvent::TurnStart, "a"), Some(false));
+        assert_eq!(agent.status.state, AgentState::Blocked);
+        apply(&mut agent, AgentEvent::TurnFinished, "a");
+        assert_eq!(apply(&mut agent, AgentEvent::TurnStart, "a"), None);
+        assert_eq!(agent.status.state, AgentState::Done);
+
+        apply(&mut agent, AgentEvent::TurnStart, "b");
+        apply(&mut agent, AgentEvent::TurnStart, "c");
+        for event in [
+            AgentEvent::TurnStart,
+            AgentEvent::PermissionRequest,
+            AgentEvent::TurnFinished,
+        ] {
+            assert_eq!(apply(&mut agent, event, "b"), None, "{event:?}");
+        }
+        assert_eq!(agent.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn retired_turns_stay_bounded_and_reset_with_the_session() {
+        let now = Instant::now();
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        for turn in 0..20 {
+            let turn = turn.to_string();
+            agent.apply(report(AgentEvent::TurnStart, "s", Some(&turn)), 0, now);
+            agent.apply(report(AgentEvent::TurnFinished, "s", Some(&turn)), 0, now);
+        }
+        assert_eq!(agent.retired_turns.len(), MAX_RETIRED);
+        agent.apply(report(AgentEvent::SessionStart, "next", None), 0, now);
+        assert!(agent.retired_turns.is_empty());
+    }
+
+    #[test]
     fn completed_tool_resumes_only_the_matching_blocked_turn() {
         let now = Instant::now();
         let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
-        permission.tool_use_id = Some("approval".to_string());
+        permission.tool = Some("approval".to_string());
         agent.apply(permission, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         assert_eq!(
@@ -1301,11 +1372,11 @@ mod tests {
         );
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut other_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
-        other_tool.tool_use_id = Some("other".to_string());
+        other_tool.tool = Some("other".to_string());
         agent.apply(other_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Blocked);
         let mut approved_tool = report(AgentEvent::ToolFinished, "s", Some("t"));
-        approved_tool.tool_use_id = Some("approval".to_string());
+        approved_tool.tool = Some("approval".to_string());
         agent.apply(approved_tool, 0, now);
         assert_eq!(agent.status.state, AgentState::Working);
         agent.apply(report(AgentEvent::TurnFinished, "s", Some("t")), 0, now);

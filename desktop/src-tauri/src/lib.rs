@@ -410,10 +410,7 @@ async fn stop_server(
         // it owned until then; a registered one once its registration is gone.
         let running = || {
             if private {
-                let child = state.child.lock().unwrap();
-                child
-                    .as_ref()
-                    .is_some_and(|child| child.pid() == server.pid)
+                owns_child(&state, server.pid)
             } else {
                 discovery::read_registration(&registration).is_some_and(|r| r.pid == server.pid)
             }
@@ -429,6 +426,28 @@ async fn stop_server(
     })
     .await
     .map_err(|_| "Could not stop btmux.".to_string())?
+}
+
+// Cleared by the exit handler once the private server stops.
+fn owns_child(state: &Server, pid: u32) -> bool {
+    let child = state.child.lock().unwrap();
+    child.as_ref().is_some_and(|child| child.pid() == pid)
+}
+
+// Asks the private server to stop, and terminates it if it doesn't in time.
+fn stop_private_server(state: &Server) {
+    let private = state.private.lock().unwrap().clone();
+    if let Some(server) = private
+        && servers::shutdown(&server).is_ok()
+    {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while owns_child(state, server.pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    if let Some(child) = state.child.lock().unwrap().take() {
+        terminate(child);
+    }
 }
 
 // Lets connected btmux pages return to the picker on every platform.
@@ -582,9 +601,8 @@ pub fn run() {
         .run(|app, event| {
             if let RunEvent::Exit = event
                 && let Some(server) = app.try_state::<Server>()
-                && let Some(child) = server.child.lock().unwrap().take()
             {
-                terminate(child);
+                stop_private_server(&server);
             }
         });
 }

@@ -17,6 +17,7 @@ use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::replay::Output;
 use crate::pty::{set_cloexec, Handoff};
 use crate::session::manager::SessionSnapshot;
@@ -25,7 +26,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -73,6 +74,7 @@ struct PaneHeader {
     spawn_cwd: Option<PathBuf>,
     color_reports: bool,
     colors: Vec<Option<[u8; 3]>>,
+    kitty: KittyKeyboard,
     /// Length of the partly read escape sequence, which follows the journal bytes.
     pending: usize,
     /// Length of the unwritten input, which follows the pending bytes.
@@ -178,6 +180,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 spawn_cwd: pane.spawn_cwd,
                 color_reports: pane.color_reports,
                 colors: pane.colors,
+                kitty: pane.kitty,
                 pending,
                 input,
                 bin: pane.bin,
@@ -406,6 +409,7 @@ fn write(
                 spawn_cwd: pane.spawn_cwd.clone(),
                 color_reports: pane.color_reports,
                 colors: pane.colors.clone(),
+                kitty: pane.kitty,
                 pending: pane.pending.len(),
                 input: pane.input.len(),
                 bin: pane.bin.clone(),
@@ -542,6 +546,7 @@ mod tests {
             Header::decl(&config),
             PaneHeader::decl(&config),
             Event::decl(&config),
+            KittyKeyboard::decl(&config),
             SessionSnapshot::decl(&config),
             WindowSnapshot::decl(&config),
             PaneSnapshot::decl(&config),

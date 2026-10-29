@@ -9,6 +9,7 @@ import { sortWindows } from '../state/windowMru';
 import {
   CONFIG_DEFAULTS,
   getFontWeightRange,
+  getMacosEditKeys,
   getPrefix,
   getRepeatTime,
   getTerminalFontFamily,
@@ -21,6 +22,7 @@ import { matchesPrefix, parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey
 import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { pasteImage } from '../lib/pasteImage';
+import { inPaneTerminal, macEditKey } from '../lib/macEditKeys';
 import { sendToNvim } from '../components/NvimSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
@@ -92,6 +94,7 @@ export function useKeybindings(
   const paneNumbersVisibleRef = useRef(paneNumbersVisible);
   const prefixRef = useRef(prefix);
   const repeatTimeRef = useRef(getRepeatTime(config));
+  const macosEditKeysRef = useRef(getMacosEditKeys(config));
   const bindsRef = useRef(binds);
   const sessionIdRef = useRef(sessionId);
   const sendRef = useRef(send);
@@ -107,6 +110,7 @@ export function useKeybindings(
   paneNumbersVisibleRef.current = paneNumbersVisible;
   prefixRef.current = prefix;
   repeatTimeRef.current = getRepeatTime(config);
+  macosEditKeysRef.current = getMacosEditKeys(config);
   bindsRef.current = binds;
   sessionIdRef.current = sessionId;
   sendRef.current = send;
@@ -129,6 +133,8 @@ export function useKeybindings(
       // The built-in Neovim decides itself which of these to keep (see nvimKey).
       const fromNvim = (e.target as HTMLElement | null)?.dataset?.nvimInput !== undefined;
       if ((e.metaKey || isFKey) && !fromNvim) {
+        // PaneTerminal translates Cmd editing chords; other surfaces never see them.
+        if (macosEditKeysRef.current && macEditKey(e) !== null && inPaneTerminal(e.target)) return;
         e.stopPropagation();
         return;
       }

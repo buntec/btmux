@@ -81,6 +81,7 @@ type Draft = {
   scrollback: number;
   allowTransparency: boolean;
   disableStdin: boolean;
+  macosEditKeys: boolean;
   smoothScrollDuration: number;
   cursorAnimationDuration: number;
   cellBackgroundOpacity: number;
@@ -138,6 +139,7 @@ function initialDraft(config: ClientConfig): Draft {
     allowTransparency:
       config.terminal.allowTransparency ?? (config.wallpaper != null || hasShaderWallpaper(config.wallpaper_shaders)),
     disableStdin: config.terminal.disableStdin ?? false,
+    macosEditKeys: config.terminal.macosEditKeys ?? true,
     smoothScrollDuration: config.terminal.smoothScrollDuration ?? 120,
     cursorAnimationDuration: config.terminal.cursorAnimationDuration ?? 120,
     cellBackgroundOpacity: config.terminal.cellBackgroundOpacity ?? 1,
@@ -206,6 +208,7 @@ const TOML_DEFAULTS = {
   fontSize: 18,
   fontWeight: 300,
   disableStdin: false,
+  macosEditKeys: true,
   smoothScrollDuration: 120,
   cursorAnimationDuration: 120,
   cellBackgroundOpacity: 1,
@@ -285,6 +288,7 @@ function toToml(draft: Draft): string {
     intLine('font-weight', draft.fontWeight, TOML_DEFAULTS.fontWeight),
     boolLine('allow-transparency', draft.allowTransparency, defaultAllowTransparency),
     boolLine('disable-stdin', draft.disableStdin, TOML_DEFAULTS.disableStdin),
+    boolLine('macos-edit-keys', draft.macosEditKeys, TOML_DEFAULTS.macosEditKeys),
     numLine('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 1),
     numLine('cursor-animation-duration', draft.cursorAnimationDuration, TOML_DEFAULTS.cursorAnimationDuration, 1),
     numLine('cell-background-opacity', draft.cellBackgroundOpacity, TOML_DEFAULTS.cellBackgroundOpacity, 2),
@@ -332,6 +336,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('scrollback')) update.scrollback = draft.scrollback;
   if (dirty.has('allowTransparency')) update.allow_transparency = draft.allowTransparency;
   if (dirty.has('disableStdin')) update.disable_stdin = draft.disableStdin;
+  if (dirty.has('macosEditKeys')) update.macos_edit_keys = draft.macosEditKeys;
   if (dirty.has('smoothScrollDuration')) update.smooth_scroll_duration = draft.smoothScrollDuration;
   if (dirty.has('cursorAnimationDuration')) update.cursor_animation_duration = draft.cursorAnimationDuration;
   if (dirty.has('cellBackgroundOpacity')) update.cell_background_opacity = draft.cellBackgroundOpacity;
@@ -463,6 +468,7 @@ export function ConfigPage({ config, send }: Props) {
         // still enable terminal transparency through its normal default.
         allowTransparency: dirty.has('allowTransparency') ? draft.allowTransparency : config.terminal.allowTransparency,
         disableStdin: dirty.has('disableStdin') ? draft.disableStdin : config.terminal.disableStdin,
+        macosEditKeys: dirty.has('macosEditKeys') ? draft.macosEditKeys : config.terminal.macosEditKeys,
         smoothScrollDuration: dirty.has('smoothScrollDuration')
           ? draft.smoothScrollDuration
           : config.terminal.smoothScrollDuration,
@@ -854,6 +860,11 @@ export function ConfigPage({ config, send }: Props) {
                         />
                         {toggle('allowTransparency', 'Allow transparency')}
                         {toggle('disableStdin', 'Disable terminal input')}
+                        {toggle(
+                          'macosEditKeys',
+                          'macOS Cmd editing keys',
+                          'Cmd+Left/Right, Cmd+Backspace, and Cmd+Delete send C-a, C-e, C-u, and C-k',
+                        )}
                         {range('smoothScrollDuration', 'Smooth scroll duration (ms)', 0, 500, 10)}
                         {range('cursorAnimationDuration', 'Cursor animation duration (ms)', 0, 500, 10)}
                         {range('cellBackgroundOpacity', 'Cell background opacity', 0, 1, 0.05)}

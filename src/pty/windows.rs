@@ -68,11 +68,13 @@ fn bash_prompt_command(mount: &str, convert: &str) -> String {
 const BASH_PS0: &str = r"\e]133;C\a";
 
 /// What WSL passes in from Windows; `p` translates paths.
-const WSL_ENV: [&str; 8] = [
+const WSL_ENV: [&str; 10] = [
     "PROMPT_COMMAND/u",
     "PS0/u",
     "TERM/u",
     "COLORTERM/u",
+    "TERM_PROGRAM/u",
+    "TERM_PROGRAM_VERSION/u",
     "BTMUX_PANE_ID/u",
     "BTMUX_API_URL/u",
     "BTMUX_AUTH_TOKEN/u",

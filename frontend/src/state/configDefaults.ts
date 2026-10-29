@@ -36,6 +36,7 @@ export const CONFIG_DEFAULTS = {
     fontWeight: 300,
     allowTransparency: null,
     disableStdin: null,
+    macosEditKeys: true,
     smoothScrollDuration: 120,
     cursorAnimationDuration: 120,
     cellBackgroundOpacity: null,
@@ -76,6 +77,10 @@ export function getCursorAnimationDuration(config: ConfigLike): number {
   return getAnimations(config)
     ? (config?.terminal.cursorAnimationDuration ?? CONFIG_DEFAULTS.terminal.cursorAnimationDuration)
     : 0;
+}
+
+export function getMacosEditKeys(config: ConfigLike): boolean {
+  return config?.terminal.macosEditKeys ?? CONFIG_DEFAULTS.terminal.macosEditKeys;
 }
 
 export function getShowPaneTitles(config: ConfigLike): boolean {

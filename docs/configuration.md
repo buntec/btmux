@@ -105,6 +105,16 @@ Home Manager module installs both files when `programs.fish.enable` is set.
 Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described in
 [btmux for tmux users](tmux.md).
 
+## macOS editing keys
+
+On macOS, panes translate Cmd editing chords as Ghostty does: Cmd+Left/Right
+send `C-a`/`C-e` and Cmd+Backspace `C-u`, even to programs using the kitty
+keyboard protocol. Cmd+Delete sends `C-k`, which Ghostty doesn't bind.
+Shift+Cmd+Left/Right send the arrow with shift and super (`CSI 1;10 D`), so
+programs that support selection can select to the line edge.
+Option+Left/Right and Option+Backspace move and delete by word without it. Set
+`[terminal] macos-edit-keys = false` to leave Cmd chords to the browser.
+
 ## Editor
 
 `editor` chooses the editor that `<prefix> + e`, the file browser, and Git

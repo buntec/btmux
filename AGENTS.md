@@ -105,6 +105,14 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   PTY writes use a dedicated blocking thread and a bounded queue. Pane disposal
   signals the foreground group and kills the shell; a waiter reaps the child.
 - **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. The emulator _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder, so its canned replies are what programs see, whatever the emulator would answer. Don't remove this without a replacement.
+  The kitty keyboard query (`CSI ? u`) is answered the same way, from flag
+  stacks the interceptor keeps per screen as libghostty does
+  (`pty/kitty_keyboard.rs`); programs detect the protocol by its reply
+  arriving before the DA1 reply. Flag changes still pass through to the
+  emulators, which encode keys with them; replays end with the current
+  stack (`Replay::viewer_snapshot`), since eviction can drop the pushes.
+  Shells get `TERM=xterm-256color` and `TERM_PROGRAM=btmux`, without the
+  server's own terminal or multiplexer variables (`OUTER_TERMINAL_ENV`).
   Color queries (OSC 4/10/11/12, `CSI ? 996 n`) are answered the same way from the
   shared `pty/colors.rs` palette, overlaid with colors the program set in that
   pane (OSC 104/110–112 and RIS reset them; mixed set/query OSCs are split);
@@ -156,7 +164,7 @@ server's arguments, which the exec passes on. It refuses
 while the built-in Neovim has unsaved changes. The server holds the state
 lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
 output stays in the kernel), and writes session snapshots, replay
-journals, title/cwd, program-set colors, any partly read escape sequence, and
+journals, title/cwd, program-set colors, kitty keyboard flags, any partly read escape sequence, and
 accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
@@ -424,7 +432,9 @@ config error, so update `generate_config_toml` and tests when adding fields.
 
 `[terminal]` holds `cursor-blink`, `scrollback` (lines; libghostty's limit is
 bytes, so `lib/paneTerminal.ts` converts it), `font-size`, `font-family`,
-`font-weight`, `allow-transparency`, `disable-stdin`, `smooth-scroll-duration` (Neovim and file preview scrolling), `cursor-animation-duration` (Neovim cursor moves), and
+`font-weight`, `allow-transparency`, `disable-stdin`, `macos-edit-keys` (Cmd
+editing chords as readline keys, `lib/macEditKeys.ts`; `useKeybindings.ts`
+lets them through), `smooth-scroll-duration` (Neovim and file preview scrolling), `cursor-animation-duration` (Neovim cursor moves), and
 `cell-background-opacity` (the Neovim surface's colored cell backgrounds over a
 transparent background). Keys are **kebab-case in TOML but camelCase on the wire**
 — `TerminalOptions` uses `rename_all(serialize = "camelCase", deserialize = "kebab-case")`

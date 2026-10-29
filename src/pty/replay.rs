@@ -47,6 +47,8 @@ pub struct Replay {
     // The interceptor emits complete control sequences, but UTF-8 can cross
     // reader chunks. Restore the incomplete code point after the checkpoint.
     utf8_tail: Vec<u8>,
+    /// Keyboard flags after the newest event; eviction can drop their pushes.
+    kitty: super::kitty_keyboard::KittyKeyboard,
 }
 
 impl Replay {
@@ -62,6 +64,7 @@ impl Replay {
             bytes: 0,
             cap: cap.min(PER_PANE_BYTES),
             utf8_tail: Vec::new(),
+            kitty: Default::default(),
         }
     }
 
@@ -136,6 +139,10 @@ impl Replay {
         }
     }
 
+    pub fn set_kitty(&mut self, kitty: super::kitty_keyboard::KittyKeyboard) {
+        self.kitty = kitty;
+    }
+
     pub fn screen_revision(&self) -> u64 {
         self.revision
     }
@@ -183,6 +190,62 @@ impl Replay {
         result.extend(self.events.iter().cloned());
         result
     }
+
+    /// `snapshot()`, then the current keyboard flags, for an emulator.
+    pub fn viewer_snapshot(&self) -> Vec<Output> {
+        let mut result = self.snapshot();
+        let restore = self.kitty.restore();
+        if restore.is_empty() {
+            return result;
+        }
+        // Keep a code point the next chunk completes after the flags. Its
+        // bytes can span events, and sizes or empty data can follow them.
+        let mut end: Vec<u8> = result
+            .iter()
+            .rev()
+            .filter_map(|event| match event {
+                Output::Data(bytes) => Some(bytes),
+                Output::Size(..) => None,
+            })
+            .flat_map(|bytes| bytes.iter().rev())
+            .take(3)
+            .copied()
+            .collect();
+        end.reverse();
+        let tail = end.split_off(end.len() - incomplete_utf8(&end));
+        let mut cut = tail.len();
+        for event in result.iter_mut().rev() {
+            if let Output::Data(bytes) = event {
+                let n = cut.min(bytes.len());
+                bytes.truncate(bytes.len() - n);
+                cut -= n;
+            }
+            if cut == 0 {
+                break;
+            }
+        }
+        result.push(Output::Data(restore.into()));
+        if !tail.is_empty() {
+            result.push(Output::Data(tail.into()));
+        }
+        result
+    }
+}
+
+/// Length of the incomplete UTF-8 sequence that ends `bytes`.
+fn incomplete_utf8(bytes: &[u8]) -> usize {
+    for (back, &byte) in bytes.iter().rev().take(3).enumerate() {
+        if byte & 0xc0 != 0x80 {
+            let len = match byte {
+                0xc0..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf7 => 4,
+                _ => return 0,
+            };
+            return if back + 1 < len { back + 1 } else { 0 };
+        }
+    }
+    0
 }
 
 impl Drop for Replay {
@@ -264,6 +327,69 @@ mod tests {
         };
         assert_eq!(resets(&replay), 1);
         assert_eq!(restore(&replay).screen().contents(), "evicted kept");
+    }
+    #[test]
+    fn viewers_get_keyboard_flags_whose_pushes_were_evicted() {
+        // Room for the second event only.
+        let mut replay = Replay::new(80, 24, 70);
+        replay.push(Output::Data(Bytes::from_static(b"\x1b[>5u")));
+        let mut kitty = crate::pty::kitty_keyboard::KittyKeyboard::default();
+        kitty.csi(b'>', &[5]);
+        replay.set_kitty(kitty);
+        replay.push(Output::Data(Bytes::from_static(b"a\xf0\x9f")));
+        let events = replay.viewer_snapshot();
+        assert_eq!(events.len(), replay.snapshot().len() + 2);
+        let data = |i: usize| match &events[events.len() - i] {
+            Output::Data(bytes) => bytes.clone(),
+            Output::Size(..) => panic!("expected data"),
+        };
+        assert_eq!(&data(3)[..], b"a");
+        assert_eq!(&data(2)[..], b"\x1b[<8u\x1b[>5u");
+        assert_eq!(&data(1)[..], b"\xf0\x9f");
+        assert_eq!(incomplete_utf8("é🙂".as_bytes()), 0);
+        assert_eq!(incomplete_utf8(b"\xc3"), 1);
+        assert_eq!(incomplete_utf8(b"x\xe2\x82"), 2);
+    }
+    #[test]
+    fn keyboard_flags_follow_a_code_point_split_across_events() {
+        let joined = |events: Vec<Output>| -> Vec<u8> {
+            events
+                .into_iter()
+                .filter_map(|event| match event {
+                    Output::Data(bytes) => Some(bytes.to_vec()),
+                    Output::Size(..) => None,
+                })
+                .flatten()
+                .collect()
+        };
+        let mut kitty = crate::pty::kitty_keyboard::KittyKeyboard::default();
+        kitty.csi(b'>', &[5]);
+        let data = |bytes: &'static [u8]| Output::Data(Bytes::from_static(bytes));
+        for (cap, events) in [
+            (1024, vec![data(b"\x1b[>5u\xf0"), data(b"\x9f")]),
+            (1024, vec![data(b"\xf0\x9f"), data(b"")]),
+            (
+                1024,
+                vec![
+                    data(b"\xf0"),
+                    Output::Size(40, 10),
+                    data(b"\x9f"),
+                    Output::Size(80, 24),
+                ],
+            ),
+            // Across the checkpoint: room for the second event only.
+            (70, vec![data(b"\xf0"), data(b"\x9f")]),
+        ] {
+            let mut replay = Replay::new(80, 24, cap);
+            for event in events {
+                replay.push(event);
+            }
+            replay.set_kitty(kitty);
+            let before = joined(replay.snapshot());
+            let after = joined(replay.viewer_snapshot());
+            assert_eq!(after[..after.len() - 12], before[..before.len() - 2]);
+            assert!(after.ends_with(b"\x1b[<8u\x1b[>5u\xf0\x9f"));
+        }
     }
     #[test]
     fn alternate_screen_survives_eviction() {

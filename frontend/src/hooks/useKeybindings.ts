@@ -20,6 +20,7 @@ import {
 import { matchesPrefix, parsePrefix, prefixBytes, prefixNvimKeys, type ParsedKey } from '../lib/prefixKey';
 import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
+import { pasteImage } from '../lib/pasteImage';
 import { sendToNvim } from '../components/NvimSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
@@ -318,9 +319,22 @@ export function runAction(
         blocked();
         break;
       }
-      navigator.clipboard
-        .readText()
-        .then((text) => text && term.paste(text))
+      // One read: WebKit rejects a second clipboard read after an await.
+      const read = async (): Promise<Blob | string> => {
+        if (!navigator.clipboard.read) return navigator.clipboard.readText();
+        for (const item of await navigator.clipboard.read()) {
+          if (item.types.includes('text/plain')) return (await item.getType('text/plain')).text();
+          const type = item.types.find((t) => t.startsWith('image/'));
+          if (type) return item.getType(type);
+        }
+        return '';
+      };
+      read()
+        .catch(() => navigator.clipboard.readText())
+        .then((data) => {
+          if (typeof data !== 'string') return pasteImage(paneId!, term, data);
+          if (data) term.paste(data);
+        })
         .catch(blocked);
       break;
     }

@@ -22,6 +22,7 @@ mod handoff;
 mod handoff;
 mod mcp;
 mod pane_git;
+mod paste_image;
 mod persistence;
 mod process;
 #[cfg(test)]
@@ -489,6 +490,7 @@ async fn main() {
     }
     ws::nvim::shutdown().await;
     vscode::shutdown().await;
+    paste_image::shutdown();
     if let Some(path) = state_file {
         let snapshots = state.read().await.all_snapshots();
         if let Err(error) = persistence::save(&path, &snapshots) {

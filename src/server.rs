@@ -86,6 +86,11 @@ pub fn create_app(state: AppState) -> Router {
                 .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
         )
         .route(
+            "/api/panes/{pane_id}/paste-image",
+            axum::routing::post(crate::paste_image::api_paste_image)
+                .layer(DefaultBodyLimit::max(crate::paste_image::MAX_BYTES)),
+        )
+        .route(
             "/api/panes/{pane_id}/open-file-browser",
             axum::routing::post(api_open_file_browser),
         )
@@ -987,6 +992,61 @@ mod pane_notification_tests {
         let event: serde_json::Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
         assert_eq!(event["type"], "focus_pane");
         assert_eq!(event["pane_id"], pane.to_string());
+    }
+
+    #[tokio::test]
+    async fn paste_image_saves_a_private_file() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        let post = |id: Uuid, content_type: &str| {
+            Request::post(format!("/api/panes/{id}/paste-image"))
+                .header(header::CONTENT_TYPE, content_type)
+                .body(Body::from("PNG"))
+                .unwrap()
+        };
+
+        let response = app
+            .clone()
+            .oneshot(post(Uuid::new_v4(), "image/png"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let response = app
+            .clone()
+            .oneshot(post(pane, "image/svg+xml"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let response = app.oneshot(post(pane, "image/png")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let path = std::path::PathBuf::from(reply["path"].as_str().unwrap());
+        assert_eq!(path.extension().unwrap(), "png");
+        assert_eq!(std::fs::read(&path).unwrap(), b"PNG");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode();
+            assert_eq!(mode(&path) & 0o777, 0o600);
+            assert_eq!(mode(path.parent().unwrap()) & 0o777, 0o700);
+        }
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 /** Terminal regressions against the isolated browser-test stack. */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 
@@ -356,6 +357,48 @@ try {
   assert(await page.locator('[data-pane-id]').count(), 'long search must retain the app');
   assert.deepEqual(errors, []);
   console.log('PASS oversized scrollback search stays bounded and leaves the app usable');
+
+  const pastePane = await page.evaluate(() => {
+    const pane = document.querySelector('[data-pane-id]')!;
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' }));
+    pane
+      .querySelector('textarea')!
+      .dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+    return pane.getAttribute('data-pane-id')!;
+  });
+  const pastedPath = await waitForAsync(
+    page,
+    async (pane) => {
+      const text = await (await fetch(`/api/panes/${pane}/capture`)).text();
+      return text.match(/\S*paste-[0-9a-f]+\.png/)?.[0] ?? false;
+    },
+    pastePane,
+  );
+  assert.deepEqual([...readFileSync(pastedPath)], [0x89, 0x50, 0x4e, 0x47]);
+  console.log('PASS pasting an image types the path of its saved copy');
+
+  // WebKit rejects a clipboard read after an await, so text comes from read().
+  await page.evaluate(() => {
+    const item = new ClipboardItem({ 'text/plain': new Blob(['clip-ok'], { type: 'text/plain' }) });
+    Object.defineProperties(navigator.clipboard, {
+      read: { configurable: true, value: async () => [item] },
+      readText: { configurable: true, value: () => Promise.reject(new DOMException('', 'NotAllowedError')) },
+    });
+  });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Terminal');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press(']');
+  await waitForAsync(
+    page,
+    async (pane) => (await (await fetch(`/api/panes/${pane}/capture`)).text()).includes('clip-ok'),
+    pastePane,
+  );
+  await page.evaluate(() => {
+    delete (navigator.clipboard as { read?: unknown }).read;
+    delete (navigator.clipboard as { readText?: unknown }).readText;
+  });
+  console.log('PASS paste-clipboard pastes text with a single clipboard read');
 
   // Closing a mounted dialog returns focus to the active pane.
   await page.keyboard.press('Control+a');

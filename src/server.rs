@@ -660,10 +660,12 @@ async fn api_open_file_browser(
 struct OpenEditorRequest {
     path: Option<String>,
     line: Option<u32>,
+    /// Overrides the `editor` setting.
+    editor: Option<crate::config::Editor>,
 }
 
-/// `btmux open-editor`: with `editor = "neovim"` or `"vscode"`, open
-/// `path` (if any) in that editor and show it over the pane's session in every tab.
+/// `btmux open-editor`: with `editor` (the request's, else the setting)
+/// `neovim` or `vscode`, open `path` (if any) in that editor and show it over the pane's session in every tab.
 /// Replies `{"opened": false}` when the caller should run `$EDITOR` instead.
 async fn api_open_editor(
     State(state): State<AppState>,
@@ -675,7 +677,7 @@ async fn api_open_editor(
         if mgr.find_pane(pane_id).is_none() {
             return StatusCode::NOT_FOUND.into_response();
         }
-        mgr.config().editor.clone()
+        body.editor.unwrap_or(mgr.config().editor)
     };
     let msg = match editor {
         crate::config::Editor::Pane => {

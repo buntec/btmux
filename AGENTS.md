@@ -355,8 +355,8 @@ The `editor` setting (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`
 `nvim_open`, which opens the file via `--remote-expr` on the shared socket;
 `vscode` sends `vscode_open`; `pane` keeps the older `open_file` path (the
 pane's foreground Neovim, else `$EDITOR` in its shell), which `prefix + e`
-sends without a path. `btmux open-editor [FILE] [LINE]` asks its pane's
-server (`POST /api/panes/{id}/open-editor`): with `neovim` it opens the file
+sends without a path. `btmux open-editor [FILE] [LINE] [--kind EDITOR]` asks its pane's
+server (`POST /api/panes/{id}/open-editor`, `--kind` overriding the setting): with `neovim` it opens the file
 and broadcasts `open_nvim` to show the surface; otherwise, or outside btmux, it
 execs `$EDITOR`.
 

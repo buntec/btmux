@@ -9,6 +9,7 @@ import { useStore } from '../state/store';
 import { CONFIG_DEFAULTS, getPrefix } from '../state/configDefaults';
 import { parsePrefix } from '../lib/prefixKey';
 import { runAction } from '../hooks/useKeybindings';
+import { dispatchKey, type KeyModifiers } from '../lib/paneTerminal';
 import type { ClientMessage } from '../protocol/messages';
 
 const ARROWS = [
@@ -18,8 +19,9 @@ const ARROWS = [
   { key: 'ArrowRight', label: 'Right', icon: ArrowRight },
 ];
 
-const inTerminal = (target: EventTarget | null) =>
-  target instanceof Element && target.closest('[data-pane-terminal]') !== null;
+// Inputs the key bar types into: pane terminals and the built-in Neovim.
+const takesKeys = (target: EventTarget | null) =>
+  target instanceof Element && target.closest('[data-pane-terminal], [data-nvim-input]') !== null;
 
 /** Keys phone keyboards lack. Ctrl and Alt apply to the next key, from here or the keyboard. */
 export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
@@ -34,17 +36,21 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
   const [alt, setAlt] = useState(false);
   const prefix = parsePrefix(getPrefix(config)) ?? parsePrefix(CONFIG_DEFAULTS.prefix)!;
 
-  // The focused terminal, else the active pane's.
-  const terminal = () => {
+  // To the focused terminal or Neovim, else the active pane's terminal.
+  const pressKey = (key: string, modifiers: KeyModifiers) => {
     const state = useStore.getState();
-    const focused = document.activeElement?.closest('[data-pane-terminal]');
-    for (const term of state.terminals.values()) if (term.element === focused) return term;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused.dataset.nvimInput !== undefined) {
+      return dispatchKey(focused, key, modifiers);
+    }
+    const pane = focused?.closest('[data-pane-terminal]');
+    for (const term of state.terminals.values()) if (term.element === pane) return term.pressKey(key, modifiers);
     const paneId = state.getActivePaneId(sessionId);
-    return paneId ? (state.terminals.get(paneId) ?? null) : null;
+    if (paneId) state.terminals.get(paneId)?.pressKey(key, modifiers);
   };
 
   const press = (key: string) => {
-    terminal()?.pressKey(key, { ctrlKey: ctrl, altKey: alt });
+    pressKey(key, { ctrlKey: ctrl, altKey: alt });
     setCtrl(false);
     setAlt(false);
   };
@@ -52,31 +58,54 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
   const run = (action: string) =>
     runAction(action, sessionId, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
 
-  // While armed, the next character typed on the keyboard takes the modifiers.
+  // While armed, the next character typed on the keyboard takes the modifiers, or the prefix's binding.
   useEffect(() => {
-    if (!ctrl && !alt) return;
+    if (!ctrl && !alt && !prefixActive) return;
+    let armed = true;
     const take = (event: Event, key: string) => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      terminal()?.pressKey(key, { ctrlKey: ctrl, altKey: alt });
+      armed = false;
+      press(key);
+    };
+    // One character takes them; longer text (a suggestion) goes through and disarms them.
+    const typed = (event: Event, text: string | null): text is string => {
+      if (!armed || !text || !takesKeys(event.target)) return false;
+      if ([...text].length === 1) return true;
+      armed = false;
       setCtrl(false);
       setAlt(false);
+      useStore.getState().setPrefixActive(false);
+      return false;
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.isTrusted || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
-      if ([...event.key].length === 1 && inTerminal(event.target)) take(event, event.key);
+      // Keys typed after the prefix reach useKeybindings themselves.
+      if (!(ctrl || alt) || !event.isTrusted || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) {
+        return;
+      }
+      if ([...event.key].length === 1 && typed(event, event.key)) take(event, event.key);
     };
-    // Android keyboards send text without key events.
+    // Android keyboards send text without key events, or compose it.
     const onBeforeInput = (event: InputEvent) => {
-      if (event.inputType === 'insertText' && event.data && inTerminal(event.target)) take(event, [...event.data][0]);
+      if (event.inputType === 'insertText' && typed(event, event.data)) take(event, event.data);
+    };
+    const onCompositionEnd = (event: CompositionEvent) => {
+      if (!typed(event, event.data)) return;
+      // End the composition without its text, which goes as the key instead.
+      const input = event.target as HTMLTextAreaElement;
+      input.value = '';
+      input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+      take(event, event.data);
     };
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('beforeinput', onBeforeInput, true);
+    window.addEventListener('compositionend', onCompositionEnd, true);
     return () => {
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('beforeinput', onBeforeInput, true);
+      window.removeEventListener('compositionend', onCompositionEnd, true);
     };
-  }, [ctrl, alt]);
+  }, [ctrl, alt, prefixActive]);
 
   return (
     <HStack
@@ -103,7 +132,7 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
           label={`Prefix (${getPrefix(config)})`}
           size="sm"
           isPressed={prefixActive}
-          onPressedChange={() => terminal()?.pressKey(prefix.key, { ctrlKey: prefix.ctrl, altKey: prefix.alt })}
+          onPressedChange={() => pressKey(prefix.key, { ctrlKey: prefix.ctrl, altKey: prefix.alt })}
         >
           {getPrefix(config)}
         </ToggleButton>

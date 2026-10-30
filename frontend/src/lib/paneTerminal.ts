@@ -105,6 +105,15 @@ function keyCode(key: string) {
   return key.length > 1 ? key : '';
 }
 
+export type KeyModifiers = { ctrlKey?: boolean; altKey?: boolean };
+
+/** Press a key on an input, as the keyboard would. */
+export function dispatchKey(input: Element, key: string, modifiers: KeyModifiers = {}) {
+  const init = { key, code: keyCode(key), ...modifiers, bubbles: true, cancelable: true, composed: true };
+  input.dispatchEvent(new KeyboardEvent('keydown', init));
+  input.dispatchEvent(new KeyboardEvent('keyup', init));
+}
+
 /**
  * Move wterm's textarea to the cursor after every render, not only while
  * composing. It keeps the offset from its last focus, so after `clear` it
@@ -555,14 +564,12 @@ export class PaneTerminal {
   }
 
   /** Press a key through wterm's input, as the keyboard would, so keybindings and key encoding apply. */
-  pressKey(key: string, modifiers: { ctrlKey?: boolean; altKey?: boolean } = {}) {
+  pressKey(key: string, modifiers: KeyModifiers = {}) {
     const input = this.element.querySelector('textarea');
     if (!input) return;
     const wtermInput = (this.wterm as unknown as { input: WTermInput | null }).input;
     if (wtermInput) wtermInput.tabExitArmed = false;
-    const init = { key, code: keyCode(key), ...modifiers, bubbles: true, cancelable: true, composed: true };
-    input.dispatchEvent(new KeyboardEvent('keydown', init));
-    input.dispatchEvent(new KeyboardEvent('keyup', init));
+    dispatchKey(input, key, modifiers);
   }
 
   /** Paste through wterm's input, as a real paste event would. */

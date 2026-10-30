@@ -107,6 +107,21 @@ try {
   await page.keyboard.type('x');
   assert.equal(await takeInput(page), '\x03\x1b[1;3Dx');
   assert.equal(await keys('Ctrl').getAttribute('aria-pressed'), 'false');
+  // Also to text that keyboards send without key events (Android) or compose.
+  await keys('Ctrl').tap();
+  await page.keyboard.insertText('c');
+  await keys('Ctrl').tap();
+  await page.evaluate(() => {
+    const input = document.activeElement as HTMLTextAreaElement;
+    input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    input.value = 'e';
+    input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'e' }));
+  });
+  // Longer text, like a suggestion, goes through and disarms them.
+  await keys('Ctrl').tap();
+  await page.keyboard.insertText('cat');
+  assert.equal(await takeInput(page), '\x03\x05cat');
+  assert.equal(await keys('Ctrl').getAttribute('aria-pressed'), 'false');
 
   // Keys go through wterm's encoder, including the kitty keyboard protocol.
   await write(page, '\x1b[>1u');
@@ -145,6 +160,16 @@ try {
   await page.keyboard.type('c');
   for (let i = 0; i < 50 && (await windows()) === before; i++) await page.waitForTimeout(100);
   assert.equal(await windows(), before + 1);
+  // Also when the key arrives as text after an unidentified key (Android).
+  await page.getByRole('button', { name: /^Prefix/ }).tap();
+  await page.evaluate(() =>
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, bubbles: true, cancelable: true }),
+    ),
+  );
+  await page.keyboard.insertText('c');
+  for (let i = 0; i < 50 && (await windows()) === before + 1; i++) await page.waitForTimeout(100);
+  assert.equal(await windows(), before + 2);
 
   // Narrow screens show only the active pane; Next pane cycles them.
   const panes = await (await api('/api/panes')).json();

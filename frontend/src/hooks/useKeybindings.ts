@@ -194,6 +194,8 @@ export function useKeybindings(
         if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
           return;
         }
+        // Text that keyboards compose or send without key events reaches the binding later (MobileKeyBar).
+        if (e.isComposing || e.key === 'Process' || e.key === 'Unidentified') return;
         e.preventDefault();
         e.stopPropagation();
         clearTimeout(timeoutRef.current);

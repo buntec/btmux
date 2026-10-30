@@ -607,7 +607,13 @@ Tailscale's identity headers are not trusted, since local processes can reach
 the loopback listener too.
 Its status (`TailscaleStatus`: starting, serving, error) is pushed to control
 sockets as `ServerMessage::Tailscale` and is in `/api/info`; the status bar's
-`TailscaleButton` shows it. The desktop picker can start a kept-running desktop
+`TailscaleButton` shows it, with a QR code of a pairing link while its
+popover is open: `POST /api/pair` issues a random code (single use, valid
+2 min, at most 16 pending), and `protect` exchanges `GET /pair?code=` for the
+auth cookie and a page that refreshes to `/` (from a scanner's page, a
+redirect would stay cross-site and lose the `SameSite=Strict` cookie). It is
+the only unauthenticated route; the
+token itself never enters the URL. The desktop picker can start a kept-running desktop
 server with `--tailscale`, on a saved port (`tailnet-port`, chosen below the
 ephemeral port ranges); its card polls the status while shown.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.

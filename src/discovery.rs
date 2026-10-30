@@ -61,7 +61,11 @@ pub fn create_private_file(path: &Path) -> std::io::Result<File> {
     Ok(file)
 }
 
-pub fn read_private_file(path: &Path) -> std::io::Result<String> {
+/// The size limit for registrations and token files.
+pub const SMALL_FILE: u64 = 16 * 1024;
+
+/// Read an owner-only regular file of at most `limit` bytes.
+pub fn read_private_file(path: &Path, limit: u64) -> std::io::Result<String> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -74,16 +78,20 @@ pub fn read_private_file(path: &Path) -> std::io::Result<String> {
     let private = metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0;
     #[cfg(windows)]
     let private = acl::is_private(&file);
-    if !metadata.is_file() || !private || metadata.len() > 16 * 1024 {
+    if !metadata.is_file() || !private {
         return Err(std::io::Error::other("expected an owner-only regular file"));
     }
+    if metadata.len() > limit {
+        return Err(std::io::ErrorKind::FileTooLarge.into());
+    }
     let mut contents = String::new();
-    file.take(16 * 1024).read_to_string(&mut contents)?;
+    file.take(limit).read_to_string(&mut contents)?;
     Ok(contents)
 }
 
 pub fn read_registration(path: &Path) -> Option<RunningServer> {
-    let server: RunningServer = serde_json::from_str(&read_private_file(path).ok()?).ok()?;
+    let server: RunningServer =
+        serde_json::from_str(&read_private_file(path, SMALL_FILE).ok()?).ok()?;
     (server.address.ip().is_loopback()
         && server.address.port() != 0
         && server.pid > 0

@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::discovery;
 
 const FILE: &str = "remote-servers.json";
+// Thousands of servers; a larger file would only hide a bug.
+const LIMIT: u64 = 256 * 1024;
+const TOO_MANY: &str = "Too many remote servers. Remove some first.";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct RemoteServer {
@@ -52,11 +55,14 @@ pub fn origin(input: &str) -> Result<String, String> {
 
 pub fn load(dir: &Path) -> Result<Vec<RemoteServer>, String> {
     let path = dir.join(FILE);
-    match discovery::read_private_file(&path) {
+    match discovery::read_private_file(&path, LIMIT) {
         Ok(text) => {
             serde_json::from_str(&text).map_err(|_| format!("Could not read {}.", path.display()))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+            Err(format!("{} is too large.", path.display()))
+        }
         Err(_) => Err(format!(
             "{} must be a regular file only you can read.",
             path.display()
@@ -68,10 +74,15 @@ pub fn save(dir: &Path, servers: &[RemoteServer]) -> Result<(), String> {
     let path = dir.join(FILE);
     let temp = dir.join(format!("{FILE}.tmp"));
     let failed = |_| format!("Could not save {}.", path.display());
+    let json = serde_json::to_vec_pretty(servers).unwrap();
+    // Keep the saved list readable.
+    if json.len() as u64 > LIMIT {
+        return Err(TOO_MANY.into());
+    }
     std::fs::create_dir_all(dir).map_err(failed)?;
     let _ = std::fs::remove_file(&temp);
     let mut file = discovery::create_private_file(&temp).map_err(failed)?;
-    file.write_all(&serde_json::to_vec_pretty(servers).unwrap())
+    file.write_all(&json)
         .and_then(|()| file.sync_all())
         .map_err(failed)?;
     drop(file);
@@ -254,6 +265,22 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o077, 0);
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_save_more_than_it_can_load() {
+        let dir = std::env::temp_dir().join(format!("btmux-remotes-{}", uuid::Uuid::new_v4()));
+        let server = |i: usize| RemoteServer {
+            url: format!("https://machine-{i}.tail1.ts.net:8004"),
+            token: "t".repeat(64),
+        };
+        let fits: Vec<_> = (0..120).map(server).collect();
+        save(&dir, &fits).unwrap();
+        assert_eq!(load(&dir).unwrap().len(), 120);
+        let too_many: Vec<_> = (0..3000).map(server).collect();
+        assert_eq!(save(&dir, &too_many).unwrap_err(), TOO_MANY);
+        assert_eq!(load(&dir).unwrap().len(), 120);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

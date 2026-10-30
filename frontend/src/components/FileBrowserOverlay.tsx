@@ -1528,7 +1528,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           ) : (
             <>
               <VStack className={searchMode === 'off' ? 'min-h-0 flex-1' : 'hidden'}>
-                <FileTree fileSend={fileSend} onNavigate={navigate} onSelect={selectFile} />
+                <FileTree fileSend={fileSend} onNavigate={navigate} />
               </VStack>
               {searchMode !== 'off' && (
                 <FileSearch fileSend={fileSend} currentPath={currentPath} focusedIndex={focusedIndex} />

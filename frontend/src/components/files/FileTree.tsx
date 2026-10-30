@@ -15,10 +15,9 @@ function formatSize(bytes: number): string {
 interface FileTreeProps {
   fileSend: (type: string, payload: Record<string, unknown>) => Promise<ServerFileMessage>;
   onNavigate: (path: string) => void;
-  onSelect: (path: string, isDir: boolean) => void;
 }
 
-export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
+export function FileTree({ fileSend, onNavigate }: FileTreeProps) {
   const entries = useFileStore((s) => s.entries);
   const currentPath = useFileStore((s) => s.currentPath);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
@@ -110,7 +109,6 @@ export function FileTree({ fileSend, onNavigate, onSelect }: FileTreeProps) {
               isCut={cutPaths.includes(fullPath)}
               gitStatus={gitStatuses.get(fullPath)}
               onNavigate={onNavigate}
-              onSelect={onSelect}
             />
           );
         })}
@@ -129,7 +127,6 @@ function FileRow({
   isCut,
   gitStatus,
   onNavigate,
-  onSelect,
 }: {
   entry: FileEntry;
   index: number;
@@ -139,7 +136,6 @@ function FileRow({
   isCut: boolean;
   gitStatus: GitStatusResult | undefined;
   onNavigate: (path: string) => void;
-  onSelect: (path: string, isDir: boolean) => void;
 }) {
   const fullPath = joinPath(currentPath, entry.name);
 
@@ -155,7 +151,8 @@ function FileRow({
         if (entry.is_dir) {
           onNavigate(fullPath);
         } else {
-          onSelect(fullPath, false);
+          // Previewing follows focus.
+          useFileStore.getState().setFocusedIndex(index);
         }
       }}
     >

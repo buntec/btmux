@@ -575,7 +575,11 @@ forwarded headers do not grant trust.
 PTY shells receive `BTMUX_AUTH_TOKEN` so generated notification hooks work.
 `--public-url` adds explicit origins/authorities for Vite or a reverse proxy.
 `--tailscale` (`tailscale.rs`) runs `tailscale serve` for the listening port and
-allows that tailnet HTTPS origin once Tailscale reports it (`Auth::allow`);
+allows that tailnet HTTPS origin once Tailscale reports it (`Auth::allow`). The
+Serve config is machine-wide: btmux refuses a port whose route serves anything
+else, and removes only a route it created, recorded in `state.tailscale` before
+the command runs; setup and shutdown share a lock, so shutdown waits for a
+command in flight;
 Tailscale's identity headers are not trusted, since local processes can reach
 the loopback listener too.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.

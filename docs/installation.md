@@ -151,9 +151,12 @@ btmux --tailscale install                # the same, as a background service
 
 btmux runs `tailscale serve --bg --https=<port>`, which serves the machine's
 tailnet name over HTTPS with a Tailscale certificate and proxies to btmux on
-loopback, and prints the URL. btmux itself stays on `127.0.0.1`. Shutting down
-removes the serve config; an upgrade keeps it. If Tailscale isn't running yet,
-btmux keeps serving locally and retries every 10 seconds.
+loopback, and prints the URL. btmux itself stays on `127.0.0.1`. It never
+replaces another route on that port: if one exists, btmux serves locally and
+reports it, so choose another `--port`. A route that already points at btmux is
+used as is. Shutting down removes only a route btmux created (recorded in
+`state.tailscale` beside the profile's state); an upgrade keeps it. If Tailscale
+isn't running yet, btmux keeps serving locally and retries every 10 seconds.
 
 This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
 [MagicDNS](https://tailscale.com/kb/1081/magicdns), and

@@ -474,7 +474,10 @@ async fn main() {
 
     if args.tailscale {
         if let Ok(address) = listener.local_addr() {
-            tailscale::spawn(address, auth);
+            let marker = state_file
+                .as_ref()
+                .map(|path| path.with_extension("tailscale"));
+            tailscale::spawn(address, auth, marker);
         }
     }
 

@@ -342,10 +342,11 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
             if (!open) useStore.getState().setFileBrowserOpen(false);
           }}
           aria-label={fileBrowserMode === 'process' ? 'Processes' : fileBrowserMode === 'git' ? 'Git' : 'Files'}
-          width="min(1440px, 94vw)"
-          maxHeight="90dvh"
           padding={0}
-          style={{ height: '90dvh' }}
+          // Fullscreen's 100dvh ignores the iOS keyboard; useVisualViewport tracks it.
+          {...(narrow
+            ? { variant: 'fullscreen', style: { height: 'var(--btm-viewport-height, 100dvh)' } }
+            : { width: 'min(1440px, 94vw)', maxHeight: '90dvh', style: { height: '90dvh' } })}
         >
           {fileBrowserMode === 'process' ? (
             <ProcessOverlay

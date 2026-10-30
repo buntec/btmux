@@ -632,9 +632,17 @@ try {
   await clicked.click();
   await page.getByText('clicked', { exact: true }).waitFor();
   assert.match((await clicked.getAttribute('class')) ?? '', /\bbg-accent-bg\b/);
+  // A selection ends with the browser.
+  await page.keyboard.press(' ');
+  await page.getByText('1 selected', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Close file browser' }).click();
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
-  console.log('PASS file click moves focus');
+  const selected = await page.evaluate(async () => {
+    const { useFileStore } = await import('/src/state/fileStore.ts' as string);
+    return useFileStore.getState().selectedPaths.size;
+  });
+  assert.equal(selected, 0);
+  console.log('PASS file click moves focus; selection clears on close');
 
   await page.evaluate(
     async ({ id, path }) => {
@@ -644,6 +652,7 @@ try {
     { id: pane, path: repo },
   );
   await page.getByText('main', { exact: true }).first().waitFor();
+  assert.equal(await page.getByText(/selected$/).count(), 0);
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     useStore.getState().showToast('Toast in Git browser', 'error');

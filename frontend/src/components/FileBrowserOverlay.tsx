@@ -4,7 +4,7 @@ import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Token } from '@astryxdesign/core/Token';
-import { X } from 'lucide-react';
+import { ChevronLeft, X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
 import { useFileStore } from '@/state/fileStore';
@@ -23,7 +23,7 @@ import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitI
 import { FileSearch } from './files/FileSearch';
 import { KeyHint, hintKeyEvent, type Hint } from './KeyHint';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
-import { TOUCH_QUERY } from '@/lib/touch';
+import { NARROW_QUERY, TOUCH_QUERY } from '@/lib/touch';
 import { cn, getParent, joinPath, stepIndex } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
 import { smoothScrollBy } from '@/lib/smoothScroll';
@@ -138,6 +138,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const touch = useMediaQuery(TOUCH_QUERY);
+  // Narrow screens show the list or, after a tap on an entry, its preview.
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const [previewShown, setPreviewShown] = useState(false);
+  const showPreview = useCallback(() => setPreviewShown(true), []);
   // Hint taps type their key, as the keyboard would.
   const pressHint = useCallback((keys: string) => {
     const root = rootRef.current;
@@ -156,6 +160,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   }, []);
 
   const closeGitPopup = useCallback(() => setGitPopup(null), []);
+
+  // Moving elsewhere returns to the list.
+  useEffect(() => setPreviewShown(false), [currentPath, isGitMode, gitView, searchMode]);
+
+  // A selection doesn't outlive the browser; the yank register does.
+  useEffect(() => () => store.getState().clearSelection(), [store]);
 
   // Refocus after the popup's dialog has unmounted; focusing earlier hits the
   // still-modal dialog's inert backdrop and focus falls to <body>.
@@ -770,6 +780,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           setPendingDiscard(null);
         } else if (pendingDelete) {
           setPendingDelete(null);
+        } else if (previewShown) {
+          setPreviewShown(false);
         } else if (selectedPaths.size > 0) {
           store.getState().clearSelection();
         } else if (searchMode !== 'off') {
@@ -1401,6 +1413,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     deleteFile,
     pendingDiscard,
     pendingDelete,
+    previewShown,
     commitModalOpen,
     gitPopup,
     createModalOpen,
@@ -1508,7 +1521,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     >
       <HStack gap={3} vAlign="center" className="min-w-0 flex-none border-b border-border px-3 py-1.5">
         <HStack className="min-w-0 flex-1 overflow-hidden">
-          <Breadcrumb onNavigate={navigate} />
+          <Breadcrumb onNavigate={navigate} singleLine={narrow} />
         </HStack>
         {fileConnectionState !== 'connected' && (
           <Text size="sm" color="secondary" role="status" className={cn(animations && 'animate-pulse')}>
@@ -1520,8 +1533,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             Filter: <Text size="sm">{filterQuery || '…'}</Text>
           </Text>
         )}
-        {selectionCount > 0 && !isFilterActive && <Token size="sm" color="blue" label={`${selectionCount} selected`} />}
-        {yankRegister && !isFilterActive && (
+        {selectionCount > 0 && !isFilterActive && !isGitMode && (
+          <Token size="sm" color="blue" label={`${selectionCount} selected`} />
+        )}
+        {yankRegister && !isFilterActive && !isGitMode && (
           <Token
             size="sm"
             label={`${yankRegister.paths.length} ${yankRegister.mode === 'cut' ? 'to move' : 'to copy'}`}
@@ -1531,31 +1546,65 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       </HStack>
 
       <HStack className="min-h-0 min-w-0 flex-1 items-stretch overflow-hidden">
-        <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ width: `${sidebarRatio * 100}%` }}>
+        <VStack
+          className={cn(
+            'min-h-0 min-w-0 overflow-hidden',
+            narrow ? 'flex-1' : 'flex-none',
+            narrow && previewShown && 'hidden',
+          )}
+          style={narrow ? undefined : { width: `${sidebarRatio * 100}%` }}
+        >
           {isGitMode ? (
             <>
               <GitModeHeader />
-              {gitView === 'log' ? <GitHistory /> : <GitStatus />}
+              {gitView === 'log' ? (
+                <GitHistory onPreview={narrow ? showPreview : undefined} />
+              ) : (
+                <GitStatus onPreview={narrow ? showPreview : undefined} />
+              )}
             </>
           ) : (
             <>
               <VStack className={searchMode === 'off' ? 'min-h-0 flex-1' : 'hidden'}>
-                <FileTree fileSend={fileSend} onNavigate={navigate} />
+                <FileTree fileSend={fileSend} onNavigate={navigate} onPreview={narrow ? showPreview : undefined} />
               </VStack>
               {searchMode !== 'off' && (
-                <FileSearch fileSend={fileSend} currentPath={currentPath} focusedIndex={focusedIndex} />
+                <FileSearch
+                  fileSend={fileSend}
+                  currentPath={currentPath}
+                  focusedIndex={focusedIndex}
+                  onPreview={narrow ? showPreview : undefined}
+                />
               )}
             </>
           )}
         </VStack>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize sidebar"
-          onMouseDown={onDividerMouseDown}
-          className="w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg"
-        />
-        <VStack className="file-preview-scroll file-preview-content min-h-0 min-w-0 flex-1">
+        {!narrow && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            onMouseDown={onDividerMouseDown}
+            className="w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg"
+          />
+        )}
+        <VStack
+          className={cn(
+            'file-preview-scroll file-preview-content min-h-0 min-w-0 flex-1',
+            narrow && !previewShown && 'hidden',
+          )}
+        >
+          {narrow && (
+            <HStack vAlign="center" className="flex-none border-b border-border px-1">
+              <IconButton
+                label="Back to list"
+                icon={<ChevronLeft />}
+                variant="ghost"
+                size="sm"
+                onClick={() => setPreviewShown(false)}
+              />
+            </HStack>
+          )}
           {isGitMode && gitView === 'log' ? <GitCommitDiffPreview /> : <FilePreview fileSend={fileSend} />}
         </VStack>
       </HStack>

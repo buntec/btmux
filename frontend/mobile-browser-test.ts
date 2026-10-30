@@ -201,6 +201,32 @@ try {
   assert.match((await row('b.txt').getAttribute('class')) ?? '', /\bbg-accent-bg\b/);
   await page.getByRole('button', { name: '.: dotfiles', exact: true }).tap();
   await row('.hidden').waitFor();
+  // Narrow screens fill the screen, keep the path on one line, and show the
+  // list or, after a tap, the preview.
+  const layout = await page.evaluate(() => {
+    const items = [...document.querySelectorAll('nav[aria-label="Current directory"] li')];
+    return {
+      dialog: document.querySelector('dialog[open]')!.getBoundingClientRect().height,
+      viewport: window.visualViewport!.height,
+      // Items differ in size, so compare their spread to their height.
+      crumbSpread:
+        Math.max(...items.map((item) => item.getBoundingClientRect().top)) -
+        Math.min(...items.map((item) => item.getBoundingClientRect().top)),
+      crumbHeight: Math.min(...items.map((item) => item.getBoundingClientRect().height)),
+    };
+  });
+  assert.equal(Math.round(layout.dialog), Math.round(layout.viewport));
+  assert(layout.crumbSpread < layout.crumbHeight / 2, 'the path wraps');
+  await row('b.txt').tap();
+  const back = page.getByRole('button', { name: 'Back to list' });
+  await back.waitFor();
+  assert(!(await row('b.txt').isVisible()));
+  await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
+  await row('b.txt').waitFor();
+  assert(!(await back.isVisible()));
+  await row('b.txt').tap();
+  await back.tap();
+  await row('b.txt').waitFor();
   await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
   rmSync(dir, { recursive: true, force: true });

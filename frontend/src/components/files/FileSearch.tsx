@@ -14,9 +14,11 @@ interface FileSearchProps {
   fileSend: (type: string, payload: Record<string, unknown>) => Promise<ServerFileMessage>;
   currentPath: string;
   focusedIndex: number;
+  /** A result was tapped or clicked. */
+  onPreview?: () => void;
 }
 
-export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchProps) {
+export function FileSearch({ fileSend, currentPath, focusedIndex, onPreview }: FileSearchProps) {
   const searchMode = useFileStore((s) => s.searchMode);
   const searchQuery = useFileStore((s) => s.searchQuery);
   const searchResults = useFileStore((s) => s.searchResults);
@@ -137,7 +139,15 @@ export function FileSearch({ fileSend, currentPath, focusedIndex }: FileSearchPr
         data-preview-viewport
         className="min-w-0 flex-1 overflow-auto"
       >
-        <div ref={listRef}>
+        <div
+          ref={listRef}
+          onClick={(event) => {
+            const row = (event.target as Element).closest<HTMLElement>('[data-index]');
+            if (!row) return;
+            store.getState().setFocusedIndex(Number(row.dataset.index));
+            onPreview?.();
+          }}
+        >
           {searchMode === 'files' &&
             searchResults.map((r, i) => (
               <FileResultRow key={r.path} result={r} root={currentPath} index={i} focused={i === focusedIndex} />
@@ -190,7 +200,7 @@ function FileResultRow({
     <div
       data-index={index}
       className={cn(
-        'flex items-start gap-2 px-2 leading-tight cursor-default select-none',
+        'flex items-start gap-2 px-2 leading-tight cursor-pointer select-none',
         focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
     >
@@ -225,7 +235,7 @@ function ContentResultRow({
     <div
       data-index={index}
       className={cn(
-        'flex flex-col px-2 py-0.5 cursor-default select-none',
+        'flex flex-col px-2 py-0.5 cursor-pointer select-none',
         focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
     >

@@ -15,9 +15,11 @@ function formatSize(bytes: number): string {
 interface FileTreeProps {
   fileSend: (type: string, payload: Record<string, unknown>) => Promise<ServerFileMessage>;
   onNavigate: (path: string) => void;
+  /** A file was tapped or clicked. */
+  onPreview?: () => void;
 }
 
-export function FileTree({ fileSend, onNavigate }: FileTreeProps) {
+export function FileTree({ fileSend, onNavigate, onPreview }: FileTreeProps) {
   const entries = useFileStore((s) => s.entries);
   const currentPath = useFileStore((s) => s.currentPath);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
@@ -109,6 +111,7 @@ export function FileTree({ fileSend, onNavigate }: FileTreeProps) {
               isCut={cutPaths.includes(fullPath)}
               gitStatus={gitStatuses.get(fullPath)}
               onNavigate={onNavigate}
+              onPreview={onPreview}
             />
           );
         })}
@@ -127,6 +130,7 @@ function FileRow({
   isCut,
   gitStatus,
   onNavigate,
+  onPreview,
 }: {
   entry: FileEntry;
   index: number;
@@ -136,6 +140,7 @@ function FileRow({
   isCut: boolean;
   gitStatus: GitStatusResult | undefined;
   onNavigate: (path: string) => void;
+  onPreview?: () => void;
 }) {
   const fullPath = joinPath(currentPath, entry.name);
 
@@ -153,6 +158,7 @@ function FileRow({
         } else {
           // Previewing follows focus.
           useFileStore.getState().setFocusedIndex(index);
+          onPreview?.();
         }
       }}
     >

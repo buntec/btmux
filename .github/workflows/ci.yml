@@ -102,7 +102,7 @@ jobs:
 
       - name: Install browser dependencies
         working-directory: frontend
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps chromium webkit
 
       - name: Test
         run: just test-browser

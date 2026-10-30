@@ -152,10 +152,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       if (!root) return;
       if (!root.contains(document.activeElement)) root.focus();
       (document.activeElement ?? root).dispatchEvent(new KeyboardEvent('keydown', hintKeyEvent(keys)));
-      // iOS opens the keyboard only for focus taken during the tap.
-      if (touch && useFileStore.getState().isFilterActive) {
+      // iOS opens the keyboard only for focus taken during the tap, so focus a
+      // text field the key opened (search, filter, rename) now.
+      if (touch && !document.activeElement?.matches(TEXT_FIELDS)) {
         flushSync(() => {});
-        filterInputRef.current?.focus();
+        [...root.querySelectorAll<HTMLElement>(TEXT_FIELDS)].find((field) => field.checkVisibility())?.focus();
       }
     },
     [touch],
@@ -1727,6 +1728,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     </VStack>
   );
 }
+
+const TEXT_FIELDS = 'input:not([type=checkbox]):not([type=radio]), textarea';
 
 const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
   b: 'branch',

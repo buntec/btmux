@@ -226,6 +226,22 @@ try {
   await row('b.txt').tap();
   await back.tap();
   await row('b.txt').waitFor();
+  // A hint that opens a text field focuses it during the tap, so the keyboard
+  // opens; search results open their preview when tapped.
+  const focusedInTap = await page.getByRole('button', { name: 'f: search', exact: true }).evaluate((button) => {
+    (button as HTMLElement).click();
+    return document.activeElement?.tagName;
+  });
+  assert.equal(focusedInTap, 'INPUT');
+  const search = page.getByRole('textbox', { name: 'Search files' });
+  await page.keyboard.type('b.t');
+  const result = page.getByLabel('Search results').locator('[data-index]', { hasText: 'b.txt' });
+  await result.tap();
+  await back.waitFor();
+  await back.tap();
+  await result.waitFor();
+  await page.getByRole('button', { name: 'esc: exit search', exact: true }).tap();
+  await search.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
 

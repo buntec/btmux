@@ -62,7 +62,50 @@ try {
   const desktop = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   await connect(desktop);
   assert.equal(await desktop.getByRole('button', { name: 'Esc', exact: true }).count(), 0);
+
+  // The tailnet popover's QR code signs a phone in once, without the token.
+  await desktop.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setTailscale({ state: 'serving', url: location.origin });
+  });
+  let pairRequests = 0;
+  desktop.on('request', (request) => request.url().endsWith('/api/pair') && pairRequests++);
+  await desktop.getByRole('button', { name: 'Tailnet', exact: true }).waitFor();
+  assert.equal(pairRequests, 0);
+  const issued = desktop.waitForResponse((response) => response.url().endsWith('/api/pair'));
+  await desktop.getByRole('button', { name: 'Tailnet', exact: true }).click();
+  const { code } = await (await issued).json();
+  await desktop.locator('svg.bg-white path').waitFor();
   await desktop.close();
+  const pairing = await browser.newContext({ ...devices['iPhone 15'] });
+  const paired = await pairing.newPage();
+  await paired.goto(`${url}/pair?code=${code}`);
+  await waitForAsync(paired, async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return useStore.getState().terminals.size > 0;
+  });
+  assert.equal((await paired.goto(`${url}/pair?code=${code}`))!.status(), 401);
+  await pairing.close();
+
+  // A link from another site (a web QR scanner) signs in too: SameSite=Strict
+  // withholds the cookie from a redirect that continues that navigation.
+  const backend = process.env.BTMUX_TEST_BACKEND_URL ?? 'http://127.0.0.1:8044';
+  const { code: linked } = await (
+    await fetch(`${backend}/api/pair`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  ).json();
+  const scanning = await browser.newContext({ ...devices['iPhone 15'] });
+  const scanner = await scanning.newPage();
+  await scanner.route('https://scanner.test/', (route) =>
+    route.fulfill({ contentType: 'text/html', body: `<a href="${backend}/pair?code=${linked}">open</a>` }),
+  );
+  await scanner.goto('https://scanner.test/');
+  const app = scanner.waitForResponse((response) => response.url() === `${backend}/`);
+  await scanner.getByRole('link', { name: 'open' }).click();
+  assert.equal((await app).status(), 200);
+  await scanning.close();
 
   const context = await browser.newContext({ ...devices['iPhone 15'] });
   const page = await context.newPage();
@@ -324,7 +367,7 @@ try {
   assert.equal(manifest.display, 'standalone');
 
   assert.deepEqual(errors, []);
-  console.log('PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, and manifest');
+  console.log('PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, pairing, and manifest');
 } finally {
   await browser.close();
 }

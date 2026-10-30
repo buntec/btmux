@@ -422,6 +422,7 @@ async fn main() {
 
     let app = server::create_app(state.clone())
         .merge(server::info_routes(info))
+        .merge(auth::routes(auth.clone()))
         .layer(axum::middleware::from_fn_with_state(
             auth.clone(),
             auth::protect,

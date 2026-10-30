@@ -193,8 +193,6 @@ try {
   }, dir);
   const row = (name: string) => page.locator('[data-index]', { hasText: name });
   await row('b.txt').waitFor();
-  // Filters need typed keys; touch screens have search instead.
-  assert.equal(await page.getByRole('button', { name: '/: filter', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'G: top/bottom', exact: true }).tap();
   await waitForAsync(page, async () =>
     /\bbg-accent-bg\b/.test(document.querySelector('[data-index="1"]')?.className ?? ''),
@@ -244,6 +242,20 @@ try {
   await untracked.waitFor({ state: 'detached' });
   await page.getByText('UNTRACKED FILES', { exact: true }).tap();
   await untracked.waitFor();
+  // Filters take text through an input, focused by the tap so the keyboard opens.
+  await page.getByRole('button', { name: '/: filter', exact: true }).tap();
+  const filter = page.getByRole('textbox', { name: 'Filter' });
+  assert(await filter.evaluate((input) => input === document.activeElement));
+  await page.keyboard.type('zz');
+  await untracked.waitFor({ state: 'detached' });
+  assert.equal(await filter.inputValue(), 'zz');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await untracked.waitFor();
+  await page.getByRole('button', { name: 'esc: close filter', exact: true }).tap();
+  await filter.waitFor({ state: 'detached' });
+  // The browser keeps focus for its keys.
+  assert(await page.evaluate(() => document.activeElement?.closest('dialog') !== null));
   await page.getByRole('button', { name: 'Close file browser' }).tap();
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
   rmSync(dir, { recursive: true, force: true });

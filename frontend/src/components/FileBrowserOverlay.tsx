@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
@@ -142,13 +143,23 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const narrow = useMediaQuery(NARROW_QUERY);
   const [previewShown, setPreviewShown] = useState(false);
   const showPreview = useCallback(() => setPreviewShown(true), []);
+  // Touch screens type filters into an input, which opens the keyboard.
+  const filterInputRef = useRef<HTMLInputElement>(null);
   // Hint taps type their key, as the keyboard would.
-  const pressHint = useCallback((keys: string) => {
-    const root = rootRef.current;
-    if (!root) return;
-    if (!root.contains(document.activeElement)) root.focus();
-    (document.activeElement ?? root).dispatchEvent(new KeyboardEvent('keydown', hintKeyEvent(keys)));
-  }, []);
+  const pressHint = useCallback(
+    (keys: string) => {
+      const root = rootRef.current;
+      if (!root) return;
+      if (!root.contains(document.activeElement)) root.focus();
+      (document.activeElement ?? root).dispatchEvent(new KeyboardEvent('keydown', hintKeyEvent(keys)));
+      // iOS opens the keyboard only for focus taken during the tap.
+      if (touch && useFileStore.getState().isFilterActive) {
+        flushSync(() => {});
+        filterInputRef.current?.focus();
+      }
+    },
+    [touch],
+  );
   const renameInputRef = useRef<HTMLInputElement>(null);
   const { sidebarRatio, onDividerMouseDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
 
@@ -160,6 +171,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   }, []);
 
   const closeGitPopup = useCallback(() => setGitPopup(null), []);
+
+  useEffect(() => {
+    if (!touch) return;
+    if (isFilterActive) filterInputRef.current?.focus();
+    // The input's removal drops focus, which the browser's keys need.
+    else if (document.activeElement === document.body) rootRef.current?.focus();
+  }, [touch, isFilterActive]);
 
   // Moving elsewhere returns to the list.
   useEffect(() => setPreviewShown(false), [currentPath, isGitMode, gitView, searchMode]);
@@ -829,6 +847,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         }
         return;
       }
+
+      // The filter input edits the query itself.
+      if (
+        isFilterActive &&
+        document.activeElement === filterInputRef.current &&
+        (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey))
+      )
+        return;
 
       // Git mode keybindings
       if (isGitMode) {
@@ -1504,9 +1530,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             ...BROWSE_HINTS.slice(-1),
           ];
   // Popup keys only work once status confirms a repository.
-  const hints = (gitStatus?.is_repo ? allHints : allHints.filter((hint) => !GIT_POPUP_HINTS.includes(hint)))
-    // Filters read typed keys, which touch screens can't type.
-    .filter((hint) => !touch || !hint.keys.includes('/'));
+  const hints = gitStatus?.is_repo ? allHints : allHints.filter((hint) => !GIT_POPUP_HINTS.includes(hint));
 
   return (
     <VStack
@@ -1528,7 +1552,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             {CONNECTION_STATE_LABEL[fileConnectionState]}
           </Text>
         )}
-        {isFilterActive && (
+        {isFilterActive && !touch && (
           <Text size="sm" color="secondary">
             Filter: <Text size="sm">{filterQuery || '…'}</Text>
           </Text>
@@ -1609,6 +1633,31 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         </VStack>
       </HStack>
 
+      {touch && isFilterActive && (
+        <HStack className="flex-none border-t border-border px-3 py-1">
+          <TextInput
+            ref={(input) => {
+              filterInputRef.current = input;
+              // TextInput doesn't forward these; iOS would capitalize and autocorrect.
+              input?.setAttribute('autocapitalize', 'off');
+              input?.setAttribute('autocorrect', 'off');
+            }}
+            label="Filter"
+            isLabelHidden
+            size="sm"
+            value={filterQuery}
+            onChange={(value) => {
+              const state = store.getState();
+              state.setFilterQuery(value);
+              if (isGitMode && gitView === 'log') state.setGitLogFocusedIndex(0);
+              else if (isGitMode) state.setGitFocusedIndex(0);
+            }}
+            autoComplete="off"
+            placeholder="Filter…"
+            controlClassName="min-w-0 flex-1"
+          />
+        </HStack>
+      )}
       <HStack
         gap={4}
         vAlign="center"

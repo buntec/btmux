@@ -74,6 +74,13 @@ try {
     viewport: window.visualViewport!.height,
   }));
   assert.equal(Math.round(fit.root), Math.round(fit.viewport));
+  // The key bar stays above the keyboard, which shrinks the visual viewport.
+  const setViewportHeight = (height: string) =>
+    page.evaluate((height) => document.documentElement.style.setProperty('--btm-viewport-height', height), height);
+  await setViewportHeight('300px');
+  const hide = (await keys('Hide keyboard').boundingBox())!;
+  assert(hide.y + hide.height <= 300, `key bar ends at ${hide.y + hide.height}px`);
+  await setViewportHeight(`${fit.viewport}px`);
 
   // Taps keep the terminal focused, so the keyboard stays open.
   await recordInput(page);

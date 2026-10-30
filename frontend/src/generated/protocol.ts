@@ -325,6 +325,10 @@ config_error: string | null, };
 // prettier-ignore
 export type ServerInfo = { version: string, profile: string | null, config_file: string | null, state_file: string | null, token_file: string | null, token_source: string, listen_address: string, executable: string | null,
 /**
+ * Daily log files; `None` when file logging is off.
+ */
+log_files: string | null,
+/**
  * Changes on every start, including an in-place upgrade.
  */
 instance: string,

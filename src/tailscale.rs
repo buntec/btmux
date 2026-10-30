@@ -306,8 +306,9 @@ impl Tailscale {
                 self.port
             )),
             Route::Same => {
-                // Created by an earlier btmux on this profile, or by the user.
-                state.owned = marked == Some((self.port, self.proxy.clone()));
+                // Created by this process, an earlier btmux on this profile,
+                // or the user.
+                state.owned |= marked == Some((self.port, self.proxy.clone()));
                 Ok(Some(url))
             }
             Route::Free => {
@@ -638,6 +639,22 @@ esac
         tailscale.stop().await;
         assert_eq!(cli.config(), "{}");
         assert!(!cli.marker().exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn keeps_owning_its_route_without_a_marker() {
+        let cli = fake::Cli::new("{}");
+        let tailscale = Tailscale::new(
+            vec![cli.path("tailscale")],
+            SocketAddr::from(([127, 0, 0, 1], 8004)),
+            None,
+        );
+        assert!(tailscale.attempt(&auth()).await.unwrap().is_some());
+        // A periodic check finds the route it created.
+        assert!(tailscale.attempt(&auth()).await.unwrap().is_some());
+        tailscale.stop().await;
+        assert_eq!(cli.config(), "{}");
     }
 
     #[cfg(unix)]

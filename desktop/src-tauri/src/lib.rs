@@ -359,7 +359,8 @@ fn tailnet_port(app: &AppHandle) -> Result<(u16, String), String> {
     let path = dir.join("tailnet-port");
     let saved = std::fs::read_to_string(&path)
         .ok()
-        .and_then(|text| text.trim().parse::<u16>().ok());
+        .and_then(|text| text.trim().parse::<u16>().ok())
+        .filter(|&port| port != BROWSER_BLOCKED_PORT);
     let port = match saved {
         Some(port) => port,
         None => {
@@ -377,11 +378,15 @@ fn tailnet_port(app: &AppHandle) -> Result<(u16, String), String> {
     Ok((port, in_use))
 }
 
+// The only port in the stable range that browsers refuse to load.
+const BROWSER_BLOCKED_PORT: u16 = 10_080;
+
 // A free port below every OS's ephemeral range (Linux's starts at 32768),
 // so outgoing connections never take it while the server is stopped.
 fn stable_port() -> Option<u16> {
     (0..64)
         .map(|_| 10_000 + (uuid::Uuid::new_v4().as_u128() % 22_768) as u16)
+        .filter(|&port| port != BROWSER_BLOCKED_PORT)
         .find(|&port| TcpListener::bind(("127.0.0.1", port)).is_ok())
 }
 

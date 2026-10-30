@@ -4,6 +4,7 @@ import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
+import type { TailscaleStatus } from '../generated/protocol';
 import { cacheThemes } from './startupTheme';
 
 export type FileBrowserMode = 'files' | 'git' | 'process';
@@ -30,6 +31,8 @@ interface AppStore {
   agentGridOpen: boolean;
   agentGridMounted: boolean;
   agentPanes: Set<string>;
+  // The server's `--tailscale` status; null without it.
+  tailscale: TailscaleStatus | null;
   // display-panes (prefix + q): briefly overlays each pane's index on the active
   // window. While true the keybinding hook captures digit presses to select a
   // pane by number (and any other key dismisses it); it auto-hides on a timer.
@@ -89,6 +92,7 @@ interface AppStore {
   setAgentGridOpen: (open: boolean) => void;
   markAgentGridMounted: () => void;
   setAgentPanes: (paneIds: string[]) => void;
+  setTailscale: (status: TailscaleStatus | null) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
   showToast: (
@@ -143,6 +147,7 @@ export const useStore = create<AppStore>((set, get) => ({
   agentGridOpen: false,
   agentGridMounted: false,
   agentPanes: new Set(),
+  tailscale: null,
   paneNumbersVisible: false,
   switcherOpen: false,
   nvimOpen: false,
@@ -196,6 +201,7 @@ export const useStore = create<AppStore>((set, get) => ({
     set((state) => ({ agentGridOpen: open, agentGridMounted: state.agentGridMounted || open })),
   markAgentGridMounted: () => set((s) => (s.agentGridMounted ? s : { agentGridMounted: true })),
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
+  setTailscale: (tailscale) => set({ tailscale }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
   // One editor surface per pane: opening one over the other's pane closes the other.

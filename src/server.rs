@@ -51,6 +51,7 @@ pub fn info_routes(info: ServerInfo) -> Router {
         get(move || {
             let mut info = serde_json::to_value(&info).unwrap();
             info["upgrade_error"] = crate::handoff::last_error().into();
+            info["tailscale"] = serde_json::to_value(crate::tailscale::status()).unwrap();
             async move { Json(info) }
         }),
     )

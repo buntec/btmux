@@ -33,6 +33,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Prose inside .btm-mono chrome, such as a toolbar popover. */
+.btm-sans {
+  --font-family-body: var(--font-family-heading);
+  --font-weight-normal: 400;
+  font-family: var(--font-family-heading);
+  font-weight: 400;
+}
+
 /* btmux wordmark: Geist Pixel only shows its grid at large sizes. The
    variables size SideNavHeading's inner heading. */
 .btm-brand {

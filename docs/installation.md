@@ -157,6 +157,8 @@ reports it, so choose another `--port`. A route that already points at btmux is
 used as is. Shutting down removes only a route btmux created (recorded in
 `state.tailscale` beside the profile's state); an upgrade keeps it. If Tailscale
 isn't running yet, btmux keeps serving locally and retries every 10 seconds.
+The status bar's tailnet button shows the URL, with a copy button, or the
+last error.
 
 This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
 [MagicDNS](https://tailscale.com/kb/1081/magicdns), and
@@ -165,6 +167,10 @@ the tailnet. Sign in with the access token as above; browsers keep the login for
 400 days. HTTPS matters even though the tailnet is encrypted: browsers allow
 the clipboard, notifications, and WebGPU shader wallpapers only on secure
 origins.
+
+In the desktop app, a desktop server kept running after the app quits can
+also be shared this way: check **Share it on my tailnet** before starting it.
+It then keeps its port across starts, so its tailnet URL stays the same.
 
 ### Phones and tablets
 

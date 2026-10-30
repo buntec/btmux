@@ -60,8 +60,8 @@ pub(crate) fn broadcast_state(mgr: &crate::session::manager::SessionManager) {
     }
 }
 
-fn initial_messages(mgr: &crate::session::manager::SessionManager) -> [String; 2] {
-    [
+fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String> {
+    let mut messages = vec![
         serde_json::to_string(&ServerMessage::Config {
             config: Box::new(mgr.config().clone()),
         })
@@ -72,13 +72,17 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> [String; 2
             agent_panes: mgr.running_agent_panes(),
         })
         .unwrap(),
-    ]
+    ];
+    if let Some(status) = crate::tailscale::status() {
+        messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
+    }
+    messages
 }
 
 async fn resynchronize(
     events: &mut tokio::sync::broadcast::Receiver<String>,
     state: &AppState,
-) -> [String; 2] {
+) -> Vec<String> {
     let mgr = state.read().await;
     *events = mgr.events().subscribe();
     initial_messages(&mgr)
@@ -1001,6 +1005,10 @@ pub enum ServerMessage {
     OpenVscode {
         pane_id: Uuid,
     },
+    /// Sent on connect and on change while `--tailscale` is on.
+    Tailscale {
+        status: crate::tailscale::TailscaleStatus,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -1133,7 +1141,9 @@ mod tests {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
         ));
         let state = std::sync::Arc::new(tokio::sync::RwLock::new(mgr));
-        let [config, snapshot] = resynchronize(&mut events, &state).await;
+        let [config, snapshot] = &resynchronize(&mut events, &state).await[..] else {
+            panic!("expected config and state");
+        };
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&config).unwrap()["type"],
             "config"

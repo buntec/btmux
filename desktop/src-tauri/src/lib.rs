@@ -53,19 +53,25 @@ struct ServerChoice {
     bundled: bool,
     // A desktop-profile server the app may stop.
     desktop: bool,
+    tailnet: Option<servers::Tailnet>,
 }
 
 #[tauri::command]
 async fn discover_servers(state: State<'_, Server>) -> Result<Vec<ServerChoice>, String> {
     let private = state.private.lock().unwrap().clone();
     let bundled = private.as_ref().map(|server| server.address);
-    let servers = tauri::async_runtime::spawn_blocking(move || {
+    let (servers, tailnet) = tauri::async_runtime::spawn_blocking(move || {
         let mut servers = servers::discover()?;
         servers.extend(private.filter(servers::ready));
-        Ok::<_, String>(servers)
+        let tailnet = servers
+            .iter()
+            .find(|server| server.profile.as_deref() == Some(DESKTOP_PROFILE))
+            .and_then(servers::tailnet);
+        Ok::<_, String>((servers, tailnet))
     })
     .await
     .map_err(|_| "Could not look for running btmux servers.".to_string())??;
+    let mut tailnet = tailnet;
     let choices = servers
         .iter()
         .map(|server| ServerChoice {
@@ -74,6 +80,11 @@ async fn discover_servers(state: State<'_, Server>) -> Result<Vec<ServerChoice>,
             url: format!("http://{}/", server.address),
             bundled: Some(server.address) == bundled,
             desktop: server.profile.as_deref() == Some(DESKTOP_PROFILE),
+            tailnet: if server.profile.as_deref() == Some(DESKTOP_PROFILE) {
+                tailnet.take()
+            } else {
+                None
+            },
         })
         .collect();
     *state.choices.lock().unwrap() = servers;
@@ -177,7 +188,7 @@ async fn connect_server(
     .map_err(|_| "Could not connect to btmux.".to_string())?
 }
 
-fn remotes_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map_err(|_| "Could not find the app's settings folder.".to_string())
@@ -194,7 +205,7 @@ struct RemoteChoice {
 #[tauri::command]
 async fn list_remote_servers(app: AppHandle) -> Result<Vec<RemoteChoice>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let servers = remote::load(&remotes_dir(&app)?)?;
+        let servers = remote::load(&config_dir(&app)?)?;
         // In parallel: an unreachable server takes the whole timeout.
         let probes: Vec<_> = servers
             .into_iter()
@@ -232,7 +243,7 @@ async fn add_remote_server(app: AppHandle, url: String, token: String) -> Result
             token,
         };
         remote::probe(&server)?;
-        let dir = remotes_dir(&app)?;
+        let dir = config_dir(&app)?;
         let state = app.state::<Server>();
         let _lock = state.remotes.lock().unwrap();
         let mut servers = remote::load(&dir)?;
@@ -247,7 +258,7 @@ async fn add_remote_server(app: AppHandle, url: String, token: String) -> Result
 #[tauri::command]
 async fn remove_remote_server(app: AppHandle, url: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = remotes_dir(&app)?;
+        let dir = config_dir(&app)?;
         let state = app.state::<Server>();
         let _lock = state.remotes.lock().unwrap();
         let mut servers = remote::load(&dir)?;
@@ -265,7 +276,7 @@ async fn connect_remote_server(
     url: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let server = remote::load(&remotes_dir(&app)?)?
+        let server = remote::load(&config_dir(&app)?)?
             .into_iter()
             .find(|saved| saved.url == url)
             .ok_or("This server is no longer listed. Refresh the server list.")?;
@@ -316,9 +327,8 @@ fn terminate(child: CommandChild) {
     let _ = child.kill();
 }
 
-// The bundled server's command, with the desktop profile and a free port.
-fn sidecar(app: &AppHandle) -> Result<(Command, u16), String> {
-    let port = unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?;
+// The bundled server's command, with the desktop profile.
+fn sidecar(app: &AppHandle, port: u16) -> Result<Command, String> {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut sidecar = app
         .shell()
@@ -344,14 +354,36 @@ fn sidecar(app: &AppHandle) -> Result<(Command, u16), String> {
         DESKTOP_PROFILE,
         "--no-browser",
     ]);
-    Ok((sidecar, port))
+    Ok(sidecar)
+}
+
+// Kept across starts: the tailnet URL includes it.
+fn tailnet_port(app: &AppHandle) -> Result<u16, String> {
+    let dir = config_dir(app)?;
+    let path = dir.join("tailnet-port");
+    if let Some(port) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| text.trim().parse::<u16>().ok())
+        && TcpListener::bind(("127.0.0.1", port)).is_ok()
+    {
+        return Ok(port);
+    }
+    let port = unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?;
+    std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&path, format!("{port}\n")))
+        .map_err(|_| "Could not save the tailnet server port.".to_string())?;
+    Ok(port)
 }
 
 fn start_desktop_server(
     app: AppHandle,
     window: WebviewWindow,
     persistent: bool,
+    tailscale: bool,
 ) -> Result<(), String> {
+    if tailscale && !persistent {
+        return Err("Only a server that keeps running can be shared on the tailnet.".into());
+    }
     let state = app.state::<Server>();
     let running = state.private.lock().unwrap().clone();
     if let Some(server) = running
@@ -369,8 +401,18 @@ fn start_desktop_server(
     {
         return open_server(&window, &server);
     }
-    let (sidecar, port) = sidecar(&app)?;
+    let port = if tailscale {
+        tailnet_port(&app)?
+    } else {
+        unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?
+    };
+    let sidecar = sidecar(&app, port)?;
     if persistent {
+        let sidecar = if tailscale {
+            sidecar.arg("--tailscale")
+        } else {
+            sidecar
+        };
         start_persistent_server(sidecar, &window)
     } else {
         start_private_server(&app, sidecar, port, &window)
@@ -517,10 +559,13 @@ async fn start_server(
     app: AppHandle,
     window: WebviewWindow,
     persistent: bool,
+    tailscale: bool,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || start_desktop_server(app, window, persistent))
-        .await
-        .map_err(|_| "Could not start btmux.".to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        start_desktop_server(app, window, persistent, tailscale)
+    })
+    .await
+    .map_err(|_| "Could not start btmux.".to_string())?
 }
 
 #[tauri::command]

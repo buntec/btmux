@@ -36,6 +36,27 @@ fn probe(client: &Client, server: &RunningServer) -> Option<ServerInfo> {
         .filter(|info| !info.version.is_empty())
 }
 
+/// What `--tailscale` reports in `/api/info`.
+#[derive(Deserialize, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Tailnet {
+    Starting,
+    Serving { url: String },
+    Error { message: String },
+}
+
+pub fn tailnet(server: &RunningServer) -> Option<Tailnet> {
+    let info = client()
+        .ok()?
+        .get(format!("http://{}/api/info", server.address))
+        .bearer_auth(&server.token)
+        .send()
+        .ok()?
+        .json::<serde_json::Value>()
+        .ok()?;
+    serde_json::from_value(info.get("tailscale")?.clone()).ok()
+}
+
 pub fn ready(server: &RunningServer) -> bool {
     client()
         .ok()

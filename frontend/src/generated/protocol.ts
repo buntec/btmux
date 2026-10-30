@@ -348,6 +348,9 @@ export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "st
 export type UpdateStatus = { "state": "disabled" } | { "state": "current", latest: string, } | { "state": "available", latest: string, url: string, } | { "state": "error", message: string, };
 
 // prettier-ignore
+export type TailscaleStatus = { "state": "starting" } | { "state": "serving", url: string, } | { "state": "error", message: string, };
+
+// prettier-ignore
 export type WallpaperCheck = { error: string | null,
 /**
  * What browsers load for a valid value, e.g. to preview it.
@@ -373,7 +376,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */
-os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, };
+os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, } | { "type": "tailscale", status: TailscaleStatus, };
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

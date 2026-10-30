@@ -604,6 +604,10 @@ the command runs; setup and shutdown share a lock, so shutdown waits for a
 command in flight;
 Tailscale's identity headers are not trusted, since local processes can reach
 the loopback listener too.
+Its status (`TailscaleStatus`: starting, serving, error) is pushed to control
+sockets as `ServerMessage::Tailscale` and is in `/api/info`; the status bar's
+`TailscaleButton` shows it. The desktop picker can start a kept-running desktop
+server with `--tailscale`, on a saved port (`tailnet-port`).
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.
 Only one running server may own a persistence profile (held OS file lock).
 

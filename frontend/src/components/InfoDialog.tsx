@@ -50,6 +50,7 @@ export function InfoDialog({ onClose }: { onClose: () => void }) {
         ['Config file', info.config_file],
         ['State file', info.state_file],
         ['Token file', info.token_file],
+        ['Log files', info.log_files ?? 'Disabled'],
         ['Credential source', info.token_source],
         ['Listening address', info.listen_address],
         ['Executable', info.executable],

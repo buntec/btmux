@@ -37,6 +37,8 @@ pub struct ServerInfo {
     pub token_source: String,
     pub listen_address: String,
     pub executable: Option<String>,
+    /// Daily log files; `None` when file logging is off.
+    pub log_files: Option<String>,
     /// Changes on every start, including an in-place upgrade.
     pub instance: String,
     /// Kept by an in-place upgrade.
@@ -859,6 +861,7 @@ mod pane_notification_tests {
             token_source: "token file".into(),
             listen_address: "127.0.0.1:8004".into(),
             executable: None,
+            log_files: None,
             instance: "test".into(),
             pid: 0,
         })

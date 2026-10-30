@@ -162,7 +162,8 @@ async fn main() {
 
     let console_layer = tracing_subscriber::fmt::layer().with_filter(console_filter);
 
-    if let Some(log_dir) = persistence::log_dir() {
+    let log_dir = persistence::log_dir();
+    if let Some(log_dir) = &log_dir {
         let file_appender = tracing_appender::rolling::daily(log_dir, "btmux.log");
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(file_appender)
@@ -403,6 +404,9 @@ async fn main() {
         .to_string(),
         listen_address: format!("{}:{}", args.host, args.port),
         executable: pty::server_exe().and_then(absolute_path),
+        log_files: log_dir
+            .filter(|_| file_level.trim() != "off")
+            .and_then(|dir| absolute_path(&dir.join("btmux.log.*"))),
         instance: uuid::Uuid::new_v4().to_string(),
         pid: std::process::id(),
     };

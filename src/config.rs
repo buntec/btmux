@@ -324,6 +324,11 @@ pub struct CliArgs {
     #[arg(long)]
     pub no_browser: bool,
 
+    /// Serve over HTTPS on the tailnet (`tailscale serve`), at this port of
+    /// the machine's tailnet name.
+    #[arg(long)]
+    pub tailscale: bool,
+
     #[arg(long, hide = true)]
     pub desktop_parent_pid: Option<u32>,
 }

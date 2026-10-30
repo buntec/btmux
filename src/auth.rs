@@ -8,7 +8,7 @@ use axum::{
 use base64::Engine;
 use std::{
     path::Path,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 static TOKEN: OnceLock<String> = OnceLock::new();
@@ -18,9 +18,35 @@ pub fn shell_token() -> Option<&'static str> {
 
 pub struct Auth {
     token: String,
-    authorities: Vec<String>,
-    origins: Vec<String>,
+    /// Allowed browser origins, e.g. `https://host:8004`.
+    origins: RwLock<Vec<String>>,
     cookie_name: String,
+}
+
+// Browsers keep cookies at most 400 days.
+const COOKIE_MAX_AGE: u32 = 400 * 24 * 60 * 60;
+
+fn parse_origin(value: &str) -> Result<String, String> {
+    let url = reqwest::Url::parse(value).map_err(|e| e.to_string())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(format!(
+            "invalid public URL {value:?}: supply an HTTP(S) origin without credentials or a path"
+        ));
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
+fn authority(origin: &str) -> &str {
+    origin
+        .split_once("://")
+        .map_or(origin, |(_, authority)| authority)
 }
 
 impl Auth {
@@ -54,40 +80,35 @@ impl Auth {
             };
             urls.push(format!("http://{host}:{port}"));
         }
-        let mut origins = Vec::new();
-        let mut authorities = Vec::new();
-        for value in urls {
-            let url = reqwest::Url::parse(&value).map_err(|e| e.to_string())?;
-            if !matches!(url.scheme(), "http" | "https")
-                || url.host_str().is_none()
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.path() != "/"
-                || url.query().is_some()
-                || url.fragment().is_some()
-            {
-                return Err(format!("invalid public URL {value:?}: supply an HTTP(S) origin without credentials or a path"));
-            }
-            let origin = url.origin().ascii_serialization();
-            authorities.push(origin.split_once("://").unwrap().1.to_ascii_lowercase());
-            origins.push(origin);
-        }
+        let origins = urls
+            .iter()
+            .map(|value| parse_origin(value))
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             token,
-            authorities,
-            origins,
+            origins: RwLock::new(origins),
             cookie_name: format!("btmux_auth_{port}"),
         })
+    }
+
+    /// Allow another origin after startup.
+    pub fn allow(&self, url: &str) -> Result<(), String> {
+        let origin = parse_origin(url)?;
+        let mut origins = self.origins.write().unwrap();
+        if !origins.contains(&origin) {
+            origins.push(origin);
+        }
+        Ok(())
     }
 
     fn permitted_request(&self, headers: &HeaderMap) -> bool {
         let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
             return false;
         };
-        if !self
-            .authorities
+        let origins = self.origins.read().unwrap();
+        if !origins
             .iter()
-            .any(|allowed| allowed.eq_ignore_ascii_case(host))
+            .any(|allowed| authority(allowed).eq_ignore_ascii_case(host))
         {
             return false;
         }
@@ -97,7 +118,7 @@ impl Auth {
             None => true,
             Some(origin) => origin
                 .to_str()
-                .is_ok_and(|o| self.origins.iter().any(|allowed| allowed == o)),
+                .is_ok_and(|o| origins.iter().any(|allowed| allowed == o)),
         }
     }
 
@@ -162,11 +183,14 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
         .headers()
         .get(header::HOST)
         .and_then(|h| h.to_str().ok())
-        .is_some_and(|host| auth.origins.iter().any(|o| o == &format!("https://{host}")));
+        .is_some_and(|host| {
+            let origin = format!("https://{host}");
+            auth.origins.read().unwrap().iter().any(|o| o == &origin)
+        });
     let mut response = next.run(request).await;
     if set_cookie {
         let cookie = format!(
-            "{}={}; Path=/; HttpOnly; SameSite=Strict{}",
+            "{}={}; Path=/; Max-Age={COOKIE_MAX_AGE}; HttpOnly; SameSite=Strict{}",
             auth.cookie_name,
             auth.token,
             if secure { "; Secure" } else { "" }
@@ -255,6 +279,25 @@ mod tests {
         assert!(!auth.permitted_request(&headers));
     }
     #[test]
+    fn allows_origins_added_after_startup() {
+        let auth = auth();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, "box.tail1.ts.net:8004".parse().unwrap());
+        headers.insert(
+            header::ORIGIN,
+            "https://box.tail1.ts.net:8004".parse().unwrap(),
+        );
+        assert!(!auth.permitted_request(&headers));
+        auth.allow("https://box.tail1.ts.net:8004").unwrap();
+        assert!(auth.permitted_request(&headers));
+        headers.insert(
+            header::ORIGIN,
+            "http://box.tail1.ts.net:8004".parse().unwrap(),
+        );
+        assert!(!auth.permitted_request(&headers));
+        assert!(auth.allow("https://box.tail1.ts.net/path").is_err());
+    }
+    #[test]
     fn requires_credentials_for_every_transport() {
         let auth = auth();
         let mut headers = HeaderMap::new();
@@ -337,6 +380,7 @@ mod middleware_tests {
             cookie.contains("HttpOnly")
                 && cookie.contains("SameSite=Strict")
                 && cookie.contains("Secure")
+                && cookie.contains("Max-Age=")
         );
     }
 }

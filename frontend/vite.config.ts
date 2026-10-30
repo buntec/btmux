@@ -65,6 +65,11 @@ export default defineConfig({
         target: backend,
         changeOrigin: true,
       },
+      // Exactly the pairing links of the tailnet QR code.
+      '^/pair(\\?|$)': {
+        target: backend,
+        changeOrigin: true,
+      },
       // Keep Host: VS Code builds its WebSocket URLs from it.
       '/vscode': {
         target: backend,

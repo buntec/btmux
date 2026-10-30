@@ -1,14 +1,17 @@
 //! One authentication boundary for HTTP, WebSocket upgrades, and MCP.
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
 };
 use base64::Engine;
 use std::{
     path::Path,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
+    time::{Duration, Instant},
 };
 
 static TOKEN: OnceLock<String> = OnceLock::new();
@@ -21,10 +24,14 @@ pub struct Auth {
     /// Allowed browser origins, e.g. `https://host:8004`.
     origins: RwLock<Vec<String>>,
     cookie_name: String,
+    /// One-time codes that sign in another device through `/pair`.
+    pairing_codes: Mutex<Vec<(String, Instant)>>,
 }
 
 // Browsers keep cookies at most 400 days.
 const COOKIE_MAX_AGE: u32 = 400 * 24 * 60 * 60;
+const PAIRING_CODE_TTL: Duration = Duration::from_secs(120);
+const MAX_PAIRING_CODES: usize = 16;
 
 fn parse_origin(value: &str) -> Result<String, String> {
     let url = reqwest::Url::parse(value).map_err(|e| e.to_string())?;
@@ -88,7 +95,48 @@ impl Auth {
             token,
             origins: RwLock::new(origins),
             cookie_name: format!("btmux_auth_{port}"),
+            pairing_codes: Mutex::new(Vec::new()),
         })
+    }
+
+    /// A random code that `/pair` exchanges once for the auth cookie.
+    pub fn pairing_code(&self) -> String {
+        let code = uuid::Uuid::new_v4().simple().to_string();
+        let now = Instant::now();
+        let mut codes = self.pairing_codes.lock().unwrap();
+        codes.retain(|(_, expires)| *expires > now);
+        if codes.len() >= MAX_PAIRING_CODES {
+            codes.remove(0);
+        }
+        codes.push((code.clone(), now + PAIRING_CODE_TTL));
+        code
+    }
+
+    fn redeem_pairing_code(&self, code: &str) -> bool {
+        let now = Instant::now();
+        let mut codes = self.pairing_codes.lock().unwrap();
+        codes.retain(|(_, expires)| *expires > now);
+        let found = codes
+            .iter()
+            .position(|(valid, _)| constant_time_eq(valid.as_bytes(), code.as_bytes()));
+        found.map(|index| codes.swap_remove(index)).is_some()
+    }
+
+    fn cookie(&self, headers: &HeaderMap) -> HeaderValue {
+        let secure = headers
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .is_some_and(|host| {
+                let origin = format!("https://{host}");
+                self.origins.read().unwrap().iter().any(|o| o == &origin)
+            });
+        let cookie = format!(
+            "{}={}; Path=/; Max-Age={COOKIE_MAX_AGE}; HttpOnly; SameSite=Strict{}",
+            self.cookie_name,
+            self.token,
+            if secure { "; Secure" } else { "" }
+        );
+        HeaderValue::from_str(&cookie).unwrap()
     }
 
     /// Allow another origin after startup.
@@ -165,6 +213,9 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
     if !auth.permitted_request(request.headers()) {
         return StatusCode::FORBIDDEN.into_response();
     }
+    if request.method() == Method::GET && request.uri().path() == "/pair" {
+        return pair(&auth, &request);
+    }
     if !auth.authenticated(request.headers()) {
         let mut response = (StatusCode::UNAUTHORIZED, "Use your btmux access token as the password. The token file location is printed when the server starts.").into_response();
         if !request.uri().path().starts_with("/api/")
@@ -178,28 +229,54 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
         }
         return response;
     }
-    let set_cookie = request.headers().contains_key(header::AUTHORIZATION);
-    let secure = request
+    let cookie = request
         .headers()
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|host| {
-            let origin = format!("https://{host}");
-            auth.origins.read().unwrap().iter().any(|o| o == &origin)
-        });
+        .contains_key(header::AUTHORIZATION)
+        .then(|| auth.cookie(request.headers()));
     let mut response = next.run(request).await;
-    if set_cookie {
-        let cookie = format!(
-            "{}={}; Path=/; Max-Age={COOKIE_MAX_AGE}; HttpOnly; SameSite=Strict{}",
-            auth.cookie_name,
-            auth.token,
-            if secure { "; Secure" } else { "" }
-        );
-        response
-            .headers_mut()
-            .append(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    if let Some(cookie) = cookie {
+        response.headers_mut().append(header::SET_COOKIE, cookie);
     }
     response
+}
+
+/// Sign in a device that scanned a pairing QR code, then load the app.
+fn pair(auth: &Auth, request: &Request) -> Response {
+    let code = request
+        .uri()
+        .query()
+        .unwrap_or_default()
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("code="));
+    if !code.is_some_and(|code| auth.redeem_pairing_code(code)) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "This pairing code was used or has expired. Scan a new one.",
+        )
+            .into_response();
+    }
+    (
+        StatusCode::SEE_OTHER,
+        [
+            (header::LOCATION, HeaderValue::from_static("/")),
+            (header::SET_COOKIE, auth.cookie(request.headers())),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+    )
+        .into_response()
+}
+
+/// `POST /api/pair` issues a pairing code; it sits behind `protect`.
+pub fn routes(auth: Arc<Auth>) -> Router {
+    Router::new().route(
+        "/api/pair",
+        post(move || async move {
+            Json(serde_json::json!({
+                "code": auth.pairing_code(),
+                "expires_in": PAIRING_CODE_TTL.as_secs(),
+            }))
+        }),
+    )
 }
 
 /// Persist a per-profile random credential with owner-only permissions. Never
@@ -382,5 +459,62 @@ mod middleware_tests {
                 && cookie.contains("Secure")
                 && cookie.contains("Max-Age=")
         );
+    }
+
+    #[tokio::test]
+    async fn pairing_codes_sign_in_once() {
+        let auth = Arc::new(Auth::new("a".repeat(64), "127.0.0.1", 8004, &[]).unwrap());
+        let app = routes(auth.clone())
+            .fallback(|| async { "ok" })
+            .layer(axum::middleware::from_fn_with_state(auth.clone(), protect));
+        let get = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header(header::HOST, "localhost:8004")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let issue = Request::builder()
+            .method(Method::POST)
+            .uri("/api/pair")
+            .header(header::HOST, "localhost:8004")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(issue).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let code = auth.pairing_code();
+        for uri in ["/pair", "/pair?code=", "/pair?code=bogus"] {
+            let response = app.clone().oneshot(get(uri)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+        }
+        let response = app
+            .clone()
+            .oneshot(get(&format!("/pair?code={code}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[header::LOCATION], "/");
+        let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(cookie.starts_with(&format!("btmux_auth_8004={};", "a".repeat(64))));
+        let response = app
+            .oneshot(get(&format!("/pair?code={code}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn pairing_codes_expire_and_are_bounded() {
+        let auth = Auth::new("a".repeat(64), "127.0.0.1", 8004, &[]).unwrap();
+        let first = auth.pairing_code();
+        for _ in 0..MAX_PAIRING_CODES {
+            auth.pairing_code();
+        }
+        assert!(!auth.redeem_pairing_code(&first));
+        let code = auth.pairing_code();
+        auth.pairing_codes.lock().unwrap().last_mut().unwrap().1 = Instant::now();
+        assert!(!auth.redeem_pairing_code(&code));
     }
 }

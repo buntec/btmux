@@ -21,7 +21,9 @@ import { GitPopup, type GitPopupKind } from './files/GitPopup';
 import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
-import { KeyHint, type Hint } from './KeyHint';
+import { KeyHint, hintKeyEvent, type Hint } from './KeyHint';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { TOUCH_QUERY } from '@/lib/touch';
 import { cn, getParent, joinPath, stepIndex } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
 import { smoothScrollBy } from '@/lib/smoothScroll';
@@ -135,6 +137,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const touch = useMediaQuery(TOUCH_QUERY);
+  // Hint taps type their key, as the keyboard would.
+  const pressHint = useCallback((keys: string) => {
+    const root = rootRef.current;
+    if (!root) return;
+    if (!root.contains(document.activeElement)) root.focus();
+    (document.activeElement ?? root).dispatchEvent(new KeyboardEvent('keydown', hintKeyEvent(keys)));
+  }, []);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const { sidebarRatio, onDividerMouseDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
 
@@ -1481,7 +1491,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             ...BROWSE_HINTS.slice(-1),
           ];
   // Popup keys only work once status confirms a repository.
-  const hints = gitStatus?.is_repo ? allHints : allHints.filter((hint) => !GIT_POPUP_HINTS.includes(hint));
+  const hints = (gitStatus?.is_repo ? allHints : allHints.filter((hint) => !GIT_POPUP_HINTS.includes(hint)))
+    // Filters read typed keys, which touch screens can't type.
+    .filter((hint) => !touch || !hint.keys.includes('/'));
 
   return (
     <VStack
@@ -1548,7 +1560,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         </VStack>
       </HStack>
 
-      <HStack gap={4} vAlign="center" wrap="wrap" className="flex-none gap-y-1 border-t border-border px-3 py-1">
+      <HStack
+        gap={4}
+        vAlign="center"
+        wrap={touch ? 'nowrap' : 'wrap'}
+        isScrollable={touch}
+        className="flex-none gap-y-1 border-t border-border px-3 py-1"
+      >
         {pendingRename ? (
           <HStack gap={3} vAlign="center" className="w-full">
             <TextInput
@@ -1570,8 +1588,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 e.stopPropagation();
               }}
             />
-            <KeyHint keys={['enter']} label="confirm" />
-            <KeyHint keys={['esc']} label="cancel" />
+            <KeyHint keys={['enter']} label="confirm" onPress={pressHint} />
+            <KeyHint keys={['esc']} label="cancel" onPress={pressHint} />
           </HStack>
         ) : pendingDiscard || pendingDelete ? (
           <>
@@ -1592,11 +1610,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               </Text>
               ?
             </Text>
-            <KeyHint keys={['y']} label="confirm" />
-            <KeyHint keys={['n']} label="cancel" />
+            <KeyHint keys={['y']} label="confirm" onPress={pressHint} />
+            <KeyHint keys={['n']} label="cancel" onPress={pressHint} />
           </>
         ) : (
-          hints.map((hint) => <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} />)
+          hints.map((hint) => (
+            <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} onPress={pressHint} />
+          ))
         )}
       </HStack>
 

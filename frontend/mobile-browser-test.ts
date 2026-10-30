@@ -1,5 +1,8 @@
 /** Touch-device regressions (key bar, swipes, narrow layout) in WebKit with iPhone emulation. */
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { devices, webkit, type Page } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 
@@ -176,6 +179,31 @@ try {
   assert.equal(await shown(), 1);
   const zoomed = (await sessionWindows()).some((window) => window.zoomed_pane);
   assert(!zoomed, 'the narrow layout must not zoom on the server');
+
+  // File browser hints type their keys when tapped.
+  const dir = mkdtempSync(path.join(tmpdir(), 'btmux-mobile-'));
+  mkdirSync(path.join(dir, 'a-dir'));
+  writeFileSync(path.join(dir, 'b.txt'), 'b\n');
+  writeFileSync(path.join(dir, '.hidden'), '');
+  await page.evaluate(async (dir) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setFileBrowserOpen(true, dir, state.getActivePaneId(state.allSessions[0].id), 'files');
+  }, dir);
+  const row = (name: string) => page.locator('[data-index]', { hasText: name });
+  await row('b.txt').waitFor();
+  // Filters need typed keys; touch screens have search instead.
+  assert.equal(await page.getByRole('button', { name: '/: filter', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'G: top/bottom', exact: true }).tap();
+  await waitForAsync(page, async () =>
+    /\bbg-accent-bg\b/.test(document.querySelector('[data-index="1"]')?.className ?? ''),
+  );
+  assert.match((await row('b.txt').getAttribute('class')) ?? '', /\bbg-accent-bg\b/);
+  await page.getByRole('button', { name: '.: dotfiles', exact: true }).tap();
+  await row('.hidden').waitFor();
+  await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
+  await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
+  rmSync(dir, { recursive: true, force: true });
 
   // Installable: the manifest loads with the session cookie.
   const manifest = await page.evaluate(async () => (await fetch('/manifest.webmanifest', { credentials: 'include' })).json());

@@ -124,6 +124,14 @@ running Neovim, else `$EDITOR` in its shell). The default is `"neovim"` when
 Neovim 0.12 or newer is on the server's `PATH`, else `"pane"`. See
 [Neovim GUI](neovim.md).
 
+Whatever `editor` says, the status bar shows a button for each editor the
+server can run: Neovim 0.12+ and, outside Windows, the `vscode-server`
+program, found on the server's `PATH` (a service's `PATH` may be shorter than
+your shell's). The configured editor comes first. The `editor-neovim` and
+`editor-vscode` actions, unbound by default, toggle one of them from the
+command palette or a `[keys]` binding, and `btmux open-editor --kind vscode`
+opens one from a pane.
+
 With `"vscode"`, `<prefix> + e` toggles VS Code over the active pane, opened
 in the pane's folder; pressing Esc twice quickly also hides it. The first time,
 btmux asks you to accept the VS Code Server license (once per profile).

@@ -120,7 +120,8 @@ browser and Git mode open files there:
 - `"vscode"`: VS Code in the browser, using btmux's color scheme and font.
 - `"pane"`: `$EDITOR` run in the pane's shell. The default without Neovim 0.12.
 
-See [Editor](docs/configuration.md#editor) for details.
+The status bar has a button for each editor the server can run, so the other
+one stays a click away. See [Editor](docs/configuration.md#editor) for details.
 
 ## Learn more
 

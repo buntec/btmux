@@ -42,9 +42,15 @@ function VscodeGlyph(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** Button label and icon for the configured editor. */
+/** Button label and icon for an editor. */
 export function editorButton(editor: Editor | undefined) {
   if (editor === 'vscode') return { label: 'VS Code', icon: <VscodeGlyph /> };
   if (editor === 'pane') return { label: 'Editor', icon: <SquarePen /> };
   return { label: 'Neovim', icon: <NeovimGlyph /> };
+}
+
+/** The toolbar's editors: the configured one, then the others the server can run. */
+export function toolbarEditors(editor: Editor | undefined, available: Editor[] | undefined): Editor[] {
+  const first = editor ?? 'neovim';
+  return [first, ...(available ?? []).filter((other) => other !== first)];
 }

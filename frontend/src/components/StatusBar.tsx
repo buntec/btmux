@@ -15,7 +15,7 @@ import { getAnimations, getWindowSort } from '../state/configDefaults';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import type { ClientMessage } from '../protocol/messages';
 import { SysStatBar } from './SysStatBar';
-import { editorButton } from './EditorIcon';
+import { editorButton, toolbarEditors } from './EditorIcon';
 import { runAction } from '../hooks/useKeybindings';
 
 let mruVersion = 0;
@@ -51,7 +51,6 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     if (mode === 'files') void openFileBrowserFiles(pane.id, pane.cwd ?? null);
     else state().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
   };
-  const editor = editorButton(config?.editor);
   const animations = getAnimations(config);
   return (
     <HStack
@@ -122,18 +121,25 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       <HStack gap={1} className="hidden lg:flex">
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>
-      <IconButton
-        label={editor.label}
-        tooltip={editor.label}
-        variant="ghost"
-        size="sm"
-        icon={editor.icon}
-        onClick={() => {
-          closeModals();
-          state().setFileBrowserOpen(false);
-          runAction('editor', session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
-        }}
-      />
+      {toolbarEditors(config?.editor, config?.editors).map((editor) => {
+        const button = editorButton(editor);
+        const action = editor === config?.editor ? 'editor' : `editor-${editor}`;
+        return (
+          <IconButton
+            key={editor}
+            label={button.label}
+            tooltip={button.label}
+            variant="ghost"
+            size="sm"
+            icon={button.icon}
+            onClick={() => {
+              closeModals();
+              state().setFileBrowserOpen(false);
+              runAction(action, session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
+            }}
+          />
+        );
+      })}
       <IconButton
         label="File browser"
         tooltip="File browser"

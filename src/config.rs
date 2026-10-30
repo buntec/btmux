@@ -1159,6 +1159,8 @@ pub struct ClientConfig {
     pub window_sort: WindowSort,
     /// Where the file browser and Git mode open files.
     pub editor: Editor,
+    /// The built-in editors the server can run, for the toolbar and palette.
+    pub editors: Vec<Editor>,
     /// The server behind VS Code.
     pub vscode_server: VscodeServer,
     /// How many recently-viewed windows the window-grid (`prefix + w`) shows.
@@ -1182,8 +1184,8 @@ pub struct ClientConfig {
 
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
-/// and intentionally absent here, as are `kill-session` and `last-window`
-/// (unbound by default).
+/// and intentionally absent here, as are `kill-session`, `last-window`,
+/// `editor-neovim`, and `editor-vscode` (unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
     ("\"", "split-horizontal"),
@@ -1950,6 +1952,13 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
         editor: file.editor.unwrap_or_else(Editor::detect),
+        editors: [
+            (Editor::Neovim, crate::ws::nvim::available()),
+            (Editor::Vscode, crate::vscode::available(file.vscode_server)),
+        ]
+        .into_iter()
+        .filter_map(|(editor, available)| available.then_some(editor))
+        .collect(),
         vscode_server: file.vscode_server,
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),

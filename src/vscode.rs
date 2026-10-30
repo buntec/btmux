@@ -294,16 +294,28 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// The program `kind` runs, if installed.
+fn program(kind: Kind) -> Option<PathBuf> {
+    match kind {
+        Kind::Code => find_on_path("code")
+            .or_else(|| Some(PathBuf::from(MACOS_CODE)).filter(|path| path.is_file())),
+        Kind::OpenvscodeServer => find_on_path("openvscode-server"),
+    }
+}
+
+/// Whether the VS Code surface can start `kind`.
+pub fn available(kind: Kind) -> bool {
+    cfg!(unix) && program(kind).is_some()
+}
+
 /// The server command, minus the options both servers share.
 fn server_command(kind: Kind, data: &Path) -> Result<Command, String> {
     Ok(match kind {
         Kind::Code => {
-            let code = find_on_path("code")
-                .or_else(|| Some(PathBuf::from(MACOS_CODE)).filter(|path| path.is_file()))
-                .ok_or(
-                    "VS Code's `code` command was not found. Install Visual Studio Code \
+            let code = program(kind).ok_or(
+                "VS Code's `code` command was not found. Install Visual Studio Code \
                         (e.g. `brew install --cask visual-studio-code`) and its `code` command.",
-                )?;
+            )?;
             let mut command = Command::new(code);
             command
                 .args([
@@ -317,7 +329,7 @@ fn server_command(kind: Kind, data: &Path) -> Result<Command, String> {
             command
         }
         Kind::OpenvscodeServer => {
-            let binary = find_on_path("openvscode-server")
+            let binary = program(kind)
                 .ok_or("`openvscode-server` (vscode-server = \"openvscode-server\") was not found on PATH.")?;
             let mut command = Command::new(binary);
             command

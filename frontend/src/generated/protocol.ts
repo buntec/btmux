@@ -288,6 +288,10 @@ window_sort: WindowSort,
  */
 editor: Editor,
 /**
+ * The built-in editors the server can run, for the toolbar and palette.
+ */
+editors: Array<Editor>,
+/**
  * The server behind VS Code.
  */
 vscode_server: VscodeServer,

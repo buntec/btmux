@@ -549,12 +549,15 @@ export function runAction(
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'git');
       break;
     }
-    case 'editor': {
-      // Toggle the configured editor over the active pane, or move it there.
+    case 'editor':
+    case 'editor-neovim':
+    case 'editor-vscode': {
+      // Toggle the editor over the active pane, or move it there.
       const win = session?.windows[session.active_window];
       const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
       if (!paneId) break;
-      const editor = store.config?.editor;
+      const editor =
+        action === 'editor-neovim' ? 'neovim' : action === 'editor-vscode' ? 'vscode' : store.config?.editor;
       if (editor === 'pane') {
         send({ type: 'open_file', pane_id: paneId, path: null, line: null });
       } else if (editor === 'vscode') {

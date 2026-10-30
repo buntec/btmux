@@ -359,6 +359,10 @@ sends without a path. `btmux open-editor [FILE] [LINE] [--kind EDITOR]` asks its
 server (`POST /api/panes/{id}/open-editor`, `--kind` overriding the setting): with `neovim` it opens the file
 and broadcasts `open_nvim` to show the surface; otherwise, or outside btmux, it
 execs `$EDITOR`.
+`ClientConfig.editors` lists the editors the server can run (`nvim::available`,
+`vscode::available`); the status bar shows a button for each, after the
+configured one, and the unbound `editor-neovim`/`editor-vscode` actions toggle
+one regardless of `editor`.
 
 ### VS Code
 

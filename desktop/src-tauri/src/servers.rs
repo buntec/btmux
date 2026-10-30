@@ -77,7 +77,8 @@ fn discover_in(dir: &Path, client: &Client) -> Vec<RunningServer> {
     if !servers
         .iter()
         .any(|server| server.profile.is_none() && server.address.port() == 8004)
-        && let Ok(token) = discovery::read_private_file(&dir.join("state.token"))
+        && let Ok(token) =
+            discovery::read_private_file(&dir.join("state.token"), discovery::SMALL_FILE)
     {
         let token = token.trim().to_string();
         if discovery::valid_token(&token) {

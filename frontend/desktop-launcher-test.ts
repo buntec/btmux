@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 
 type Choice = { address: string; profile: string; url: string; bundled: boolean; desktop: boolean };
+type Remote = { url: string; profile: string | null; version: string | null; error: string | null };
 type Call = { command: string; args?: Record<string, unknown> };
 type LauncherWindow = Window & {
   launcherTest: {
     choices: Choice[];
+    remotes: Remote[];
     calls: Call[];
     failures: Record<string, string>;
+    holdRemotes: boolean;
+    releaseRemotes?: () => void;
   };
 };
 
@@ -20,33 +24,57 @@ const choices = [
   { address: '[::1]:9234', profile: '<work>', url: 'http://[::1]:9234/', bundled: false, desktop: false },
 ];
 
-async function open(servers: Choice[], failures: Record<string, string> = {}, query = '', persistent = false) {
+async function open(
+  servers: Choice[],
+  failures: Record<string, string> = {},
+  query = '',
+  persistent = false,
+  remotes: Remote[] = [],
+  holdRemotes = false,
+) {
   const page = await browser.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
   await page.addInitScript(
-    ({ servers, failures, persistent }) => {
+    ({ servers, failures, persistent, remotes, holdRemotes }) => {
       if (persistent) localStorage.setItem('btmux-persistent', '1');
-      const state = { choices: servers, failures, calls: [] as Call[] };
+      const state: LauncherWindow['launcherTest'] = { choices: servers, remotes, failures, calls: [], holdRemotes };
       Object.assign(window, {
         launcherTest: state,
         __TAURI__: {
           core: {
             invoke: async (command: string, args?: Record<string, unknown>) => {
               state.calls.push({ command, args });
+              if (command === 'list_remote_servers' && state.holdRemotes) {
+                await new Promise<void>((resolve) => {
+                  state.releaseRemotes = resolve;
+                });
+              }
               if (state.failures[command]) throw state.failures[command];
               if (command === 'discover_servers') return state.choices;
+              if (command === 'list_remote_servers') return state.remotes;
+              if (command === 'add_remote_server') {
+                state.remotes.push({ url: String(args?.url), profile: null, version: '0.0.175', error: null });
+              }
+              if (command === 'remove_remote_server') {
+                state.remotes = state.remotes.filter((remote) => remote.url !== args?.url);
+              }
             },
           },
         },
       });
     },
-    { servers, failures, persistent },
+    { servers, failures, persistent, remotes, holdRemotes },
   );
   await page.goto(url + query);
   return page;
 }
 
+// Remote servers are listed in the background on every refresh.
 async function calls(page: Page) {
+  return (await allCalls(page)).filter((call) => call.command !== 'list_remote_servers');
+}
+
+async function allCalls(page: Page) {
   return page.evaluate(() => (window as LauncherWindow).launcherTest.calls);
 }
 
@@ -152,8 +180,60 @@ try {
   assert.equal(await switcher.getByText('Stops when btmux quits').count(), 1);
   assert.equal(await switcher.getByRole('alert').isHidden(), true);
   await switcher.close();
+  // Saved remote servers suppress the automatic start and list their state.
+  const box: Remote = { url: 'https://box.tail1.ts.net:8004', profile: null, version: '0.0.175', error: null };
+  const down: Remote = { url: 'https://down.example', profile: 'work', version: null, error: 'Could not reach https://down.example.' };
+  const remotes = await open([], {}, '', false, [box, down]);
+  await remotes.getByRole('button', { name: `Connect to ${box.url}` }).waitFor();
+  await remotes.getByText('btmux · 0.0.175').waitFor();
+  await remotes.getByText(down.error!).waitFor();
+  assert.equal((await calls(remotes)).filter((call) => call.command === 'start_server').length, 0);
+  assert(await remotes.getByRole('button', { name: 'Start desktop server' }).isEnabled());
+  await remotes.getByRole('button', { name: `Connect to ${down.url}` }).click();
+  assert.deepEqual((await calls(remotes)).at(-1), { command: 'connect_remote_server', args: { url: down.url } });
+  await remotes.close();
+
+  // An unreachable remote doesn't hold up local servers.
+  const slow = await open(choices, {}, '', false, [box], true);
+  await slow.getByRole('button', { name: 'Connect to default' }).waitFor();
+  assert(await slow.getByRole('button', { name: 'Connect to default' }).isEnabled());
+  assert.equal(await slow.getByRole('button', { name: `Connect to ${box.url}` }).count(), 0);
+  await slow.evaluate(() => (window as LauncherWindow).launcherTest.releaseRemotes?.());
+  await slow.getByRole('button', { name: `Connect to ${box.url}` }).waitFor();
+  assert(await slow.getByRole('button', { name: `Connect to ${box.url}` }).isEnabled());
+  await slow.close();
+
+  // Adding checks the server first; a failure keeps the form filled in.
+  const adding = await open(choices, { add_remote_server: 'The server rejected this token.' });
+  await adding.getByRole('button', { name: 'Connect to default' }).waitFor();
+  assert.equal(await adding.getByRole('textbox').count(), 0);
+  await adding.getByRole('button', { name: 'Add server' }).click();
+  await adding.getByRole('textbox', { name: 'Address' }).fill('box.tail1.ts.net:8004');
+  await adding.getByLabel('Access token').fill('secret-token');
+  await adding.getByRole('button', { name: 'Save server' }).click();
+  await adding.getByRole('alert').filter({ hasText: 'The server rejected this token.' }).waitFor();
+  assert.equal(await adding.getByRole('textbox', { name: 'Address' }).inputValue(), 'box.tail1.ts.net:8004');
+  assert.deepEqual((await calls(adding)).at(-1), {
+    command: 'add_remote_server',
+    args: { url: 'box.tail1.ts.net:8004', token: 'secret-token' },
+  });
+  await adding.evaluate(() => {
+    (window as LauncherWindow).launcherTest.failures = {};
+  });
+  await adding.getByRole('button', { name: 'Save server' }).click();
+  await adding.getByRole('button', { name: 'Connect to box.tail1.ts.net:8004' }).waitFor();
+  assert(await adding.getByRole('textbox', { name: 'Address' }).isHidden());
+  assert(await adding.getByRole('button', { name: 'Add server' }).isVisible());
+  await adding.getByRole('button', { name: 'Remove box.tail1.ts.net:8004' }).click();
+  await adding.getByRole('button', { name: 'Connect to box.tail1.ts.net:8004' }).waitFor({ state: 'detached' });
+  assert.deepEqual(
+    (await allCalls(adding)).slice(-3).map((call) => call.command),
+    ['remove_remote_server', 'list_remote_servers', 'discover_servers'],
+  );
+  await adding.close();
+
   assert.deepEqual(errors, []);
-  console.log('PASS desktop discovery choices, automatic startup, keep-running choice, stopping, connection, refresh, return, and error recovery');
+  console.log('PASS desktop discovery choices, automatic startup, keep-running choice, stopping, connection, refresh, return, error recovery, and remote servers');
 } finally {
   await browser.close();
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "allows the bundled startup picker to discover, connect to, start, and stop servers",
+  "description": "allows the bundled startup picker to discover, connect to, start, and stop servers, and manage remote servers",
   "local": true,
   "windows": [
     "main"
@@ -10,6 +10,10 @@
     "allow-discover-servers",
     "allow-connect-server",
     "allow-start-server",
-    "allow-stop-server"
+    "allow-stop-server",
+    "allow-list-remote-servers",
+    "allow-add-remote-server",
+    "allow-remove-remote-server",
+    "allow-connect-remote-server"
   ]
 }

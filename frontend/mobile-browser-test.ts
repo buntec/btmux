@@ -204,7 +204,11 @@ try {
   for (let i = 0; i < 50 && (await windows()) === before; i++) await page.waitForTimeout(100);
   assert.equal(await windows(), before + 1);
   // Also when the key arrives as text after an unidentified key (Android).
+  // The new window's pane takes focus once its replay is shown.
+  await page.waitForFunction(() => document.activeElement?.closest('[data-pane-terminal]') != null);
   await page.getByRole('button', { name: /^Prefix/ }).tap();
+  // Armed only once the key bar has rendered it.
+  await page.getByRole('button', { name: /^Prefix/, pressed: true }).waitFor();
   await page.evaluate(() =>
     document.activeElement!.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, bubbles: true, cancelable: true }),
@@ -234,7 +238,9 @@ try {
 
   // Narrow screens show only the active pane; Next pane cycles them.
   const panes = await (await api('/api/panes')).json();
-  const paneId = panes.find((pane: { window_active: boolean; pane_active: boolean }) => pane.window_active && pane.pane_active).pane_id;
+  const paneId = panes.find(
+    (pane: { window_active: boolean; pane_active: boolean }) => pane.window_active && pane.pane_active,
+  ).pane_id;
   assert((await api(`/api/panes/${paneId}/split`, { method: 'POST', body: '{"direction":"right"}' })).ok);
   await keys('Next pane').waitFor();
   const shown = () =>
@@ -258,11 +264,15 @@ try {
     });
   const first = await activePane();
   await keys('Next pane').tap();
-  await waitForAsync(page, async (first) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    const state = useStore.getState();
-    return state.getActivePaneId(state.allSessions[0].id) !== first;
-  }, first);
+  await waitForAsync(
+    page,
+    async (first) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const state = useStore.getState();
+      return state.getActivePaneId(state.allSessions[0].id) !== first;
+    },
+    first,
+  );
   assert.equal(await shown(), 1);
   const zoomed = (await sessionWindows()).some((window) => window.zoomed_pane);
   assert(!zoomed, 'the narrow layout must not zoom on the server');
@@ -373,11 +383,15 @@ try {
   await page.locator('dialog.btm-side-nav').waitFor({ state: 'hidden' });
 
   // Installable: the manifest loads with the session cookie.
-  const manifest = await page.evaluate(async () => (await fetch('/manifest.webmanifest', { credentials: 'include' })).json());
+  const manifest = await page.evaluate(async () =>
+    (await fetch('/manifest.webmanifest', { credentials: 'include' })).json(),
+  );
   assert.equal(manifest.display, 'standalone');
 
   assert.deepEqual(errors, []);
-  console.log('PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, nav drawer, pairing, and manifest');
+  console.log(
+    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, nav drawer, pairing, and manifest',
+  );
 } finally {
   await browser.close();
 }

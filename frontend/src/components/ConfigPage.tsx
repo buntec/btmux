@@ -41,7 +41,9 @@ import { FormLayout } from '@astryxdesign/core/FormLayout';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { Text } from '@astryxdesign/core/Text';
-import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { useClipboard, useMediaQuery } from '@astryxdesign/core/hooks';
+import { Icon } from '@astryxdesign/core/Icon';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import {
   Layout,
   LayoutContent,
@@ -409,18 +411,26 @@ function KeyBindField({ label, value, onChange }: { label: string; value: string
   }, [recording, onChange]);
 
   return (
-    <HStack gap={3} vAlign="center" hAlign="between" className="min-w-0">
-      <Text>{label}</Text>
-      <Button
-        label={recording ? `Press a key for ${label}` : `Change key for ${label}`}
-        size="sm"
-        variant={recording ? 'primary' : 'ghost'}
-        onClick={() => setRecording((current) => !current)}
-        onBlur={() => setRecording(false)}
-      >
-        {recording ? 'Press a key…' : value ? <KeyCap keys={value} /> : 'Unbound'}
-      </Button>
-    </HStack>
+    <Button
+      label={recording ? `Press a key for ${label}` : `Change key for ${label}`}
+      size="sm"
+      variant="ghost"
+      width="100%"
+      onClick={() => setRecording((current) => !current)}
+      onBlur={() => setRecording(false)}
+      className="[&>span>span]:flex-1"
+    >
+      <HStack as="span" gap={3} vAlign="center" hAlign="between" className="w-full">
+        <Text>{label}</Text>
+        {recording ? (
+          <Text color="accent">Press a key…</Text>
+        ) : value ? (
+          <KeyCap keys={value} />
+        ) : (
+          <Text color="secondary">Unbound</Text>
+        )}
+      </HStack>
+    </Button>
   );
 }
 
@@ -436,7 +446,7 @@ export function ConfigPage({ config, send }: Props) {
   const [typedFont, setTypedFont] = useState(draft.fontFamily);
   const wallpaperCheck = useWallpaperCheck(draft.wallpaper);
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
-  const [copied, setCopied] = useState(false);
+  const { copy, isCopied } = useClipboard({ announce: 'Copied' });
   const [showToml, setShowToml] = useState(false);
   const [clearBackdrop, setClearBackdrop] = useState(false);
   const toml = useMemo(() => toToml(draft), [draft]);
@@ -547,13 +557,6 @@ export function ConfigPage({ config, send }: Props) {
     setSettingsOpen(false);
   };
 
-  const copy = async () => {
-    await navigator.clipboard.writeText(toml);
-    setCopied(true);
-    toast({ body: 'Settings copied to clipboard' });
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-
   const reset = () => {
     send({ type: 'reset_config' });
     setDirty(new Set());
@@ -658,14 +661,8 @@ export function ConfigPage({ config, send }: Props) {
       className={isNarrow ? 'h-64 border-t border-border' : 'h-full'}
     >
       <Layout
-        padding={6}
-        header={
-          <LayoutHeader>
-            <Text weight="medium">Generated TOML</Text>
-          </LayoutHeader>
-        }
         content={
-          <LayoutContent isScrollable={false} className="[&>.astryx-field]:h-full">
+          <LayoutContent padding={6} isScrollable={false} className="relative [&>.astryx-field]:h-full">
             <TextArea
               label="Generated TOML"
               isLabelHidden
@@ -673,14 +670,18 @@ export function ConfigPage({ config, send }: Props) {
               isReadOnly
               hasSpellCheck={false}
               statusVariant="detached"
-              controlClassName="h-full [&_textarea]:h-full [&_textarea]:resize-none [&_textarea]:font-mono"
+              controlClassName="h-full [&_textarea]:h-full [&_textarea]:resize-none [&_textarea]:pr-10 [&_textarea]:font-mono"
+            />
+            <IconButton
+              variant="ghost"
+              size="sm"
+              icon={<Icon icon={isCopied ? 'check' : 'copy'} size="sm" color="inherit" />}
+              tooltip="Copy"
+              label={isCopied ? 'Copied' : 'Copy TOML'}
+              onClick={() => void copy(toml)}
+              className="absolute top-8 right-8"
             />
           </LayoutContent>
-        }
-        footer={
-          <LayoutFooter>
-            <Button label={copied ? 'Copied' : 'Copy TOML'} clickAction={copy} />
-          </LayoutFooter>
         }
       />
     </LayoutPanel>
@@ -914,7 +915,7 @@ export function ConfigPage({ config, send }: Props) {
                   )}
                   {tab === 'keybinds' && (
                     <VStack gap={4} id="settings-keybinds" role="tabpanel" aria-label={TAB_LABELS.keybinds}>
-                      <FormLayout>
+                      <VStack gap={1}>
                         {bindingRows.map((bind) => (
                           <KeyBindField
                             key={bind.action}
@@ -930,7 +931,7 @@ export function ConfigPage({ config, send }: Props) {
                             }}
                           />
                         ))}
-                      </FormLayout>
+                      </VStack>
                     </VStack>
                   )}
                   {tab === 'notifications' && (
@@ -975,13 +976,13 @@ export function ConfigPage({ config, send }: Props) {
             }
             footer={
               <LayoutFooter hasDivider>
-                <HStack gap={2} wrap="wrap" hAlign="between">
-                  <HStack gap={4} wrap="wrap">
+                <HStack gap={2} wrap="wrap" hAlign="between" vAlign="center">
+                  <HStack gap={4} wrap="wrap" vAlign="center">
                     <Button label="Reset" onClick={reset} />
                     <Switch label="Show TOML" value={showToml} onChange={setShowToml} />
                     <Switch label="Clear background" value={clearBackdrop} onChange={setClearBackdrop} />
                   </HStack>
-                  <HStack gap={2} wrap="wrap">
+                  <HStack gap={2} wrap="wrap" vAlign="center">
                     <Button label="Close" onClick={goBack} />
                     <Button
                       label="Apply"

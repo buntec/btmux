@@ -105,7 +105,7 @@ function keyCode(key: string) {
   return key.length > 1 ? key : '';
 }
 
-export type KeyModifiers = { ctrlKey?: boolean; altKey?: boolean };
+export type KeyModifiers = { ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean };
 
 /** Press a key on an input, as the keyboard would. */
 export function dispatchKey(input: Element, key: string, modifiers: KeyModifiers = {}) {
@@ -317,6 +317,8 @@ export class PaneTerminal {
     const touch = event.touches.length === 1 ? event.touches[0] : null;
     if (!touch || !this.touch) return;
     if (!this.mouseTracking() && !this.usingAltScreen()) return;
+    // Back to the live screen first, as onWheel does.
+    if (this.mouseTracking() && !this.isScrolledToBottom()) return;
     const deltaY = this.touch.y - touch.clientY;
     this.touch = { x: touch.clientX, y: touch.clientY };
     event.preventDefault();

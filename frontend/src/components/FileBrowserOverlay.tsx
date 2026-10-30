@@ -22,11 +22,12 @@ import { GitPopup, type GitPopupKind } from './files/GitPopup';
 import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
-import { KeyHint, hintKeyEvent, type Hint } from './KeyHint';
+import { KeyHint, hintKey, type Hint } from './KeyHint';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { NARROW_QUERY, TOUCH_QUERY } from '@/lib/touch';
 import { cn, getParent, joinPath, stepIndex } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
+import { dispatchKey } from '@/lib/paneTerminal';
 import { smoothScrollBy } from '@/lib/smoothScroll';
 import { DEFAULT_TYPE_SCALE, terminalTypeScale } from '@/lib/astryx-theme';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
@@ -151,12 +152,18 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       const root = rootRef.current;
       if (!root) return;
       if (!root.contains(document.activeElement)) root.focus();
-      (document.activeElement ?? root).dispatchEvent(new KeyboardEvent('keydown', hintKeyEvent(keys)));
+      const fields = () =>
+        [...root.querySelectorAll<HTMLElement>(TEXT_FIELDS)].filter((field) => field.checkVisibility());
+      const before = new Set(fields());
+      const { key, modifiers } = hintKey(keys);
+      dispatchKey(document.activeElement ?? root, key, modifiers);
       // iOS opens the keyboard only for focus taken during the tap, so focus a
       // text field the key opened (search, filter, rename) now.
       if (touch && !document.activeElement?.matches(TEXT_FIELDS)) {
         flushSync(() => {});
-        [...root.querySelectorAll<HTMLElement>(TEXT_FIELDS)].find((field) => field.checkVisibility())?.focus();
+        fields()
+          .find((field) => !before.has(field))
+          ?.focus();
       }
     },
     [touch],
@@ -322,6 +329,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
     },
     [fileSend, store],
+  );
+
+  // Set the filter, focusing the first match in Git mode.
+  const applyFilterQuery = useCallback(
+    (query: string) => {
+      const st = store.getState();
+      st.setFilterQuery(query);
+      if (st.isGitMode && st.gitView === 'log') st.setGitLogFocusedIndex(0);
+      else if (st.isGitMode) st.setGitFocusedIndex(0);
+    },
+    [store],
   );
 
   // Close the log filter, keeping the focused commit selected in the full list.
@@ -799,7 +817,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           setPendingDiscard(null);
         } else if (pendingDelete) {
           setPendingDelete(null);
-        } else if (previewShown) {
+        } else if (narrow && previewShown) {
           setPreviewShown(false);
         } else if (selectedPaths.size > 0) {
           store.getState().clearSelection();
@@ -871,8 +889,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             if (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey)) {
               e.preventDefault();
-              store.getState().setFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
-              store.getState().setGitLogFocusedIndex(0);
+              applyFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
               return;
             }
             if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -957,16 +974,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             closeStatusFilter();
             return;
           }
-          if (e.key === 'Backspace') {
+          if (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey)) {
             e.preventDefault();
-            store.getState().setFilterQuery(filterQuery.slice(0, -1));
-            store.getState().setGitFocusedIndex(0);
-            return;
-          }
-          if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
-            e.preventDefault();
-            store.getState().setFilterQuery(filterQuery + e.key);
-            store.getState().setGitFocusedIndex(0);
+            applyFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
             return;
           }
           if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -1189,14 +1199,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           }
           return;
         }
-        if (e.key === 'Backspace') {
+        if (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey)) {
           e.preventDefault();
-          store.getState().setFilterQuery(filterQuery.slice(0, -1));
-          return;
-        }
-        if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
-          e.preventDefault();
-          store.getState().setFilterQuery(filterQuery + e.key);
+          applyFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
           return;
         }
         const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n');
@@ -1430,6 +1435,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     onClose,
     exitGitMode,
     closeLogFilter,
+    applyFilterQuery,
     closeStatusFilter,
     gitStage,
     gitUnstage,
@@ -1440,6 +1446,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     deleteFile,
     pendingDiscard,
     pendingDelete,
+    narrow,
     previewShown,
     commitModalOpen,
     gitPopup,
@@ -1647,12 +1654,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             isLabelHidden
             size="sm"
             value={filterQuery}
-            onChange={(value) => {
-              const state = store.getState();
-              state.setFilterQuery(value);
-              if (isGitMode && gitView === 'log') state.setGitLogFocusedIndex(0);
-              else if (isGitMode) state.setGitFocusedIndex(0);
-            }}
+            onChange={applyFilterQuery}
             autoComplete="off"
             placeholder="Filter…"
             controlClassName="min-w-0 flex-1"

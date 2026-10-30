@@ -36,7 +36,7 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
   const [alt, setAlt] = useState(false);
   const prefix = parsePrefix(getPrefix(config)) ?? parsePrefix(CONFIG_DEFAULTS.prefix)!;
 
-  // To the focused terminal or Neovim, else the active pane's terminal.
+  // To the focused terminal or Neovim, else what covers the active pane.
   const pressKey = (key: string, modifiers: KeyModifiers) => {
     const state = useStore.getState();
     const focused = document.activeElement;
@@ -46,7 +46,15 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     const pane = focused?.closest('[data-pane-terminal]');
     for (const term of state.terminals.values()) if (term.element === pane) return term.pressKey(key, modifiers);
     const paneId = state.getActivePaneId(sessionId);
-    if (paneId) state.terminals.get(paneId)?.pressKey(key, modifiers);
+    if (!paneId) return;
+    if (state.nvimOpen && state.nvimPaneId === paneId) {
+      const input = document.querySelector('[data-nvim-input]');
+      if (input) dispatchKey(input, key, modifiers);
+      return;
+    }
+    // VS Code's iframe ignores synthetic keys; they mustn't reach the shell under it.
+    if (state.vscodeOpen && state.vscodePaneId === paneId) return;
+    state.terminals.get(paneId)?.pressKey(key, modifiers);
   };
 
   const press = (key: string) => {

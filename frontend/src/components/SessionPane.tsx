@@ -223,7 +223,9 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const paneNumberById = new Map(
     activeWindow ? paneIdsInOrder(activeWindow.layout).map((id, i) => [id, i] as const) : [],
   );
-  const showPaneNumbers = isActiveSession && paneNumbersVisible && !zoomedPaneId;
+  const showPaneNumbers = isActiveSession && paneNumbersVisible;
+  // A zoomed pane (or the one narrow screens show) fills the window.
+  const numberRects = zoomedPaneId ? [{ ...HIDDEN, paneId: zoomedPaneId }] : rects;
 
   // Place the Neovim and VS Code surfaces over their panes while this session is shown.
   const pinnedRect = (paneId: string | null): LayoutRect | null =>
@@ -367,7 +369,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         </Dialog>
       )}
       {showPaneNumbers &&
-        rects.map((rect) => {
+        numberRects.map((rect) => {
           const n = paneNumberById.get(rect.paneId);
           if (n === undefined) return null;
           const accent = config?.theme?.yellow ?? STARTUP_THEME.yellow;

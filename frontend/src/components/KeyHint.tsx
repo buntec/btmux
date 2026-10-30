@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { HStack } from '@astryxdesign/core/Layout';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { Text } from '@astryxdesign/core/Text';
+import type { KeyModifiers } from '../lib/paneTerminal';
 
 export interface Hint {
   keys: string[];
@@ -38,29 +39,25 @@ function parseKeys(keys: string): { modifiers: string[]; key: string } {
 
 // Hint key names as KeyboardEvent.key values.
 const KEY_VALUES: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(KEY_NAMES).map(([value, name]) => [name, value])),
   esc: 'Escape',
   escape: 'Escape',
   enter: 'Enter',
   tab: 'Tab',
-  space: ' ',
   backspace: 'Backspace',
-  up: 'ArrowUp',
-  down: 'ArrowDown',
-  left: 'ArrowLeft',
-  right: 'ArrowRight',
 };
 
-/** The keydown a hint key such as `ctrl+d`, `G`, or `esc` stands for. */
-export function hintKeyEvent(keys: string): KeyboardEventInit {
+/** The key and modifiers a hint key such as `ctrl+d`, `G`, or `esc` stands for. */
+export function hintKey(keys: string): { key: string; modifiers: KeyModifiers } {
   const { modifiers, key } = parseKeys(keys);
   const value = KEY_VALUES[key.toLowerCase()] ?? key;
   return {
     key: value,
-    ctrlKey: modifiers.includes('ctrl'),
-    altKey: modifiers.includes('alt'),
-    shiftKey: modifiers.includes('shift') || (value.length === 1 && value !== value.toLowerCase()),
-    bubbles: true,
-    cancelable: true,
+    modifiers: {
+      ctrlKey: modifiers.includes('ctrl'),
+      altKey: modifiers.includes('alt'),
+      shiftKey: modifiers.includes('shift') || (value.length === 1 && value !== value.toLowerCase()),
+    },
   };
 }
 

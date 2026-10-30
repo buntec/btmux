@@ -94,6 +94,8 @@ export function useControlSocket() {
         const msg: ServerMessage = JSON.parse(ev.data);
         if (msg.type === 'client') {
           clientId = msg.id;
+          // Sent again after it on connect, if the server has it.
+          useStore.getState().setTailscale(null);
           reportFocus();
         } else if (msg.type === 'state') {
           setSessions(msg.sessions);
@@ -155,6 +157,8 @@ export function useControlSocket() {
         } else if (msg.type === 'open_vscode') {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setVscodeOpen(true, msg.pane_id);
+        } else if (msg.type === 'tailscale') {
+          useStore.getState().setTailscale(msg.status);
         }
       };
 

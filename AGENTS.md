@@ -601,9 +601,15 @@ allows that tailnet HTTPS origin once Tailscale reports it (`Auth::allow`). The
 Serve config is machine-wide: btmux refuses a port whose route serves anything
 else, and removes only a route it created, recorded in `state.tailscale` before
 the command runs; setup and shutdown share a lock, so shutdown waits for a
-command in flight;
+command in flight. Once serving, it rechecks the route every 30 s and sets it
+up again if it's gone.
 Tailscale's identity headers are not trusted, since local processes can reach
 the loopback listener too.
+Its status (`TailscaleStatus`: starting, serving, error) is pushed to control
+sockets as `ServerMessage::Tailscale` and is in `/api/info`; the status bar's
+`TailscaleButton` shows it. The desktop picker can start a kept-running desktop
+server with `--tailscale`, on a saved port (`tailnet-port`, chosen below the
+ephemeral port ranges); its card polls the status while shown.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.
 Only one running server may own a persistence profile (held OS file lock).
 

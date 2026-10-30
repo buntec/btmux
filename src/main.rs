@@ -477,7 +477,8 @@ async fn main() {
             let marker = state_file
                 .as_ref()
                 .map(|path| path.with_extension("tailscale"));
-            tailscale::spawn(address, auth, marker);
+            let events = state.read().await.events().clone();
+            tailscale::spawn(address, auth, marker, events);
         }
     }
 

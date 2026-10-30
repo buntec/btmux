@@ -17,6 +17,7 @@ import type { ClientMessage } from '../protocol/messages';
 import { SysStatBar } from './SysStatBar';
 import { editorButton, toolbarEditors } from './EditorIcon';
 import { runAction } from '../hooks/useKeybindings';
+import { TailscaleButton } from './TailscaleButton';
 
 let mruVersion = 0;
 window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
@@ -164,6 +165,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
         icon={<Activity />}
         onClick={() => openFiles('process')}
       />
+      <TailscaleButton />
     </HStack>
   );
 }

@@ -153,10 +153,14 @@ btmux runs `tailscale serve --bg --https=<port>`, which serves the machine's
 tailnet name over HTTPS with a Tailscale certificate and proxies to btmux on
 loopback, and prints the URL. btmux itself stays on `127.0.0.1`. It never
 replaces another route on that port: if one exists, btmux serves locally and
-reports it, so choose another `--port`. A route that already points at btmux is
+reports it: remove that route or choose another `--port`. A route that already points at btmux is
 used as is. Shutting down removes only a route btmux created (recorded in
 `state.tailscale` beside the profile's state); an upgrade keeps it. If Tailscale
 isn't running yet, btmux keeps serving locally and retries every 10 seconds.
+Once serving, it checks the route every 30 seconds and sets it up again if
+it's gone, for example after Tailscale restarts.
+The status bar's tailnet button shows the URL, with a copy button, or the
+last error.
 
 This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
 [MagicDNS](https://tailscale.com/kb/1081/magicdns), and
@@ -165,6 +169,10 @@ the tailnet. Sign in with the access token as above; browsers keep the login for
 400 days. HTTPS matters even though the tailnet is encrypted: browsers allow
 the clipboard, notifications, and WebGPU shader wallpapers only on secure
 origins.
+
+In the desktop app, a desktop server kept running after the app quits can
+also be shared this way: check **Share it on my tailnet** before starting it.
+It then keeps its port across starts, so its tailnet URL stays the same.
 
 ### Phones and tablets
 
@@ -266,7 +274,8 @@ default.
 }
 ```
 
-`services.btmux` is accepted as an alias for `programs.btmux`. The service uses
+Set `service.tailscale = true` to start the service with `--tailscale` (see
+[Tailscale](#tailscale)). `services.btmux` is accepted as an alias for `programs.btmux`. The service uses
 the same launchd label and systemd unit as `btmux install`, so `btmux restart`
 works with it. When only the package changes, activation runs `btmux upgrade`,
 so running shells survive; it falls back to a restart if the running server

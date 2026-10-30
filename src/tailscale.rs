@@ -14,10 +14,14 @@ use std::{
     time::Duration,
 };
 
-use serde::Deserialize;
-use tokio::{process::Command, sync::Mutex};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    process::Command,
+    sync::{broadcast, Mutex},
+};
 
 use crate::auth::Auth;
+use crate::ws::control::ServerMessage;
 
 #[cfg(target_os = "macos")]
 const PROGRAMS: &[&str] = &[
@@ -30,8 +34,25 @@ const PROGRAMS: &[&str] = &["tailscale"];
 // Shutdown waits for a command in flight, up to this long.
 const TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY: Duration = Duration::from_secs(10);
+// While serving, how often to check that the route still works.
+const CHECK: Duration = Duration::from_secs(30);
 
 static INSTANCE: OnceLock<Arc<Tailscale>> = OnceLock::new();
+
+/// Whether `--tailscale` serves the tailnet URL yet.
+#[derive(Clone, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum TailscaleStatus {
+    Starting,
+    Serving {
+        url: String,
+    },
+    /// The last attempt failed; btmux keeps retrying.
+    Error {
+        message: String,
+    },
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -177,6 +198,7 @@ struct Tailscale {
     marker: Option<PathBuf>,
     // Held across each setup attempt, so shutdown waits for one in flight.
     state: Mutex<State>,
+    status: std::sync::Mutex<TailscaleStatus>,
 }
 
 impl Tailscale {
@@ -187,7 +209,19 @@ impl Tailscale {
             proxy: format!("http://{}", target(address)),
             marker,
             state: Mutex::default(),
+            status: std::sync::Mutex::new(TailscaleStatus::Starting),
         }
+    }
+
+    /// Record `status`, and broadcast it if it changed. Returns whether it did.
+    fn report(&self, status: TailscaleStatus, events: &broadcast::Sender<String>) -> bool {
+        let mut current = self.status.lock().unwrap();
+        if *current == status {
+            return false;
+        }
+        *current = status.clone();
+        let _ = events.send(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
+        true
     }
 
     async fn cli(&self, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -207,7 +241,11 @@ impl Tailscale {
                 Ok(Err(e)) => return Err(e.to_string()),
                 Ok(Ok(output)) if output.status.success() => return Ok(output.stdout),
                 Ok(Ok(output)) => {
-                    return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+                    let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    if error.is_empty() {
+                        return Err(format!("`tailscale {}` failed", args.join(" ")));
+                    }
+                    return Err(error);
                 }
             }
         }
@@ -264,12 +302,13 @@ impl Tailscale {
         let marked = self.marked();
         match route(&config, &host, self.port, &self.proxy) {
             Route::Taken(what) => Err(format!(
-                "{host}:{} already serves {what}; choose another --port",
+                "{host}:{} already serves {what}; remove that route or serve btmux on another port",
                 self.port
             )),
             Route::Same => {
-                // Created by an earlier btmux on this profile, or by the user.
-                state.owned = marked == Some((self.port, self.proxy.clone()));
+                // Created by this process, an earlier btmux on this profile,
+                // or the user.
+                state.owned |= marked == Some((self.port, self.proxy.clone()));
                 Ok(Some(url))
             }
             Route::Free => {
@@ -326,36 +365,64 @@ impl Tailscale {
             Err(error) => tracing::warn!("tailscale serve cleanup: {error}"),
         }
     }
+
+    /// Set up the route, then keep checking it: Tailscale may stop, or the
+    /// route be removed or replaced, while btmux runs.
+    async fn run(
+        &self,
+        auth: &Auth,
+        events: &broadcast::Sender<String>,
+        check: Duration,
+        retry: Duration,
+    ) {
+        let mut last_error = String::new();
+        loop {
+            let wait = match self.attempt(auth).await {
+                Ok(Some(url)) => {
+                    last_error.clear();
+                    if self.report(TailscaleStatus::Serving { url: url.clone() }, events) {
+                        eprintln!("btmux tailnet URL: {url}");
+                        tracing::info!("tailnet URL: {url}");
+                    }
+                    check
+                }
+                Ok(None) => return,
+                Err(error) => {
+                    if error != last_error {
+                        // Warnings reach the console by default.
+                        tracing::warn!("tailscale serve: {error} (retrying)");
+                        last_error = error.clone();
+                    }
+                    self.report(TailscaleStatus::Error { message: error }, events);
+                    retry
+                }
+            };
+            tokio::time::sleep(wait).await;
+        }
+    }
 }
 
 /// Expose the server on its port of the tailnet HTTPS name, retrying until
-/// Tailscale is up and the route is free.
-pub fn spawn(address: SocketAddr, auth: Arc<Auth>, marker: Option<PathBuf>) {
+/// Tailscale is up and the route is free, and restoring the route if it goes.
+pub fn spawn(
+    address: SocketAddr,
+    auth: Arc<Auth>,
+    marker: Option<PathBuf>,
+    events: broadcast::Sender<String>,
+) {
     let programs = PROGRAMS.iter().map(PathBuf::from).collect();
     let tailscale = Arc::new(Tailscale::new(programs, address, marker));
     if INSTANCE.set(tailscale.clone()).is_err() {
         return;
     }
-    tokio::spawn(async move {
-        let mut last_error = String::new();
-        loop {
-            match tailscale.attempt(&auth).await {
-                Ok(Some(url)) => {
-                    eprintln!("btmux tailnet URL: {url}");
-                    tracing::info!("tailnet URL: {url}");
-                    return;
-                }
-                Ok(None) => return,
-                Err(error) if error != last_error => {
-                    // Warnings reach the console by default.
-                    tracing::warn!("tailscale serve: {error} (retrying)");
-                    last_error = error;
-                }
-                Err(_) => {}
-            }
-            tokio::time::sleep(RETRY).await;
-        }
-    });
+    tokio::spawn(async move { tailscale.run(&auth, &events, CHECK, RETRY).await });
+}
+
+/// The tailnet status, if the server runs with `--tailscale`.
+pub fn status() -> Option<TailscaleStatus> {
+    INSTANCE
+        .get()
+        .map(|tailscale| tailscale.status.lock().unwrap().clone())
 }
 
 /// Remove btmux's route on shutdown (not on upgrade, which keeps it).
@@ -452,6 +519,24 @@ mod tests {
             web(r#"{"Proxy":"http://127.0.0.1:8004"}"#)
         );
         assert!(matches!(check(&foreground), Route::Taken(_)));
+    }
+
+    #[test]
+    fn broadcasts_status_changes_only() {
+        let tailscale = Tailscale::new(Vec::new(), "127.0.0.1:8004".parse().unwrap(), None);
+        let (events, mut rx) = broadcast::channel(4);
+        let error = || TailscaleStatus::Error {
+            message: "down".into(),
+        };
+        assert!(!tailscale.report(TailscaleStatus::Starting, &events));
+        assert!(tailscale.report(error(), &events));
+        assert!(!tailscale.report(error(), &events));
+        let message: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            message,
+            serde_json::json!({"type": "tailscale", "status": {"state": "error", "message": "down"}})
+        );
+        assert!(rx.try_recv().is_err());
     }
 
     /// A fake `tailscale` CLI with a one-route Serve config in a file.
@@ -558,6 +643,22 @@ esac
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn keeps_owning_its_route_without_a_marker() {
+        let cli = fake::Cli::new("{}");
+        let tailscale = Tailscale::new(
+            vec![cli.path("tailscale")],
+            SocketAddr::from(([127, 0, 0, 1], 8004)),
+            None,
+        );
+        assert!(tailscale.attempt(&auth()).await.unwrap().is_some());
+        // A periodic check finds the route it created.
+        assert!(tailscale.attempt(&auth()).await.unwrap().is_some());
+        tailscale.stop().await;
+        assert_eq!(cli.config(), "{}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn leaves_other_routes_alone() {
         let other = fake::route(8004, "http://127.0.0.1:3000");
         let cli = fake::Cli::new(&other);
@@ -605,6 +706,38 @@ esac
         assert!(tailscale.attempt(&auth()).await.unwrap().is_some());
         assert!(cli.calls().contains("serve --https=9000 off"));
         assert_eq!(cli.config(), fake::route(8004, "http://127.0.0.1:8004"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reports_and_restores_a_route_that_stops_working() {
+        let cli = fake::Cli::new("{}");
+        let tailscale = Arc::new(cli.tailscale(8004));
+        let (events, mut rx) = broadcast::channel(16);
+        let run = tokio::spawn({
+            let tailscale = tailscale.clone();
+            let ms = Duration::from_millis(20);
+            async move { tailscale.run(&auth(), &events, ms, ms).await }
+        });
+        let mut next = async || {
+            let message: serde_json::Value =
+                serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+            message["status"]["state"].as_str().unwrap().to_string()
+        };
+        assert_eq!(next().await, "serving");
+        std::fs::write(
+            cli.path("status.json"),
+            fake::STATUS.replace("Running", "Stopped"),
+        )
+        .unwrap();
+        assert_eq!(next().await, "error");
+        std::fs::write(cli.path("status.json"), fake::STATUS).unwrap();
+        // Removed while Tailscale was down: created again.
+        std::fs::write(cli.path("serve.json"), "{}").unwrap();
+        assert_eq!(next().await, "serving");
+        assert_eq!(cli.config(), fake::route(8004, "http://127.0.0.1:8004"));
+        tailscale.stop().await;
+        run.await.unwrap();
     }
 
     #[cfg(unix)]

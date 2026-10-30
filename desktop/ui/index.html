@@ -34,6 +34,7 @@
       label + label { margin-top: 10px; }
       label small { display: block; margin-top: 2px; color: #aaa; line-height: 1.4; }
       input { margin: 2px 0 0; accent-color: #b4c9ff; }
+      label.sub { margin-left: 24px; }
       code { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
       .field label { display: block; cursor: default; }
       .field + .field { margin-top: 12px; }
@@ -58,6 +59,7 @@
             <div class="info">
               <strong>Running</strong>
               <small id="desktop-detail"></small>
+              <small id="desktop-tailnet" hidden></small>
             </div>
             <button id="desktop-stop" class="stop" type="button">Stop</button>
             <button id="desktop-connect" class="primary" type="button" aria-label="Connect to the desktop server">Connect</button>
@@ -73,6 +75,10 @@
               <label>
                 <input id="persistent" type="radio" name="lifetime" value="persistent" />
                 <span>Keep it running after btmux quits<small>Its shells keep running until you stop it here or log out.</small></span>
+              </label>
+              <label class="sub">
+                <input id="tailscale" type="checkbox" />
+                <span>Share it on my tailnet<small>Serves it over HTTPS with <code>tailscale serve</code>, so your other devices can connect.</small></span>
               </label>
             </fieldset>
             <button id="start" class="primary" type="button">Start desktop server</button>
@@ -120,19 +126,30 @@
       const status = element("status");
       const error = element("error");
       const persistent = element("persistent");
+      const tailscale = element("tailscale");
       const stopButton = element("desktop-stop");
       const remoteList = element("remote-list");
       const remoteForm = element("remote-form");
       let desktopServer = null;
       let stopTimer;
+      let tailnetTimer;
       let generation = 0;
+
+      // Only a server that keeps running can be shared.
+      function syncTailscale() {
+        tailscale.disabled = !persistent.checked;
+      }
 
       try {
         persistent.checked = localStorage.getItem("btmux-persistent") === "1";
+        tailscale.checked = localStorage.getItem("btmux-tailscale") === "1";
       } catch {}
+      syncTailscale();
       element("lifetime").addEventListener("change", () => {
+        syncTailscale();
         try {
           localStorage.setItem("btmux-persistent", persistent.checked ? "1" : "0");
+          localStorage.setItem("btmux-tailscale", tailscale.checked ? "1" : "0");
         } catch {}
       });
 
@@ -148,6 +165,7 @@
         element("others").hidden = false;
         element("remotes").hidden = false;
         document.querySelectorAll("button, input").forEach((control) => { control.disabled = false; });
+        syncTailscale();
       }
 
       function showError(message) {
@@ -159,7 +177,10 @@
       async function start() {
         busy("Starting the desktop server…");
         try {
-          await invoke("start_server", { persistent: persistent.checked });
+          await invoke("start_server", {
+            persistent: persistent.checked,
+            tailscale: persistent.checked && tailscale.checked,
+          });
         } catch (message) {
           showError(message);
         }
@@ -255,6 +276,7 @@
           const lifetime = desktopServer.bundled ? "Stops when btmux quits" : "Keeps running after btmux quits";
           element("desktop-detail").textContent = `${lifetime} · ${desktopServer.address}`;
         }
+        renderTailnet();
         const others = choices.filter((server) => !server.desktop);
         servers.replaceChildren(
           ...others.map((server) => {
@@ -280,6 +302,39 @@
           }),
         );
         element("none").hidden = others.length > 0;
+      }
+
+      function renderTailnet() {
+        const tailnet = element("desktop-tailnet");
+        const shared = desktopServer?.tailnet;
+        tailnet.hidden = !shared;
+        tailnet.classList.toggle("problem", shared?.state === "error");
+        if (shared) {
+          tailnet.textContent =
+            shared.state === "serving"
+              ? `Tailnet: ${shared.url}`
+              : shared.state === "error"
+                ? `Tailnet: ${shared.message}`
+                : "Tailnet: starting…";
+        }
+        watchTailnet();
+      }
+
+      // The server sets the route up, and keeps checking it, after it starts.
+      function watchTailnet() {
+        clearTimeout(tailnetTimer);
+        if (!desktopServer?.tailnet) return;
+        const current = generation;
+        tailnetTimer = setTimeout(async () => {
+          let choices;
+          try {
+            choices = await invoke("discover_servers");
+          } catch {}
+          if (current !== generation) return;
+          const server = choices?.find((choice) => choice.desktop);
+          if (server && server.address === desktopServer?.address) desktopServer = server;
+          renderTailnet();
+        }, 3000);
       }
 
       function renderRemotes(remotes) {

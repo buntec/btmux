@@ -33,6 +33,7 @@ let
     ++ lib.optional (cfg.service.profile != null) cfg.service.profile
     ++ lib.optional (cfg.service.shell != null) "--shell"
     ++ lib.optional (cfg.service.shell != null) (toString cfg.service.shell)
+    ++ lib.optional cfg.service.tailscale "--tailscale"
     ++ cfg.service.extraArgs;
 
   configuredShell = config.home.sessionVariables.SHELL or null;
@@ -213,6 +214,16 @@ in
           Shell to spawn in new panes. This is passed as btmux's `--shell`
           argument and therefore takes precedence over the `shell` setting in
           `settings`.
+        '';
+      };
+
+      tailscale = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Serve btmux over HTTPS on the tailnet with `tailscale serve`, at
+          `https://<machine>.<tailnet>.ts.net:<port>`. Requires the `tailscale`
+          CLI, MagicDNS, and HTTPS certificates for the tailnet.
         '';
       };
 

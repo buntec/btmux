@@ -998,6 +998,47 @@ try {
   assert.deepEqual(errors, [], 'session switches and resize must not throw');
   console.log('PASS closing Neovim returns focus to the terminal');
 
+  // With a pane default, the Editor button hides a built-in editor over the pane.
+  // VS Code stops at its license prompt; open_file is recorded, not sent.
+  await page.route('**/api/vscode', (route) => route.fulfill({ json: { state: 'license' } }));
+  await page.evaluate(() => {
+    const store = (window as any).nvimStore;
+    const config = store.getState().config;
+    (window as any).savedConfig = config;
+    store.setState({ config: { ...config, editor: 'pane', editors: ['neovim', 'vscode'] } });
+    const control = ((window as any).nvimSockets as WebSocket[]).findLast((s) => s.url.includes('/ws/control'))!;
+    const send = control.send.bind(control);
+    (window as any).paneEditorOpens = [];
+    control.send = (data) => {
+      if (typeof data === 'string' && JSON.parse(data).type === 'open_file') {
+        const { nvimOpen, vscodeOpen } = store.getState();
+        (window as any).paneEditorOpens.push({ nvimOpen, vscodeOpen });
+      } else send(data);
+    };
+    (window as any).restoreControlSend = () => delete (control as any).send;
+  });
+  for (const label of ['Neovim', 'VS Code']) {
+    await page.getByRole('button', { name: label, exact: true }).click();
+    const open = label === 'Neovim' ? 'nvimOpen' : 'vscodeOpen';
+    await page.waitForFunction((open) => (window as any).nvimStore.getState()[open], open);
+    await page.getByRole('button', { name: 'Editor', exact: true }).click();
+    await page.waitForFunction((open) => !(window as any).nvimStore.getState()[open], open);
+  }
+  assert.deepEqual(
+    await page.evaluate(() => (window as any).paneEditorOpens),
+    [
+      { nvimOpen: false, vscodeOpen: false },
+      { nvimOpen: false, vscodeOpen: false },
+    ],
+    'the pane editor starts with its terminal shown',
+  );
+  await page.evaluate(() => {
+    (window as any).restoreControlSend();
+    (window as any).nvimStore.setState({ config: (window as any).savedConfig });
+  });
+  await page.unroute('**/api/vscode');
+  console.log('PASS the pane editor hides a built-in editor over its pane');
+
   // Neovim doesn't resend unchanged window cells to a UI attaching later.
   await rpc('nvim_command', ['only']);
   await rpc('nvim_set_current_buf', [scratch]);

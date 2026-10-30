@@ -64,6 +64,8 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'git-view',
       'process-view',
       'editor',
+      'editor-neovim',
+      'editor-vscode',
     ],
   },
   {
@@ -122,6 +124,12 @@ const SWITCH_SERVER: Command = {
   confirm: null,
 };
 
+/** Editor actions the server can't run. */
+const UNAVAILABLE_EDITOR: Record<string, (config: ClientConfig | null) => boolean> = {
+  'editor-neovim': (config) => !config?.editors.includes('neovim'),
+  'editor-vscode': (config) => !config?.editors.includes('vscode'),
+};
+
 /** Keybinding actions as palette entries, after the server's own commands. */
 function actionCommands(commands: Command[], config: ClientConfig | null): Command[] {
   const keys = new Map<string, string[]>();
@@ -130,6 +138,7 @@ function actionCommands(commands: Command[], config: ClientConfig | null): Comma
   const prefix = getPrefix(config);
   return [...actions]
     .filter((action) => action !== 'command-palette' && !commands.some((command) => command.id === action))
+    .filter((action) => !UNAVAILABLE_EDITOR[action]?.(config))
     .map((action) => {
       const bound = keys.get(action);
       return {

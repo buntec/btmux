@@ -94,8 +94,8 @@ async fn main() {
         return;
     }
 
-    if let Some(config::SubCommand::OpenEditor { file, line }) = args.command.as_ref() {
-        std::process::exit(editor::run(file.as_deref(), *line).await);
+    if let Some(config::SubCommand::OpenEditor { file, line, kind }) = args.command.as_ref() {
+        std::process::exit(editor::run(file.as_deref(), *line, *kind).await);
     }
 
     if let Some(config::SubCommand::SendNotification { title, body, level }) = args.command.as_ref()

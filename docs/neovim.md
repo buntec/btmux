@@ -26,6 +26,8 @@ editor = "pane"
 `btmux open-editor [FILE] [LINE]` follows the same setting from a btmux pane:
 it opens the Neovim GUI (at FILE, if given) over the pane, or
 runs `$EDITOR` in the terminal when `editor = "pane"` or outside btmux.
+`--kind neovim|vscode|pane` (`nvim` also works) overrides the setting, so
+`btmux open-editor --kind vscode` opens VS Code with Neovim as the default.
 
 ## Your Neovim config
 

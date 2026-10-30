@@ -338,6 +338,9 @@ pub enum SubCommand {
     OpenEditor {
         file: Option<String>,
         line: Option<u32>,
+        /// The editor to use instead of the `editor` setting.
+        #[arg(long, value_enum)]
+        kind: Option<Editor>,
     },
     /// Show a notification in every connected browser. Inside a btmux pane
     /// this targets that pane's server; otherwise the `--profile` server.
@@ -496,13 +499,14 @@ impl Appearance {
 
 /// The editor `prefix + e`, the file browser, Git mode, and `btmux open-editor`
 /// open. Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Editor {
     /// The pane's foreground Neovim, or `$EDITOR` in its shell.
     Pane,
     /// The built-in Neovim.
+    #[value(alias = "nvim")]
     Neovim,
     /// VS Code.
     Vscode,
@@ -1155,6 +1159,8 @@ pub struct ClientConfig {
     pub window_sort: WindowSort,
     /// Where the file browser and Git mode open files.
     pub editor: Editor,
+    /// The built-in editors the server can run, for the toolbar and palette.
+    pub editors: Vec<Editor>,
     /// The server behind VS Code.
     pub vscode_server: VscodeServer,
     /// How many recently-viewed windows the window-grid (`prefix + w`) shows.
@@ -1178,8 +1184,8 @@ pub struct ClientConfig {
 
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
-/// and intentionally absent here, as are `kill-session` and `last-window`
-/// (unbound by default).
+/// and intentionally absent here, as are `kill-session`, `last-window`,
+/// `editor-neovim`, and `editor-vscode` (unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
     ("\"", "split-horizontal"),
@@ -1945,7 +1951,14 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
-        editor: file.editor.clone().unwrap_or_else(Editor::detect),
+        editor: file.editor.unwrap_or_else(Editor::detect),
+        editors: [
+            (Editor::Neovim, crate::ws::nvim::available()),
+            (Editor::Vscode, crate::vscode::available(file.vscode_server)),
+        ]
+        .into_iter()
+        .filter_map(|(editor, available)| available.then_some(editor))
+        .collect(),
         vscode_server: file.vscode_server,
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
@@ -2053,7 +2066,7 @@ impl ConfigUpdate {
             self.window_sort = other.window_sort.clone();
         }
         if other.editor.is_some() {
-            self.editor = other.editor.clone();
+            self.editor = other.editor;
         }
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
@@ -2195,7 +2208,7 @@ pub fn resolve_with_overrides(
         file.window_sort = window_sort.clone();
     }
     if let Some(editor) = &overrides.editor {
-        file.editor = Some(editor.clone());
+        file.editor = Some(*editor);
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));

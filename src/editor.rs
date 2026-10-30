@@ -1,11 +1,13 @@
-//! `btmux open-editor`: open a file (or just the editor) where `editor`
-//! says: the built-in Neovim, or `$EDITOR` in this terminal.
+//! `btmux open-editor`: open a file (or just the editor) where `--kind` or
+//! `editor` says: the built-in Neovim, VS Code, or `$EDITOR` in this terminal.
 //!
 //! Also injected into a pane's shell by `OpenFile` so the typed line stays
 //! short and shell-agnostic; the editor-specific argument handling lives here.
 
 use std::path::Path;
 use std::time::Duration;
+
+use crate::config::Editor;
 
 /// Editor argv for `editor` (a command line, split on whitespace) opening
 /// `file`. `vi`-likes take `+LINE`; VS Code variants take `--goto file:LINE`.
@@ -43,8 +45,8 @@ pub fn editor_argv(editor: &str, file: Option<&str>, line: Option<u32>) -> Vec<S
     argv
 }
 
-/// Open `file` where `editor` says. Returns the exit code on failure.
-pub async fn run(file: Option<&str>, line: Option<u32>) -> i32 {
+/// Open `file` in `kind`, else where `editor` says. Returns the exit code on failure.
+pub async fn run(file: Option<&str>, line: Option<u32>, kind: Option<Editor>) -> i32 {
     let file = match file.map(std::path::absolute).transpose() {
         Ok(file) => file.map(|f| f.to_string_lossy().into_owned()),
         Err(error) => {
@@ -52,7 +54,10 @@ pub async fn run(file: Option<&str>, line: Option<u32>) -> i32 {
             return 1;
         }
     };
-    match open_in_server(file.as_deref(), line).await {
+    if kind == Some(Editor::Pane) {
+        return exec_editor(file.as_deref(), line);
+    }
+    match open_in_server(file.as_deref(), line, kind).await {
         Ok(true) => 0,
         Ok(false) => exec_editor(file.as_deref(), line),
         Err(error) => {
@@ -62,10 +67,14 @@ pub async fn run(file: Option<&str>, line: Option<u32>) -> i32 {
     }
 }
 
-/// Ask the server owning this pane to open the built-in Neovim. `Ok(false)`
-/// means use `$EDITOR`: outside a btmux pane, `editor = "pane"`, or no
-/// server (or an older one) to ask.
-async fn open_in_server(file: Option<&str>, line: Option<u32>) -> Result<bool, String> {
+/// Ask the server owning this pane to open its editor (`kind`, else the
+/// `editor` setting). `Ok(false)` means use `$EDITOR`: outside a btmux pane,
+/// `editor = "pane"`, or no server (or an older one) to ask.
+async fn open_in_server(
+    file: Option<&str>,
+    line: Option<u32>,
+    kind: Option<Editor>,
+) -> Result<bool, String> {
     let env = |name| std::env::var(name).ok().filter(|v| !v.is_empty());
     let (Some(url), Some(pane), Some(token)) = (
         env("BTMUX_API_URL"),
@@ -83,7 +92,7 @@ async fn open_in_server(file: Option<&str>, line: Option<u32>) -> Result<bool, S
         .post(format!("{url}/api/panes/{pane}/open-editor"))
         .bearer_auth(token)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(serde_json::json!({ "path": file, "line": line }).to_string())
+        .body(serde_json::json!({ "path": file, "line": line, "editor": kind }).to_string())
         .send()
         .await
     {

@@ -109,6 +109,8 @@ interface AppStore {
   setNvimRect: (rect: LayoutRect | null) => void;
   setVscodeOpen: (open: boolean, paneId?: string | null) => void;
   setVscodeRect: (rect: LayoutRect | null) => void;
+  // Hide the editor surfaces over paneId, revealing its terminal.
+  hideEditorSurfaces: (paneId: string) => void;
   setNavigateFn: (fn: ((path: string) => void) | null) => void;
   setControlSendFn: (fn: ((message: ClientMessage) => void) | null) => void;
   // Navigate to the window containing a pane, if it can be located.
@@ -211,6 +213,11 @@ export const useStore = create<AppStore>((set, get) => ({
       return { vscodeOpen: open, vscodePaneId, ...(covers && { nvimOpen: false }) };
     }),
   setVscodeRect: (rect) => set((s) => (sameRect(s.vscodeRect, rect) ? s : { vscodeRect: rect })),
+  hideEditorSurfaces: (paneId) =>
+    set((s) => ({
+      ...(s.nvimOpen && s.nvimPaneId === paneId && { nvimOpen: false }),
+      ...(s.vscodeOpen && s.vscodePaneId === paneId && { vscodeOpen: false }),
+    })),
   showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
   toggleLatex: (paneId) =>
     set((s) => {

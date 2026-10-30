@@ -1,4 +1,4 @@
-const WORDS: Record<string, string> = { latex: 'LaTeX' };
+const WORDS: Record<string, string> = { latex: 'LaTeX', neovim: 'Neovim', vscode: 'VS Code' };
 
 /** Sentence-case label for a kebab-case keybinding action, e.g. `split-vertical` → `Split vertical`. */
 export function actionLabel(action: string): string {

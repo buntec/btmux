@@ -2,7 +2,15 @@
 import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 
-type Choice = { address: string; profile: string; url: string; bundled: boolean; desktop: boolean };
+type Tailnet = { state: 'starting' } | { state: 'serving'; url: string } | { state: 'error'; message: string };
+type Choice = {
+  address: string;
+  profile: string;
+  url: string;
+  bundled: boolean;
+  desktop: boolean;
+  tailnet?: Tailnet | null;
+};
 type Remote = { url: string; profile: string | null; version: string | null; error: string | null };
 type Call = { command: string; args?: Record<string, unknown> };
 type LauncherWindow = Window & {
@@ -170,6 +178,29 @@ try {
     [{ command: 'stop_server', args: { address: '127.0.0.1:9400' } }, { command: 'discover_servers', args: undefined }],
   );
   await stopping.close();
+
+  // The card shows the kept server's tailnet status and follows its changes.
+  const tailnetPage = await open([{ ...kept, tailnet: { state: 'starting' } }, choices[0]], {}, '?return=switch');
+  const tailnetLine = tailnetPage.locator('#desktop-tailnet');
+  await tailnetLine.filter({ hasText: 'Tailnet: starting…' }).waitFor();
+  const setTailnet = (tailnet: Tailnet) =>
+    tailnetPage.evaluate((tailnet) => {
+      const state = (window as LauncherWindow).launcherTest;
+      state.choices = [{ ...state.choices[0], tailnet }, ...state.choices.slice(1)];
+    }, tailnet);
+  const problem = () => tailnetLine.evaluate((line) => line.classList.contains('problem'));
+  assert(!(await problem()));
+  await setTailnet({ state: 'serving', url: 'https://box.tail1.ts.net:12345' });
+  await tailnetLine.filter({ hasText: 'Tailnet: https://box.tail1.ts.net:12345' }).waitFor();
+  assert(!(await problem()));
+  await setTailnet({ state: 'error', message: 'Tailscale is Stopped' });
+  await tailnetLine.filter({ hasText: 'Tailnet: Tailscale is Stopped' }).waitFor();
+  assert(await problem());
+  await tailnetPage.close();
+  const unshared = await open([kept], {}, '?return=switch');
+  await unshared.getByText('Keeps running after btmux quits').waitFor();
+  assert(await unshared.locator('#desktop-tailnet').isHidden());
+  await unshared.close();
 
   const unstoppable = await open([kept], { stop_server: 'The server did not stop.' }, '?return=switch');
   await unstoppable.getByRole('button', { name: 'Stop the desktop server' }).click();

@@ -11,6 +11,15 @@ use crate::discovery::{self, RunningServer};
 struct ServerInfo {
     version: String,
     profile: Option<String>,
+    // Parsed separately, so an unknown status doesn't hide the server.
+    #[serde(default)]
+    tailscale: Option<serde_json::Value>,
+}
+
+impl ServerInfo {
+    fn tailnet(self) -> Option<Tailnet> {
+        serde_json::from_value(self.tailscale?).ok()
+    }
 }
 
 fn client() -> Result<Client, reqwest::Error> {
@@ -45,18 +54,6 @@ pub enum Tailnet {
     Error { message: String },
 }
 
-pub fn tailnet(server: &RunningServer) -> Option<Tailnet> {
-    let info = client()
-        .ok()?
-        .get(format!("http://{}/api/info", server.address))
-        .bearer_auth(&server.token)
-        .send()
-        .ok()?
-        .json::<serde_json::Value>()
-        .ok()?;
-    serde_json::from_value(info.get("tailscale")?.clone()).ok()
-}
-
 pub fn ready(server: &RunningServer) -> bool {
     client()
         .ok()
@@ -82,22 +79,26 @@ pub fn shutdown(server: &RunningServer) -> Result<(), String> {
     }
 }
 
-fn discover_in(dir: &Path, client: &Client) -> Vec<RunningServer> {
+/// A running server, with its tailnet status if it has one.
+pub type Discovered = (RunningServer, Option<Tailnet>);
+
+fn discover_in(dir: &Path, client: &Client) -> Vec<Discovered> {
     let mut servers = Vec::new();
     let mut addresses = HashSet::new();
     for path in discovery::registration_paths(dir) {
         if let Some(server) = discovery::read_registration(&path)
-            && probe(client, &server).is_some_and(|info| info.profile == server.profile)
+            && let Some(info) = probe(client, &server)
+            && info.profile == server.profile
             && addresses.insert(server.address)
         {
-            servers.push(server);
+            servers.push((server, info.tailnet()));
         }
     }
 
     // Older default-profile servers do not publish a registration.
     if !servers
         .iter()
-        .any(|server| server.profile.is_none() && server.address.port() == 8004)
+        .any(|(server, _)| server.profile.is_none() && server.address.port() == 8004)
         && let Ok(token) =
             discovery::read_private_file(&dir.join("state.token"), discovery::SMALL_FILE)
     {
@@ -111,19 +112,20 @@ fn discover_in(dir: &Path, client: &Client) -> Vec<RunningServer> {
                     token: token.clone(),
                 };
                 if !addresses.contains(&server.address)
-                    && probe(client, &server).is_some_and(|info| info.profile.is_none())
+                    && let Some(info) = probe(client, &server)
+                    && info.profile.is_none()
                 {
-                    servers.push(server);
+                    servers.push((server, info.tailnet()));
                     break;
                 }
             }
         }
     }
-    servers.sort_by(|a, b| a.profile.cmp(&b.profile).then(a.address.cmp(&b.address)));
+    servers.sort_by(|(a, _), (b, _)| a.profile.cmp(&b.profile).then(a.address.cmp(&b.address)));
     servers
 }
 
-pub fn discover() -> Result<Vec<RunningServer>, String> {
+pub fn discover() -> Result<Vec<Discovered>, String> {
     let Some(dir) = discovery::state_dir() else {
         return Ok(Vec::new());
     };
@@ -200,15 +202,18 @@ mod tests {
                 }
                 let request = String::from_utf8(request).unwrap().to_ascii_lowercase();
                 assert!(request.contains(&format!("authorization: bearer {token}")));
-                let body = r#"{"version":"test","profile":null}"#;
+                let body = r#"{"version":"test","profile":null,"tailscale":{"state":"serving","url":"https://box.ts.net:8004"}}"#;
                 write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
             }
         });
         let client = client().unwrap();
         let servers = discover_in(&dir, &client);
         assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].address, address);
-        let mut mismatched = servers[0].clone();
+        assert_eq!(servers[0].0.address, address);
+        assert!(
+            matches!(&servers[0].1, Some(Tailnet::Serving { url }) if url == "https://box.ts.net:8004")
+        );
+        let mut mismatched = servers[0].0.clone();
         mismatched.profile = Some("wrong-profile".into());
         assert!(!ready(&mismatched));
         responder.join().unwrap();

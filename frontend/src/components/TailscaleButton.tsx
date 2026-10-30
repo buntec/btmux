@@ -31,7 +31,7 @@ function Details({ status }: { status: TailscaleStatus }) {
     return (
       <VStack gap={1} className="btm-sans">
         <Text>{status.message}</Text>
-        <Text type="supporting">Retrying every 10 seconds.</Text>
+        <Text type="supporting">btmux keeps retrying.</Text>
       </VStack>
     );
   const copy = () => {

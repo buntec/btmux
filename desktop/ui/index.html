@@ -132,6 +132,7 @@
       const remoteForm = element("remote-form");
       let desktopServer = null;
       let stopTimer;
+      let tailnetTimer;
       let generation = 0;
 
       // Only a server that keeps running can be shared.
@@ -275,18 +276,7 @@
           const lifetime = desktopServer.bundled ? "Stops when btmux quits" : "Keeps running after btmux quits";
           element("desktop-detail").textContent = `${lifetime} · ${desktopServer.address}`;
         }
-        const tailnet = element("desktop-tailnet");
-        const shared = desktopServer?.tailnet;
-        tailnet.hidden = !shared;
-        tailnet.classList.toggle("problem", shared?.state === "error");
-        if (shared) {
-          tailnet.textContent =
-            shared.state === "serving"
-              ? `Tailnet: ${shared.url}`
-              : shared.state === "error"
-                ? `Tailnet: ${shared.message}`
-                : "Tailnet: starting…";
-        }
+        renderTailnet();
         const others = choices.filter((server) => !server.desktop);
         servers.replaceChildren(
           ...others.map((server) => {
@@ -312,6 +302,39 @@
           }),
         );
         element("none").hidden = others.length > 0;
+      }
+
+      function renderTailnet() {
+        const tailnet = element("desktop-tailnet");
+        const shared = desktopServer?.tailnet;
+        tailnet.hidden = !shared;
+        tailnet.classList.toggle("problem", shared?.state === "error");
+        if (shared) {
+          tailnet.textContent =
+            shared.state === "serving"
+              ? `Tailnet: ${shared.url}`
+              : shared.state === "error"
+                ? `Tailnet: ${shared.message}`
+                : "Tailnet: starting…";
+        }
+        watchTailnet();
+      }
+
+      // The server sets the route up, and keeps checking it, after it starts.
+      function watchTailnet() {
+        clearTimeout(tailnetTimer);
+        if (!desktopServer?.tailnet) return;
+        const current = generation;
+        tailnetTimer = setTimeout(async () => {
+          let choices;
+          try {
+            choices = await invoke("discover_servers");
+          } catch {}
+          if (current !== generation) return;
+          const server = choices?.find((choice) => choice.desktop);
+          if (server && server.address === desktopServer?.address) desktopServer = server;
+          renderTailnet();
+        }, 3000);
       }
 
       function renderRemotes(remotes) {

@@ -60,33 +60,28 @@ struct ServerChoice {
 async fn discover_servers(state: State<'_, Server>) -> Result<Vec<ServerChoice>, String> {
     let private = state.private.lock().unwrap().clone();
     let bundled = private.as_ref().map(|server| server.address);
-    let (servers, tailnet) = tauri::async_runtime::spawn_blocking(move || {
+    let discovered = tauri::async_runtime::spawn_blocking(move || {
         let mut servers = servers::discover()?;
-        servers.extend(private.filter(servers::ready));
-        let tailnet = servers
-            .iter()
-            .find(|server| server.profile.as_deref() == Some(DESKTOP_PROFILE))
-            .and_then(servers::tailnet);
-        Ok::<_, String>((servers, tailnet))
+        // Started without `--tailscale`.
+        servers.extend(private.filter(servers::ready).map(|server| (server, None)));
+        Ok::<_, String>(servers)
     })
     .await
     .map_err(|_| "Could not look for running btmux servers.".to_string())??;
-    let mut tailnet = tailnet;
-    let choices = servers
-        .iter()
-        .map(|server| ServerChoice {
-            address: server.address.to_string(),
-            profile: server.profile.clone().unwrap_or_else(|| "default".into()),
-            url: format!("http://{}/", server.address),
-            bundled: Some(server.address) == bundled,
-            desktop: server.profile.as_deref() == Some(DESKTOP_PROFILE),
-            tailnet: if server.profile.as_deref() == Some(DESKTOP_PROFILE) {
-                tailnet.take()
-            } else {
-                None
-            },
+    let (servers, choices): (Vec<_>, Vec<_>) = discovered
+        .into_iter()
+        .map(|(server, tailnet)| {
+            let choice = ServerChoice {
+                address: server.address.to_string(),
+                profile: server.profile.clone().unwrap_or_else(|| "default".into()),
+                url: format!("http://{}/", server.address),
+                bundled: Some(server.address) == bundled,
+                desktop: server.profile.as_deref() == Some(DESKTOP_PROFILE),
+                tailnet,
+            };
+            (server, choice)
         })
-        .collect();
+        .unzip();
     *state.choices.lock().unwrap() = servers;
     Ok(choices)
 }
@@ -357,28 +352,37 @@ fn sidecar(app: &AppHandle, port: u16) -> Result<Command, String> {
     Ok(sidecar)
 }
 
-// Kept across starts: the tailnet URL includes it.
-fn tailnet_port(app: &AppHandle) -> Result<u16, String> {
+// Kept across starts: the tailnet URL includes it. Returns the port and
+// the error to show if another program holds it.
+fn tailnet_port(app: &AppHandle) -> Result<(u16, String), String> {
     let dir = config_dir(app)?;
     let path = dir.join("tailnet-port");
-    if let Some(port) = std::fs::read_to_string(&path)
+    let saved = std::fs::read_to_string(&path)
         .ok()
-        .and_then(|text| text.trim().parse::<u16>().ok())
-    {
-        // Another port would change the tailnet URL.
-        return match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(_) => Ok(port),
-            Err(_) => Err(format!(
-                "Port {port}, which the tailnet address uses, is in use. Free it, or delete {} to choose another port.",
-                path.display()
-            )),
-        };
-    }
-    let port = unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?;
-    std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(&path, format!("{port}\n")))
-        .map_err(|_| "Could not save the tailnet server port.".to_string())?;
-    Ok(port)
+        .and_then(|text| text.trim().parse::<u16>().ok());
+    let port = match saved {
+        Some(port) => port,
+        None => {
+            let port = stable_port().ok_or("Could not choose a server port.")?;
+            std::fs::create_dir_all(&dir)
+                .and_then(|()| std::fs::write(&path, format!("{port}\n")))
+                .map_err(|_| "Could not save the tailnet server port.".to_string())?;
+            port
+        }
+    };
+    let in_use = format!(
+        "Port {port}, which the tailnet address uses, is in use by another program. Free it, or start without tailnet sharing. To use another port, and so another tailnet address, delete {}.",
+        path.display()
+    );
+    Ok((port, in_use))
+}
+
+// A free port below every OS's ephemeral range (Linux's starts at 32768),
+// so outgoing connections never take it while the server is stopped.
+fn stable_port() -> Option<u16> {
+    (0..64)
+        .map(|_| 10_000 + (uuid::Uuid::new_v4().as_u128() % 22_768) as u16)
+        .find(|&port| TcpListener::bind(("127.0.0.1", port)).is_ok())
 }
 
 fn start_desktop_server(
@@ -401,16 +405,21 @@ fn start_desktop_server(
         return open_server(&window, &server);
     }
     // A server that kept running owns the desktop profile.
-    if let Some(server) = servers::discover()?
+    if let Some((server, _)) = servers::discover()?
         .into_iter()
-        .find(|server| server.profile.as_deref() == Some(DESKTOP_PROFILE))
+        .find(|(server, _)| server.profile.as_deref() == Some(DESKTOP_PROFILE))
     {
         return open_server(&window, &server);
     }
-    let port = if tailscale {
+    let (port, in_use) = if tailscale {
         tailnet_port(&app)?
     } else {
-        unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?
+        let port =
+            unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?;
+        (
+            port,
+            format!("Port {port} was taken before btmux could use it. Try again."),
+        )
     };
     let sidecar = sidecar(&app, port)?;
     if persistent {
@@ -419,7 +428,7 @@ fn start_desktop_server(
         } else {
             sidecar
         };
-        start_persistent_server(sidecar, &window)
+        start_persistent_server(sidecar, port, in_use, &window)
     } else {
         start_private_server(&app, sidecar, port, &window)
     }
@@ -507,7 +516,12 @@ const PROFILE_IN_USE: &str =
 
 // Detached from the app: no parent watch, pipes, or shared session. It
 // registers like a CLI server, so later launches discover it.
-fn start_persistent_server(sidecar: Command, window: &WebviewWindow) -> Result<(), String> {
+fn start_persistent_server(
+    sidecar: Command,
+    port: u16,
+    in_use: String,
+    window: &WebviewWindow,
+) -> Result<(), String> {
     let registration = discovery::state_dir()
         .ok_or("Could not find the btmux state directory.")?
         .join(DESKTOP_PROFILE)
@@ -540,6 +554,10 @@ fn start_persistent_server(sidecar: Command, window: &WebviewWindow) -> Result<(
     let deadline = Instant::now() + Duration::from_secs(15);
     let server = loop {
         if !matches!(child.try_wait(), Ok(None)) {
+            // Its output is discarded: tell a taken port from a taken profile.
+            if TcpListener::bind(("127.0.0.1", port)).is_err() {
+                return Err(in_use);
+            }
             return Err(PROFILE_IN_USE.into());
         }
         if let Some(server) = discovery::read_registration(&registration)

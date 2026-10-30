@@ -162,6 +162,11 @@ it's gone, for example after Tailscale restarts.
 The status bar's tailnet button shows the URL, with a copy button, or the
 last error.
 
+While its popover is open, it also shows a QR code of a sign-in link for that
+URL. Scanning it on a phone or tablet signs that browser in without the access
+token. Each code works once and expires after two minutes; the popover renews
+it while open. The token never appears in the link.
+
 This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
 [MagicDNS](https://tailscale.com/kb/1081/magicdns), and
 [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled for
@@ -181,7 +186,8 @@ keyboards lack: Esc, Tab, arrows, the prefix, and Ctrl and Alt, which apply to
 the next key typed or tapped. It also opens the command palette, cycles panes,
 and hides the keyboard. Swipes scroll full-screen programs such as `less` the
 way a mouse wheel does. On narrow screens, a window with several panes shows
-only the active one. Add btmux to the home screen to run it without browser
+only the active one, and the file browser fills the screen, showing its list or,
+after a tap, the preview; its key hints can be tapped. Add btmux to the home screen to run it without browser
 chrome; it needs HTTPS, so serve it with `--tailscale` or through a reverse proxy.
 
 ## Background service

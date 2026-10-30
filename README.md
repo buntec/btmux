@@ -1,20 +1,23 @@
 # btmux
 
-A terminal emulator and tmux-style session manager for the browser and desktop, powered by [wterm](https://github.com/vercel-labs/wterm) and [libghostty](https://github.com/ghostty-org/ghostty).
+A terminal emulator and tmux-style session manager. Runs as a stand-alone app, in the browser and on mobile.
+For macOS, Linux and Windows. Powered by [wterm](https://github.com/vercel-labs/wterm), [libghostty](https://github.com/ghostty-org/ghostty) and [Tauri](https://github.com/tauri-apps/tauri).
 
 ## Highlights
 
 - Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and preset layouts
-- Server-side sessions: (re)connect from any number of frontends
-- Phones and tablets: a key bar for Esc, Ctrl, arrows, and the prefix; swipe scrolling; installable as a home-screen app
-- Batteries included: file browser, Git mode, process viewer, Neovim GUI, VS Code integration
+- Server-side sessions: (re)connect from any number of clients
+- Tailscale integration: serve over HTTPS on your tailnet with `--tailscale`; log in from a phone/tablet by scanning a QR code
+- Phones and tablets: installable as a home-screen app, scan QR code to log in
+- Batteries included: file browser, Git GUI, process viewer, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
 - LaTeX rendering overlay
-- Single self-contained binary
+- Single self-contained binary (~20 MB)
 - Interactive, composable shader wallpapers
 - Support for base16/base24 color schemes, dark/light mode
 - Highly configurable
-- tmux-style CLI, REST API, MCP server, and an agent skill
+- tmux-style CLI, REST API, MCP server and agent skill
+- Nix Home-Manager module
 
 ## Demos
 
@@ -109,6 +112,25 @@ Get-Content "$env:LOCALAPPDATA\btmux\state.token"
 
 Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the command palette.
 
+## Phones, tablets, and Tailscale
+
+```sh
+btmux --tailscale  # https://<machine>.<tailnet>.ts.net:8004
+```
+
+`--tailscale` serves btmux over HTTPS on your [tailnet](https://tailscale.com)
+with `tailscale serve`, while btmux itself stays on loopback. The status bar's
+tailnet button shows the address and a QR code: scan it on a phone or tablet to
+sign in without typing the access token. Each code signs in once and expires
+after two minutes. The desktop app can share its server the same way, and
+connect to btmux servers on other machines.
+
+On touch screens, a key bar supplies Esc, Tab, Ctrl, Alt, arrows, and the
+prefix; swipes scroll full-screen programs; and narrow screens show one pane
+at a time, with a full-screen file browser. Add btmux to the home screen to
+run it without browser chrome. See [Tailscale](docs/installation.md#tailscale)
+and [Phones and tablets](docs/installation.md#phones-and-tablets).
+
 ## Editor
 
 `<prefix> + e` opens the configured `editor` over the active pane, and the file
@@ -126,7 +148,7 @@ one stays a click away. See [Editor](docs/configuration.md#editor) for details.
 
 ## Learn more
 
-- [Installation](docs/installation.md): Windows, services, tokens, remote access, and shell completions
+- [Installation](docs/installation.md): Windows, services, tokens, remote access, Tailscale, phones, and shell completions
 - [In-place upgrades](docs/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
 - [Configuration](docs/configuration.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, editors, and profiles
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization

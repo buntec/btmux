@@ -559,6 +559,7 @@ export function runAction(
       const editor =
         action === 'editor-neovim' ? 'neovim' : action === 'editor-vscode' ? 'vscode' : store.config?.editor;
       if (editor === 'pane') {
+        store.hideEditorSurfaces(paneId);
         send({ type: 'open_file', pane_id: paneId, path: null, line: null });
       } else if (editor === 'vscode') {
         store.setVscodeOpen(!(store.vscodeOpen && store.vscodePaneId === paneId), paneId);

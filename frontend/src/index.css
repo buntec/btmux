@@ -18,7 +18,8 @@
     font-family: var(--font-family-body);
   }
   #root {
-    height: 100dvh;
+    /* useVisualViewport sets it on touch devices. */
+    height: var(--btm-viewport-height, 100dvh);
   }
 }
 

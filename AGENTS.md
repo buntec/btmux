@@ -30,7 +30,7 @@ wire types; the tests reject stale generated types. `just check` and `just lint`
 remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
 reconnect/replay, config updates, correlated command errors, and multiple viewers,
-followed by upgrade, Astryx interaction, theme, and Git checks
+followed by upgrade, Astryx interaction, theme, Git, and mobile (WebKit) checks
 (`just test-nvim-browser` covers the Neovim surface; `just test-shader-browser`,
 run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
@@ -222,6 +222,17 @@ pixel grid.
 
 Terminal geometry, live mirrors, and file previews retain specialized rendering.
 UI navigation must preserve terminal and socket lifetimes.
+
+Touch devices (`(pointer: coarse)`, `lib/touch.ts`, as wterm decides) get
+`MobileKeyBar` above the status bar. Its keys go through
+`PaneTerminal.pressKey`, a synthetic keydown on wterm's textarea, so
+keybindings and wterm's encoding (kitty protocol, cursor modes) apply; taps
+prevent `mousedown`, not `pointerdown` (which cancels a tap's click in WebKit),
+to keep the keyboard open. `useVisualViewport` sizes `#root` to the visual
+viewport, since iOS doesn't resize the layout for the keyboard. Swipes in
+alternate-screen or mouse-tracking programs become wheel events. Below 768px,
+`SessionPane` shows only the active pane, a local zoom.
+`mobile-browser-test.ts` covers these in WebKit with iPhone emulation.
 
 ### Frontend lifetime and routing
 

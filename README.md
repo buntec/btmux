@@ -6,6 +6,7 @@ A terminal emulator and tmux-style session manager for the browser and desktop, 
 
 - Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and preset layouts
 - Server-side sessions: (re)connect from any number of frontends
+- Phones and tablets: a key bar for Esc, Ctrl, arrows, and the prefix; swipe scrolling; installable as a home-screen app
 - Batteries included: file browser, Git mode, process viewer, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
 - LaTeX rendering overlay

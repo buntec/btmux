@@ -11,6 +11,8 @@ import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
 import { useWindowAttended } from '../lib/windowAttention';
+import { NARROW_QUERY } from '../lib/touch';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
 
 interface Props {
   sessionId: string;
@@ -59,7 +61,10 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const windows = session?.windows ?? [];
   const activeWindow = session ? windows[session.active_window] : undefined;
   const activePaneId = activeWindow?.panes[activeWindow.active_pane]?.id ?? null;
-  const zoomedPaneId = activeWindow?.zoomed_pane ?? null;
+  // Narrow screens show only the active pane, as if zoomed (locally).
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const zoomedPaneId =
+    activeWindow?.zoomed_pane ?? (narrow && (activeWindow?.panes.length ?? 0) > 1 ? activePaneId : null);
   const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
   const focusedAgentState = focusedPane?.agent_status.state ?? null;
   const focusedUnread = focusedPane?.unread != null;

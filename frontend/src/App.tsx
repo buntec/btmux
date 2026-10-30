@@ -43,8 +43,13 @@ import { pageBackground } from './lib/desktopTransparency';
 import { hasShaderWallpaper } from './lib/wallpaperCatalog';
 import { desktopVersionMismatch } from './lib/desktopApp';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
+import { useVisualViewport } from './hooks/useVisualViewport';
+import { MobileKeyBar } from './components/MobileKeyBar';
+import { TOUCH_QUERY } from './lib/touch';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
 
 function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
+  const touch = useMediaQuery(TOUCH_QUERY);
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
   const configPreview = useStore((s) => s.configPreview);
@@ -258,6 +263,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         footer={
           activeSessionId ? (
             <LayoutFooter padding={0} hasDivider className="backdrop-blur-2xl">
+              {touch && <MobileKeyBar sessionId={activeSessionId} send={send} />}
               <StatusBar sessionId={activeSessionId ?? ''} send={send} />
             </LayoutFooter>
           ) : undefined
@@ -275,6 +281,7 @@ export function App() {
   const settingsOpen = useStore((s) => s.settingsOpen);
   const effectiveConfig = settingsOpen ? (configPreview ?? config) : config;
   useFontLoader();
+  useVisualViewport();
   const desktopVersion = useDesktopVersion();
   const serverVersion = config?.version;
   useEffect(() => {

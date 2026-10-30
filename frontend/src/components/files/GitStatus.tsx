@@ -211,7 +211,10 @@ export function GitStatus({ onPreview }: { onPreview?: () => void } = {}) {
                   <div
                     key={`header-${item.section}`}
                     data-git-index={i}
-                    onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
+                    onClick={() => {
+                      useFileStore.getState().setGitFocusedIndex(i);
+                      useFileStore.getState().toggleGitSection(item.section);
+                    }}
                     className={cn(
                       'flex items-center gap-1.5 px-2 cursor-pointer select-none leading-tight',
                       i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'text-secondary hover:bg-overlay-hover',

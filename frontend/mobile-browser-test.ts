@@ -1,5 +1,6 @@
 /** Touch-device regressions (key bar, swipes, narrow layout) in WebKit with iPhone emulation. */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -228,6 +229,22 @@ try {
   await back.tap();
   await row('b.txt').waitFor();
   await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
+  await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
+
+  // Tapping a Git section header folds it.
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  await page.evaluate(async (dir) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setFileBrowserOpen(true, dir, state.getActivePaneId(state.allSessions[0].id), 'git');
+  }, dir);
+  const untracked = page.locator('[data-git-index]', { hasText: 'b.txt' });
+  await untracked.waitFor();
+  await page.getByText('UNTRACKED FILES', { exact: true }).tap();
+  await untracked.waitFor({ state: 'detached' });
+  await page.getByText('UNTRACKED FILES', { exact: true }).tap();
+  await untracked.waitFor();
+  await page.getByRole('button', { name: 'Close file browser' }).tap();
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
   rmSync(dir, { recursive: true, force: true });
 

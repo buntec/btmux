@@ -3,7 +3,7 @@ use axum::{
     extract::{Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::post,
     Json, Router,
 };
@@ -240,7 +240,9 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
     response
 }
 
-/// Sign in a device that scanned a pairing QR code, then load the app.
+/// Sign in a device that scanned a pairing QR code, then load the app. A
+/// redirect would continue a cross-site navigation (a scanner's page), which
+/// withholds the `SameSite=Strict` cookie; the refresh starts a same-site one.
 fn pair(auth: &Auth, request: &Request) -> Response {
     let code = request
         .uri()
@@ -256,12 +258,13 @@ fn pair(auth: &Auth, request: &Request) -> Response {
             .into_response();
     }
     (
-        StatusCode::SEE_OTHER,
         [
-            (header::LOCATION, HeaderValue::from_static("/")),
             (header::SET_COOKIE, auth.cookie(request.headers())),
             (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+            (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'")),
+            (header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")),
         ],
+        Html(r#"<!doctype html><meta http-equiv="refresh" content="0; url=/"><a href="/">Open btmux</a>"#),
     )
         .into_response()
 }
@@ -494,8 +497,7 @@ mod middleware_tests {
             .oneshot(get(&format!("/pair?code={code}")))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(response.headers()[header::LOCATION], "/");
+        assert_eq!(response.status(), StatusCode::OK);
         let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
         assert!(cookie.starts_with(&format!("btmux_auth_8004={};", "a".repeat(64))));
         let response = app

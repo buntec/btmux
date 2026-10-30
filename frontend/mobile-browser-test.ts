@@ -87,6 +87,26 @@ try {
   assert.equal((await paired.goto(`${url}/pair?code=${code}`))!.status(), 401);
   await pairing.close();
 
+  // A link from another site (a web QR scanner) signs in too: SameSite=Strict
+  // withholds the cookie from a redirect that continues that navigation.
+  const backend = process.env.BTMUX_TEST_BACKEND_URL ?? 'http://127.0.0.1:8044';
+  const { code: linked } = await (
+    await fetch(`${backend}/api/pair`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  ).json();
+  const scanning = await browser.newContext({ ...devices['iPhone 15'] });
+  const scanner = await scanning.newPage();
+  await scanner.route('https://scanner.test/', (route) =>
+    route.fulfill({ contentType: 'text/html', body: `<a href="${backend}/pair?code=${linked}">open</a>` }),
+  );
+  await scanner.goto('https://scanner.test/');
+  const app = scanner.waitForResponse((response) => response.url() === `${backend}/`);
+  await scanner.getByRole('link', { name: 'open' }).click();
+  assert.equal((await app).status(), 200);
+  await scanning.close();
+
   const context = await browser.newContext({ ...devices['iPhone 15'] });
   const page = await context.newPage();
   const errors: string[] = [];

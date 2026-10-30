@@ -272,7 +272,8 @@ default.
 }
 ```
 
-`services.btmux` is accepted as an alias for `programs.btmux`. The service uses
+Set `service.tailscale = true` to start the service with `--tailscale` (see
+[Tailscale](#tailscale)). `services.btmux` is accepted as an alias for `programs.btmux`. The service uses
 the same launchd label and systemd unit as `btmux install`, so `btmux restart`
 works with it. When only the package changes, activation runs `btmux upgrade`,
 so running shells survive; it falls back to a restart if the running server

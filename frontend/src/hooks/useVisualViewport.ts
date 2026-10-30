@@ -12,7 +12,8 @@ export function useVisualViewport() {
     if (!viewport || !isTouchPrimary()) return;
     const root = document.documentElement;
     const update = () => {
-      root.style.setProperty('--btm-viewport-height', `${viewport.height}px`);
+      // Unzoomed height: pinch zoom shrinks the viewport too, but mustn't resize panes.
+      root.style.setProperty('--btm-viewport-height', `${viewport.height * viewport.scale}px`);
       if (window.scrollY) window.scrollTo(0, 0);
     };
     update();

@@ -23,6 +23,7 @@ import { resizeRatio, type ResizeDirection } from '../lib/resizePane';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { pasteImage } from '../lib/pasteImage';
 import { inPaneTerminal, macEditKey } from '../lib/macEditKeys';
+import { isTouchPrimary } from '../lib/touch';
 import { sendToNvim } from '../components/NvimSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
@@ -194,8 +195,8 @@ export function useKeybindings(
         if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
           return;
         }
-        // Text that keyboards compose or send without key events reaches the binding later (MobileKeyBar).
-        if (e.isComposing || e.key === 'Process' || e.key === 'Unidentified') return;
+        // On touch screens, text composed or sent without key events reaches the binding later (MobileKeyBar).
+        if (isTouchPrimary() && (e.isComposing || e.key === 'Process' || e.key === 'Unidentified')) return;
         e.preventDefault();
         e.stopPropagation();
         clearTimeout(timeoutRef.current);

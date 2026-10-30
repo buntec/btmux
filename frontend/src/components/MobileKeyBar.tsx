@@ -132,7 +132,11 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
           label={`Prefix (${getPrefix(config)})`}
           size="sm"
           isPressed={prefixActive}
-          onPressedChange={() => pressKey(prefix.key, { ctrlKey: prefix.ctrl, altKey: prefix.alt })}
+          onPressedChange={(pressed) =>
+            pressed
+              ? pressKey(prefix.key, { ctrlKey: prefix.ctrl, altKey: prefix.alt })
+              : useStore.getState().setPrefixActive(false)
+          }
         >
           {getPrefix(config)}
         </ToggleButton>

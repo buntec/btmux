@@ -170,6 +170,24 @@ try {
   await page.keyboard.insertText('c');
   for (let i = 0; i < 50 && (await windows()) === before + 1; i++) await page.waitForTimeout(100);
   assert.equal(await windows(), before + 2);
+  // Tapping it again disarms it rather than sending the prefix.
+  await page.evaluate(() => {
+    const record = window as unknown as { sent: string[] };
+    const send = WebSocket.prototype.send;
+    record.sent = [];
+    WebSocket.prototype.send = function (data) {
+      if (typeof data === 'string') record.sent.push(data);
+      return send.call(this, data);
+    };
+  });
+  await page.getByRole('button', { name: /^Prefix/, pressed: false }).tap();
+  await page.getByRole('button', { name: /^Prefix/, pressed: true }).tap();
+  await waitForAsync(page, async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return !useStore.getState().prefixActive;
+  });
+  const sent = await page.evaluate(() => (window as unknown as { sent: string[] }).sent);
+  assert(!sent.some((message) => message.includes('write_pane_input')), 'the prefix was sent');
 
   // Narrow screens show only the active pane; Next pane cycles them.
   const panes = await (await api('/api/panes')).json();

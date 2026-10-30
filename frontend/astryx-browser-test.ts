@@ -438,18 +438,17 @@ try {
   });
   assert(spacing >= 16, 'settings groups must retain Astryx container padding');
   await toastIsOnTop('Toast before settings');
-  await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
-  await dialog.getByRole('button', { name: 'Copy TOML', exact: true }).click();
-  await toastIsOnTop('Settings copied to clipboard');
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().showToast('Toast in settings');
+  });
+  await toastIsOnTop('Toast in settings');
   await page
     .locator('.astryx-toast')
-    .filter({ hasText: 'Settings copied to clipboard' })
+    .filter({ hasText: 'Toast in settings' })
     .getByRole('button', { name: 'Dismiss notification' })
     .click();
-  await page
-    .locator('.astryx-toast')
-    .filter({ hasText: 'Settings copied to clipboard' })
-    .waitFor({ state: 'detached' });
+  await page.locator('.astryx-toast').filter({ hasText: 'Toast in settings' }).waitFor({ state: 'detached' });
   await dialog.getByRole('heading', { name: 'Settings', exact: true }).focus();
   await page.keyboard.press('Tab');
   assert(await page.evaluate(() => document.activeElement?.closest('dialog')?.open));

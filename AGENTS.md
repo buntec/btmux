@@ -41,7 +41,7 @@ returned Promise as truthy and doesn't wait.
 `just test-frontend` runs the frontend unit tests (`bun test`, the LaTeX detector and theme mapping).
 
 The CLI also accepts `--host`, `--port`, `--profile`, `--shell`, `--public-url`,
-and `--no-browser`; `install`, `uninstall`, and `restart` manage a per-user
+`--tailscale`, and `--no-browser`; `install`, `uninstall`, and `restart` manage a per-user
 launchd/systemd service.
 
 ## Style guide
@@ -574,6 +574,14 @@ are checked against the local authority and explicit `--public-url` values;
 forwarded headers do not grant trust.
 PTY shells receive `BTMUX_AUTH_TOKEN` so generated notification hooks work.
 `--public-url` adds explicit origins/authorities for Vite or a reverse proxy.
+`--tailscale` (`tailscale.rs`) runs `tailscale serve` for the listening port and
+allows that tailnet HTTPS origin once Tailscale reports it (`Auth::allow`). The
+Serve config is machine-wide: btmux refuses a port whose route serves anything
+else, and removes only a route it created, recorded in `state.tailscale` before
+the command runs; setup and shutdown share a lock, so shutdown waits for a
+command in flight;
+Tailscale's identity headers are not trusted, since local processes can reach
+the loopback listener too.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.
 Only one running server may own a persistence profile (held OS file lock).
 

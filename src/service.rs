@@ -181,13 +181,14 @@ fn render_systemd_unit(
     let shell_arg = explicit_shell
         .map(|s| format!(" --shell {s}"))
         .unwrap_or_default();
+    let tailscale_arg = if args.tailscale { " --tailscale" } else { "" };
     format!(
         "[Unit]\n\
          Description=btmux — browser-based tmux\n\
          After=network.target\n\
          \n\
          [Service]\n\
-         ExecStart={exe} --no-browser --host {host} --port {port}{profile_arg}{shell_arg}{public_url_args}\n\
+         ExecStart={exe} --no-browser --host {host} --port {port}{profile_arg}{shell_arg}{public_url_args}{tailscale_arg}\n\
          Restart=on-failure\n\
          Environment=PATH={path}\n\
          Environment=SHELL={env_shell}\n\
@@ -198,6 +199,7 @@ fn render_systemd_unit(
         host = args.host,
         port = args.port,
         public_url_args = public_url_args,
+        tailscale_arg = tailscale_arg,
         profile_arg = profile_arg,
         shell_arg = shell_arg,
         env_shell = env_shell,
@@ -405,6 +407,12 @@ fn render_plist(
         })
         .unwrap_or_default();
 
+    let tailscale_args = if args.tailscale {
+        "\n        <string>--tailscale</string>"
+    } else {
+        ""
+    };
+
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -419,7 +427,7 @@ fn render_plist(
         <string>--host</string>
         <string>{host}</string>
         <string>--port</string>
-        <string>{port}</string>{profile_args}{shell_args}{public_url_args}
+        <string>{port}</string>{profile_args}{shell_args}{public_url_args}{tailscale_args}
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -507,6 +515,22 @@ mod tests {
         std::fs::remove_file(dir.join("opt/btmux")).unwrap();
         assert_eq!(stable_homebrew_path(&exe), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bakes_tailscale_into_service_units() {
+        use clap::Parser;
+        let exe = Path::new("/usr/local/bin/btmux");
+        let args = CliArgs::parse_from(["btmux", "--tailscale"]);
+        assert!(render_systemd_unit(exe, &args, None, "/bin/sh", "/usr/bin")
+            .contains("--port 8004 --tailscale\n"));
+        assert!(render_plist(exe, &args, None, "/bin/sh", "/usr/bin")
+            .contains("<string>--tailscale</string>"));
+        let args = CliArgs::parse_from(["btmux"]);
+        assert!(
+            !render_systemd_unit(exe, &args, None, "/bin/sh", "/usr/bin").contains("tailscale")
+        );
+        assert!(!render_plist(exe, &args, None, "/bin/sh", "/usr/bin").contains("tailscale"));
     }
 }
 

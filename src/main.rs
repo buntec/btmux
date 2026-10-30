@@ -33,6 +33,7 @@ mod server;
 mod service;
 mod session;
 mod shell;
+mod tailscale;
 mod tmux_cli;
 mod update_check;
 mod vscode;
@@ -421,7 +422,10 @@ async fn main() {
 
     let app = server::create_app(state.clone())
         .merge(server::info_routes(info))
-        .layer(axum::middleware::from_fn_with_state(auth, auth::protect));
+        .layer(axum::middleware::from_fn_with_state(
+            auth.clone(),
+            auth::protect,
+        ));
     let upgraded = inherited_listener.is_some();
     let listener = match inherited_listener {
         Some(listener) => listener
@@ -468,6 +472,15 @@ async fn main() {
             }
         });
 
+    if args.tailscale {
+        if let Ok(address) = listener.local_addr() {
+            let marker = state_file
+                .as_ref()
+                .map(|path| path.with_extension("tailscale"));
+            tailscale::spawn(address, auth, marker);
+        }
+    }
+
     if !args.no_browser && !upgraded {
         let url = format!("http://{}:{}", args.host, args.port);
         if let Err(e) = open::that(&url) {
@@ -494,6 +507,7 @@ async fn main() {
     }
     ws::nvim::shutdown().await;
     vscode::shutdown().await;
+    tailscale::shutdown().await;
     paste_image::shutdown();
     if let Some(path) = state_file {
         let snapshots = state.read().await.all_snapshots();

@@ -138,6 +138,34 @@ Preserve the public Host header (or use the configured backend authority) and
 forward WebSocket upgrades. Forwarded headers never implicitly grant trust.
 Plain HTTP does not encrypt the access token or terminal traffic.
 
+### Tailscale
+
+To reach btmux from other devices on your
+[tailnet](https://tailscale.com), including phones, start it with
+`--tailscale`:
+
+```sh
+btmux --tailscale                        # https://<machine>.<tailnet>.ts.net:8004
+btmux --tailscale install                # the same, as a background service
+```
+
+btmux runs `tailscale serve --bg --https=<port>`, which serves the machine's
+tailnet name over HTTPS with a Tailscale certificate and proxies to btmux on
+loopback, and prints the URL. btmux itself stays on `127.0.0.1`. It never
+replaces another route on that port: if one exists, btmux serves locally and
+reports it, so choose another `--port`. A route that already points at btmux is
+used as is. Shutting down removes only a route btmux created (recorded in
+`state.tailscale` beside the profile's state); an upgrade keeps it. If Tailscale
+isn't running yet, btmux keeps serving locally and retries every 10 seconds.
+
+This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
+[MagicDNS](https://tailscale.com/kb/1081/magicdns), and
+[HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled for
+the tailnet. Sign in with the access token as above; browsers keep the login for
+400 days. HTTPS matters even though the tailnet is encrypted: browsers allow
+the clipboard, notifications, and WebGPU shader wallpapers only on secure
+origins.
+
 ## Background service
 
 btmux can install itself as a per-user service that starts at login and restarts
@@ -153,7 +181,7 @@ btmux restart              # restart the installed service
 btmux uninstall            # stop and remove the service
 ```
 
-The `--host`, `--port`, `--profile`, `--shell`, and `--public-url` flags, along
+The `--host`, `--port`, `--profile`, `--shell`, `--public-url`, and `--tailscale` flags, along
 with your shell's `PATH`, are captured when the service is installed. Re-run
 `btmux install` after changing them.
 

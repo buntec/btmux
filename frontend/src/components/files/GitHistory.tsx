@@ -63,7 +63,8 @@ function RefLabel({ ref }: { ref: GitLogRef }) {
   );
 }
 
-export function GitHistory() {
+/** `onPreview`: a commit was tapped or clicked. */
+export function GitHistory({ onPreview }: { onPreview?: () => void } = {}) {
   const gitStatus = useFileStore((s) => s.gitStatus);
   const gitLog = useFileStore((s) => s.gitLog);
   const gitLogFocusedIndex = useFileStore((s) => s.gitLogFocusedIndex);
@@ -195,7 +196,10 @@ export function GitHistory() {
                   role="listitem"
                   data-git-log-index={rowIndex}
                   aria-current={selected ? 'true' : undefined}
-                  onClick={() => useFileStore.getState().setGitLogFocusedIndex(rowIndex)}
+                  onClick={() => {
+                    useFileStore.getState().setGitLogFocusedIndex(rowIndex);
+                    onPreview?.();
+                  }}
                   className={cn(
                     'flex cursor-pointer items-center gap-2 px-2',
                     selected ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',

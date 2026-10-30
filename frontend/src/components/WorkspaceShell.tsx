@@ -69,6 +69,8 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
   return (
     <AppShell
       height="fill"
+      // Fill's 100dvh ignores the iOS keyboard; useVisualViewport tracks it.
+      style={{ height: 'var(--btm-viewport-height, 100dvh)' }}
       contentPadding={0}
       variant="section"
       // Never scroll the main region: TabList's indicator bleed pokes 1px past

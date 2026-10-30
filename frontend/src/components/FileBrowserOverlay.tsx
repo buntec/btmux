@@ -1,10 +1,11 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Token } from '@astryxdesign/core/Token';
-import { X } from 'lucide-react';
+import { ChevronLeft, X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
 import { useFileStore } from '@/state/fileStore';
@@ -21,9 +22,12 @@ import { GitPopup, type GitPopupKind } from './files/GitPopup';
 import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
-import { KeyHint, type Hint } from './KeyHint';
+import { KeyHint, hintKey, type Hint } from './KeyHint';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { NARROW_QUERY, TOUCH_QUERY } from '@/lib/touch';
 import { cn, getParent, joinPath, stepIndex } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
+import { dispatchKey } from '@/lib/paneTerminal';
 import { smoothScrollBy } from '@/lib/smoothScroll';
 import { DEFAULT_TYPE_SCALE, terminalTypeScale } from '@/lib/astryx-theme';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
@@ -135,6 +139,35 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const touch = useMediaQuery(TOUCH_QUERY);
+  // Narrow screens show the list or, after a tap on an entry, its preview.
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const [previewShown, setPreviewShown] = useState(false);
+  const showPreview = useCallback(() => setPreviewShown(true), []);
+  // Touch screens type filters into an input, which opens the keyboard.
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  // Hint taps type their key, as the keyboard would.
+  const pressHint = useCallback(
+    (keys: string) => {
+      const root = rootRef.current;
+      if (!root) return;
+      if (!root.contains(document.activeElement)) root.focus();
+      const fields = () =>
+        [...root.querySelectorAll<HTMLElement>(TEXT_FIELDS)].filter((field) => field.checkVisibility());
+      const before = new Set(fields());
+      const { key, modifiers } = hintKey(keys);
+      dispatchKey(document.activeElement ?? root, key, modifiers);
+      // iOS opens the keyboard only for focus taken during the tap, so focus a
+      // text field the key opened (search, filter, rename) now.
+      if (touch && !document.activeElement?.matches(TEXT_FIELDS)) {
+        flushSync(() => {});
+        fields()
+          .find((field) => !before.has(field))
+          ?.focus();
+      }
+    },
+    [touch],
+  );
   const renameInputRef = useRef<HTMLInputElement>(null);
   const { sidebarRatio, onDividerMouseDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
 
@@ -146,6 +179,19 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   }, []);
 
   const closeGitPopup = useCallback(() => setGitPopup(null), []);
+
+  useEffect(() => {
+    if (!touch) return;
+    if (isFilterActive) filterInputRef.current?.focus();
+    // The input's removal drops focus, which the browser's keys need.
+    else if (document.activeElement === document.body) rootRef.current?.focus();
+  }, [touch, isFilterActive]);
+
+  // Moving elsewhere returns to the list.
+  useEffect(() => setPreviewShown(false), [currentPath, isGitMode, gitView, searchMode]);
+
+  // A selection doesn't outlive the browser; the yank register does.
+  useEffect(() => () => store.getState().clearSelection(), [store]);
 
   // Refocus after the popup's dialog has unmounted; focusing earlier hits the
   // still-modal dialog's inert backdrop and focus falls to <body>.
@@ -283,6 +329,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
     },
     [fileSend, store],
+  );
+
+  // Set the filter, focusing the first match in Git mode.
+  const applyFilterQuery = useCallback(
+    (query: string) => {
+      const st = store.getState();
+      st.setFilterQuery(query);
+      if (st.isGitMode && st.gitView === 'log') st.setGitLogFocusedIndex(0);
+      else if (st.isGitMode) st.setGitFocusedIndex(0);
+    },
+    [store],
   );
 
   // Close the log filter, keeping the focused commit selected in the full list.
@@ -760,6 +817,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           setPendingDiscard(null);
         } else if (pendingDelete) {
           setPendingDelete(null);
+        } else if (narrow && previewShown) {
+          setPreviewShown(false);
         } else if (selectedPaths.size > 0) {
           store.getState().clearSelection();
         } else if (searchMode !== 'off') {
@@ -808,6 +867,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         return;
       }
 
+      // The filter input edits the query itself.
+      if (
+        isFilterActive &&
+        document.activeElement === filterInputRef.current &&
+        (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey))
+      )
+        return;
+
       // Git mode keybindings
       if (isGitMode) {
         if (gitView === 'log') {
@@ -822,8 +889,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             if (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey)) {
               e.preventDefault();
-              store.getState().setFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
-              store.getState().setGitLogFocusedIndex(0);
+              applyFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
               return;
             }
             if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -908,16 +974,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             closeStatusFilter();
             return;
           }
-          if (e.key === 'Backspace') {
+          if (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey)) {
             e.preventDefault();
-            store.getState().setFilterQuery(filterQuery.slice(0, -1));
-            store.getState().setGitFocusedIndex(0);
-            return;
-          }
-          if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
-            e.preventDefault();
-            store.getState().setFilterQuery(filterQuery + e.key);
-            store.getState().setGitFocusedIndex(0);
+            applyFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
             return;
           }
           if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -1140,14 +1199,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           }
           return;
         }
-        if (e.key === 'Backspace') {
+        if (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey)) {
           e.preventDefault();
-          store.getState().setFilterQuery(filterQuery.slice(0, -1));
-          return;
-        }
-        if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
-          e.preventDefault();
-          store.getState().setFilterQuery(filterQuery + e.key);
+          applyFilterQuery(e.key === 'Backspace' ? filterQuery.slice(0, -1) : filterQuery + e.key);
           return;
         }
         const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n');
@@ -1381,6 +1435,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     onClose,
     exitGitMode,
     closeLogFilter,
+    applyFilterQuery,
     closeStatusFilter,
     gitStage,
     gitUnstage,
@@ -1391,6 +1446,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     deleteFile,
     pendingDiscard,
     pendingDelete,
+    narrow,
+    previewShown,
     commitModalOpen,
     gitPopup,
     createModalOpen,
@@ -1496,20 +1553,22 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     >
       <HStack gap={3} vAlign="center" className="min-w-0 flex-none border-b border-border px-3 py-1.5">
         <HStack className="min-w-0 flex-1 overflow-hidden">
-          <Breadcrumb onNavigate={navigate} />
+          <Breadcrumb onNavigate={navigate} singleLine={narrow} />
         </HStack>
         {fileConnectionState !== 'connected' && (
           <Text size="sm" color="secondary" role="status" className={cn(animations && 'animate-pulse')}>
             {CONNECTION_STATE_LABEL[fileConnectionState]}
           </Text>
         )}
-        {isFilterActive && (
+        {isFilterActive && !touch && (
           <Text size="sm" color="secondary">
             Filter: <Text size="sm">{filterQuery || '…'}</Text>
           </Text>
         )}
-        {selectionCount > 0 && !isFilterActive && <Token size="sm" color="blue" label={`${selectionCount} selected`} />}
-        {yankRegister && !isFilterActive && (
+        {selectionCount > 0 && !isFilterActive && !isGitMode && (
+          <Token size="sm" color="blue" label={`${selectionCount} selected`} />
+        )}
+        {yankRegister && !isFilterActive && !isGitMode && (
           <Token
             size="sm"
             label={`${yankRegister.paths.length} ${yankRegister.mode === 'cut' ? 'to move' : 'to copy'}`}
@@ -1519,36 +1578,96 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       </HStack>
 
       <HStack className="min-h-0 min-w-0 flex-1 items-stretch overflow-hidden">
-        <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ width: `${sidebarRatio * 100}%` }}>
+        <VStack
+          className={cn(
+            'min-h-0 min-w-0 overflow-hidden',
+            narrow ? 'flex-1' : 'flex-none',
+            narrow && previewShown && 'hidden',
+          )}
+          style={narrow ? undefined : { width: `${sidebarRatio * 100}%` }}
+        >
           {isGitMode ? (
             <>
               <GitModeHeader />
-              {gitView === 'log' ? <GitHistory /> : <GitStatus />}
+              {gitView === 'log' ? (
+                <GitHistory onPreview={narrow ? showPreview : undefined} />
+              ) : (
+                <GitStatus onPreview={narrow ? showPreview : undefined} />
+              )}
             </>
           ) : (
             <>
               <VStack className={searchMode === 'off' ? 'min-h-0 flex-1' : 'hidden'}>
-                <FileTree fileSend={fileSend} onNavigate={navigate} onSelect={selectFile} />
+                <FileTree fileSend={fileSend} onNavigate={navigate} onPreview={narrow ? showPreview : undefined} />
               </VStack>
               {searchMode !== 'off' && (
-                <FileSearch fileSend={fileSend} currentPath={currentPath} focusedIndex={focusedIndex} />
+                <FileSearch
+                  fileSend={fileSend}
+                  currentPath={currentPath}
+                  focusedIndex={focusedIndex}
+                  onPreview={narrow ? showPreview : undefined}
+                />
               )}
             </>
           )}
         </VStack>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize sidebar"
-          onMouseDown={onDividerMouseDown}
-          className="w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg"
-        />
-        <VStack className="file-preview-scroll file-preview-content min-h-0 min-w-0 flex-1">
+        {!narrow && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            onMouseDown={onDividerMouseDown}
+            className="w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg"
+          />
+        )}
+        <VStack
+          className={cn(
+            'file-preview-scroll file-preview-content min-h-0 min-w-0 flex-1',
+            narrow && !previewShown && 'hidden',
+          )}
+        >
+          {narrow && (
+            <HStack vAlign="center" className="flex-none border-b border-border px-1">
+              <IconButton
+                label="Back to list"
+                icon={<ChevronLeft />}
+                variant="ghost"
+                size="sm"
+                onClick={() => setPreviewShown(false)}
+              />
+            </HStack>
+          )}
           {isGitMode && gitView === 'log' ? <GitCommitDiffPreview /> : <FilePreview fileSend={fileSend} />}
         </VStack>
       </HStack>
 
-      <HStack gap={4} vAlign="center" wrap="wrap" className="flex-none gap-y-1 border-t border-border px-3 py-1">
+      {touch && isFilterActive && (
+        <HStack className="flex-none border-t border-border px-3 py-1">
+          <TextInput
+            ref={(input) => {
+              filterInputRef.current = input;
+              // TextInput doesn't forward these; iOS would capitalize and autocorrect.
+              input?.setAttribute('autocapitalize', 'off');
+              input?.setAttribute('autocorrect', 'off');
+            }}
+            label="Filter"
+            isLabelHidden
+            size="sm"
+            value={filterQuery}
+            onChange={applyFilterQuery}
+            autoComplete="off"
+            placeholder="Filter…"
+            controlClassName="min-w-0 flex-1"
+          />
+        </HStack>
+      )}
+      <HStack
+        gap={4}
+        vAlign="center"
+        wrap={touch ? 'nowrap' : 'wrap'}
+        isScrollable={touch}
+        className="flex-none gap-y-1 border-t border-border px-3 py-1"
+      >
         {pendingRename ? (
           <HStack gap={3} vAlign="center" className="w-full">
             <TextInput
@@ -1570,8 +1689,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                 e.stopPropagation();
               }}
             />
-            <KeyHint keys={['enter']} label="confirm" />
-            <KeyHint keys={['esc']} label="cancel" />
+            <KeyHint keys={['enter']} label="confirm" onPress={pressHint} />
+            <KeyHint keys={['esc']} label="cancel" onPress={pressHint} />
           </HStack>
         ) : pendingDiscard || pendingDelete ? (
           <>
@@ -1592,11 +1711,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
               </Text>
               ?
             </Text>
-            <KeyHint keys={['y']} label="confirm" />
-            <KeyHint keys={['n']} label="cancel" />
+            <KeyHint keys={['y']} label="confirm" onPress={pressHint} />
+            <KeyHint keys={['n']} label="cancel" onPress={pressHint} />
           </>
         ) : (
-          hints.map((hint) => <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} />)
+          hints.map((hint) => (
+            <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} onPress={pressHint} />
+          ))
         )}
       </HStack>
 
@@ -1609,6 +1730,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     </VStack>
   );
 }
+
+const TEXT_FIELDS = 'input:not([type=checkbox]):not([type=radio]), textarea';
 
 const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
   b: 'branch',

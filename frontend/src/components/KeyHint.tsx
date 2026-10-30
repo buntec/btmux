@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { HStack } from '@astryxdesign/core/Layout';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { Text } from '@astryxdesign/core/Text';
+import type { KeyModifiers } from '../lib/paneTerminal';
 
 export interface Hint {
   keys: string[];
@@ -34,6 +35,30 @@ function parseKeys(keys: string): { modifiers: string[]; key: string } {
     return { modifiers: parts.slice(0, -1).map((part) => part.toLowerCase()), key: parts[parts.length - 1] };
   }
   return { modifiers: [], key: keys };
+}
+
+// Hint key names as KeyboardEvent.key values.
+const KEY_VALUES: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(KEY_NAMES).map(([value, name]) => [name, value])),
+  esc: 'Escape',
+  escape: 'Escape',
+  enter: 'Enter',
+  tab: 'Tab',
+  backspace: 'Backspace',
+};
+
+/** The key and modifiers a hint key such as `ctrl+d`, `G`, or `esc` stands for. */
+export function hintKey(keys: string): { key: string; modifiers: KeyModifiers } {
+  const { modifiers, key } = parseKeys(keys);
+  const value = KEY_VALUES[key.toLowerCase()] ?? key;
+  return {
+    key: value,
+    modifiers: {
+      ctrlKey: modifiers.includes('ctrl'),
+      altKey: modifiers.includes('alt'),
+      shiftKey: modifiers.includes('shift') || (value.length === 1 && value !== value.toLowerCase()),
+    },
+  };
 }
 
 /** Keys Kbd draws as glyphs or a readable name; it would uppercase others. */
@@ -69,20 +94,65 @@ export function KeyCap({ keys }: { keys: string }) {
   );
 }
 
-/** Compact key-cap hint for overlay footers. */
-export function KeyHint({ keys, label }: Hint) {
+function PressableKey({
+  keys,
+  label,
+  onPress,
+  children,
+}: {
+  keys: string;
+  label: ReactNode;
+  onPress: (keys: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      aria-label={typeof label === 'string' ? `${keys}: ${label}` : keys}
+      className="flex flex-none cursor-pointer items-center gap-1 rounded-sm py-1 hover:bg-overlay-hover"
+      // Keep focus (and an open keyboard) where it is.
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={() => onPress(keys)}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Compact key-cap hint for overlay footers. With `onPress`, tapping a key presses it. */
+export function KeyHint({ keys, label, onPress }: Hint & { onPress?: (keys: string) => void }) {
+  const text =
+    typeof label === 'string' ? (
+      <Text size="sm" color="secondary">
+        {label}
+      </Text>
+    ) : (
+      label
+    );
+  // A single key takes its label along, for a larger target.
+  if (onPress && keys.length === 1)
+    return (
+      <PressableKey keys={keys[0]} label={label} onPress={onPress}>
+        <KeyCap keys={keys[0]} />
+        {text}
+      </PressableKey>
+    );
   return (
     <HStack gap={1} vAlign="center" className="flex-none">
-      {keys.map((key) => (
-        <KeyCap key={key} keys={key} />
-      ))}
-      {typeof label === 'string' ? (
-        <Text size="sm" color="secondary">
-          {label}
-        </Text>
-      ) : (
-        label
+      {keys.map((key) =>
+        onPress ? (
+          <PressableKey key={key} keys={key} label={label} onPress={onPress}>
+            <KeyCap keys={key} />
+          </PressableKey>
+        ) : (
+          <KeyCap key={key} keys={key} />
+        ),
       )}
+      {text}
     </HStack>
   );
 }

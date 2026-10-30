@@ -87,11 +87,11 @@ Start `btmux`, then open `http://127.0.0.1:8004`. Access requires a token even
 on localhost. Unless `BTMUX_AUTH_TOKEN` is set, btmux creates an owner-only
 `state.token` beside the profile's `state.json` and prints its path on startup.
 
-| Instance | Default token file |
-| --- | --- |
-| `btmux` | `~/.local/state/btmux/state.token` |
-| `btmux --profile NAME` | `~/.local/state/btmux/NAME/state.token` |
-| `just dev` / `just dev-backend` | `~/.local/state/btmux/dev/state.token` |
+| Instance                        | Default token file                      |
+| ------------------------------- | --------------------------------------- |
+| `btmux`                         | `~/.local/state/btmux/state.token`      |
+| `btmux --profile NAME`          | `~/.local/state/btmux/NAME/state.token` |
+| `just dev` / `just dev-backend` | `~/.local/state/btmux/dev/state.token`  |
 
 These paths apply on both macOS and Linux. On Windows, `%LOCALAPPDATA%`
 replaces `~/.local/state` (`%LOCALAPPDATA%\btmux\state.token`). If
@@ -165,6 +165,16 @@ the tailnet. Sign in with the access token as above; browsers keep the login for
 400 days. HTTPS matters even though the tailnet is encrypted: browsers allow
 the clipboard, notifications, and WebGPU shader wallpapers only on secure
 origins.
+
+### Phones and tablets
+
+On touch devices, a key bar above the status bar supplies the keys on-screen
+keyboards lack: Esc, Tab, arrows, the prefix, and Ctrl and Alt, which apply to
+the next key typed or tapped. It also opens the command palette, cycles panes,
+and hides the keyboard. Swipes scroll full-screen programs such as `less` the
+way a mouse wheel does. On narrow screens, a window with several panes shows
+only the active one. Add btmux to the home screen to run it without browser
+chrome; it needs HTTPS, so serve it with `--tailscale` or through a reverse proxy.
 
 ## Background service
 

@@ -11,6 +11,8 @@ import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
 import { useWindowAttended } from '../lib/windowAttention';
+import { NARROW_QUERY } from '../lib/touch';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
 
 interface Props {
   sessionId: string;
@@ -59,7 +61,10 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const windows = session?.windows ?? [];
   const activeWindow = session ? windows[session.active_window] : undefined;
   const activePaneId = activeWindow?.panes[activeWindow.active_pane]?.id ?? null;
-  const zoomedPaneId = activeWindow?.zoomed_pane ?? null;
+  // Narrow screens show only the active pane, as if zoomed (locally).
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const zoomedPaneId =
+    activeWindow?.zoomed_pane ?? (narrow && (activeWindow?.panes.length ?? 0) > 1 ? activePaneId : null);
   const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
   const focusedAgentState = focusedPane?.agent_status.state ?? null;
   const focusedUnread = focusedPane?.unread != null;
@@ -218,7 +223,9 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const paneNumberById = new Map(
     activeWindow ? paneIdsInOrder(activeWindow.layout).map((id, i) => [id, i] as const) : [],
   );
-  const showPaneNumbers = isActiveSession && paneNumbersVisible && !zoomedPaneId;
+  const showPaneNumbers = isActiveSession && paneNumbersVisible;
+  // A zoomed pane (or the one narrow screens show) fills the window.
+  const numberRects = zoomedPaneId ? [{ ...HIDDEN, paneId: zoomedPaneId }] : rects;
 
   // Place the Neovim and VS Code surfaces over their panes while this session is shown.
   const pinnedRect = (paneId: string | null): LayoutRect | null =>
@@ -337,10 +344,11 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
             if (!open) useStore.getState().setFileBrowserOpen(false);
           }}
           aria-label={fileBrowserMode === 'process' ? 'Processes' : fileBrowserMode === 'git' ? 'Git' : 'Files'}
-          width="min(1440px, 94vw)"
-          maxHeight="90dvh"
           padding={0}
-          style={{ height: '90dvh' }}
+          // Fullscreen's 100dvh ignores the iOS keyboard; useVisualViewport tracks it.
+          {...(narrow
+            ? { variant: 'fullscreen', style: { height: 'var(--btm-viewport-height, 100dvh)' } }
+            : { width: 'min(1440px, 94vw)', maxHeight: '90dvh', style: { height: '90dvh' } })}
         >
           {fileBrowserMode === 'process' ? (
             <ProcessOverlay
@@ -361,7 +369,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         </Dialog>
       )}
       {showPaneNumbers &&
-        rects.map((rect) => {
+        numberRects.map((rect) => {
           const n = paneNumberById.get(rect.paneId);
           if (n === undefined) return null;
           const accent = config?.theme?.yellow ?? STARTUP_THEME.yellow;

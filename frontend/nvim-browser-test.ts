@@ -1,6 +1,6 @@
 /** Requires Neovim 0.12+. Run with `just test-nvim-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 import { encode, MsgpackStream, type MsgpackExt } from './src/lib/msgpack';
 import { waitForAsync } from './browser-test-utils';
 
@@ -1038,6 +1038,39 @@ try {
   });
   await page.unroute('**/api/vscode');
   console.log('PASS the pane editor hides a built-in editor over its pane');
+
+  // On touch screens, the key bar types into Neovim, not the pane beneath it.
+  await rpc('nvim_command', ['only']);
+  await rpc('nvim_set_current_buf', [scratch]);
+  await rpc('nvim_buf_set_lines', [scratch, 0, -1, false, ['']]);
+  const phoneContext = await browser.newContext({ ...devices['Pixel 7'] });
+  const phone = await phoneContext.newPage();
+  await phone.goto(url);
+  await phone.getByLabel('Access token').fill(token);
+  await phone.getByRole('button', { name: 'Connect', exact: true }).click();
+  await phone.waitForFunction(() => !document.querySelector('#access-token'));
+  await phone.goto(`${url}/s/${encodeURIComponent(sessions[1].name)}`);
+  await phone.waitForFunction(() => document.querySelector('[data-pane-id]'));
+  await phone.evaluate(async (id) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setNvimOpen(true, state.getActivePaneId(id));
+  }, sessions[1].id);
+  const phoneInput = phone.getByRole('textbox', { name: 'Neovim input', exact: true });
+  await phoneInput.waitFor({ state: 'attached' });
+  await phone.waitForFunction(() => document.activeElement?.hasAttribute('data-nvim-input'));
+  await phone.waitForTimeout(500);
+  await phone.keyboard.type('iab cd');
+  for (let i = 0; i < 50 && (await rpc('nvim_get_current_line', [])) !== 'ab cd'; i++) await phone.waitForTimeout(100);
+  const phoneKey = (name: string) => phone.getByRole('button', { name, exact: true });
+  await phoneKey('Ctrl').tap();
+  await phone.keyboard.insertText('w');
+  await phoneKey('Esc').tap();
+  for (let i = 0; i < 50 && (await rpc('nvim_get_mode', [])).mode !== 'n'; i++) await phone.waitForTimeout(100);
+  assert.equal((await rpc('nvim_get_mode', [])).mode, 'n', 'the key bar Esc reaches Neovim');
+  assert.equal(await rpc('nvim_get_current_line', []), 'ab ', 'Ctrl applies to text typed into Neovim');
+  await phoneContext.close();
+  console.log('PASS the key bar types into Neovim');
 
   // Neovim doesn't resend unchanged window cells to a UI attaching later.
   await rpc('nvim_command', ['only']);

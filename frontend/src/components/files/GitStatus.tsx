@@ -170,7 +170,8 @@ function DiffStat({ additions, deletions, showZeroes = false }: LineStats & { sh
   );
 }
 
-export function GitStatus() {
+/** `onPreview`: a file was tapped or clicked. */
+export function GitStatus({ onPreview }: { onPreview?: () => void } = {}) {
   const gitStatus = useFileStore((s) => s.gitStatus);
   const gitFocusedIndex = useFileStore((s) => s.gitFocusedIndex);
   const gitExpandedSections = useFileStore((s) => s.gitExpandedSections);
@@ -210,7 +211,10 @@ export function GitStatus() {
                   <div
                     key={`header-${item.section}`}
                     data-git-index={i}
-                    onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
+                    onClick={() => {
+                      useFileStore.getState().setGitFocusedIndex(i);
+                      useFileStore.getState().toggleGitSection(item.section);
+                    }}
                     className={cn(
                       'flex items-center gap-1.5 px-2 cursor-pointer select-none leading-tight',
                       i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'text-secondary hover:bg-overlay-hover',
@@ -237,7 +241,10 @@ export function GitStatus() {
                 <div
                   key={`${item.section}-${item.path}`}
                   data-git-index={i}
-                  onClick={() => useFileStore.getState().setGitFocusedIndex(i)}
+                  onClick={() => {
+                    useFileStore.getState().setGitFocusedIndex(i);
+                    onPreview?.();
+                  }}
                   className={cn(
                     'flex items-start gap-2 px-2 pl-5 cursor-pointer leading-tight',
                     i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',

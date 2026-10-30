@@ -94,6 +94,24 @@ function unscaleMeasurement(wterm: WTerm, element: HTMLElement) {
 interface WTermInput {
   syncInputPosition(): void;
   positionTextarea(): void;
+  // Set by Escape: a following Tab leaves the terminal instead of reaching it.
+  tabExitArmed: boolean;
+}
+
+/** `KeyboardEvent.code` for a key, for listeners that match physical keys. */
+function keyCode(key: string) {
+  if (/^[a-z]$/i.test(key)) return `Key${key.toUpperCase()}`;
+  if (/^\d$/.test(key)) return `Digit${key}`;
+  return key.length > 1 ? key : '';
+}
+
+export type KeyModifiers = { ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean };
+
+/** Press a key on an input, as the keyboard would. */
+export function dispatchKey(input: Element, key: string, modifiers: KeyModifiers = {}) {
+  const init = { key, code: keyCode(key), ...modifiers, bubbles: true, cancelable: true, composed: true };
+  input.dispatchEvent(new KeyboardEvent('keydown', init));
+  input.dispatchEvent(new KeyboardEvent('keyup', init));
 }
 
 /**
@@ -141,6 +159,7 @@ export class PaneTerminal {
   private pointer: { x: number; y: number; target: EventTarget | null } | null = null;
   private linkModifierHeld = false;
   private hoveredLink: string | null = null;
+  private touch: { x: number; y: number } | null = null;
 
   private constructor(wterm: WTerm, element: HTMLElement, core: GhosttyCore, inputDisabled: boolean) {
     this.wterm = wterm;
@@ -161,6 +180,10 @@ export class PaneTerminal {
     element.addEventListener('mousemove', this.onMouseMove);
     element.addEventListener('mouseleave', this.onMouseLeave);
     element.addEventListener('scroll', this.onLinkModifier, { passive: true });
+    element.addEventListener('touchstart', this.onTouchStart, { passive: true });
+    element.addEventListener('touchmove', this.onTouchMove, { passive: false });
+    element.addEventListener('touchend', this.onTouchEnd, { passive: true });
+    element.addEventListener('touchcancel', this.onTouchEnd, { passive: true });
     document.addEventListener('keydown', this.onLinkModifier, true);
     document.addEventListener('keyup', this.onLinkModifier, true);
   }
@@ -282,6 +305,36 @@ export class PaneTerminal {
     } finally {
       this.forwardingWheel = false;
     }
+  };
+
+  private onTouchStart = (event: TouchEvent) => {
+    const touch = event.touches.length === 1 ? event.touches[0] : null;
+    this.touch = touch && { x: touch.clientX, y: touch.clientY };
+  };
+
+  /** Swipes scroll applications as the wheel does; scrollback scrolls natively. */
+  private onTouchMove = (event: TouchEvent) => {
+    const touch = event.touches.length === 1 ? event.touches[0] : null;
+    if (!touch || !this.touch) return;
+    if (!this.mouseTracking() && !this.usingAltScreen()) return;
+    // Back to the live screen first, as onWheel does.
+    if (this.mouseTracking() && !this.isScrolledToBottom()) return;
+    const deltaY = this.touch.y - touch.clientY;
+    this.touch = { x: touch.clientX, y: touch.clientY };
+    event.preventDefault();
+    this.element.dispatchEvent(
+      new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaY,
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+      }),
+    );
+  };
+
+  private onTouchEnd = () => {
+    this.touch = null;
   };
 
   /** Plain-text URL at a viewport point; wterm handles OSC 8 links itself. */
@@ -512,6 +565,15 @@ export class PaneTerminal {
     this.element.scrollTop += pages * this.element.clientHeight;
   }
 
+  /** Press a key through wterm's input, as the keyboard would, so keybindings and key encoding apply. */
+  pressKey(key: string, modifiers: KeyModifiers = {}) {
+    const input = this.element.querySelector('textarea');
+    if (!input) return;
+    const wtermInput = (this.wterm as unknown as { input: WTermInput | null }).input;
+    if (wtermInput) wtermInput.tabExitArmed = false;
+    dispatchKey(input, key, modifiers);
+  }
+
   /** Paste through wterm's input, as a real paste event would. */
   paste(text: string) {
     const clipboardData = new DataTransfer();
@@ -627,6 +689,10 @@ export class PaneTerminal {
     this.element.removeEventListener('mousemove', this.onMouseMove);
     this.element.removeEventListener('mouseleave', this.onMouseLeave);
     this.element.removeEventListener('scroll', this.onLinkModifier);
+    this.element.removeEventListener('touchstart', this.onTouchStart);
+    this.element.removeEventListener('touchmove', this.onTouchMove);
+    this.element.removeEventListener('touchend', this.onTouchEnd);
+    this.element.removeEventListener('touchcancel', this.onTouchEnd);
     document.removeEventListener('keydown', this.onLinkModifier, true);
     document.removeEventListener('keyup', this.onLinkModifier, true);
     this.dataListeners.clear();

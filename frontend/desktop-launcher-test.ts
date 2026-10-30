@@ -100,7 +100,7 @@ try {
   await empty.getByRole('status').filter({ hasText: 'Starting the desktop server' }).waitFor();
   assert.deepEqual(await calls(empty), [
     { command: 'discover_servers', args: undefined },
-    { command: 'start_server', args: { persistent: false } },
+    { command: 'start_server', args: { persistent: false, tailscale: false } },
   ]);
   await empty.close();
 
@@ -110,15 +110,46 @@ try {
   assert(await choose.getByRole('radio', { name: 'Stop it when btmux quits' }).isChecked());
   await choose.getByRole('radio', { name: 'Keep it running after btmux quits' }).check();
   await choose.getByRole('button', { name: 'Start desktop server' }).click();
-  assert.deepEqual((await calls(choose)).at(-1), { command: 'start_server', args: { persistent: true } });
+  assert.deepEqual((await calls(choose)).at(-1), {
+    command: 'start_server',
+    args: { persistent: true, tailscale: false },
+  });
   await choose.reload();
   await choose.getByRole('button', { name: 'Connect to default' }).waitFor();
   assert(await choose.getByRole('radio', { name: 'Keep it running after btmux quits' }).isChecked());
   await choose.close();
   const remembered = await open([], {}, '', true);
   await remembered.getByRole('status').filter({ hasText: 'Starting the desktop server' }).waitFor();
-  assert.deepEqual((await calls(remembered)).at(-1), { command: 'start_server', args: { persistent: true } });
+  assert.deepEqual((await calls(remembered)).at(-1), {
+    command: 'start_server',
+    args: { persistent: true, tailscale: false },
+  });
   await remembered.close();
+
+  // Tailnet sharing needs a server that keeps running; the choice is remembered.
+  const share = await open(choices);
+  await share.getByRole('button', { name: 'Connect to default' }).waitFor();
+  const shareBox = share.getByRole('checkbox', { name: /Share it on my tailnet/ });
+  assert(await shareBox.isDisabled());
+  await share.getByRole('radio', { name: 'Keep it running after btmux quits' }).check();
+  await shareBox.check();
+  await share.getByRole('button', { name: 'Start desktop server' }).click();
+  assert.deepEqual((await calls(share)).at(-1), {
+    command: 'start_server',
+    args: { persistent: true, tailscale: true },
+  });
+  await share.reload();
+  await share.getByRole('button', { name: 'Connect to default' }).waitFor();
+  assert(await shareBox.isChecked());
+  // Kept checked but not sent for a server that stops with the app.
+  await share.getByRole('radio', { name: 'Stop it when btmux quits' }).check();
+  assert(await shareBox.isDisabled());
+  await share.getByRole('button', { name: 'Start desktop server' }).click();
+  assert.deepEqual((await calls(share)).at(-1), {
+    command: 'start_server',
+    args: { persistent: false, tailscale: false },
+  });
+  await share.close();
 
   const kept = { address: '127.0.0.1:9400', profile: 'desktop', url: 'http://127.0.0.1:9400/', bundled: false, desktop: true };
   const stopping = await open([kept, choices[0]], {}, '?return=switch');

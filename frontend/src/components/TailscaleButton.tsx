@@ -34,11 +34,13 @@ function Details({ status }: { status: TailscaleStatus }) {
         <Text type="supporting">Retrying every 10 seconds.</Text>
       </VStack>
     );
-  const copy = () =>
-    navigator.clipboard.writeText(status.url).then(
-      () => useStore.getState().showToast('Tailnet address copied', 'success'),
-      () => useStore.getState().showToast('Could not copy the tailnet address', 'error'),
-    );
+  const copy = () => {
+    const { showToast } = useStore.getState();
+    const failed = () => showToast('Could not copy the tailnet address; select it to copy it', 'error');
+    // Absent outside secure contexts, e.g. plain HTTP from another machine.
+    if (!navigator.clipboard?.writeText) return failed();
+    navigator.clipboard.writeText(status.url).then(() => showToast('Tailnet address copied', 'success'), failed);
+  };
   return (
     <VStack gap={2} className="btm-sans">
       <HStack gap={1} vAlign="center">

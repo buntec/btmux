@@ -364,9 +364,15 @@ fn tailnet_port(app: &AppHandle) -> Result<u16, String> {
     if let Some(port) = std::fs::read_to_string(&path)
         .ok()
         .and_then(|text| text.trim().parse::<u16>().ok())
-        && TcpListener::bind(("127.0.0.1", port)).is_ok()
     {
-        return Ok(port);
+        // Another port would change the tailnet URL.
+        return match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(_) => Ok(port),
+            Err(_) => Err(format!(
+                "Port {port}, which the tailnet address uses, is in use. Free it, or delete {} to choose another port.",
+                path.display()
+            )),
+        };
     }
     let port = unused_loopback_port().map_err(|_| "Could not choose a server port.".to_string())?;
     std::fs::create_dir_all(&dir)

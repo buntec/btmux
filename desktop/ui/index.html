@@ -35,6 +35,14 @@
       label small { display: block; margin-top: 2px; color: #aaa; line-height: 1.4; }
       input { margin: 2px 0 0; accent-color: #b4c9ff; }
       code { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      .field label { display: block; cursor: default; }
+      .field + .field { margin-top: 12px; }
+      .field input { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 8px 10px; background: #111; color: #eee; border: 1px solid #444; border-radius: 6px; font: inherit; }
+      .field input:focus-visible { outline: 2px solid #b4c9ff; outline-offset: 1px; }
+      .field small { display: block; margin-top: 6px; color: #aaa; line-height: 1.4; }
+      .actions { justify-content: flex-end; margin-top: 16px; }
+      #remote-form { margin-top: 8px; }
+      .problem { color: #ffb4b4 !important; }
       #error { color: #ffb4b4; }
       #status:empty, #error:empty { display: none; }
       [hidden] { display: none !important; }
@@ -79,6 +87,29 @@
         <ul id="servers" aria-labelledby="others-title"></ul>
         <p id="none">None running. Servers you start with the <code>btmux</code> command appear here.</p>
       </section>
+      <section id="remotes" aria-labelledby="remotes-title" hidden>
+        <div class="head">
+          <h2 id="remotes-title">Remote servers</h2>
+          <button id="add-remote" class="link" type="button">Add server</button>
+        </div>
+        <ul id="remote-list" aria-labelledby="remotes-title"></ul>
+        <p id="no-remotes">Servers on other machines, such as one started with <code>btmux --tailscale</code>.</p>
+        <form id="remote-form" class="card" hidden>
+          <div class="field">
+            <label for="remote-url">Address</label>
+            <input id="remote-url" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://machine.tailnet.ts.net:8004" required />
+          </div>
+          <div class="field">
+            <label for="remote-token">Access token</label>
+            <input id="remote-token" type="password" autocomplete="off" required />
+            <small>The contents of the server's <code>state.token</code> file. It is kept on this computer, readable only by you.</small>
+          </div>
+          <div class="row actions">
+            <button id="remote-cancel" type="button">Cancel</button>
+            <button class="primary" type="submit">Save server</button>
+          </div>
+        </form>
+      </section>
       <p id="status" role="status" aria-live="polite"></p>
       <p id="error" role="alert" hidden></p>
     </main>
@@ -90,8 +121,11 @@
       const error = element("error");
       const persistent = element("persistent");
       const stopButton = element("desktop-stop");
+      const remoteList = element("remote-list");
+      const remoteForm = element("remote-form");
       let desktopServer = null;
       let stopTimer;
+      let generation = 0;
 
       try {
         persistent.checked = localStorage.getItem("btmux-persistent") === "1";
@@ -112,6 +146,7 @@
         status.textContent = "";
         element("desktop").hidden = false;
         element("others").hidden = false;
+        element("remotes").hidden = false;
         document.querySelectorAll("button, input").forEach((control) => { control.disabled = false; });
       }
 
@@ -134,6 +169,47 @@
         busy("Connecting…");
         try {
           await invoke("connect_server", { address: server.address });
+        } catch (message) {
+          showError(message);
+        }
+      }
+
+      async function connectRemote(server) {
+        busy("Connecting…");
+        try {
+          await invoke("connect_remote_server", { url: server.url });
+        } catch (message) {
+          showError(message);
+        }
+      }
+
+      async function removeRemote(server) {
+        busy("Removing the server…");
+        try {
+          await invoke("remove_remote_server", { url: server.url });
+          await refresh();
+        } catch (message) {
+          showError(message);
+        }
+      }
+
+      function showRemoteForm(shown) {
+        remoteForm.hidden = !shown;
+        element("add-remote").hidden = shown;
+        if (shown) {
+          element("remote-url").focus();
+        } else {
+          remoteForm.reset();
+        }
+      }
+
+      async function addRemote(event) {
+        event.preventDefault();
+        busy("Checking the server…");
+        try {
+          await invoke("add_remote_server", { url: element("remote-url").value, token: element("remote-token").value });
+          showRemoteForm(false);
+          await refresh();
         } catch (message) {
           showError(message);
         }
@@ -206,24 +282,79 @@
         element("none").hidden = others.length > 0;
       }
 
+      function renderRemotes(remotes) {
+        remoteList.replaceChildren(
+          ...remotes.map((server) => {
+            const item = document.createElement("li");
+            item.className = "card row";
+            const info = document.createElement("div");
+            info.className = "info";
+            const name = document.createElement("strong");
+            const url = document.createElement("code");
+            url.textContent = server.url;
+            name.append(url);
+            const detail = document.createElement("small");
+            if (server.error) {
+              detail.textContent = server.error;
+              detail.classList.add("problem");
+            } else {
+              const command = server.profile ? `btmux --profile ${server.profile}` : "btmux";
+              detail.textContent = `${command} · ${server.version}`;
+            }
+            info.append(name, detail);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.textContent = "Remove";
+            remove.setAttribute("aria-label", `Remove ${server.url}`);
+            remove.addEventListener("click", () => removeRemote(server));
+            const connect = document.createElement("button");
+            connect.type = "button";
+            connect.textContent = "Connect";
+            connect.setAttribute("aria-label", `Connect to ${server.url}`);
+            connect.addEventListener("click", () => connectRemote(server));
+            // Rendered late: match the other controls while busy.
+            remove.disabled = connect.disabled = status.textContent !== "";
+            item.append(info, remove, connect);
+            return item;
+          }),
+        );
+        element("no-remotes").hidden = remotes.length > 0;
+      }
+
       async function refresh(autoStart = false) {
+        const current = ++generation;
         busy("Looking for running servers…");
+        // Remote checks can take seconds; local servers show first.
+        const remotes = invoke("list_remote_servers");
+        remotes.catch(() => {});
         try {
           const choices = await invoke("discover_servers");
+          if (current !== generation) return;
           render(choices);
-          if (autoStart && !choices.length) {
+          if (autoStart && !choices.length && !(await remotes.catch(() => [])).length) {
             await start();
-          } else {
-            idle();
-            (desktopServer ? element("desktop-connect") : servers.querySelector("button") ?? element("start")).focus();
+            return;
           }
+          if (current !== generation) return;
+          idle();
+          (desktopServer ? element("desktop-connect") : servers.querySelector("button") ?? element("start")).focus();
         } catch (message) {
           showError(message);
+          return;
+        }
+        try {
+          const list = await remotes;
+          if (current === generation) renderRemotes(list);
+        } catch (message) {
+          if (current === generation) showError(message);
         }
       }
 
       element("start").addEventListener("click", start);
       element("refresh").addEventListener("click", () => refresh());
+      element("add-remote").addEventListener("click", () => showRemoteForm(true));
+      element("remote-cancel").addEventListener("click", () => showRemoteForm(false));
+      remoteForm.addEventListener("submit", addRemote);
       element("desktop-connect").addEventListener("click", () => connect(desktopServer));
       // Set when returning from a server; only a fresh launch starts one.
       const returned = new URLSearchParams(location.search).get("return");

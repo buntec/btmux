@@ -12,13 +12,15 @@ The picker shows the desktop server in its own card, either running (with **Conn
 
 Standalone servers publish an owner-only `state.server` registration beside their profile's `state.json` in `$XDG_STATE_HOME/btmux` (or `~/.local/state/btmux`, `%LOCALAPPDATA%\btmux` on Windows). The registration contains the local endpoint and access credential, including credentials supplied through `BTMUX_AUTH_TOKEN`, and is removed on normal shutdown. The app checks each candidate through the authenticated API and ignores stale or inaccessible registrations. Wildcard listeners are reached through loopback; listeners bound only to a non-loopback address are not discovered. Desktop and server launches must share the same state directory. Older servers (v0.0.106 or later) using the default profile and port 8004 can also be found through their owner-only `state.token`; restart older custom-port or named-profile servers with the updated binary to register them.
 
+**Remote servers** on other machines are added by address and access token (**Add server** in the picker), for example a server started with `btmux --tailscale` on another tailnet machine. An address without a scheme means HTTPS. The app checks the token through the server's `/api/info` before saving it, and saves addresses and tokens in an owner-only `remote-servers.json` in its settings folder (`~/Library/Application Support/com.btmux.desktop` on macOS). Each picker refresh checks them again in the background, so an unreachable server shows its error without delaying local servers. Saved remote servers keep a fresh launch from starting the desktop server automatically. The server must accept the address: start it with `--tailscale` or `--public-url <address>`.
+
 Credentials stay in Rust and are installed as HTTP-only cookies before opening the server UI. They are never passed to the picker or placed in URLs. Connecting to an existing server never starts or takes ownership of that server.
 
 `just desktop-check` compiles the launcher and its bundled server. `cargo test --manifest-path desktop/src-tauri/Cargo.toml` checks registration privacy and authenticated discovery. `just test-desktop-launcher` exercises the startup picker with Playwright, including connection choices, refresh, and startup failures, without starting a server.
 
 The desktop app and a server it connects to can be different versions. When they differ, the app shows a warning toast on connect, and **About btmux** lists the app version beside the server version and repeats the warning.
 
-While the window is hidden, attention and error notifications from connected loopback servers appear as OS notifications. Clicking one focuses the app and its pane.
+While the window is hidden, attention and error notifications from connected servers, local or remote, appear as OS notifications. Clicking one focuses the app and its pane.
 
 On macOS, the window is transparent with a theme-colored tint, defaulting to 95% opacity. Set `desktop-background-opacity = 0.95` in `config.toml` to adjust the tint from clear (`0`) to opaque (`1`); changes reload live. Linux and Windows windows remain opaque. macOS transparency requires Tauri's `macos-private-api` feature, so this build cannot be distributed through the Mac App Store.
 

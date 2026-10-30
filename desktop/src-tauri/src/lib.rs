@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -8,6 +10,7 @@ use std::time::{Duration, Instant};
 use std::ffi::CStr;
 #[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
+use tauri::ipc::CapabilityBuilder;
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
 use tauri::webview::cookie::SameSite;
@@ -21,6 +24,7 @@ use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
 #[rustfmt::skip]
 #[path = "../../../src/discovery.rs"]
 mod discovery;
+mod remote;
 mod servers;
 
 const SWITCH_SERVER: &str = "switch-server";
@@ -35,6 +39,10 @@ struct Server {
     // Bumped on every navigation so stale watchdogs stop.
     connection: AtomicU64,
     picker: OnceLock<Url>,
+    // Serializes edits of the remote server file.
+    remotes: Mutex<()>,
+    // Remote origins granted the connected-page commands.
+    remote_origins: Mutex<HashSet<String>>,
 }
 
 #[derive(serde::Serialize)]
@@ -83,7 +91,7 @@ fn show_picker(window: &WebviewWindow, reason: &str) {
 }
 
 // Return to the picker once the connected server stops answering.
-fn watch(window: WebviewWindow, server: discovery::RunningServer) {
+fn watch(window: WebviewWindow, ready: impl Fn() -> bool + Send + 'static) {
     let generation = window.state::<Server>().connection.load(Ordering::SeqCst);
     std::thread::spawn(move || {
         let mut failures = 0;
@@ -92,11 +100,7 @@ fn watch(window: WebviewWindow, server: discovery::RunningServer) {
             if window.state::<Server>().connection.load(Ordering::SeqCst) != generation {
                 return;
             }
-            failures = if servers::ready(&server) {
-                0
-            } else {
-                failures + 1
-            };
+            failures = if ready() { 0 } else { failures + 1 };
         }
         show_picker(&window, "lost");
     });
@@ -104,14 +108,28 @@ fn watch(window: WebviewWindow, server: discovery::RunningServer) {
 
 fn open_server(window: &WebviewWindow, server: &discovery::RunningServer) -> Result<(), String> {
     // IPv6 needs the bare form: WKWebView ignores a "[::1]" domain.
-    let domain = server.address.ip().to_string();
-    let cookie_name = format!("btmux_auth_{}", server.address.port());
-    let cookie = Cookie::build((cookie_name.clone(), server.token.clone()))
-        .domain(domain)
-        .path("/")
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .build();
+    let cookie = Cookie::build((
+        format!("btmux_auth_{}", server.address.port()),
+        server.token.clone(),
+    ))
+    .domain(server.address.ip().to_string())
+    .path("/")
+    .http_only(true)
+    .same_site(SameSite::Lax)
+    .build();
+    let url = format!("http://{}/", server.address).parse().unwrap();
+    let server = server.clone();
+    open_page(window, url, cookie, move || servers::ready(&server))
+}
+
+// Authenticates the webview with `cookie` and opens `url`.
+fn open_page(
+    window: &WebviewWindow,
+    url: Url,
+    cookie: Cookie<'static>,
+    ready: impl Fn() -> bool + Send + 'static,
+) -> Result<(), String> {
+    let (name, token) = (cookie.name().to_string(), cookie.value().to_string());
     window
         .set_cookie(cookie)
         .map_err(|_| "Could not authenticate btmux.".to_string())?;
@@ -120,11 +138,10 @@ fn open_server(window: &WebviewWindow, server: &discovery::RunningServer) -> Res
         .map_err(|_| "Could not authenticate btmux.".to_string())?;
     if !cookies
         .iter()
-        .any(|cookie| cookie.name() == cookie_name && cookie.value() == server.token)
+        .any(|cookie| cookie.name() == name && cookie.value() == token)
     {
         return Err("Could not authenticate btmux.".into());
     }
-    let url = format!("http://{}/", server.address).parse().unwrap();
     window
         .state::<Server>()
         .connection
@@ -132,7 +149,7 @@ fn open_server(window: &WebviewWindow, server: &discovery::RunningServer) -> Res
     window
         .navigate(url)
         .map_err(|_| "Could not open btmux.".to_string())?;
-    watch(window.clone(), server.clone());
+    watch(window.clone(), ready);
     Ok(())
 }
 
@@ -158,6 +175,136 @@ async fn connect_server(
     })
     .await
     .map_err(|_| "Could not connect to btmux.".to_string())?
+}
+
+fn remotes_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map_err(|_| "Could not find the app's settings folder.".to_string())
+}
+
+#[derive(serde::Serialize)]
+struct RemoteChoice {
+    url: String,
+    profile: Option<String>,
+    version: Option<String>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+async fn list_remote_servers(app: AppHandle) -> Result<Vec<RemoteChoice>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let servers = remote::load(&remotes_dir(&app)?)?;
+        // In parallel: an unreachable server takes the whole timeout.
+        let probes: Vec<_> = servers
+            .into_iter()
+            .map(|server| {
+                std::thread::spawn(move || {
+                    let info = remote::probe(&server);
+                    RemoteChoice {
+                        url: server.url,
+                        profile: info.as_ref().ok().and_then(|info| info.profile.clone()),
+                        version: info.as_ref().ok().map(|info| info.version.clone()),
+                        error: info.err(),
+                    }
+                })
+            })
+            .collect();
+        Ok(probes
+            .into_iter()
+            .filter_map(|probe| probe.join().ok())
+            .collect())
+    })
+    .await
+    .map_err(|_| "Could not check remote servers.".to_string())?
+}
+
+// Saves a remote server once it accepts the token.
+#[tauri::command]
+async fn add_remote_server(app: AppHandle, url: String, token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = token.trim().to_string();
+        if !discovery::valid_token(&token) {
+            return Err("Enter the server's access token.".into());
+        }
+        let server = remote::RemoteServer {
+            url: remote::origin(&url)?,
+            token,
+        };
+        remote::probe(&server)?;
+        let dir = remotes_dir(&app)?;
+        let state = app.state::<Server>();
+        let _lock = state.remotes.lock().unwrap();
+        let mut servers = remote::load(&dir)?;
+        servers.retain(|saved| saved.url != server.url);
+        servers.push(server);
+        remote::save(&dir, &servers)
+    })
+    .await
+    .map_err(|_| "Could not add the server.".to_string())?
+}
+
+#[tauri::command]
+async fn remove_remote_server(app: AppHandle, url: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = remotes_dir(&app)?;
+        let state = app.state::<Server>();
+        let _lock = state.remotes.lock().unwrap();
+        let mut servers = remote::load(&dir)?;
+        servers.retain(|saved| saved.url != url);
+        remote::save(&dir, &servers)
+    })
+    .await
+    .map_err(|_| "Could not remove the server.".to_string())?
+}
+
+#[tauri::command]
+async fn connect_remote_server(
+    app: AppHandle,
+    window: WebviewWindow,
+    url: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let server = remote::load(&remotes_dir(&app)?)?
+            .into_iter()
+            .find(|saved| saved.url == url)
+            .ok_or("This server is no longer listed. Refresh the server list.")?;
+        let info = remote::probe(&server)?;
+        allow_remote(&app, &server.url)?;
+        let cookie = Cookie::build((info.cookie, server.token.clone()))
+            .domain(remote::cookie_domain(&server.url).unwrap_or_default())
+            .path("/")
+            .http_only(true)
+            .secure(server.url.starts_with("https:"))
+            .same_site(SameSite::Lax)
+            .build();
+        let page = format!("{}/", server.url).parse().unwrap();
+        open_page(&window, page, cookie, move || {
+            remote::probe(&server).is_ok()
+        })
+    })
+    .await
+    .map_err(|_| "Could not connect to btmux.".to_string())?
+}
+
+// Grants a remote origin what capabilities/notifications.json grants loopback.
+fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
+    let state = app.state::<Server>();
+    let mut allowed = state.remote_origins.lock().unwrap();
+    if allowed.contains(origin) {
+        return Ok(());
+    }
+    let capability = CapabilityBuilder::new(format!("remote-{}", allowed.len()))
+        .remote(remote::url_pattern(origin).ok_or("Could not open btmux.")?)
+        .local(false)
+        .window("main")
+        .permission("allow-notify")
+        .permission("allow-desktop-info")
+        .permission("allow-switch-server");
+    app.add_capability(capability)
+        .map_err(|_| "Could not open btmux.".to_string())?;
+    allowed.insert(origin.to_string());
+    Ok(())
 }
 
 fn terminate(child: CommandChild) {
@@ -541,6 +688,10 @@ pub fn run() {
             start_server,
             stop_server,
             switch_server,
+            list_remote_servers,
+            add_remote_server,
+            remove_remote_server,
+            connect_remote_server,
             notify,
             desktop_info
         ])

@@ -391,6 +391,13 @@ dialog::backdrop {
   backdrop-filter: none !important;
 }
 
+/* Below the breakpoint the side nav is a drawer dialog, capped at 320px; on
+   phones that left a strip of backdrop beside it. */
+dialog.btm-side-nav > div {
+  max-width: none;
+  border-inline-width: 0;
+}
+
 /* wterm host: fills the pane; btmux draws the chrome. */
 .wterm.btm-wterm {
   position: absolute;

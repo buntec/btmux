@@ -319,12 +319,22 @@ try {
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
   rmSync(dir, { recursive: true, force: true });
 
+  // The navigation drawer fills the screen.
+  await page.getByRole('button', { name: 'Open navigation' }).tap();
+  const drawer = page.locator('dialog.btm-side-nav > div');
+  await waitForAsync(page, async () => {
+    const box = document.querySelector('dialog.btm-side-nav > div')!.getBoundingClientRect();
+    return box.left === 0 && box.width === innerWidth;
+  });
+  await drawer.getByRole('button', { name: 'Close navigation' }).tap();
+  await page.locator('dialog.btm-side-nav').waitFor({ state: 'hidden' });
+
   // Installable: the manifest loads with the session cookie.
   const manifest = await page.evaluate(async () => (await fetch('/manifest.webmanifest', { credentials: 'include' })).json());
   assert.equal(manifest.display, 'standalone');
 
   assert.deepEqual(errors, []);
-  console.log('PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, and manifest');
+  console.log('PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, nav drawer, and manifest');
 } finally {
   await browser.close();
 }

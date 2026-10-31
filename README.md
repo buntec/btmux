@@ -8,7 +8,6 @@ For macOS, Linux and Windows. Powered by [wterm](https://github.com/vercel-labs/
 - Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and preset layouts
 - Server-side sessions: (re)connect from any number of clients
 - Tailscale integration: serve over HTTPS on your tailnet with `--tailscale`; log in from a phone/tablet by scanning a QR code
-- Phones and tablets: installable as a home-screen app, scan QR code to log in
 - Batteries included: file browser, Git GUI, process viewer, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
 - LaTeX rendering overlay

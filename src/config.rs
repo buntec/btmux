@@ -1029,6 +1029,12 @@ fn default_commands() -> Vec<Command> {
             description: "Show the version, profile, and file locations.".to_string(),
             confirm: None,
         },
+        Command {
+            id: "system-info".to_string(),
+            label: "about: system info".to_string(),
+            description: "Show the server host and this browser, fastfetch-style.".to_string(),
+            confirm: None,
+        },
     ]
 }
 

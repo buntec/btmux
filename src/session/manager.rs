@@ -468,6 +468,11 @@ impl SessionManager {
         &self.config
     }
 
+    /// The shell new panes run.
+    pub fn shell(&self) -> &str {
+        &self.shell
+    }
+
     pub fn check_for_updates(&self) -> bool {
         self.file_config.check_for_updates
     }

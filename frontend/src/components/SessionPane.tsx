@@ -347,7 +347,15 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           padding={0}
           // Fullscreen's 100dvh ignores the iOS keyboard; useVisualViewport tracks it.
           {...(narrow
-            ? { variant: 'fullscreen', style: { height: 'var(--btm-viewport-height, 100dvh)' } }
+            ? {
+                variant: 'fullscreen',
+                style: {
+                  height: 'var(--btm-viewport-height, 100dvh)',
+                  // padding={0} drops Dialog's safe-area padding.
+                  padding:
+                    'env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) var(--btm-safe-bottom, env(safe-area-inset-bottom, 0px)) env(safe-area-inset-left, 0px)',
+                },
+              }
             : { width: 'min(1440px, 94vw)', maxHeight: '90dvh', style: { height: '90dvh' } })}
         >
           {fileBrowserMode === 'process' ? (

@@ -262,7 +262,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
         }
         footer={
           activeSessionId ? (
-            <LayoutFooter padding={0} hasDivider className="backdrop-blur-2xl">
+            <LayoutFooter
+              padding={0}
+              hasDivider
+              className="backdrop-blur-2xl"
+              // Clear the home indicator and rounded screen corners; none above the keyboard.
+              style={{ paddingBottom: 'var(--btm-safe-bottom, env(safe-area-inset-bottom, 0px))' }}
+            >
               {touch && <MobileKeyBar sessionId={activeSessionId} send={send} />}
               <StatusBar sessionId={activeSessionId ?? ''} send={send} />
             </LayoutFooter>

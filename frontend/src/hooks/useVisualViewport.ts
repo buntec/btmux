@@ -13,7 +13,11 @@ export function useVisualViewport() {
     const root = document.documentElement;
     const update = () => {
       // Unzoomed height: pinch zoom shrinks the viewport too, but mustn't resize panes.
-      root.style.setProperty('--btm-viewport-height', `${viewport.height * viewport.scale}px`);
+      const height = viewport.height * viewport.scale;
+      root.style.setProperty('--btm-viewport-height', `${height}px`);
+      // The keyboard covers the home indicator: drop the bottom safe-area inset.
+      if (root.clientHeight - height > 100) root.style.setProperty('--btm-safe-bottom', '0px');
+      else root.style.removeProperty('--btm-safe-bottom');
       if (window.scrollY) window.scrollTo(0, 0);
     };
     update();
@@ -23,6 +27,7 @@ export function useVisualViewport() {
       viewport.removeEventListener('resize', update);
       viewport.removeEventListener('scroll', update);
       root.style.removeProperty('--btm-viewport-height');
+      root.style.removeProperty('--btm-safe-bottom');
     };
   }, []);
 }

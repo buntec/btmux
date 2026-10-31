@@ -70,7 +70,13 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
     <AppShell
       height="fill"
       // Fill's 100dvh ignores the iOS keyboard; useVisualViewport tracks it.
-      style={{ height: 'var(--btm-viewport-height, 100dvh)' }}
+      style={{
+        height: 'var(--btm-viewport-height, 100dvh)',
+        // The footer pads the bottom inset itself, so its background reaches the edge.
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)',
+      }}
       contentPadding={0}
       variant="section"
       // Never scroll the main region: TabList's indicator bleed pokes 1px past

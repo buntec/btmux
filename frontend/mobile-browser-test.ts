@@ -382,6 +382,9 @@ try {
   const processRow = page.locator('[data-process-pid]').first();
   await processRow.waitFor();
   assert.equal(await page.getByRole('button', { name: 'USER', exact: true }).count(), 0);
+  // Keys of a multi-key hint are padded to a usable size.
+  const keyBox = (await page.getByRole('button', { name: 'j: navigate', exact: true }).boundingBox())!;
+  assert(keyBox.width >= 32 && keyBox.height >= 32, `small hint key: ${JSON.stringify(keyBox)}`);
   await page.getByRole('button', { name: 'V: tree', exact: true }).tap();
   await page.getByRole('tree', { name: 'Processes', exact: true }).waitFor();
   // At the PID: WebKit moves taps near the fold button onto it.
@@ -430,16 +433,26 @@ try {
   await switcher.waitFor({ state: 'hidden' });
   await page.waitForURL(/\/w\/tapme$/);
 
-  // The key bar's Esc reaches pane search, not the shell.
-  await page.evaluate(async () => {
+  // Pane search opened before the replay keeps focus when the pane shows it,
+  // and the key bar's Esc reaches it, not the shell.
+  await page.reload();
+  await waitForAsync(page, async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const state = useStore.getState();
-    state.setSearchPaneId(state.getActivePaneId(state.allSessions[0].id));
+    const paneId = state.allSessions[0] && state.getActivePaneId(state.allSessions[0].id);
+    if (!paneId) return false;
+    state.setSearchPaneId(paneId);
+    return true;
   });
   const paneSearch = page.getByRole('textbox', { name: 'Search scrollback' });
   await paneSearch.waitFor();
-  await page.getByRole('button', { name: 'Older match' }).waitFor();
-  await paneSearch.focus();
+  await waitForAsync(page, async () =>
+    [...document.querySelectorAll('[data-pane-terminal]')].some(
+      (element) => element.checkVisibility({ visibilityProperty: true }) && element.getBoundingClientRect().width > 0,
+    ),
+  );
+  await page.waitForTimeout(300);
+  assert(await paneSearch.evaluate((input) => input === document.activeElement), 'the replay took focus from search');
   // The key bar stays scrolled to where an earlier tap left it. WebKit targets
   // the scroller's pointerdown, so Playwright's tap refuses; touch the key itself.
   await keys('Esc').evaluate((key) => key.parentElement!.scrollTo({ left: 0, behavior: 'instant' }));

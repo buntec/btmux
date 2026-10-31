@@ -3,6 +3,7 @@ import { HStack } from '@astryxdesign/core/Layout';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { Text } from '@astryxdesign/core/Text';
 import type { KeyModifiers } from '../lib/paneTerminal';
+import { cn } from '../lib/utils';
 
 export interface Hint {
   keys: string[];
@@ -98,11 +99,14 @@ function PressableKey({
   keys,
   label,
   onPress,
+  isBare = false,
   children,
 }: {
   keys: string;
   label: ReactNode;
   onPress: (keys: string) => void;
+  /** A key cap without its label, padded on touch screens for a larger target. */
+  isBare?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -110,7 +114,10 @@ function PressableKey({
       type="button"
       tabIndex={-1}
       aria-label={typeof label === 'string' ? `${keys}: ${label}` : keys}
-      className="flex flex-none cursor-pointer items-center gap-1 rounded-sm py-1 hover:bg-overlay-hover"
+      className={cn(
+        'flex flex-none cursor-pointer items-center gap-1 rounded-sm py-1 hover:bg-overlay-hover pointer-coarse:py-1.5',
+        isBare && 'pointer-coarse:px-2',
+      )}
       // Keep focus (and an open keyboard) where it is.
       onMouseDown={(event) => {
         event.preventDefault();
@@ -145,7 +152,7 @@ export function KeyHint({ keys, label, onPress }: Hint & { onPress?: (keys: stri
     <HStack gap={1} vAlign="center" className="flex-none">
       {keys.map((key) =>
         onPress ? (
-          <PressableKey key={key} keys={key} label={label} onPress={onPress}>
+          <PressableKey key={key} keys={key} label={label} onPress={onPress} isBare>
             <KeyCap keys={key} />
           </PressableKey>
         ) : (

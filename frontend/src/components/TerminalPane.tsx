@@ -435,28 +435,38 @@ export function TerminalPane({
   // Focus when this pane becomes active (false→true transition, including mount),
   // when its initial replay finishes, or when an overlay closes while this pane
   // is active. Blur when it is inactive, not yet ready for keyboard input, or a
-  // modal surface owns the keyboard.
+  // modal surface or pane search owns the keyboard.
   // Tracking the previous value prevents the old active pane from re-stealing
   // focus while a select_pane command is still in flight to the server.
   const prevIsActive = useRef(false);
   const prevOverlay = useRef(overlay);
   const prevFileBrowser = useRef(fileBrowserOpen);
   const prevNvimOpen = useRef(nvimOpen);
+  const prevSearchOpen = useRef(searchOpen);
   const prevInitialReplayRendered = useRef(false);
   useEffect(() => {
     const wasActive = prevIsActive.current;
     const hadOverlay = prevOverlay.current;
     const hadFileBrowser = prevFileBrowser.current;
     const hadNvimOpen = prevNvimOpen.current;
+    const hadSearchOpen = prevSearchOpen.current;
     const hadRenderedInitialReplay = prevInitialReplayRendered.current;
     prevIsActive.current = isActive;
     prevOverlay.current = overlay;
     prevFileBrowser.current = fileBrowserOpen;
     prevNvimOpen.current = nvimOpen;
+    prevSearchOpen.current = searchOpen;
     prevInitialReplayRendered.current = initialReplayRendered;
 
     const keyboardOwnedElsewhere =
-      settingsOpen || overlay || windowGridOpen || agentGridOpen || switcherOpen || fileBrowserOpen || nvimOpen;
+      settingsOpen ||
+      overlay ||
+      windowGridOpen ||
+      agentGridOpen ||
+      switcherOpen ||
+      fileBrowserOpen ||
+      nvimOpen ||
+      searchOpen;
 
     if (!isActive || keyboardOwnedElsewhere || !initialReplayRendered) {
       termRef.current?.blur();
@@ -466,7 +476,10 @@ export function TerminalPane({
     const becameActive = !wasActive;
     const replayFinished = !hadRenderedInitialReplay;
     const overlayClosed =
-      (!overlay && !!hadOverlay) || (!fileBrowserOpen && hadFileBrowser) || (!nvimOpen && hadNvimOpen);
+      (!overlay && !!hadOverlay) ||
+      (!fileBrowserOpen && hadFileBrowser) ||
+      (!nvimOpen && hadNvimOpen) ||
+      (!searchOpen && hadSearchOpen);
     if (becameActive || replayFinished || overlayClosed) {
       termRef.current?.focus();
     }
@@ -479,6 +492,7 @@ export function TerminalPane({
     switcherOpen,
     fileBrowserOpen,
     nvimOpen,
+    searchOpen,
     initialReplayRendered,
   ]);
 

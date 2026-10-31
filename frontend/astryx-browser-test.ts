@@ -536,13 +536,19 @@ try {
     .click();
   console.log('PASS toast stacking and interaction across modal transitions');
 
-  // Typing that keeps the same results must keep the top one highlighted.
+  // Typing that keeps the same results must keep the top one highlighted
+  // ("ab" also matches "about: system info").
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   const aboutHighlighted = () =>
     page.waitForFunction(() => {
       const options = document.querySelectorAll('dialog[open] [role="option"]');
       const active = document.querySelector('dialog[open] input')?.getAttribute('aria-activedescendant');
-      return options.length === 1 && options[0].getAttribute('data-value') === 'about' && options[0].id === active;
+      return (
+        options.length === 2 &&
+        options[0].getAttribute('data-value') === 'about' &&
+        options[1].getAttribute('data-value') === 'system-info' &&
+        options[0].id === active
+      );
     });
   await page.keyboard.type('ab');
   await aboutHighlighted();

@@ -41,11 +41,6 @@ export function SystemInfoPanel({ desktopVersion }: { desktopVersion: string | n
   }, [desktopVersion]);
 
   const terminal = config?.terminal;
-  const scheme =
-    config?.color_mode === 'light'
-      ? (config.colors_light ?? 'btmux-default-light')
-      : (config?.colors_dark ?? 'btmux-default-dark');
-
   return (
     <VStack gap={6} className="btm-mono select-text">
       {error ? (
@@ -64,7 +59,7 @@ export function SystemInfoPanel({ desktopVersion }: { desktopVersion: string | n
             label="Terminal font"
             value={`${terminal?.fontFamily ?? CONFIG_DEFAULTS.terminal.fontFamily} (${terminal?.fontSize ?? CONFIG_DEFAULTS.terminal.fontSize}px)`}
           />
-          {config && <Item label="Theme" value={`${scheme} (${config.color_mode})`} />}
+          {config && <Item label="Theme" value={`${config.color_scheme} (${config.color_mode})`} />}
           {host.cpu && <Item label="CPU" value={cpu(host.cpu)} />}
           <UsageItem label="Memory" usage={host.memory} />
           {host.swap.total > 0 && <UsageItem label="Swap" usage={host.swap} />}

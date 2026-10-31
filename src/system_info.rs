@@ -1,4 +1,6 @@
 //! `GET /api/system`: a fastfetch-style report of the server host.
+use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::net::IpAddr;
 use std::process::Stdio;
 use std::time::Duration;
@@ -197,7 +199,6 @@ fn placeholder(value: &str) -> bool {
 
 fn disks() -> Vec<DiskInfo> {
     let disks = Disks::new_with_refreshed_list();
-    let mut seen = Vec::new();
     let mut list: Vec<_> = disks
         .list()
         .iter()
@@ -217,11 +218,9 @@ fn disks() -> Vec<DiskInfo> {
         .collect();
     list.sort_by_key(|disk| disk.mount_point().as_os_str().len());
     // A device mounted twice (bind mounts) counts once, at its shortest path.
-    list.retain(|disk| {
-        let new = !seen.contains(&disk.name());
-        seen.push(disk.name());
-        new || disk.name().is_empty()
-    });
+    if NAME_IS_DEVICE {
+        dedupe_devices(&mut list, |disk| disk.name());
+    }
     list.into_iter()
         .map(|disk| DiskInfo {
             mount: disk.mount_point().to_string_lossy().into_owned(),
@@ -234,6 +233,19 @@ fn disks() -> Vec<DiskInfo> {
             removable: disk.is_removable(),
         })
         .collect()
+}
+
+/// `Disk::name()` is the device path on Linux; elsewhere it is a volume label,
+/// which distinct volumes can share.
+const NAME_IS_DEVICE: bool = cfg!(target_os = "linux");
+
+/// Keeps the first mount of each named device.
+fn dedupe_devices<T>(list: &mut Vec<T>, device: impl Fn(&T) -> &OsStr) {
+    let mut seen = HashSet::new();
+    list.retain(|item| {
+        let name = device(item);
+        name.is_empty() || seen.insert(name.to_owned())
+    });
 }
 
 fn addresses() -> Vec<Address> {
@@ -298,7 +310,22 @@ fn version(output: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::version;
+    use super::{dedupe_devices, version};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn dedupes_devices() {
+        let mut mounts = vec![
+            ("/", "/dev/sda1"),
+            ("/home", "/dev/sda2"),
+            ("/mnt/bind", "/dev/sda1"),
+            ("/a", ""),
+            ("/b", ""),
+        ];
+        dedupe_devices(&mut mounts, |(_, device)| OsStr::new(device));
+        let kept: Vec<_> = mounts.iter().map(|(mount, _)| *mount).collect();
+        assert_eq!(kept, ["/", "/home", "/a", "/b"]);
+    }
 
     #[test]
     fn parses_shell_versions() {

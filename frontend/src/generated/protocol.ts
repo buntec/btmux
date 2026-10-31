@@ -199,6 +199,11 @@ theme: Theme,
  */
 color_palette: BaseTheme,
 /**
+ * Where `color_palette` came from: a scheme name, path, or URL, or the
+ * inline table (`[theme-dark]`/`[theme-light]`).
+ */
+color_scheme: string,
+/**
  * Both variants, for previews and the browser's first paint.
  */
 dark_theme: Theme, light_theme: Theme,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import type { SearchState } from '@wterm/dom';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { Card } from '@astryxdesign/core/Card';
@@ -53,9 +53,19 @@ export function PaneSearch({ term, theme, onClose }: Props) {
     onClose();
     term.focus();
   };
+  // Buttons leave focus in the input, which owns Enter and the key bar's keys.
+  const keepFocus = (e: MouseEvent) => e.preventDefault();
 
   return (
-    <Card padding={1} elevation="high" className="absolute top-2 right-2 z-5 max-w-[calc(100%-1rem)]">
+    <Card
+      padding={1}
+      elevation="high"
+      className="absolute top-2 right-2 z-5 max-w-[calc(100%-1rem)]"
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') close();
+      }}
+    >
       <HStack gap={1} vAlign="center">
         <TextInput
           ref={plainTextInput}
@@ -68,17 +78,29 @@ export function PaneSearch({ term, theme, onClose }: Props) {
           value={query}
           onChange={(value) => setQuery(value.slice(0, MAX_SEARCH_LENGTH))}
           onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === 'Escape') close();
-            else if (e.key === 'Enter') step(e.shiftKey ? 1 : -1);
+            if (e.key === 'Enter') step(e.shiftKey ? 1 : -1);
           }}
           containerClassName="w-48 min-w-0 shrink"
         />
         <Text size="sm" color="secondary" textWrap="nowrap" className="min-w-[4.5em] text-end tabular-nums">
           {query && state ? (state.count ? `${state.activeIndex + 1}/${state.count}` : 'no match') : ''}
         </Text>
-        <IconButton label="Older match" icon={<ChevronUp />} variant="ghost" size="sm" onClick={() => step(-1)} />
-        <IconButton label="Newer match" icon={<ChevronDown />} variant="ghost" size="sm" onClick={() => step(1)} />
+        <IconButton
+          label="Older match"
+          icon={<ChevronUp />}
+          variant="ghost"
+          size="sm"
+          onMouseDown={keepFocus}
+          onClick={() => step(-1)}
+        />
+        <IconButton
+          label="Newer match"
+          icon={<ChevronDown />}
+          variant="ghost"
+          size="sm"
+          onMouseDown={keepFocus}
+          onClick={() => step(1)}
+        />
         <IconButton label="Close search" icon={<X />} variant="ghost" size="sm" onClick={close} />
       </HStack>
     </Card>

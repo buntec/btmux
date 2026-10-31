@@ -381,6 +381,26 @@ try {
   });
   const processRow = page.locator('[data-process-pid]').first();
   await processRow.waitFor();
+  // Moving up from the bottom keeps the selection clear of the sticky header.
+  assert(
+    await page.locator('[aria-label="Process list"]').evaluate((list) => list.scrollHeight > list.clientHeight),
+    'too few processes to scroll the list',
+  );
+  await page.keyboard.press('G');
+  const visibleRows = await page.evaluate(() => {
+    const list = document.querySelector('[aria-label="Process list"]')!;
+    const row = document.querySelector('[data-process-pid]')!;
+    return Math.ceil(list.clientHeight / row.getBoundingClientRect().height);
+  });
+  for (let i = 0; i < visibleRows + 2; i++) {
+    await page.keyboard.press('k');
+    const overlap = await page.evaluate(() => {
+      const header = document.querySelector('[aria-label="Process list"] .sticky')!.getBoundingClientRect();
+      const row = document.querySelector('[data-process-pid][aria-selected="true"]')!.getBoundingClientRect();
+      return header.bottom - row.top;
+    });
+    assert(overlap <= 0.5, `the header covers the selected row by ${overlap}px`);
+  }
   assert.equal(await page.getByRole('button', { name: 'USER', exact: true }).count(), 0);
   // Keys of a multi-key hint are padded to a usable size.
   const keyBox = (await page.getByRole('button', { name: 'j: navigate', exact: true }).boundingBox())!;
@@ -453,6 +473,10 @@ try {
   );
   await page.waitForTimeout(300);
   assert(await paneSearch.evaluate((input) => input === document.activeElement), 'the replay took focus from search');
+  // Match buttons leave focus in the input.
+  await page.getByRole('button', { name: 'Older match' }).tap();
+  await page.getByRole('button', { name: 'Newer match' }).tap();
+  assert(await paneSearch.evaluate((input) => input === document.activeElement), 'a match button took focus');
   // The key bar stays scrolled to where an earlier tap left it. WebKit targets
   // the scroller's pointerdown, so Playwright's tap refuses; touch the key itself.
   await keys('Esc').evaluate((key) => key.parentElement!.scrollTo({ left: 0, behavior: 'instant' }));

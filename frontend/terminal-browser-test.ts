@@ -352,7 +352,11 @@ try {
   const search = page.getByLabel('Search scrollback');
   await search.fill('x'.repeat(1025));
   assert.equal((await search.inputValue()).length, 1024);
-  await search.press('Escape');
+  await page.getByRole('button', { name: 'Older match' }).click();
+  await page.getByRole('button', { name: 'Newer match' }).click();
+  assert(await search.evaluate((input) => input === document.activeElement), 'a match button took focus');
+  await page.getByRole('button', { name: 'Newer match' }).focus();
+  await page.keyboard.press('Escape');
   await search.waitFor({ state: 'detached' });
   assert(await page.locator('[data-pane-id]').count(), 'long search must retain the app');
   assert.deepEqual(errors, []);

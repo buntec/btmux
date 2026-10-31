@@ -75,6 +75,7 @@ export function ProcessTree({
   const setFocusedPid = useProcessStore((s) => s.setFocusedPid);
   const toggleCollapsed = useProcessStore((s) => s.toggleCollapsed);
   const listRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const focusIndexRef = useRef(0);
   const processesRef = useRef(processes);
 
@@ -88,8 +89,11 @@ export function ProcessTree({
     }
     const index = rows.findIndex((row) => row.process.pid === focusedPid);
     if (index >= 0) focusIndexRef.current = index;
-    const row = listRef.current?.querySelector(`[data-process-pid="${focusedPid}"]`);
-    row?.scrollIntoView({ block: 'nearest' });
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-process-pid="${focusedPid}"]`);
+    if (!row) return;
+    // Keep the row clear of the sticky header.
+    row.style.scrollMarginTop = `${headerRef.current?.offsetHeight ?? 0}px`;
+    row.scrollIntoView({ block: 'nearest' });
   }, [focusedPid, followFocus, processes, rows, setFocusedPid]);
 
   return (
@@ -100,7 +104,10 @@ export function ProcessTree({
         axis={compact ? 'block' : 'both'}
         className="min-h-0 flex-1 overflow-auto"
       >
-        <div className={cn(grid, 'sticky top-0 z-10 border-b border-border bg-surface px-2 py-1 text-secondary')}>
+        <div
+          ref={headerRef}
+          className={cn(grid, 'sticky top-0 z-10 border-b border-border bg-surface px-2 py-1 text-secondary')}
+        >
           {columns.map((column) => (
             <SortHeader key={column.label} label={column.label} mode={column.mode} active={sortMode === column.mode} />
           ))}

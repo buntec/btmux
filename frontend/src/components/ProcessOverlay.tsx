@@ -1,18 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, X } from 'lucide-react';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { useProcessSocket } from '@/hooks/useProcessSocket';
-import { useSidebarResize } from '@/hooks/useSidebarResize';
+import { DIVIDER_TOUCH_TARGET, useSidebarResize } from '@/hooks/useSidebarResize';
 import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
 import { terminalTypeScale } from '@/lib/astryx-theme';
-import { stepIndex } from '@/lib/utils';
+import { cn, stepIndex } from '@/lib/utils';
+import { usePressHint } from '@/hooks/usePressHint';
+import { NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '@/lib/touch';
 import { buildPortRows } from '@/lib/portRows';
 import { buildProcessRows } from '@/lib/processTree';
-import { KeyHint } from './KeyHint';
+import { KeyHint, type Hint } from './KeyHint';
 import { ProcessDetails } from './processes/ProcessDetails';
 import { ProcessModeHeader } from './processes/ProcessModeHeader';
 import { PortTable } from './processes/PortTable';
@@ -52,11 +56,23 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const treeMode = useProcessStore((s) => s.treeMode);
   const filterQuery = useProcessStore((s) => s.filterQuery);
   const filterActive = useProcessStore((s) => s.filterActive);
-  const message = useProcessStore((s) => s.message);
   const [pendingKill, setPendingKill] = useState<PendingKill | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const touch = useMediaQuery(TOUCH_QUERY);
+  // Narrow screens show the list or, after a tap on a row, its details.
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const [detailsShown, setDetailsShown] = useState(false);
+  const showDetails = useCallback(() => setDetailsShown(true), []);
+  // Touch screens type the filter into an input, which opens the keyboard.
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!touch) return;
+    if (filterActive) filterInputRef.current?.focus();
+    // The input unmounts; keep keys on the viewer.
+    else if (!rootRef.current?.contains(document.activeElement)) rootRef.current?.focus();
+  }, [touch, filterActive]);
   const bodyRef = useRef<HTMLElement>(null);
-  const { sidebarRatio: tableRatio, onDividerMouseDown } = useSidebarResize(bodyRef, DEFAULT_TABLE_RATIO, {
+  const { sidebarRatio: tableRatio, onDividerPointerDown } = useSidebarResize(bodyRef, DEFAULT_TABLE_RATIO, {
     axis: 'y',
     min: 0.25,
     max: 0.85,
@@ -90,6 +106,11 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     const win = session?.windows[session.active_window];
     return win?.panes[win.active_pane]?.id === paneId;
   });
+  // Hint taps type their key, as the keyboard would.
+  const selectPane = useCallback(() => {
+    if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
+  }, [isActive, send, sessionId, paneId]);
+  const pressHint = usePressHint(rootRef, selectPane);
   const mountedRef = useRef(false);
   useEffect(() => {
     // Focus on mount, and again whenever the pane becomes active.
@@ -113,6 +134,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
         e.stopPropagation();
         if (store.filterActive) store.setFilterActive(false);
         else if (pendingKill) setPendingKill(null);
+        else if (narrow && detailsShown) setDetailsShown(false);
         else onClose();
         return;
       }
@@ -162,6 +184,12 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
       };
 
       if (store.filterActive) {
+        // The filter input edits the query itself.
+        if (
+          document.activeElement === filterInputRef.current &&
+          (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey))
+        )
+          return;
         if (e.key === 'Enter') {
           e.preventDefault();
           store.setFilterActive(false);
@@ -269,10 +297,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
               signal: e.key === 'X' ? 'kill' : 'term',
             });
           } else if (row && store.viewMode === 'ports') {
-            store.setMessage({
-              type: 'error',
-              message: 'Cannot signal this socket: process information is unavailable',
-            });
+            useStore.getState().showToast('Cannot signal this socket: process information is unavailable', 'error');
           }
           break;
         case 'q':
@@ -284,7 +309,28 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
 
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [onClose, pendingKill, sendKill]);
+  }, [onClose, pendingKill, sendKill, narrow, detailsShown]);
+
+  const hints: Hint[] = filterActive
+    ? FILTER_HINTS
+    : [
+        { keys: ['j', 'k'], label: 'navigate' },
+        { keys: ['ctrl+d', 'ctrl+u'], label: 'half page' },
+        ...(viewMode === 'ports' || treeMode
+          ? [
+              { keys: ['h', 'l'], label: 'fold/unfold' },
+              { keys: ['tab', 'enter'], label: viewMode === 'ports' ? 'connections' : 'toggle' },
+            ]
+          : []),
+        { keys: ['x', 'X'], label: 'term/kill' },
+        { keys: ['F'], label: 'follow' },
+        { keys: ['s'], label: 'sort' },
+        ...(viewMode === 'processes' ? [{ keys: ['V'], label: treeMode ? 'flat' : 'tree' }] : []),
+        { keys: ['p'], label: viewMode === 'ports' ? 'processes' : 'ports' },
+        { keys: ['/'], label: 'filter' },
+        { keys: ['g', 'G'], label: 'top/bottom' },
+        { keys: ['esc', 'q'], label: 'close' },
+      ];
 
   return (
     <VStack
@@ -303,22 +349,74 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
       </HStack>
 
       <VStack ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
-        <VStack className="min-h-0 min-w-0 flex-none overflow-hidden" style={{ height: `${tableRatio * 100}%` }}>
-          {viewMode === 'ports' ? <PortTable rows={portRows} /> : <ProcessTree rows={rows} />}
+        <VStack
+          className={cn(
+            'min-h-0 min-w-0 overflow-hidden',
+            narrow ? 'flex-1' : 'flex-none',
+            narrow && detailsShown && 'hidden',
+          )}
+          style={narrow ? undefined : { height: `${tableRatio * 100}%` }}
+        >
+          {viewMode === 'ports' ? (
+            <PortTable rows={portRows} onDetails={narrow ? showDetails : undefined} />
+          ) : (
+            <ProcessTree rows={rows} compact={narrow} onDetails={narrow ? showDetails : undefined} />
+          )}
         </VStack>
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize process list"
-          onMouseDown={onDividerMouseDown}
-          className="h-1 flex-none cursor-row-resize border-b border-border hover:bg-accent-bg active:bg-accent-bg"
-        />
-        <VStack className="min-h-0 min-w-0 flex-1">
+        {!narrow && (
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize process list"
+            onPointerDown={onDividerPointerDown}
+            className={cn(
+              DIVIDER_TOUCH_TARGET,
+              'h-1 flex-none cursor-row-resize border-b border-border hover:bg-accent-bg active:bg-accent-bg',
+            )}
+          />
+        )}
+        <VStack className={cn('min-h-0 min-w-0 flex-1', narrow && !detailsShown && 'hidden')}>
+          {narrow && (
+            <HStack vAlign="center" className="flex-none border-b border-border px-1">
+              <IconButton
+                label="Back to list"
+                icon={<ChevronLeft />}
+                variant="ghost"
+                size="sm"
+                onClick={() => setDetailsShown(false)}
+              />
+            </HStack>
+          )}
           <ProcessDetails />
         </VStack>
       </VStack>
 
-      <HStack gap={4} vAlign="center" className="flex-none overflow-hidden border-t border-border px-3 py-1">
+      {touch && filterActive && (
+        <HStack className="flex-none border-t border-border px-3 py-1">
+          <TextInput
+            ref={(input) => {
+              filterInputRef.current = input;
+              plainTextInput(input);
+            }}
+            label="Filter"
+            isLabelHidden
+            size="sm"
+            value={filterQuery}
+            onChange={(value) => useProcessStore.getState().setFilterQuery(value)}
+            autoComplete="off"
+            placeholder="Filter…"
+            controlClassName="min-w-0 flex-1"
+          />
+        </HStack>
+      )}
+
+      <HStack
+        gap={4}
+        vAlign="center"
+        wrap={touch ? 'nowrap' : 'wrap'}
+        isScrollable={touch}
+        className="flex-none gap-y-1 border-t border-border px-3 py-1"
+      >
         {pendingKill ? (
           <>
             <Text size="sm">
@@ -331,40 +429,22 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
               </Text>
               ?
             </Text>
-            <KeyHint keys={['y']} label="confirm" />
-            <KeyHint keys={['n']} label="cancel" />
+            <KeyHint keys={['y']} label="confirm" onPress={pressHint} />
+            <KeyHint keys={['n']} label="cancel" onPress={pressHint} />
           </>
         ) : (
           <>
-            {message && (
-              <Text
-                role="status"
-                size="sm"
-                color="inherit"
-                textWrap="nowrap"
-                className={message.type === 'error' || !message.success ? 'text-error' : 'text-success'}
-              >
-                {message.message}
-              </Text>
-            )}
-            <KeyHint keys={['j', 'k']} label="navigate" />
-            {(viewMode === 'ports' || treeMode) && (
-              <>
-                <KeyHint keys={['h', 'l']} label="fold/unfold" />
-                <KeyHint keys={['tab', 'enter']} label={viewMode === 'ports' ? 'connections' : 'toggle'} />
-              </>
-            )}
-            <KeyHint keys={['x', 'X']} label="term/kill" />
-            <KeyHint keys={['F']} label="follow" />
-            <KeyHint keys={['s']} label="sort" />
-            {viewMode === 'processes' && <KeyHint keys={['V']} label={treeMode ? 'flat' : 'tree'} />}
-            <KeyHint keys={['p']} label={viewMode === 'ports' ? 'processes' : 'ports'} />
-            <KeyHint keys={['/']} label="filter" />
-            <KeyHint keys={['g', 'G']} label="top/bottom" />
-            <KeyHint keys={['esc', 'q']} label="close" />
+            {hints.map((hint) => (
+              <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} onPress={pressHint} />
+            ))}
           </>
         )}
       </HStack>
     </VStack>
   );
 }
+
+const FILTER_HINTS: Hint[] = [
+  { keys: ['up', 'down'], label: 'navigate' },
+  { keys: ['enter', 'esc'], label: 'close filter' },
+];

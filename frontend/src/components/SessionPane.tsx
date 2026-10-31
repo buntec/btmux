@@ -12,6 +12,7 @@ import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
 import { useWindowAttended } from '../lib/windowAttention';
 import { NARROW_QUERY } from '../lib/touch';
+import { DIVIDER_TOUCH_TARGET, trackPointerDrag } from '../hooks/useSidebarResize';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 
 interface Props {
@@ -166,9 +167,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     config,
   ]);
 
-  const handleDividerMouseDown = useCallback(
-    (divider: Divider, e: React.MouseEvent) => {
-      e.preventDefault();
+  const handleDividerPointerDown = useCallback(
+    (divider: Divider, e: React.PointerEvent) => {
       e.stopPropagation();
 
       const container = containerRef.current;
@@ -185,27 +185,24 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         return Math.max(0.05, Math.min(0.95, ratio));
       };
 
-      const onMouseMove = (moveEvent: MouseEvent) => {
+      const onMove = (moveEvent: PointerEvent) => {
         const ratio = computeRatio(moveEvent.clientX, moveEvent.clientY);
         setRatioOverrides((prev) => new Map(prev).set(divider.id, ratio));
       };
 
-      const onMouseUp = (upEvent: MouseEvent) => {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-
-        const ratio = computeRatio(upEvent.clientX, upEvent.clientY);
-        send({ type: 'resize_split', session_id: sessionId, split_id: divider.id, ratio });
+      trackPointerDrag(e, onMove, (upEvent) => {
+        // A cancelled touch (a system gesture) keeps the old layout.
+        if (upEvent.type === 'pointerup') {
+          const ratio = computeRatio(upEvent.clientX, upEvent.clientY);
+          send({ type: 'resize_split', session_id: sessionId, split_id: divider.id, ratio });
+        }
 
         setRatioOverrides((prev) => {
           const next = new Map(prev);
           next.delete(divider.id);
           return next;
         });
-      };
-
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
+      });
     },
     [sessionId, send],
   );
@@ -310,7 +307,8 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         dividers.map((divider) => (
           <div
             key={divider.id}
-            onMouseDown={(e) => handleDividerMouseDown(divider, e)}
+            onPointerDown={(e) => handleDividerPointerDown(divider, e)}
+            className={DIVIDER_TOUCH_TARGET}
             style={
               divider.orientation === 'vertical'
                 ? {

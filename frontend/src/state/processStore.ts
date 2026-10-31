@@ -1,16 +1,7 @@
 import { create } from 'zustand';
-import type { ProcessInfo, ProcessKillResult, ProcessSnapshot } from '../protocol/process-messages';
+import type { ProcessInfo, ProcessSnapshot } from '../protocol/process-messages';
 import { portKey, PORT_SORT_MODES, type PortSortMode } from '../lib/portRows';
 import { nextProcessSortMode, type ProcessSortMode } from '../lib/processTree';
-
-const MESSAGE_TIMEOUT_MS = 4000;
-
-let messageTimer: ReturnType<typeof setTimeout> | null = null;
-
-function clearMessageTimer() {
-  if (messageTimer) clearTimeout(messageTimer);
-  messageTimer = null;
-}
 
 interface ProcessStore {
   snapshot: ProcessSnapshot | null;
@@ -35,7 +26,6 @@ interface ProcessStore {
   treeMode: boolean;
   filterQuery: string;
   filterActive: boolean;
-  message: ProcessKillResult | { type: 'error'; message: string } | null;
   setSnapshot: (snapshot: ProcessSnapshot) => void;
   setFocusedPid: (pid: number | null) => void;
   toggleFollowFocus: () => void;
@@ -46,7 +36,6 @@ interface ProcessStore {
   toggleTreeMode: () => void;
   setFilterQuery: (query: string) => void;
   setFilterActive: (active: boolean) => void;
-  setMessage: (message: ProcessStore['message']) => void;
   reset: () => void;
 }
 
@@ -66,7 +55,6 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   treeMode: false,
   filterQuery: '',
   filterActive: false,
-  message: null,
   // Tables repair focus in displayed row order.
   setSnapshot: (snapshot) =>
     set((state) => {
@@ -116,13 +104,7 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   toggleTreeMode: () => set((state) => ({ treeMode: !state.treeMode })),
   setFilterQuery: (filterQuery) => set({ filterQuery }),
   setFilterActive: (filterActive) => set({ filterActive, filterQuery: filterActive ? get().filterQuery : '' }),
-  setMessage: (message) => {
-    clearMessageTimer();
-    set({ message });
-    if (message) messageTimer = setTimeout(() => set({ message: null }), MESSAGE_TIMEOUT_MS);
-  },
   reset: () => {
-    clearMessageTimer();
     set({
       snapshot: null,
       processes: [],
@@ -139,7 +121,6 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
       treeMode: false,
       filterQuery: '',
       filterActive: false,
-      message: null,
     });
   },
 }));

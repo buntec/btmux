@@ -26,7 +26,14 @@ const COLUMNS: Array<{ label: string; mode: PortSortMode }> = [
   { label: 'CONNECTIONS', mode: 'connections' },
 ];
 
-export function PortTable({ rows }: { rows: PortRow[] }) {
+export function PortTable({
+  rows,
+  onDetails,
+}: {
+  rows: PortRow[];
+  /** Called when a row is tapped, to show its details. */
+  onDetails?: () => void;
+}) {
   const snapshot = useProcessStore((s) => s.snapshot);
   const focusedPort = useProcessStore((s) => s.focusedPort);
   const focusedPid = useProcessStore((s) => s.focusedPid);
@@ -91,7 +98,10 @@ export function PortTable({ rows }: { rows: PortRow[] }) {
                   aria-selected={key === focusedPort}
                   aria-expanded={expandedPorts.has(key)}
                   onDoubleClick={() => togglePortExpanded(key)}
-                  onClick={() => setFocusedPort(key, port.pid)}
+                  onClick={() => {
+                    setFocusedPort(key, port.pid);
+                    onDetails?.();
+                  }}
                   className={cn(
                     'cursor-pointer',
                     key === focusedPort ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',

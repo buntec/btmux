@@ -20,7 +20,6 @@ import { encode, MsgpackStream, type MsgpackExt } from '../lib/msgpack';
 import { NvimGrid, type FloatFrame } from '../lib/nvimGrid';
 import { escapeNvimText, nvimKey } from '../lib/nvimKeys';
 import { cssFamily, parseGuifont, type GuiFont } from '../lib/nvimFont';
-import { KeyHint } from './KeyHint';
 import {
   NvimWidgets as WidgetModel,
   type KindIcons,
@@ -377,6 +376,9 @@ export function NvimSurface({
         if (disconnected && e.key === 'Enter') {
           e.preventDefault();
           setGeneration((g) => g + 1);
+        } else if (disconnected && e.key === 'Escape') {
+          e.preventDefault();
+          useStore.getState().setNvimOpen(false);
         }
         return;
       }
@@ -648,7 +650,7 @@ export function NvimSurface({
         className="absolute top-0 left-0 h-px min-w-px resize-none overflow-hidden border-0 bg-body p-0 text-primary underline opacity-0 outline-none field-sizing-content data-composing:z-50 data-composing:opacity-100"
       />
       {status && (
-        <Center className="absolute inset-0 z-50 bg-body/90">
+        <Center className="btm-sans absolute inset-0 z-50 bg-body/90">
           {status.kind === 'connecting' ? (
             <Spinner label="Starting Neovim…" />
           ) : (
@@ -660,7 +662,7 @@ export function NvimSurface({
                 </VStack>
                 <HStack gap={2} vAlign="center">
                   <Button label="Restart" variant="primary" onClick={() => setGeneration((g) => g + 1)} />
-                  <KeyHint keys={['enter']} label="restart" />
+                  <Button label="Close" onClick={() => useStore.getState().setNvimOpen(false)} />
                 </HStack>
               </VStack>
             </Card>

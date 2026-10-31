@@ -1,5 +1,4 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
@@ -7,7 +6,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Token } from '@astryxdesign/core/Token';
 import { ChevronLeft, X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
-import { useSidebarResize } from '@/hooks/useSidebarResize';
+import { DIVIDER_TOUCH_TARGET, useSidebarResize } from '@/hooks/useSidebarResize';
 import { useFileStore } from '@/state/fileStore';
 import { useStore } from '@/state/store';
 import { FileTree } from './files/FileTree';
@@ -22,12 +21,12 @@ import { GitPopup, type GitPopupKind } from './files/GitPopup';
 import { CreateEntryModal } from './files/CreateEntryModal';
 import { GitStatus, computeGitItems, filterGitItems, ALL_GIT_SECTIONS, type GitItem } from './files/GitStatus';
 import { FileSearch } from './files/FileSearch';
-import { KeyHint, hintKey, type Hint } from './KeyHint';
+import { KeyHint, type Hint } from './KeyHint';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
-import { NARROW_QUERY, TOUCH_QUERY } from '@/lib/touch';
+import { NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '@/lib/touch';
 import { cn, getParent, joinPath, stepIndex } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
-import { dispatchKey } from '@/lib/paneTerminal';
+import { usePressHint } from '@/hooks/usePressHint';
 import { smoothScrollBy } from '@/lib/smoothScroll';
 import { DEFAULT_TYPE_SCALE, terminalTypeScale } from '@/lib/astryx-theme';
 import { CONNECTION_STATE_LABEL } from '@/lib/connectionState';
@@ -146,30 +145,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const showPreview = useCallback(() => setPreviewShown(true), []);
   // Touch screens type filters into an input, which opens the keyboard.
   const filterInputRef = useRef<HTMLInputElement>(null);
-  // Hint taps type their key, as the keyboard would.
-  const pressHint = useCallback(
-    (keys: string) => {
-      const root = rootRef.current;
-      if (!root) return;
-      if (!root.contains(document.activeElement)) root.focus();
-      const fields = () =>
-        [...root.querySelectorAll<HTMLElement>(TEXT_FIELDS)].filter((field) => field.checkVisibility());
-      const before = new Set(fields());
-      const { key, modifiers } = hintKey(keys);
-      dispatchKey(document.activeElement ?? root, key, modifiers);
-      // iOS opens the keyboard only for focus taken during the tap, so focus a
-      // text field the key opened (search, filter, rename) now.
-      if (touch && !document.activeElement?.matches(TEXT_FIELDS)) {
-        flushSync(() => {});
-        fields()
-          .find((field) => !before.has(field))
-          ?.focus();
-      }
-    },
-    [touch],
-  );
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const { sidebarRatio, onDividerMouseDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
+  const { sidebarRatio, onDividerPointerDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
 
   const handleCommitModalOpenChange = useCallback((open: boolean) => {
     setCommitModalOpen(open);
@@ -772,6 +749,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     return win?.panes[win.active_pane]?.id ?? null;
   })();
   const isActive = activePaneId === paneId;
+  // Hint taps type their key, as the keyboard would.
+  const selectPane = useCallback(() => {
+    if (!isActive) send({ type: 'select_pane', session_id: sessionId, pane_id: paneId });
+  }, [isActive, send, sessionId, paneId]);
+  const pressHint = usePressHint(rootRef, selectPane);
   const prevIsActive = useRef(false);
   useEffect(() => {
     const wasActive = prevIsActive.current;
@@ -1616,8 +1598,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize sidebar"
-            onMouseDown={onDividerMouseDown}
-            className="w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg"
+            onPointerDown={onDividerPointerDown}
+            className={cn(
+              DIVIDER_TOUCH_TARGET,
+              'w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg',
+            )}
           />
         )}
         <VStack
@@ -1646,9 +1631,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           <TextInput
             ref={(input) => {
               filterInputRef.current = input;
-              // TextInput doesn't forward these; iOS would capitalize and autocorrect.
-              input?.setAttribute('autocapitalize', 'off');
-              input?.setAttribute('autocorrect', 'off');
+              plainTextInput(input);
             }}
             label="Filter"
             isLabelHidden
@@ -1730,8 +1713,6 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     </VStack>
   );
 }
-
-const TEXT_FIELDS = 'input:not([type=checkbox]):not([type=radio]), textarea';
 
 const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
   b: 'branch',

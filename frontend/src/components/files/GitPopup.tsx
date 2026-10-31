@@ -11,6 +11,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { cn } from '@/lib/utils';
 import { useStore } from '@/state/store';
 import { KeyCap, KeyHint, type Hint } from '../KeyHint';
+import { usePressHint } from '@/hooks/usePressHint';
 import type { GitBranchInfo, GitOp, GitRefsResult } from '@/protocol/file-messages';
 
 export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash';
@@ -415,6 +416,8 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   const [queuedKey, setQueuedKey] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const pressHint = usePressHint(dialogRef);
 
   useEffect(() => {
     let cancelled = false;
@@ -657,6 +660,7 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
 
   return (
     <Dialog
+      ref={dialogRef}
       isOpen
       onOpenChange={(open) => !open && close()}
       width={kind === 'branch' ? 760 : 520}
@@ -834,19 +838,20 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
                     <KeyHint
                       keys={[action.key === 'Enter' ? 'enter' : action.key]}
                       label={action.label.toLowerCase()}
+                      onPress={pressHint}
                     />
                   </HStack>
                 ))}
-                <KeyHint keys={['r']} label={remoteView ? 'local' : 'remote'} />
-                <KeyHint keys={['j', 'k', 'down', 'up']} label="select" />
-                <KeyHint keys={['esc', 'q']} label="close" />
+                <KeyHint keys={['r']} label={remoteView ? 'local' : 'remote'} onPress={pressHint} />
+                <KeyHint keys={['j', 'k', 'down', 'up']} label="select" onPress={pressHint} />
+                <KeyHint keys={['esc', 'q']} label="close" onPress={pressHint} />
               </HStack>
             </LayoutFooter>
           ) : hints.length > 0 ? (
             <LayoutFooter hasDivider>
               <HStack gap={4} wrap="wrap">
                 {hints.map((hint) => (
-                  <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} />
+                  <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} onPress={pressHint} />
                 ))}
               </HStack>
             </LayoutFooter>

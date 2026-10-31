@@ -4,6 +4,8 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { Text } from '@astryxdesign/core/Text';
 import { Token } from '@astryxdesign/core/Token';
 import { Button } from '@astryxdesign/core/Button';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { TOUCH_QUERY } from '@/lib/touch';
 import { useProcessStore } from '@/state/processStore';
 import { formatBytes } from '@/lib/processFormat';
 import { isPortSortDescending, portKey, PORT_SORT_LABELS } from '@/lib/portRows';
@@ -19,6 +21,7 @@ export function ProcessModeHeader({
   animations: boolean;
 }) {
   const viewMode = useProcessStore((s) => s.viewMode);
+  const touch = useMediaQuery(TOUCH_QUERY);
   const portSortMode = useProcessStore((s) => s.portSortMode);
   const portSortReversed = useProcessStore((s) => s.portSortReversed);
   const setPortSortMode = useProcessStore((s) => s.setPortSortMode);
@@ -62,7 +65,8 @@ export function ProcessModeHeader({
       )}
       {viewMode === 'processes' && <Token size="sm" label={treeMode ? 'tree' : 'flat'} />}
       {followFocus && <Token size="sm" color="blue" label="follow" />}
-      {filterActive && (
+      {/* Touch screens show the filter's input instead. */}
+      {filterActive && !touch && (
         <Text size="sm" color="secondary" textWrap="nowrap">
           Filter: <Text size="sm">{filterQuery || '…'}</Text>
         </Text>

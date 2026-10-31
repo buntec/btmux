@@ -24,6 +24,7 @@ import { getPrefix, getSmoothScrollDuration } from '../state/configDefaults';
 import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
+import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
 import { isDesktopApp, switchDesktopServer } from '../lib/desktopApp';
 
@@ -192,6 +193,9 @@ export function Overlay({ sessionId, send, config }: Props) {
   const [applied, setApplied] = useState<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef<HTMLDivElement>(null);
+  // The palette or picker dialog, for hint taps.
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const pressHint = usePressHint(dialogRef);
   const commands = useMemo(
     () =>
       overlay?.mode === 'command'
@@ -251,6 +255,7 @@ export function Overlay({ sessionId, send, config }: Props) {
   if (overlay.mode === 'command')
     return (
       <CommandPalette
+        ref={dialogRef}
         isOpen
         label={overlay.title}
         // Fixed height keeps the input still while results change.
@@ -259,10 +264,10 @@ export function Overlay({ sessionId, send, config }: Props) {
         input={<TopHighlightedInput />}
         footer={
           <CommandPaletteFooter>
-            <KeyHint keys={['up', 'down']} label="navigate" />
-            <KeyHint keys={['ctrl+n', 'ctrl+p']} label="cycle" />
-            <KeyHint keys={['enter']} label="run" />
-            <KeyHint keys={['esc']} label="close" />
+            <KeyHint keys={['up', 'down']} label="navigate" onPress={pressHint} />
+            <KeyHint keys={['ctrl+n', 'ctrl+p']} label="cycle" onPress={pressHint} />
+            <KeyHint keys={['enter']} label="run" onPress={pressHint} />
+            <KeyHint keys={['esc']} label="close" onPress={pressHint} />
           </CommandPaletteFooter>
         }
         onOpenChange={(open) => {
@@ -373,6 +378,7 @@ export function Overlay({ sessionId, send, config }: Props) {
     };
     return (
       <Dialog
+        ref={dialogRef}
         isOpen
         onOpenChange={changeOpen}
         width={640}
@@ -428,9 +434,11 @@ export function Overlay({ sessionId, send, config }: Props) {
           }
           footer={
             <LayoutFooter hasDivider>
-              <HStack gap={2} hAlign="between">
-                <Text color="secondary">Space to apply · Enter to confirm</Text>
-                <Button label="Done" onClick={close} />
+              <HStack gap={4} vAlign="center">
+                <KeyHint keys={['up', 'down']} label="navigate" onPress={pressHint} />
+                <KeyHint keys={['space']} label="apply" onPress={pressHint} />
+                <KeyHint keys={['enter']} label="confirm" onPress={pressHint} />
+                <Button label="Done" onClick={close} className="ms-auto" />
               </HStack>
             </LayoutFooter>
           }

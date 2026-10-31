@@ -20,7 +20,9 @@ import { SessionIcon } from './SessionIcon';
 import { sortSessions } from '../state/sessionMru';
 import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
-import { KeyCap, KeyHint } from './KeyHint';
+import { KeyHint } from './KeyHint';
+import { usePressHint } from '../hooks/usePressHint';
+import { NARROW_DIALOG, NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '../lib/touch';
 import {
   gitMatches,
   repoColors,
@@ -82,7 +84,9 @@ export function SessionSwitcher({ send }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const previewRef = useRef<HTMLElement>(null);
   const selectedRef = useRef<HTMLLIElement>(null);
-  const isNarrow = useMediaQuery('(max-width: 767px)');
+  const isNarrow = useMediaQuery(NARROW_QUERY);
+  const touch = useMediaQuery(TOUCH_QUERY);
+  const pressHint = usePressHint(dialogRef);
 
   // Track viewport aspect ratio so the preview box matches the real terminal window.
   const viewportAspect = useSyncExternalStore(
@@ -439,6 +443,7 @@ export function SessionSwitcher({ send }: Props) {
     <VStack gap={2}>
       {filterMode && (
         <TextInput
+          ref={plainTextInput}
           label="Filter sessions"
           isLabelHidden
           placeholder="Filter sessions, windows, and branches"
@@ -512,7 +517,8 @@ export function SessionSwitcher({ send }: Props) {
                     </Text>
                   </HStack>
                 }
-                onClick={() => setSelectedIdx(i)}
+                // Touch has no double-click: a tap switches.
+                onClick={() => (touch ? activate(row) : setSelectedIdx(i))}
                 onDoubleClick={() => activate(row)}
               />
             );
@@ -565,9 +571,7 @@ export function SessionSwitcher({ send }: Props) {
       onOpenChange={(value) => {
         if (!value) cancel();
       }}
-      width={960}
-      maxHeight="85dvh"
-      style={{ height: 'min(560px, 85dvh)' }}
+      {...(isNarrow ? NARROW_DIALOG : { width: 960, maxHeight: '85dvh', style: { height: 'min(560px, 85dvh)' } })}
       onKeyDown={onKeyDown}
       onFocus={(e) => {
         // MirrorPane's Terminal.open() focuses its textarea; keep keys on the dialog.
@@ -603,17 +607,12 @@ export function SessionSwitcher({ send }: Props) {
                     </Text>
                     ?
                   </Text>
-                  <KeyHint keys={['y']} label="confirm" />
-                  <KeyHint keys={['n']} label="cancel" />
+                  <KeyHint keys={['y']} label="confirm" onPress={pressHint} />
+                  <KeyHint keys={['n']} label="cancel" onPress={pressHint} />
                 </>
               ) : (
-                HINTS.map(([keys, label]) => (
-                  <HStack key={label} gap={1} vAlign="center">
-                    {keys.map((key) => (
-                      <KeyCap key={key} keys={key} />
-                    ))}
-                    <Text color="secondary">{label}</Text>
-                  </HStack>
+                (filterMode ? FILTER_HINTS : HINTS).map(([keys, label]) => (
+                  <KeyHint key={label} keys={keys} label={label} onPress={pressHint} />
                 ))
               )}
             </HStack>
@@ -678,4 +677,10 @@ const HINTS: [string[], string][] = [
   [['m'], 'rename'],
   [['x'], 'kill'],
   [['esc'], 'close'],
+];
+
+const FILTER_HINTS: [string[], string][] = [
+  [['up', 'down'], 'navigate'],
+  [['enter'], 'switch'],
+  [['esc'], 'close filter'],
 ];

@@ -79,7 +79,17 @@ try {
   assert.match(await selectedBranch(), /alpha/);
   await page.keyboard.press('ArrowDown');
   assert.match(await selectedBranch(), /main/);
-  assert.equal(await branches.locator('.astryx-layout-footer button').count(), 0, 'footer hints are display-only');
+  // Footer hints press their key when clicked, without taking focus from Enter.
+  const hintButtons = branches.locator('.astryx-layout-footer button');
+  assert(await hintButtons.count());
+  assert.deepEqual(
+    [...new Set(await hintButtons.evaluateAll((buttons) => buttons.map((button) => button.tabIndex)))],
+    [-1],
+  );
+  await branches.getByRole('button', { name: 'j: select', exact: true }).click();
+  assert.match(await selectedBranch(), /unmerged/);
+  await branches.getByRole('button', { name: 'k: select', exact: true }).click();
+  assert.match(await selectedBranch(), /main/);
   await page.keyboard.press('d');
   await page.keyboard.press('D');
   assert(await branches.isVisible());

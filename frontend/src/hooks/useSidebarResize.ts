@@ -18,9 +18,8 @@ export function useSidebarResize(
 ) {
   const [sidebarRatio, setSidebarRatio] = useState(initialRatio);
 
-  const onDividerMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
+  const onDividerPointerDown = useCallback(
+    (e: React.PointerEvent) => {
       const root = rootRef.current;
       if (!root) return;
 
@@ -34,21 +33,43 @@ export function useSidebarResize(
         setSidebarRatio(Math.max(min, Math.min(max, ratio)));
       };
 
-      const onMouseMove = (ev: MouseEvent) => updateSidebarRatio(ev);
-      const onMouseUp = () => {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      };
       updateSidebarRatio(e);
       document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize';
       document.body.style.userSelect = 'none';
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
+      trackPointerDrag(e, updateSidebarRatio, () => {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      });
     },
     [rootRef, axis, min, max],
   );
 
-  return { sidebarRatio, onDividerMouseDown };
+  return { sidebarRatio, onDividerPointerDown };
 }
+
+/**
+ * Follows a drag that starts with `e` on a divider, with mouse, pen, or touch.
+ * The divider needs `touch-action: none`, or touch scrolls instead.
+ */
+export function trackPointerDrag(
+  e: React.PointerEvent,
+  onMove: (event: PointerEvent) => void,
+  onEnd: (event: PointerEvent) => void,
+) {
+  e.preventDefault();
+  const target = e.currentTarget as HTMLElement;
+  target.setPointerCapture(e.pointerId);
+  const end = (event: PointerEvent) => {
+    target.removeEventListener('pointermove', onMove);
+    target.removeEventListener('pointerup', end);
+    target.removeEventListener('pointercancel', end);
+    onEnd(event);
+  };
+  target.addEventListener('pointermove', onMove);
+  target.addEventListener('pointerup', end);
+  target.addEventListener('pointercancel', end);
+}
+
+/** Widens a thin divider's hit area on touch screens. */
+export const DIVIDER_TOUCH_TARGET =
+  "touch-none pointer-coarse:relative pointer-coarse:before:absolute pointer-coarse:before:-inset-2 pointer-coarse:before:content-['']";

@@ -13,7 +13,8 @@ import { getWindowMruOrder } from '../state/windowMru';
 import type { SessionState } from '../state/types';
 import { WindowThumbnail } from './WindowThumbnail';
 import { getAnimations, getWindowGridCount } from '../state/configDefaults';
-import { KeyCap } from './KeyHint';
+import { KeyHint } from './KeyHint';
+import { usePressHint } from '../hooks/usePressHint';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -112,6 +113,7 @@ export function WindowGrid({ send }: Props) {
 
   const [selectedIdx, setSelectedIdx] = useState(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const pressHint = usePressHint(dialogRef);
 
   // On each open, pre-select the currently active window.
   const wasOpen = useRef(false);
@@ -253,8 +255,9 @@ export function WindowGrid({ send }: Props) {
                     <VStack gap={2} className="h-full min-h-0">
                       <HStack gap={2} vAlign="center" className="min-w-0">
                         {i < 9 && <Kbd keys={String(i + 1)} />}
-                        <Text color="secondary">{entry.sessionName}</Text>
-                        <Text>{entry.windowName}</Text>
+                        <Text maxLines={1} className="btm-mono min-w-0">
+                          <Text color="secondary">{entry.sessionName}</Text> <Text>{entry.windowName}</Text>
+                        </Text>
                       </HStack>
                       <VStack data-window-thumbnail className="relative min-h-0 flex-1 overflow-hidden">
                         <WindowThumbnail
@@ -278,12 +281,7 @@ export function WindowGrid({ send }: Props) {
           <LayoutFooter hasDivider>
             <HStack gap={4} wrap="wrap">
               {HINTS.map(([keys, label]) => (
-                <HStack key={label} gap={1} vAlign="center">
-                  {keys.map((key) => (
-                    <KeyCap key={key} keys={key} />
-                  ))}
-                  <Text color="secondary">{label}</Text>
-                </HStack>
+                <KeyHint key={label} keys={keys} label={label} onPress={pressHint} />
               ))}
             </HStack>
           </LayoutFooter>
@@ -294,7 +292,7 @@ export function WindowGrid({ send }: Props) {
 }
 
 const HINTS: [string[], string][] = [
-  [['up', 'down', 'left', 'right'], 'move'],
+  [['up', 'down', 'left', 'right'], 'navigate'],
   [['1', '9'], 'jump to cell'],
   [['enter'], 'switch'],
   [['esc'], 'close'],

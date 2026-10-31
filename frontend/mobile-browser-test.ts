@@ -372,6 +372,64 @@ try {
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
   rmSync(dir, { recursive: true, force: true });
 
+  // The process viewer: hints type their keys, the list or a row's details fill
+  // the screen, and the filter takes text through an input.
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setFileBrowserOpen(true, null, state.getActivePaneId(state.allSessions[0].id), 'process');
+  });
+  const processRow = page.locator('[data-process-pid]').first();
+  await processRow.waitFor();
+  assert.equal(await page.getByRole('button', { name: 'USER', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'V: tree', exact: true }).tap();
+  await page.getByRole('tree', { name: 'Processes', exact: true }).waitFor();
+  // At the PID: WebKit moves taps near the fold button onto it.
+  await processRow.tap({ position: { x: 16, y: 8 } });
+  const processBack = page.getByRole('button', { name: 'Back to list' });
+  await processBack.waitFor();
+  assert(!(await processRow.isVisible()));
+  await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
+  await processRow.waitFor();
+  await page.getByRole('button', { name: '/: filter', exact: true }).tap();
+  const processFilter = page.getByRole('textbox', { name: 'Filter' });
+  assert(await processFilter.evaluate((input) => input === document.activeElement));
+  await page.keyboard.type('zzzzzz');
+  await processRow.waitFor({ state: 'detached' });
+  assert.equal(await processFilter.inputValue(), 'zzzzzz');
+  await page.getByRole('button', { name: 'esc: close filter', exact: true }).tap();
+  await processFilter.waitFor({ state: 'detached' });
+  await processRow.waitFor();
+  assert(await page.evaluate(() => document.activeElement?.closest('dialog') !== null));
+  await page.getByRole('button', { name: 'Close process viewer' }).tap();
+  await page.getByRole('button', { name: 'Close process viewer' }).waitFor({ state: 'hidden' });
+
+  // Switcher hints type their keys, and tapping a window switches to it.
+  const [firstSession] = await (await api('/api/sessions')).json();
+  assert(
+    (
+      await api(`/api/sessions/${firstSession.id}/windows`, {
+        method: 'POST',
+        body: '{"name":"tapme","select":false}',
+      })
+    ).ok,
+  );
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setSwitcherOpen(true);
+  });
+  const switcher = page.getByRole('dialog', { name: 'Sessions', exact: true });
+  await switcher.waitFor();
+  await page.getByRole('button', { name: '/: filter', exact: true }).tap();
+  const switcherFilter = page.getByRole('textbox', { name: 'Filter sessions' });
+  assert(await switcherFilter.evaluate((input) => input === document.activeElement));
+  await page.getByRole('button', { name: 'esc: close filter', exact: true }).tap();
+  await switcherFilter.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'right: fold', exact: true }).tap();
+  await switcher.getByText('tapme', { exact: true }).tap();
+  await switcher.waitFor({ state: 'hidden' });
+  await page.waitForURL(/\/w\/tapme$/);
+
   // The navigation drawer fills the screen.
   await page.getByRole('button', { name: 'Open navigation' }).tap();
   const drawer = page.locator('dialog.btm-side-nav > div');
@@ -390,7 +448,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, nav drawer, pairing, and manifest',
+    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, nav drawer, pairing, and manifest',
   );
 } finally {
   await browser.close();

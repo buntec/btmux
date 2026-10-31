@@ -236,8 +236,10 @@ composition; longer text (a suggestion) passes through and disarms them.
 viewport, since iOS doesn't resize the layout for the keyboard. Swipes in
 alternate-screen or mouse-tracking programs become wheel events. Below 768px,
 `SessionPane` shows only the active pane, a local zoom, and the file browser
-is fullscreen, showing its list or, after a tap, the preview. Its key hints
-type their key when tapped; on touch screens, filters type into an input.
+and process viewer are fullscreen, showing a list or, after a tap, the
+preview or details. Footer key hints everywhere type their key when tapped
+(`usePressHint`); on touch screens, filters type into an input and a tap on a
+session switcher window switches to it.
 `mobile-browser-test.ts` covers these in WebKit with iPhone emulation.
 
 ### Frontend lifetime and routing

@@ -169,6 +169,7 @@ shows an error and leaves that program's input untouched.
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session        |
 | `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session             |
 | `GET/POST/DELETE /api/panes/<pane-id>/agent-status`             | Explain, set, or clear semantic agent status                  |
+| `GET /api/system`                                               | Describe the server host (OS, CPU, memory, disks, shell, ...) |
 | `POST /api/server/shutdown`                                     | Stop the server, closing every shell                          |
 
 ## MCP server
@@ -176,7 +177,8 @@ shows an error and leaves that program's input untouched.
 The MCP server at `/mcp` exposes tools for creating and inspecting sessions,
 splitting panes, creating and removing git worktrees (`create_worktree`,
 `remove_worktree`), running commands, sending text and keys, reading pane
-output, and [driving agents](#orchestrating-agents). `read_pane_output` returns the
+output, describing the host (`system_info`, like `GET /api/system`), and
+[driving agents](#orchestrating-agents). `read_pane_output` returns the
 rendered screen (with `scrollback` and `lines` like `/capture`), and
 `send_keys` takes `text` and tmux-style `keys`.
 

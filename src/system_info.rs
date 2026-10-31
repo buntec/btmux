@@ -75,11 +75,16 @@ pub struct Address {
 }
 
 pub async fn handle(State(state): State<AppState>) -> Json<SystemInfo> {
+    Json(report(&state).await)
+}
+
+/// Shared by `GET /api/system` and the `system_info` MCP tool.
+pub async fn report(state: &AppState) -> SystemInfo {
     let shell = state.read().await.shell().to_string();
     let (shell, info) = tokio::join!(shell_version(shell), tokio::task::spawn_blocking(collect));
     let mut info = info.expect("system info task panicked");
     info.shell = shell;
-    Json(info)
+    info
 }
 
 fn collect() -> SystemInfo {

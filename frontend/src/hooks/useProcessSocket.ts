@@ -6,6 +6,7 @@ import type {
   ProcessServerMessage,
   ProcessSignal,
 } from '../protocol/process-messages';
+import { useStore } from '../state/store';
 import { useProcessStore } from '../state/processStore';
 
 const RECONNECT_MS = 2000;
@@ -42,12 +43,12 @@ export function useProcessSocket(enabled: boolean) {
         if (message.type === 'snapshot') {
           useProcessStore.getState().setSnapshot(message);
         } else if (message.type === 'kill_result') {
-          useProcessStore.getState().setMessage(message);
+          useStore.getState().showToast(message.message, message.success ? 'success' : 'error');
         } else if (message.type === 'error') {
-          useProcessStore.getState().setMessage(message);
+          useStore.getState().showToast(message.message, 'error');
         }
       } catch {
-        useProcessStore.getState().setMessage({ type: 'error', message: 'Invalid process viewer response' });
+        useStore.getState().showToast('Invalid process viewer response', 'error');
       }
     };
 
@@ -91,7 +92,7 @@ export function useProcessSocket(enabled: boolean) {
   const sendKill = useCallback((pid: number, startTime: number, signal: ProcessSignal) => {
     const ws = socketRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      useProcessStore.getState().setMessage({ type: 'error', message: 'Process viewer is not connected' });
+      useStore.getState().showToast('Process viewer is not connected', 'error');
       return;
     }
     const request: ProcessKillRequest = { type: 'kill', pid, start_time: startTime, signal };

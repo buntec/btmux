@@ -56,7 +56,6 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const treeMode = useProcessStore((s) => s.treeMode);
   const filterQuery = useProcessStore((s) => s.filterQuery);
   const filterActive = useProcessStore((s) => s.filterActive);
-  const message = useProcessStore((s) => s.message);
   const [pendingKill, setPendingKill] = useState<PendingKill | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const touch = useMediaQuery(TOUCH_QUERY);
@@ -298,10 +297,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
               signal: e.key === 'X' ? 'kill' : 'term',
             });
           } else if (row && store.viewMode === 'ports') {
-            store.setMessage({
-              type: 'error',
-              message: 'Cannot signal this socket: process information is unavailable',
-            });
+            useStore.getState().showToast('Cannot signal this socket: process information is unavailable', 'error');
           }
           break;
         case 'q':
@@ -438,17 +434,6 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
           </>
         ) : (
           <>
-            {message && (
-              <Text
-                role="status"
-                size="sm"
-                color="inherit"
-                textWrap="nowrap"
-                className={message.type === 'error' || !message.success ? 'text-error' : 'text-success'}
-              >
-                {message.message}
-              </Text>
-            )}
             {hints.map((hint) => (
               <KeyHint key={hint.keys.join()} keys={hint.keys} label={hint.label} onPress={pressHint} />
             ))}

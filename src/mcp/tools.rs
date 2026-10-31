@@ -456,6 +456,13 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
+        description = "Describe the machine btmux and its shells run on, fastfetch-style: user, host name, OS, hardware model, kernel, uptime, default shell, CPU, memory, swap, disks, local IPv4 addresses, load average, process count, and locale. Sizes are in bytes, uptime in seconds."
+    )]
+    async fn system_info(&self) -> Result<CallToolResult, ErrorData> {
+        ok_json(crate::system_info::report(&self.state).await)
+    }
+
+    #[tool(
         description = "Send a command to a pane and wait for its output to settle (or timeout_ms to elapse), returning the cleaned output produced since sending. Appends Enter automatically. Note: timed_out=false means the pane went quiet for idle_ms, not that the command necessarily finished -- a command that runs silently (e.g. a long sleep) will also look 'settled'. If you need to be sure a command finished, look for its actual completion signal in the output, or follow up with read_pane_output later."
     )]
     async fn run_command(

@@ -33,6 +33,7 @@ mod server;
 mod service;
 mod session;
 mod shell;
+mod system_info;
 mod tailscale;
 mod tmux_cli;
 mod update_check;

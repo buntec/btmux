@@ -1029,6 +1029,12 @@ fn default_commands() -> Vec<Command> {
             description: "Show the version, profile, and file locations.".to_string(),
             confirm: None,
         },
+        Command {
+            id: "system-info".to_string(),
+            label: "about: system info".to_string(),
+            description: "Show the server host and this browser, fastfetch-style.".to_string(),
+            confirm: None,
+        },
     ]
 }
 
@@ -1114,6 +1120,9 @@ pub struct ClientConfig {
     pub theme: Theme,
     /// Original Base16/24 slots for the built-in Neovim colorscheme.
     pub color_palette: BaseTheme,
+    /// Where `color_palette` came from: a scheme name, path, or URL, or the
+    /// inline table (`[theme-dark]`/`[theme-light]`).
+    pub color_scheme: String,
     /// Both variants, for previews and the browser's first paint.
     pub dark_theme: Theme,
     pub light_theme: Theme,
@@ -1751,31 +1760,43 @@ const VI_BINDS: &[(&str, &str)] = &[
     ("l", "navigate-right"),
 ];
 
-/// The dark or light palette: an inline palette, else a resolved remote palette,
-/// a local palette path, or a named scheme, else the bundled default.
-fn variant_palette(file: &FileConfig, mode: ColorMode) -> BaseTheme {
-    let (inline, colors, resolved, default) = match mode {
+/// The dark or light palette and where it came from: an inline palette
+/// (`[theme-dark]`), else a resolved remote palette, a local palette path, or a
+/// named scheme, else the bundled default.
+fn variant_palette(file: &FileConfig, mode: ColorMode) -> (BaseTheme, String) {
+    let (inline, table, colors, resolved, default) = match mode {
         ColorMode::Dark => (
             &file.theme_dark,
+            "[theme-dark]",
             &file.colors_dark,
             &file.resolved_colors_dark,
             DEFAULT_DARK_COLOR_SCHEME,
         ),
         ColorMode::Light => (
             &file.theme_light,
+            "[theme-light]",
             &file.colors_light,
             &file.resolved_colors_light,
             DEFAULT_LIGHT_COLOR_SCHEME,
         ),
     };
-    inline
-        .clone()
-        .or_else(|| match colors.as_deref() {
-            Some(url) if is_color_scheme_url(url) => resolved.clone(),
-            Some(name) => load_color_scheme(name),
-            None => None,
-        })
-        .unwrap_or_else(|| bundled_color_scheme(default).expect("bundled color scheme parses"))
+    if let Some(palette) = inline {
+        return (palette.clone(), table.to_string());
+    }
+    let configured = colors.as_deref().and_then(|colors| {
+        let palette = if is_color_scheme_url(colors) {
+            resolved.clone()
+        } else {
+            load_color_scheme(colors)
+        };
+        palette.map(|palette| (palette, colors.to_string()))
+    });
+    configured.unwrap_or_else(|| {
+        (
+            bundled_color_scheme(default).expect("bundled color scheme parses"),
+            default.to_string(),
+        )
+    })
 }
 
 /// Merge a FileConfig's `[keys]` overrides over the default bind table to produce
@@ -1872,11 +1893,11 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .clamp(0.1, 1.0);
 
     let color_mode = file.appearance.color_mode(system);
-    let dark_palette = variant_palette(file, ColorMode::Dark);
-    let light_palette = variant_palette(file, ColorMode::Light);
-    let color_palette = match color_mode {
-        ColorMode::Dark => dark_palette.clone(),
-        ColorMode::Light => light_palette.clone(),
+    let (dark_palette, dark_source) = variant_palette(file, ColorMode::Dark);
+    let (light_palette, light_source) = variant_palette(file, ColorMode::Light);
+    let (color_palette, color_scheme) = match color_mode {
+        ColorMode::Dark => (dark_palette.clone(), dark_source),
+        ColorMode::Light => (light_palette.clone(), light_source),
     };
     let theme = color_palette.to_theme();
 
@@ -1931,6 +1952,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         color_mode,
         theme,
         color_palette,
+        color_scheme,
         dark_theme: dark_palette.to_theme(),
         light_theme: light_palette.to_theme(),
         repeat_time: file.repeat_time,
@@ -2426,6 +2448,7 @@ palette:
             resolved.color_palette,
             load_color_scheme("kauz-light").unwrap()
         );
+        assert_eq!(resolved.color_scheme, "kauz-light");
         assert!(toml::from_str::<FileConfig>("appearance = \"dim\"").is_err());
     }
 
@@ -2439,6 +2462,7 @@ palette:
         };
         let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.color_palette, palette);
+        assert_eq!(resolved.color_scheme, "[theme-dark]");
         let serialized = serde_json::to_value(&resolved.color_palette).unwrap();
         assert_eq!(serialized["base0F"], "#ff00ff");
         assert_eq!(serialized["base11"], "#111111");
@@ -2454,6 +2478,7 @@ palette:
             overridden.color_palette,
             bundled_color_scheme("btmux-default-light").unwrap()
         );
+        assert_eq!(overridden.color_scheme, "btmux-default-light");
         assert_eq!(overridden.color_palette.to_theme(), overridden.theme);
     }
 

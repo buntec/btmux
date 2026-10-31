@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
 import type { ClientConfig, ColorMode } from '../state/types';
@@ -54,6 +55,7 @@ import {
   VStack,
 } from '@astryxdesign/core/Layout';
 import { KeyCap } from './KeyHint';
+import { NARROW_DIALOG, NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '../lib/touch';
 import { actionLabel } from '../lib/actionLabel';
 import { prefixError } from '../lib/prefixKey';
 
@@ -392,15 +394,21 @@ type SettingsTab = keyof typeof TAB_LABELS;
 
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
 
-/** A binding shown as its key cap; click it, then press the new key. Escape cancels. */
+/**
+ * A binding shown as its key cap; click it, then press the new key. Escape
+ * cancels. Touch screens type the key into an input, which opens the keyboard.
+ */
 function KeyBindField({ label, value, onChange }: { label: string; value: string; onChange: (key: string) => void }) {
   const [recording, setRecording] = useState(false);
+  const touch = useMediaQuery(TOUCH_QUERY);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!recording) return;
     // Window capture runs before the keybinding hook and the dialog's Escape handling.
     const onKeyDown = (e: KeyboardEvent) => {
-      if (MODIFIER_KEYS.has(e.key)) return;
+      // Android keyboards send Unidentified; the touch input reads their text.
+      if (MODIFIER_KEYS.has(e.key) || e.key === 'Unidentified' || e.isComposing) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       if (e.key !== 'Escape') onChange(e.key);
@@ -410,13 +418,40 @@ function KeyBindField({ label, value, onChange }: { label: string; value: string
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [recording, onChange]);
 
+  if (touch && recording)
+    return (
+      <TextInput
+        ref={(input) => {
+          inputRef.current = input;
+          plainTextInput(input);
+        }}
+        label={`Type a key for ${label}`}
+        isLabelHidden
+        size="sm"
+        value=""
+        placeholder={`${label}: type a key…`}
+        autoComplete="off"
+        onChange={(typed) => {
+          const key = [...typed].pop();
+          if (key) onChange(key);
+          setRecording(false);
+        }}
+        onBlur={() => setRecording(false)}
+      />
+    );
+
   return (
     <Button
       label={recording ? `Press a key for ${label}` : `Change key for ${label}`}
       size="sm"
       variant="ghost"
       width="100%"
-      onClick={() => setRecording((current) => !current)}
+      onClick={() => {
+        if (!touch) return setRecording((current) => !current);
+        // iOS opens the keyboard only for focus taken during the tap.
+        flushSync(() => setRecording(true));
+        inputRef.current?.focus();
+      }}
       onBlur={() => setRecording(false)}
       className="[&>span>span]:flex-1"
     >
@@ -435,7 +470,7 @@ function KeyBindField({ label, value, onChange }: { label: string; value: string
 }
 
 export function ConfigPage({ config, send }: Props) {
-  const isNarrow = useMediaQuery('(max-width: 767px)');
+  const isNarrow = useMediaQuery(NARROW_QUERY);
   const [tab, setTab] = useState<SettingsTab>('general');
   const setConfigPreview = useStore((state) => state.setConfigPreview);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
@@ -598,6 +633,7 @@ export function ConfigPage({ config, send }: Props) {
   ) => (
     <TextInput
       key={key}
+      ref={plainTextInput}
       label={label}
       value={draft[key]}
       onChange={(value) => update(key, value as never)}
@@ -694,8 +730,7 @@ export function ConfigPage({ config, send }: Props) {
         if (!open) goBack();
       }}
       purpose="form"
-      width={showToml ? 1200 : 640}
-      maxHeight="90dvh"
+      {...(isNarrow ? NARROW_DIALOG : { width: showToml ? 1200 : 640, maxHeight: '90dvh' })}
       className={clearBackdrop ? 'h-full btm-clear-backdrop' : 'h-full'}
     >
       <Layout

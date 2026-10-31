@@ -11,3 +11,9 @@ export function plainTextInput(input: HTMLInputElement | null) {
   input?.setAttribute('autocapitalize', 'off');
   input?.setAttribute('autocorrect', 'off');
 }
+
+/** Dialog props that fill a phone's visual viewport; 100dvh ignores the iOS keyboard. */
+export const NARROW_DIALOG = {
+  variant: 'fullscreen',
+  style: { height: 'var(--btm-viewport-height, 100dvh)' },
+} as const;

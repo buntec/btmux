@@ -22,7 +22,7 @@ import { sortWindows } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
 import { KeyHint } from './KeyHint';
 import { usePressHint } from '../hooks/usePressHint';
-import { NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '../lib/touch';
+import { NARROW_DIALOG, NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '../lib/touch';
 import {
   gitMatches,
   repoColors,
@@ -571,9 +571,7 @@ export function SessionSwitcher({ send }: Props) {
       onOpenChange={(value) => {
         if (!value) cancel();
       }}
-      width={960}
-      maxHeight="85dvh"
-      style={{ height: 'min(560px, 85dvh)' }}
+      {...(isNarrow ? NARROW_DIALOG : { width: 960, maxHeight: '85dvh', style: { height: 'min(560px, 85dvh)' } })}
       onKeyDown={onKeyDown}
       onFocus={(e) => {
         // MirrorPane's Terminal.open() focuses its textarea; keep keys on the dialog.

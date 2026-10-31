@@ -430,6 +430,44 @@ try {
   await switcher.waitFor({ state: 'hidden' });
   await page.waitForURL(/\/w\/tapme$/);
 
+  // The key bar's Esc reaches pane search, not the shell.
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setSearchPaneId(state.getActivePaneId(state.allSessions[0].id));
+  });
+  const paneSearch = page.getByRole('textbox', { name: 'Search scrollback' });
+  await paneSearch.waitFor();
+  await page.getByRole('button', { name: 'Older match' }).waitFor();
+  await paneSearch.focus();
+  // The key bar stays scrolled to where an earlier tap left it. WebKit targets
+  // the scroller's pointerdown, so Playwright's tap refuses; touch the key itself.
+  await keys('Esc').evaluate((key) => key.parentElement!.scrollTo({ left: 0, behavior: 'instant' }));
+  const escBox = (await keys('Esc').boundingBox())!;
+  await page.touchscreen.tap(escBox.x + escBox.width / 2, escBox.y + escBox.height / 2);
+  await paneSearch.waitFor({ state: 'detached' });
+
+  // Settings fill the screen, and a binding takes a key typed into an input.
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setSettingsOpen(true);
+  });
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await settings.waitFor();
+  assert.equal(
+    Math.round((await settings.boundingBox())!.height),
+    Math.round(await page.evaluate(() => window.visualViewport!.height)),
+  );
+  await settings.getByRole('tab', { name: 'Key binds', exact: true }).tap();
+  const bindButton = settings.getByRole('button', { name: 'Change key for Command palette', exact: true });
+  await bindButton.tap();
+  const bindInput = settings.getByRole('textbox', { name: 'Type a key for Command palette', exact: true });
+  assert(await bindInput.evaluate((input) => input === document.activeElement));
+  await page.keyboard.type('Z');
+  await bindButton.filter({ hasText: 'Z' }).waitFor();
+  await settings.getByRole('button', { name: 'Close', exact: true }).last().tap();
+  await settings.waitFor({ state: 'hidden' });
+
   // The navigation drawer fills the screen.
   await page.getByRole('button', { name: 'Open navigation' }).tap();
   const drawer = page.locator('dialog.btm-side-nav > div');
@@ -448,7 +486,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, nav drawer, pairing, and manifest',
+    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pairing, and manifest',
   );
 } finally {
   await browser.close();

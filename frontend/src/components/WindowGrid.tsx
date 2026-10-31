@@ -6,6 +6,8 @@ import { Grid } from '@astryxdesign/core/Grid';
 import { SelectableCard } from '@astryxdesign/core/SelectableCard';
 import { Text } from '@astryxdesign/core/Text';
 import { Kbd } from '@astryxdesign/core/Kbd';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { NARROW_QUERY } from '../lib/touch';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import { chromePalette } from '../lib/chrome-colors';
@@ -108,7 +110,9 @@ export function WindowGrid({ send }: Props) {
     }
   }, [open]);
 
-  const cols = Math.ceil(Math.sqrt(entries.length));
+  // Phones scroll two columns of fixed-height tiles.
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const cols = narrow ? Math.min(2, entries.length) : Math.ceil(Math.sqrt(entries.length));
   const rows = Math.ceil(entries.length / cols);
 
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -233,15 +237,15 @@ export function WindowGrid({ send }: Props) {
           />
         }
         content={
-          <LayoutContent isScrollable={false} padding={4}>
+          <LayoutContent isScrollable={narrow} padding={narrow ? 2 : 4}>
             {entries.length === 0 ? (
               <Text color="secondary">No windows.</Text>
             ) : (
               <Grid
                 columns={cols}
                 gap={3}
-                height="100%"
-                style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+                height={narrow ? undefined : '100%'}
+                style={narrow ? { gridAutoRows: '12rem' } : { gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
               >
                 {entries.map((entry, i) => (
                   <SelectableCard

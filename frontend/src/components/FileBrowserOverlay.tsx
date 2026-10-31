@@ -6,7 +6,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Token } from '@astryxdesign/core/Token';
 import { ChevronLeft, X } from 'lucide-react';
 import { useFileSocket } from '@/hooks/useFileSocket';
-import { useSidebarResize } from '@/hooks/useSidebarResize';
+import { DIVIDER_TOUCH_TARGET, useSidebarResize } from '@/hooks/useSidebarResize';
 import { useFileStore } from '@/state/fileStore';
 import { useStore } from '@/state/store';
 import { FileTree } from './files/FileTree';
@@ -146,7 +146,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Touch screens type filters into an input, which opens the keyboard.
   const filterInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const { sidebarRatio, onDividerMouseDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
+  const { sidebarRatio, onDividerPointerDown } = useSidebarResize(rootRef, DEFAULT_SIDEBAR_RATIO);
 
   const handleCommitModalOpenChange = useCallback((open: boolean) => {
     setCommitModalOpen(open);
@@ -1598,8 +1598,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize sidebar"
-            onMouseDown={onDividerMouseDown}
-            className="w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg"
+            onPointerDown={onDividerPointerDown}
+            className={cn(
+              DIVIDER_TOUCH_TARGET,
+              'w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg',
+            )}
           />
         )}
         <VStack

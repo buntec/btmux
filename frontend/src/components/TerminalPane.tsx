@@ -562,7 +562,15 @@ export function TerminalPane({
           onToggleLatex={toggleLatex}
         />
       )}
-      {!showTitle && <PaneCorner index={paneIndex ?? 0} status={agentStatus} isActive={isActive} />}
+      {!showTitle && (
+        <PaneCorner
+          index={paneIndex ?? 0}
+          status={agentStatus}
+          isActive={isActive}
+          latexCount={latexOpen ? 0 : latexMatches.length}
+          onToggleLatex={toggleLatex}
+        />
+      )}
       {/* Focus ring — only rendered on the active/zoomed pane so mounting it
           replays btm-bloom on every focus change without needing a key trick. */}
       {(isActive || isZoomed) && (
@@ -612,35 +620,10 @@ export function TerminalPane({
             visibility: initialReplayRendered ? 'visible' : 'hidden',
           }}
         />
-        {/* Without a title bar the LaTeX chip floats in the pane's corner. */}
-        {!showTitle && !latexOpen && latexMatches.length > 0 && (
-          <button
-            type="button"
-            title="Toggle LaTeX overlay"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={toggleLatex}
-            style={{
-              position: 'absolute',
-              top: 6,
-              right: 10,
-              padding: '1px 7px',
-              borderRadius: 5,
-              fontSize: Math.max(10, Math.round(termFont * 0.75)),
-              fontWeight: 700,
-              cursor: 'pointer',
-              color: config?.theme?.background ?? STARTUP_THEME.background,
-              background: withAlpha(borderActive, 0.85),
-              zIndex: 5,
-            }}
-          >
-            ∑ {latexMatches.length}
-          </button>
-        )}
         {searchOpen && term && (
           <PaneSearch
             term={term}
             theme={config?.theme ?? null}
-            termFont={termFont}
             onClose={() => useStore.getState().setSearchPaneId(null)}
           />
         )}

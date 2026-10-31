@@ -112,10 +112,36 @@ export function PaneTitleBar({
   );
 }
 
-export function PaneCorner({ index, status, isActive }: { index: number; status?: AgentStatus; isActive: boolean }) {
+/** The pane's badges without a title bar; only its controls take the pointer. */
+export function PaneCorner({
+  index,
+  status,
+  isActive,
+  latexCount,
+  onToggleLatex,
+}: {
+  index: number;
+  status?: AgentStatus;
+  isActive: boolean;
+  latexCount: number;
+  onToggleLatex: () => void;
+}) {
   return (
     <HStack gap={2} vAlign="center" className="pointer-events-none absolute top-2 right-2 z-3">
-      <AgentStatusBadge status={status} />
+      {latexCount > 0 && (
+        <ToggleButton
+          size="sm"
+          label={`∑ ${latexCount}`}
+          tooltip="Toggle LaTeX overlay"
+          isPressed={false}
+          onPressedChange={onToggleLatex}
+          onMouseDown={(e) => e.preventDefault()}
+          className="pointer-events-auto"
+        />
+      )}
+      <span className="pointer-events-auto">
+        <AgentStatusBadge status={status} />
+      </span>
       <Token color={isActive ? 'blue' : 'gray'} aria-label={`Pane ${index}`} label={String(index)} />
     </HStack>
   );

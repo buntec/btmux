@@ -6,7 +6,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { useProcessSocket } from '@/hooks/useProcessSocket';
-import { useSidebarResize } from '@/hooks/useSidebarResize';
+import { DIVIDER_TOUCH_TARGET, useSidebarResize } from '@/hooks/useSidebarResize';
 import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
@@ -73,7 +73,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     else if (!rootRef.current?.contains(document.activeElement)) rootRef.current?.focus();
   }, [touch, filterActive]);
   const bodyRef = useRef<HTMLElement>(null);
-  const { sidebarRatio: tableRatio, onDividerMouseDown } = useSidebarResize(bodyRef, DEFAULT_TABLE_RATIO, {
+  const { sidebarRatio: tableRatio, onDividerPointerDown } = useSidebarResize(bodyRef, DEFAULT_TABLE_RATIO, {
     axis: 'y',
     min: 0.25,
     max: 0.85,
@@ -372,8 +372,11 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
             role="separator"
             aria-orientation="horizontal"
             aria-label="Resize process list"
-            onMouseDown={onDividerMouseDown}
-            className="h-1 flex-none cursor-row-resize border-b border-border hover:bg-accent-bg active:bg-accent-bg"
+            onPointerDown={onDividerPointerDown}
+            className={cn(
+              DIVIDER_TOUCH_TARGET,
+              'h-1 flex-none cursor-row-resize border-b border-border hover:bg-accent-bg active:bg-accent-bg',
+            )}
           />
         )}
         <VStack className={cn('min-h-0 min-w-0 flex-1', narrow && !detailsShown && 'hidden')}>

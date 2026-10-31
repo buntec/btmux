@@ -229,7 +229,9 @@ Touch devices (`(pointer: coarse)`, `lib/touch.ts`, as wterm decides) get
 keybindings and wterm's encoding (kitty protocol, cursor modes) apply, or to
 Neovim's input when it has focus; taps
 prevent `mousedown`, not `pointerdown` (which cancels a tap's click in WebKit),
-to keep the keyboard open. Armed Ctrl, Alt, or prefix apply to the next single
+to keep the keyboard open. Its keys go to a focused text field (pane search)
+instead, and it has a key to hide an editor covering the active pane, since
+VS Code ignores synthetic keys. Armed Ctrl, Alt, or prefix apply to the next single
 character typed, including text sent without key events or committed by a
 composition; longer text (a suggestion) passes through and disarms them.
 `useVisualViewport` sizes `#root` to the visual

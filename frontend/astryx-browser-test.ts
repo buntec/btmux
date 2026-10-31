@@ -390,17 +390,27 @@ try {
     assert.equal(await viewer.getByText('Unknown owner', { exact: true }).count(), 3);
     await viewer.getByText('4', { exact: true }).waitFor();
     for (const label of ['Unknown owner', 'Process unavailable']) {
-      await viewer.getByText(label, { exact: true }).first().click();
+      // Click its protocol cell: the feedback toasts stack over the right side.
+      await viewer
+        .locator('tr', { hasText: label })
+        .first()
+        .locator('td')
+        .nth(1)
+        .click();
       for (const key of ['x', 'X']) {
-        await unavailablePage.evaluate(async () => {
-          const { useProcessStore } = await import('/src/state/processStore.ts' as string);
-          useProcessStore.getState().setMessage(null);
+        const toasts = unavailablePage.locator('.astryx-toast', {
+          hasText: 'Cannot signal this socket: process information is unavailable',
         });
+        const shown = await toasts.count();
         await unavailablePage.keyboard.press(key);
-        await viewer
-          .getByRole('status')
-          .getByText('Cannot signal this socket: process information is unavailable', { exact: true })
-          .waitFor();
+        await waitForAsync(
+          unavailablePage,
+          (shown) =>
+            [...document.querySelectorAll('.astryx-toast')].filter((toast) =>
+              toast.textContent?.includes('Cannot signal this socket: process information is unavailable'),
+            ).length > shown,
+          shown,
+        );
       }
     }
     assert(

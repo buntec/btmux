@@ -372,6 +372,139 @@ try {
   await page.getByRole('button', { name: 'Close file browser' }).waitFor({ state: 'hidden' });
   rmSync(dir, { recursive: true, force: true });
 
+  // The process viewer: hints type their keys, the list or a row's details fill
+  // the screen, and the filter takes text through an input.
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setFileBrowserOpen(true, null, state.getActivePaneId(state.allSessions[0].id), 'process');
+  });
+  const processRow = page.locator('[data-process-pid]').first();
+  await processRow.waitFor();
+  // Moving up from the bottom keeps the selection clear of the sticky header.
+  assert(
+    await page.locator('[aria-label="Process list"]').evaluate((list) => list.scrollHeight > list.clientHeight),
+    'too few processes to scroll the list',
+  );
+  await page.keyboard.press('G');
+  const visibleRows = await page.evaluate(() => {
+    const list = document.querySelector('[aria-label="Process list"]')!;
+    const row = document.querySelector('[data-process-pid]')!;
+    return Math.ceil(list.clientHeight / row.getBoundingClientRect().height);
+  });
+  for (let i = 0; i < visibleRows + 2; i++) {
+    await page.keyboard.press('k');
+    const overlap = await page.evaluate(() => {
+      const header = document.querySelector('[aria-label="Process list"] .sticky')!.getBoundingClientRect();
+      const row = document.querySelector('[data-process-pid][aria-selected="true"]')!.getBoundingClientRect();
+      return header.bottom - row.top;
+    });
+    assert(overlap <= 0.5, `the header covers the selected row by ${overlap}px`);
+  }
+  assert.equal(await page.getByRole('button', { name: 'USER', exact: true }).count(), 0);
+  // Keys of a multi-key hint are padded to a usable size.
+  const keyBox = (await page.getByRole('button', { name: 'j: navigate', exact: true }).boundingBox())!;
+  assert(keyBox.width >= 32 && keyBox.height >= 32, `small hint key: ${JSON.stringify(keyBox)}`);
+  await page.getByRole('button', { name: 'V: tree', exact: true }).tap();
+  await page.getByRole('tree', { name: 'Processes', exact: true }).waitFor();
+  // At the PID: WebKit moves taps near the fold button onto it.
+  await processRow.tap({ position: { x: 16, y: 8 } });
+  const processBack = page.getByRole('button', { name: 'Back to list' });
+  await processBack.waitFor();
+  assert(!(await processRow.isVisible()));
+  await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
+  await processRow.waitFor();
+  await page.getByRole('button', { name: '/: filter', exact: true }).tap();
+  const processFilter = page.getByRole('textbox', { name: 'Filter' });
+  assert(await processFilter.evaluate((input) => input === document.activeElement));
+  await page.keyboard.type('zzzzzz');
+  await processRow.waitFor({ state: 'detached' });
+  assert.equal(await processFilter.inputValue(), 'zzzzzz');
+  await page.getByRole('button', { name: 'esc: close filter', exact: true }).tap();
+  await processFilter.waitFor({ state: 'detached' });
+  await processRow.waitFor();
+  assert(await page.evaluate(() => document.activeElement?.closest('dialog') !== null));
+  await page.getByRole('button', { name: 'Close process viewer' }).tap();
+  await page.getByRole('button', { name: 'Close process viewer' }).waitFor({ state: 'hidden' });
+
+  // Switcher hints type their keys, and tapping a window switches to it.
+  const [firstSession] = await (await api('/api/sessions')).json();
+  assert(
+    (
+      await api(`/api/sessions/${firstSession.id}/windows`, {
+        method: 'POST',
+        body: '{"name":"tapme","select":false}',
+      })
+    ).ok,
+  );
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setSwitcherOpen(true);
+  });
+  const switcher = page.getByRole('dialog', { name: 'Sessions', exact: true });
+  await switcher.waitFor();
+  await page.getByRole('button', { name: '/: filter', exact: true }).tap();
+  const switcherFilter = page.getByRole('textbox', { name: 'Filter sessions' });
+  assert(await switcherFilter.evaluate((input) => input === document.activeElement));
+  await page.getByRole('button', { name: 'esc: close filter', exact: true }).tap();
+  await switcherFilter.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'right: fold', exact: true }).tap();
+  await switcher.getByText('tapme', { exact: true }).tap();
+  await switcher.waitFor({ state: 'hidden' });
+  await page.waitForURL(/\/w\/tapme$/);
+
+  // Pane search opened before the replay keeps focus when the pane shows it,
+  // and the key bar's Esc reaches it, not the shell.
+  await page.reload();
+  await waitForAsync(page, async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    const paneId = state.allSessions[0] && state.getActivePaneId(state.allSessions[0].id);
+    if (!paneId) return false;
+    state.setSearchPaneId(paneId);
+    return true;
+  });
+  const paneSearch = page.getByRole('textbox', { name: 'Search scrollback' });
+  await paneSearch.waitFor();
+  await waitForAsync(page, async () =>
+    [...document.querySelectorAll('[data-pane-terminal]')].some(
+      (element) => element.checkVisibility({ visibilityProperty: true }) && element.getBoundingClientRect().width > 0,
+    ),
+  );
+  await page.waitForTimeout(300);
+  assert(await paneSearch.evaluate((input) => input === document.activeElement), 'the replay took focus from search');
+  // Match buttons leave focus in the input.
+  await page.getByRole('button', { name: 'Older match' }).tap();
+  await page.getByRole('button', { name: 'Newer match' }).tap();
+  assert(await paneSearch.evaluate((input) => input === document.activeElement), 'a match button took focus');
+  // The key bar stays scrolled to where an earlier tap left it. WebKit targets
+  // the scroller's pointerdown, so Playwright's tap refuses; touch the key itself.
+  await keys('Esc').evaluate((key) => key.parentElement!.scrollTo({ left: 0, behavior: 'instant' }));
+  const escBox = (await keys('Esc').boundingBox())!;
+  await page.touchscreen.tap(escBox.x + escBox.width / 2, escBox.y + escBox.height / 2);
+  await paneSearch.waitFor({ state: 'detached' });
+
+  // Settings fill the screen, and a binding takes a key typed into an input.
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setSettingsOpen(true);
+  });
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await settings.waitFor();
+  assert.equal(
+    Math.round((await settings.boundingBox())!.height),
+    Math.round(await page.evaluate(() => window.visualViewport!.height)),
+  );
+  await settings.getByRole('tab', { name: 'Key binds', exact: true }).tap();
+  const bindButton = settings.getByRole('button', { name: 'Change key for Command palette', exact: true });
+  await bindButton.tap();
+  const bindInput = settings.getByRole('textbox', { name: 'Type a key for Command palette', exact: true });
+  assert(await bindInput.evaluate((input) => input === document.activeElement));
+  await page.keyboard.type('Z');
+  await bindButton.filter({ hasText: 'Z' }).waitFor();
+  await settings.getByRole('button', { name: 'Close', exact: true }).last().tap();
+  await settings.waitFor({ state: 'hidden' });
+
   // The navigation drawer fills the screen.
   await page.getByRole('button', { name: 'Open navigation' }).tap();
   const drawer = page.locator('dialog.btm-side-nav > div');
@@ -390,7 +523,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, nav drawer, pairing, and manifest',
+    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pairing, and manifest',
   );
 } finally {
   await browser.close();

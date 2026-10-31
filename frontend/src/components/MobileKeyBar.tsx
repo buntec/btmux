@@ -4,12 +4,22 @@ import { HStack } from '@astryxdesign/core/Layout';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Command, KeyboardOff, SquareSplitHorizontal } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Command,
+  KeyboardOff,
+  PanelBottomClose,
+  SquareSplitHorizontal,
+} from 'lucide-react';
 import { useStore } from '../state/store';
 import { CONFIG_DEFAULTS, getPrefix } from '../state/configDefaults';
 import { parsePrefix } from '../lib/prefixKey';
 import { runAction } from '../hooks/useKeybindings';
 import { dispatchKey, type KeyModifiers } from '../lib/paneTerminal';
+import { TEXT_FIELDS } from '../hooks/usePressHint';
 import type { ClientMessage } from '../protocol/messages';
 
 const ARROWS = [
@@ -32,6 +42,14 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     const session = state.allSessions.find((session) => session.id === sessionId);
     return session?.windows[session.active_window]?.panes.length ?? 0;
   });
+  // The editor covering the active pane, which a double Esc hides on a keyboard.
+  const editor = useStore((state) => {
+    const paneId = state.getActivePaneId(sessionId);
+    if (!paneId) return null;
+    if (state.vscodeOpen && state.vscodePaneId === paneId) return 'VS Code';
+    if (state.nvimOpen && state.nvimPaneId === paneId) return 'Neovim';
+    return null;
+  });
   const [ctrl, setCtrl] = useState(false);
   const [alt, setAlt] = useState(false);
   const prefix = parsePrefix(getPrefix(config)) ?? parsePrefix(CONFIG_DEFAULTS.prefix)!;
@@ -40,7 +58,12 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
   const pressKey = (key: string, modifiers: KeyModifiers) => {
     const state = useStore.getState();
     const focused = document.activeElement;
-    if (focused instanceof HTMLElement && focused.dataset.nvimInput !== undefined) {
+    // Neovim, or a text field such as pane search, gets the key itself.
+    if (
+      focused instanceof HTMLElement &&
+      (focused.dataset.nvimInput !== undefined ||
+        (focused.matches(TEXT_FIELDS) && !focused.closest('[data-pane-terminal]')))
+    ) {
       return dispatchKey(focused, key, modifiers);
     }
     const pane = focused?.closest('[data-pane-terminal]');
@@ -164,6 +187,19 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
           icon={<Command />}
           onClick={() => run('command-palette')}
         />
+        {editor && (
+          <IconButton
+            label={`Hide ${editor}`}
+            size="sm"
+            variant="ghost"
+            icon={<PanelBottomClose />}
+            onClick={() => {
+              const state = useStore.getState();
+              if (editor === 'VS Code') state.setVscodeOpen(false);
+              else state.setNvimOpen(false);
+            }}
+          />
+        )}
       </HStack>
       {/* iPhone keyboards have no dismiss key. */}
       <IconButton

@@ -435,28 +435,38 @@ export function TerminalPane({
   // Focus when this pane becomes active (false→true transition, including mount),
   // when its initial replay finishes, or when an overlay closes while this pane
   // is active. Blur when it is inactive, not yet ready for keyboard input, or a
-  // modal surface owns the keyboard.
+  // modal surface or pane search owns the keyboard.
   // Tracking the previous value prevents the old active pane from re-stealing
   // focus while a select_pane command is still in flight to the server.
   const prevIsActive = useRef(false);
   const prevOverlay = useRef(overlay);
   const prevFileBrowser = useRef(fileBrowserOpen);
   const prevNvimOpen = useRef(nvimOpen);
+  const prevSearchOpen = useRef(searchOpen);
   const prevInitialReplayRendered = useRef(false);
   useEffect(() => {
     const wasActive = prevIsActive.current;
     const hadOverlay = prevOverlay.current;
     const hadFileBrowser = prevFileBrowser.current;
     const hadNvimOpen = prevNvimOpen.current;
+    const hadSearchOpen = prevSearchOpen.current;
     const hadRenderedInitialReplay = prevInitialReplayRendered.current;
     prevIsActive.current = isActive;
     prevOverlay.current = overlay;
     prevFileBrowser.current = fileBrowserOpen;
     prevNvimOpen.current = nvimOpen;
+    prevSearchOpen.current = searchOpen;
     prevInitialReplayRendered.current = initialReplayRendered;
 
     const keyboardOwnedElsewhere =
-      settingsOpen || overlay || windowGridOpen || agentGridOpen || switcherOpen || fileBrowserOpen || nvimOpen;
+      settingsOpen ||
+      overlay ||
+      windowGridOpen ||
+      agentGridOpen ||
+      switcherOpen ||
+      fileBrowserOpen ||
+      nvimOpen ||
+      searchOpen;
 
     if (!isActive || keyboardOwnedElsewhere || !initialReplayRendered) {
       termRef.current?.blur();
@@ -466,7 +476,10 @@ export function TerminalPane({
     const becameActive = !wasActive;
     const replayFinished = !hadRenderedInitialReplay;
     const overlayClosed =
-      (!overlay && !!hadOverlay) || (!fileBrowserOpen && hadFileBrowser) || (!nvimOpen && hadNvimOpen);
+      (!overlay && !!hadOverlay) ||
+      (!fileBrowserOpen && hadFileBrowser) ||
+      (!nvimOpen && hadNvimOpen) ||
+      (!searchOpen && hadSearchOpen);
     if (becameActive || replayFinished || overlayClosed) {
       termRef.current?.focus();
     }
@@ -479,6 +492,7 @@ export function TerminalPane({
     switcherOpen,
     fileBrowserOpen,
     nvimOpen,
+    searchOpen,
     initialReplayRendered,
   ]);
 
@@ -562,7 +576,15 @@ export function TerminalPane({
           onToggleLatex={toggleLatex}
         />
       )}
-      {!showTitle && <PaneCorner index={paneIndex ?? 0} status={agentStatus} isActive={isActive} />}
+      {!showTitle && (
+        <PaneCorner
+          index={paneIndex ?? 0}
+          status={agentStatus}
+          isActive={isActive}
+          latexCount={latexOpen ? 0 : latexMatches.length}
+          onToggleLatex={toggleLatex}
+        />
+      )}
       {/* Focus ring — only rendered on the active/zoomed pane so mounting it
           replays btm-bloom on every focus change without needing a key trick. */}
       {(isActive || isZoomed) && (
@@ -612,35 +634,10 @@ export function TerminalPane({
             visibility: initialReplayRendered ? 'visible' : 'hidden',
           }}
         />
-        {/* Without a title bar the LaTeX chip floats in the pane's corner. */}
-        {!showTitle && !latexOpen && latexMatches.length > 0 && (
-          <button
-            type="button"
-            title="Toggle LaTeX overlay"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={toggleLatex}
-            style={{
-              position: 'absolute',
-              top: 6,
-              right: 10,
-              padding: '1px 7px',
-              borderRadius: 5,
-              fontSize: Math.max(10, Math.round(termFont * 0.75)),
-              fontWeight: 700,
-              cursor: 'pointer',
-              color: config?.theme?.background ?? STARTUP_THEME.background,
-              background: withAlpha(borderActive, 0.85),
-              zIndex: 5,
-            }}
-          >
-            ∑ {latexMatches.length}
-          </button>
-        )}
         {searchOpen && term && (
           <PaneSearch
             term={term}
             theme={config?.theme ?? null}
-            termFont={termFont}
             onClose={() => useStore.getState().setSearchPaneId(null)}
           />
         )}

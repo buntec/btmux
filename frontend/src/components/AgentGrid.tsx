@@ -14,7 +14,8 @@ import { ClientMessage } from '../protocol/messages';
 import type { AgentStatus } from '../state/types';
 import { AgentStatusBadge } from './PaneTitleBar';
 import { MirrorPane } from './MirrorPane';
-import { KeyCap } from './KeyHint';
+import { KeyHint } from './KeyHint';
+import { usePressHint } from '../hooks/usePressHint';
 import { chromePalette } from '../lib/chrome-colors';
 
 interface Props {
@@ -172,6 +173,7 @@ export function AgentGrid({ send }: Props) {
   );
   const [selectedIdx, setSelectedIdx] = useState(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const pressHint = usePressHint(dialogRef);
   const wasOpen = useRef(false);
 
   useEffect(() => {
@@ -310,7 +312,10 @@ export function AgentGrid({ send }: Props) {
                             <HStack gap={2} vAlign="center" className="min-w-0">
                               {i < 9 && <Kbd keys={String(i + 1)} />}
                               <Text maxLines={1} className="min-w-0 flex-1">
-                                <Text color="secondary">{entry.sessionName}</Text> <Text>{entry.windowName}</Text>{' '}
+                                <Text color="secondary" className="btm-mono">
+                                  {entry.sessionName}
+                                </Text>{' '}
+                                <Text className="btm-mono">{entry.windowName}</Text>{' '}
                                 <Text color="secondary">{paneLabel}</Text>
                               </Text>
                               <HStack gap={1} vAlign="center" className="shrink-0">
@@ -354,12 +359,7 @@ export function AgentGrid({ send }: Props) {
           <LayoutFooter hasDivider>
             <HStack gap={4} wrap="wrap">
               {(entries.length ? HINTS : CLOSE_HINTS).map(([keys, label]) => (
-                <HStack key={label} gap={1} vAlign="center">
-                  {keys.map((key) => (
-                    <KeyCap key={key} keys={key} />
-                  ))}
-                  <Text color="secondary">{label}</Text>
-                </HStack>
+                <KeyHint key={label} keys={keys} label={label} onPress={pressHint} />
               ))}
             </HStack>
           </LayoutFooter>
@@ -370,7 +370,7 @@ export function AgentGrid({ send }: Props) {
 }
 
 const HINTS: [string[], string][] = [
-  [['up', 'down', 'left', 'right'], 'move'],
+  [['up', 'down', 'left', 'right'], 'navigate'],
   [['1', '9'], 'jump to cell'],
   [['enter'], 'switch'],
   [['x'], 'reset agent state'],

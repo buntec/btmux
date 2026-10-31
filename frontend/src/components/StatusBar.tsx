@@ -62,7 +62,15 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       role="toolbar"
       aria-label="Terminal controls"
     >
-      <Button label={session.name} variant="ghost" size="sm" onClick={() => state().setSwitcherOpen(true)} />
+      <Button
+        label={session.name}
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          closeModals();
+          state().setSwitcherOpen(true);
+        }}
+      />
       <TabList
         value={activeWindow?.id ?? ''}
         onChange={(id) => {

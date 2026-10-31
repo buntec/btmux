@@ -13,6 +13,9 @@ import {
 import { useProcessStore } from '@/state/processStore';
 
 const GRID_COLUMNS = 'grid gap-x-2 grid-cols-[3.5rem_5rem_4.5rem_4.5rem_5rem_5rem_5.5rem_minmax(0,1fr)]';
+// Phones show PID, CPU%, MEM%, and the command.
+const COMPACT_GRID_COLUMNS = 'grid gap-x-2 grid-cols-[3.5rem_3.5rem_3.5rem_minmax(0,1fr)]';
+const COMPACT_LABELS = new Set(['PID', 'CPU%', 'MEM%']);
 
 const SORT_COLUMNS: Array<{ label: string; mode: ProcessSortMode }> = [
   { label: 'PID', mode: 'pid' },
@@ -50,7 +53,18 @@ function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortM
   );
 }
 
-export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
+export function ProcessTree({
+  rows,
+  compact = false,
+  onDetails,
+}: {
+  rows: ProcessTreeRow[];
+  compact?: boolean;
+  /** Called when a row is tapped, to show its details. */
+  onDetails?: () => void;
+}) {
+  const grid = compact ? COMPACT_GRID_COLUMNS : GRID_COLUMNS;
+  const columns = compact ? SORT_COLUMNS.filter((column) => COMPACT_LABELS.has(column.label)) : SORT_COLUMNS;
   const processes = useProcessStore((s) => s.processes);
   const focusedPid = useProcessStore((s) => s.focusedPid);
   const followFocus = useProcessStore((s) => s.followFocus);
@@ -61,6 +75,7 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
   const setFocusedPid = useProcessStore((s) => s.setFocusedPid);
   const toggleCollapsed = useProcessStore((s) => s.toggleCollapsed);
   const listRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const focusIndexRef = useRef(0);
   const processesRef = useRef(processes);
 
@@ -74,19 +89,30 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
     }
     const index = rows.findIndex((row) => row.process.pid === focusedPid);
     if (index >= 0) focusIndexRef.current = index;
-    const row = listRef.current?.querySelector(`[data-process-pid="${focusedPid}"]`);
-    row?.scrollIntoView({ block: 'nearest' });
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-process-pid="${focusedPid}"]`);
+    if (!row) return;
+    // Keep the row clear of the sticky header.
+    row.style.scrollMarginTop = `${headerRef.current?.offsetHeight ?? 0}px`;
+    row.scrollIntoView({ block: 'nearest' });
   }, [focusedPid, followFocus, processes, rows, setFocusedPid]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className={cn(GRID_COLUMNS, 'shrink-0 border-b border-border px-2 py-1 text-secondary')}>
-        {SORT_COLUMNS.map((column) => (
-          <SortHeader key={column.label} label={column.label} mode={column.mode} active={sortMode === column.mode} />
-        ))}
-        <SortHeader label="COMMAND" mode="command" active={sortMode === 'command'} />
-      </div>
-      <ScrollableArea label="Process list" axis="both" className="min-h-0 flex-1 overflow-auto">
+      <ScrollableArea
+        label="Process list"
+        // Wide screens scroll to long commands; phones truncate them.
+        axis={compact ? 'block' : 'both'}
+        className="min-h-0 flex-1 overflow-auto"
+      >
+        <div
+          ref={headerRef}
+          className={cn(grid, 'sticky top-0 z-10 border-b border-border bg-surface px-2 py-1 text-secondary')}
+        >
+          {columns.map((column) => (
+            <SortHeader key={column.label} label={column.label} mode={column.mode} active={sortMode === column.mode} />
+          ))}
+          <SortHeader label="COMMAND" mode="command" active={sortMode === 'command'} />
+        </div>
         <div ref={listRef} role={treeMode ? 'tree' : 'list'} aria-label="Processes">
           {rows.map(({ process, depth, hasChildren, match }) => {
             const collapsed = collapsedPids.has(process.pid);
@@ -100,47 +126,70 @@ export function ProcessTree({ rows }: { rows: ProcessTreeRow[] }) {
                 aria-expanded={hasChildren ? !collapsed : undefined}
                 aria-selected={focused}
                 className={cn(
-                  GRID_COLUMNS,
-                  'cursor-pointer items-center px-2 leading-tight',
+                  grid,
+                  'cursor-pointer items-center px-2 leading-tight pointer-coarse:py-1.5',
                   focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   !match && !focused && 'text-secondary',
                 )}
-                onClick={() => setFocusedPid(process.pid)}
+                onClick={() => {
+                  setFocusedPid(process.pid);
+                  onDetails?.();
+                }}
                 onDoubleClick={() => hasChildren && toggleCollapsed(process.pid)}
               >
                 <span className="truncate font-mono" title={String(process.pid)}>
                   {process.pid}
                 </span>
-                <span className="truncate" title={process.user ?? '—'}>
-                  {process.user ?? '—'}
-                </span>
+                {!compact && (
+                  <span className="truncate" title={process.user ?? '—'}>
+                    {process.user ?? '—'}
+                  </span>
+                )}
                 <span className={cn('font-mono', process.cpu >= 80 && !focused && 'text-red-vivid')}>
                   {formatCpu(process.cpu)}
                 </span>
                 <span className="font-mono" title={`${formatMemoryPercent(process.memory, memTotal)} of system memory`}>
                   {formatMemoryPercent(process.memory, memTotal)}
                 </span>
-                <span className="font-mono" title={`${process.memory} bytes`}>
-                  {formatBytes(process.memory)}
-                </span>
-                <span className="font-mono" title={`${process.virtual_memory} bytes`}>
-                  {formatBytes(process.virtual_memory)}
-                </span>
-                <span className="truncate font-mono" title={formatElapsed(process)}>
-                  {formatElapsed(process)}
-                </span>
+                {!compact && (
+                  <>
+                    <span className="font-mono" title={`${process.memory} bytes`}>
+                      {formatBytes(process.memory)}
+                    </span>
+                    <span className="font-mono" title={`${process.virtual_memory} bytes`}>
+                      {formatBytes(process.virtual_memory)}
+                    </span>
+                    <span className="truncate font-mono" title={formatElapsed(process)}>
+                      {formatElapsed(process)}
+                    </span>
+                  </>
+                )}
                 <span
                   className="flex min-w-0 items-center"
                   style={{ paddingLeft: treeMode ? `${depth * 1.1}rem` : undefined }}
                 >
-                  {treeMode && (
-                    <span
-                      className={cn('inline-block w-4 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')}
-                      aria-hidden
-                    >
-                      {hasChildren ? (collapsed ? '▸' : '▾') : ' '}
-                    </span>
-                  )}
+                  {treeMode &&
+                    (hasChildren ? (
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        aria-label={`${collapsed ? 'Unfold' : 'Fold'} ${process.name || process.pid}`}
+                        className={cn(
+                          'inline-block w-4 shrink-0 cursor-pointer text-left pointer-coarse:w-6',
+                          focused ? 'text-on-accent/70' : 'text-secondary hover:text-primary',
+                        )}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedPid(process.pid);
+                          toggleCollapsed(process.pid);
+                        }}
+                      >
+                        {collapsed ? '▸' : '▾'}
+                      </button>
+                    ) : (
+                      <span className="inline-block w-4 shrink-0 pointer-coarse:w-6" aria-hidden />
+                    ))}
                   <span className="truncate" title={process.command}>
                     {process.command || process.name}
                   </span>

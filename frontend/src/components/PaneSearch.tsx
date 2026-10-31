@@ -1,6 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import type { SearchState } from '@wterm/dom';
+import { ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Card } from '@astryxdesign/core/Card';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { HStack } from '@astryxdesign/core/Layout';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import { chromePalette, withAlpha } from '../lib/chrome-colors';
+import { plainTextInput } from '../lib/touch';
 import type { PaneTerminal } from '../lib/paneTerminal';
 import type { Theme } from '../state/types';
 
@@ -9,19 +16,17 @@ const MAX_SEARCH_LENGTH = 1024;
 interface Props {
   term: PaneTerminal;
   theme: Theme | null;
-  termFont: number;
   onClose: () => void;
 }
 
 /**
- * Scrollback search for one pane (prefix + /). Enter jumps to the next older
- * match, Shift+Enter to a newer one.
+ * Scrollback search for one pane (prefix + /). Enter or the up button jumps to
+ * the next older match, Shift+Enter or the down button to a newer one.
  */
-export function PaneSearch({ term, theme, termFont, onClose }: Props) {
+export function PaneSearch({ term, theme, onClose }: Props) {
   const c = chromePalette(theme);
   const [query, setQuery] = useState('');
   const [state, setState] = useState<SearchState | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     term.onSearchChange(setState);
@@ -48,47 +53,56 @@ export function PaneSearch({ term, theme, termFont, onClose }: Props) {
     onClose();
     term.focus();
   };
+  // Buttons leave focus in the input, which owns Enter and the key bar's keys.
+  const keepFocus = (e: MouseEvent) => e.preventDefault();
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '6px 10px',
-        background: withAlpha(c.panelBg, 0.95),
-        border: `1px solid ${c.border}`,
-        borderRadius: 8,
-        boxShadow: `0 8px 30px ${withAlpha('#000000', 0.35)}`,
-        color: c.fg,
-        fontSize: Math.max(10, Math.round(termFont * 0.85)),
-        zIndex: 5,
+    <Card
+      padding={1}
+      elevation="high"
+      className="absolute top-2 right-2 z-5 max-w-[calc(100%-1rem)]"
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') close();
       }}
     >
-      <input
-        ref={inputRef}
-        autoFocus
-        aria-label="Search scrollback"
-        placeholder="search"
-        maxLength={MAX_SEARCH_LENGTH}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === 'Escape') close();
-          else if (e.key === 'Enter') step(e.shiftKey ? 1 : -1);
-        }}
-        style={{ width: '16em', background: 'transparent', outline: 'none', color: c.fg }}
-      />
-      <span style={{ color: c.fgMuted, minWidth: '5em', textAlign: 'right' }}>
-        {query && state ? (state.count ? `${state.activeIndex + 1}/${state.count}` : 'no match') : ''}
-      </span>
-      <button type="button" aria-label="Close search" onClick={close} style={{ color: c.fgMuted, cursor: 'pointer' }}>
-        ×
-      </button>
-    </div>
+      <HStack gap={1} vAlign="center">
+        <TextInput
+          ref={plainTextInput}
+          label="Search scrollback"
+          isLabelHidden
+          size="sm"
+          placeholder="Search"
+          hasAutoFocus
+          autoComplete="off"
+          value={query}
+          onChange={(value) => setQuery(value.slice(0, MAX_SEARCH_LENGTH))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') step(e.shiftKey ? 1 : -1);
+          }}
+          containerClassName="w-48 min-w-0 shrink"
+        />
+        <Text size="sm" color="secondary" textWrap="nowrap" className="min-w-[4.5em] text-end tabular-nums">
+          {query && state ? (state.count ? `${state.activeIndex + 1}/${state.count}` : 'no match') : ''}
+        </Text>
+        <IconButton
+          label="Older match"
+          icon={<ChevronUp />}
+          variant="ghost"
+          size="sm"
+          onMouseDown={keepFocus}
+          onClick={() => step(-1)}
+        />
+        <IconButton
+          label="Newer match"
+          icon={<ChevronDown />}
+          variant="ghost"
+          size="sm"
+          onMouseDown={keepFocus}
+          onClick={() => step(1)}
+        />
+        <IconButton label="Close search" icon={<X />} variant="ghost" size="sm" onClick={close} />
+      </HStack>
+    </Card>
   );
 }

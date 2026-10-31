@@ -108,6 +108,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/nvim/file", axum::routing::get(api_nvim_file))
         .route("/api/vscode", get(crate::vscode::status))
         .route("/api/update", get(crate::update_check::status))
+        .route("/api/system", get(crate::system_info::handle))
         .route("/api/wallpaper/check", get(api_wallpaper_check))
         .route(
             "/api/vscode/license",

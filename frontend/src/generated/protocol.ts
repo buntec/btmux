@@ -348,6 +348,45 @@ export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "st
 export type UpdateStatus = { "state": "disabled" } | { "state": "current", latest: string, } | { "state": "available", latest: string, url: string, } | { "state": "error", message: string, };
 
 // prettier-ignore
+export type SystemInfo = { user: string | null, host_name: string | null,
+/**
+ * "macOS 26.0 Tahoe", "Ubuntu 24.04 LTS".
+ */
+os: string | null,
+/**
+ * `ID` from os-release, or "macos"/"windows".
+ */
+os_id: string, arch: string,
+/**
+ * Hardware vendor and model.
+ */
+model: string | null, kernel: string | null, uptime: number,
+/**
+ * The shell new panes run, with its version when it reports one.
+ */
+shell: string, cpu: CpuInfo | null, memory: Usage, swap: Usage, disks: Array<DiskInfo>, addresses: Array<Address>,
+/**
+ * 1, 5, and 15 minute load; `null` where the OS has none.
+ */
+load: [number, number, number] | null, processes: number, locale: string | null, };
+
+// prettier-ignore
+export type CpuInfo = { brand: string, threads: number, cores: number | null, mhz: number, };
+
+// prettier-ignore
+export type Usage = { used: number, total: number, };
+
+// prettier-ignore
+export type DiskInfo = { mount: string, file_system: string, usage: Usage, removable: boolean, };
+
+// prettier-ignore
+export type Address = { interface: string,
+/**
+ * CIDR notation.
+ */
+address: string, };
+
+// prettier-ignore
 export type TailscaleStatus = { "state": "starting" } | { "state": "serving", url: string, } | { "state": "error", message: string, };
 
 // prettier-ignore

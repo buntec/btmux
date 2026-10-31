@@ -220,7 +220,7 @@ export function Overlay({ sessionId, send, config }: Props) {
   const changeOpen = (open: boolean) => {
     if (!open) close();
   };
-  if (overlay.mode === 'info') return <InfoDialog onClose={close} />;
+  if (overlay.mode === 'info') return <InfoDialog initialTab={overlay.tab} onClose={close} />;
   if (overlay.mode === 'config-error') return <ConfigErrorDialog onClose={close} />;
   if (overlay.mode === 'confirm')
     return (
@@ -292,6 +292,10 @@ export function Overlay({ sessionId, send, config }: Props) {
           }
           if (id === 'about') {
             setOverlay({ mode: 'info', title: 'About btmux' });
+            return;
+          }
+          if (id === 'system-info') {
+            setOverlay({ mode: 'info', title: 'About btmux', tab: 'system' });
             return;
           }
           if (id === 'toggle-latex') {

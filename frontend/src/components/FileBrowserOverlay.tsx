@@ -38,6 +38,7 @@ import type {
   GitCommitDiffResult,
   GitOp,
   GitRefsResult,
+  WorktreeOp,
   FileDiff,
   TreeNode,
   FileSearchResult,
@@ -440,10 +441,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, currentPath, applyGitChange],
   );
 
-  const gitLoadRefs = useCallback(async () => {
-    const resp = await fileSend('git_refs', { cwd: currentPath });
-    return resp.payload as unknown as GitRefsResult;
-  }, [fileSend, currentPath]);
+  const gitLoadRefs = useCallback(
+    async (worktrees: boolean) => {
+      const resp = await fileSend('git_refs', { cwd: currentPath, worktrees });
+      return resp.payload as unknown as GitRefsResult;
+    },
+    [fileSend, currentPath],
+  );
 
   const gitRun = useCallback(
     async (op: GitOp) => {
@@ -453,6 +457,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       return payload.output;
     },
     [fileSend, currentPath, applyGitChange],
+  );
+
+  const gitRunWorktree = useCallback(
+    async (op: WorktreeOp) => {
+      const resp = await fileSend('git_worktree', { cwd: currentPath, session_id: sessionId, op });
+      // No status when the op visits the worktree, which closes the browser.
+      const payload = resp.payload as { status: GitStatusResult | null; output: string };
+      if (payload.status) await applyGitChange(payload.status);
+      return payload.output;
+    },
+    [fileSend, currentPath, sessionId, applyGitChange],
   );
 
   const trashFile = useCallback(
@@ -1708,7 +1723,16 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       <div className="contents" style={DEFAULT_TYPE_SCALE}>
         <CreateEntryModal open={createModalOpen} onOpenChange={handleCreateModalOpenChange} onCreate={createEntry} />
         <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
-        <GitPopup kind={gitPopup} onClose={closeGitPopup} loadRefs={gitLoadRefs} run={gitRun} />
+        <GitPopup
+          kind={gitPopup}
+          sessionId={sessionId}
+          paneId={paneId}
+          onClose={closeGitPopup}
+          onLeave={onClose}
+          loadRefs={gitLoadRefs}
+          run={gitRun}
+          runWorktree={gitRunWorktree}
+        />
       </div>
     </VStack>
   );
@@ -1720,6 +1744,8 @@ const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
   F: 'pull',
   P: 'push',
   z: 'stash',
+  // Magit's worktree key.
+  '%': 'worktree',
 };
 
 const DEFAULT_DIFF_CONTEXT = 3;

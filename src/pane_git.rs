@@ -295,7 +295,7 @@ fn resolve(dir: &Path) -> Option<(PathBuf, Worktree)> {
 
 /// `dir` with symlinks resolved, as git finds its repo. Unchanged on Windows,
 /// where a UNC path (WSL) would become a verbatim `\\?\UNC\` one.
-fn real_path(dir: &Path) -> PathBuf {
+pub(crate) fn real_path(dir: &Path) -> PathBuf {
     #[cfg(unix)]
     if let Ok(real) = dir.canonicalize() {
         return real;

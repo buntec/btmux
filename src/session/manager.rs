@@ -732,6 +732,10 @@ impl SessionManager {
         unread
     }
 
+    pub fn has_session(&self, session_id: Uuid) -> bool {
+        self.sessions.iter().any(|s| s.id == session_id)
+    }
+
     fn session_mut(&mut self, session_id: Uuid) -> Option<&mut Session> {
         self.sessions.iter_mut().find(|s| s.id == session_id)
     }

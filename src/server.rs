@@ -60,6 +60,7 @@ pub fn info_routes(info: ServerInfo) -> Router {
 pub fn create_app(state: AppState) -> Router {
     let files_state = Arc::new(ws::files::FilesState {
         file_index: Arc::new(FileIndex::new()),
+        app: state.clone(),
     });
 
     Router::new()

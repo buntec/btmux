@@ -13,6 +13,8 @@ use crate::fs_ops;
 
 pub struct FilesState {
     pub file_index: Arc<FileIndex>,
+    /// For worktree operations, which open and close windows.
+    pub app: crate::AppState,
 }
 
 #[derive(Debug, Deserialize)]
@@ -452,9 +454,14 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("cwd")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
+            let worktrees = request
+                .payload
+                .get("worktrees")
+                .and_then(|p| p.as_bool())
+                .unwrap_or(false);
             let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
-            match file_git_ops::git_refs(&git_root).await {
+            match file_git_ops::git_refs(&git_root, worktrees).await {
                 Ok(result) => ServerMessage {
                     id,
                     msg_type: "git_refs_result".to_string(),
@@ -492,6 +499,51 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                     payload: serde_json::json!({ "status": status, "output": output }),
                 },
                 Err(e) => error_response(id, &e),
+            }
+        }
+        "git_worktree" => {
+            let cwd = request
+                .payload
+                .get("cwd")
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+            let session_id = request
+                .payload
+                .get("session_id")
+                .and_then(|p| p.as_str())
+                .and_then(|s| uuid::Uuid::parse_str(s).ok());
+            let op = match request
+                .payload
+                .get("op")
+                .cloned()
+                .map(serde_json::from_value::<crate::worktree::Op>)
+            {
+                Some(Ok(op)) => op,
+                Some(Err(e)) => return error_response(id, &format!("Invalid worktree op: {}", e)),
+                None => return error_response(id, "Missing worktree op"),
+            };
+            let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
+
+            // The browser closes to show the worktree's window.
+            let navigates = op.navigates();
+            let output = match crate::worktree::run(&state.app, session_id, &status_root, op).await
+            {
+                Ok(output) => output,
+                Err(e) => return error_response(id, &e.to_string()),
+            };
+            // The op succeeded either way.
+            let status = if navigates {
+                None
+            } else {
+                file_git::git_status(&status_root, true)
+                    .await
+                    .inspect_err(|e| tracing::warn!("git status after a worktree op: {e}"))
+                    .ok()
+            };
+            ServerMessage {
+                id,
+                msg_type: "git_worktree_result".to_string(),
+                payload: serde_json::json!({ "status": status, "output": output }),
             }
         }
         "rename_file" => {

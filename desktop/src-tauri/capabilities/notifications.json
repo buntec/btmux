@@ -15,6 +15,7 @@
   "permissions": [
     "allow-notify",
     "allow-desktop-info",
-    "allow-switch-server"
+    "allow-switch-server",
+    "allow-zoom"
   ]
 }

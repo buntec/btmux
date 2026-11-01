@@ -12,6 +12,7 @@ fn main() {
             "connect_remote_server",
             "notify",
             "desktop_info",
+            "zoom",
         ]),
     ))
     .expect("build desktop permissions")

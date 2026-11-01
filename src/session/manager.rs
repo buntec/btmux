@@ -672,7 +672,7 @@ impl SessionManager {
             .filter(|p| {
                 p.pty.local_cwd().is_some_and(|cwd| {
                     let cwd = std::path::Path::new(&cwd);
-                    under(cwd) || cwd.canonicalize().is_ok_and(|cwd| under(&cwd))
+                    under(cwd) || under(&crate::pane_git::real_path(cwd))
                 })
             })
             .map(|p| p.id)

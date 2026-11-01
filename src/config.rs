@@ -529,6 +529,23 @@ pub enum VscodeServer {
     OpenvscodeServer,
 }
 
+/// `[vscode]`: the server behind the VS Code surface and what it shares with
+/// desktop VS Code. Read when VS Code starts (extensions) or when a VS Code
+/// window connects (settings, keybindings).
+#[derive(Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct VscodeConfig {
+    pub server: VscodeServer,
+    /// Use desktop VS Code's user settings, keybindings, and extensions.
+    pub desktop: bool,
+    /// A `settings.json` to use instead of desktop VS Code's.
+    pub settings: Option<String>,
+    /// A `keybindings.json` to use instead of desktop VS Code's.
+    pub keybindings: Option<String>,
+    /// Extension folders, or folders of them, to use instead of desktop VS Code's.
+    pub extensions: Option<Vec<String>>,
+}
+
 impl Editor {
     /// The default: Neovim if the built-in one can start, else the pane.
     fn detect() -> Self {
@@ -681,9 +698,8 @@ pub struct FileConfig {
     pub window_sort: WindowSort,
     /// The editor `prefix + e`, the file browser, and Git mode open.
     pub editor: Option<Editor>,
-    /// The server behind VS Code. Read when it starts.
-    #[serde(rename = "vscode-server", default)]
-    pub vscode_server: VscodeServer,
+    /// VS Code's server and what it shares with desktop VS Code.
+    pub vscode: VscodeConfig,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -748,7 +764,7 @@ impl Default for FileConfig {
             session_sort: SessionSort::default(),
             window_sort: WindowSort::default(),
             editor: None,
-            vscode_server: VscodeServer::default(),
+            vscode: VscodeConfig::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -1175,8 +1191,10 @@ pub struct ClientConfig {
     pub editor: Editor,
     /// The built-in editors the server can run, for the toolbar and palette.
     pub editors: Vec<Editor>,
-    /// The server behind VS Code.
-    pub vscode_server: VscodeServer,
+    /// VS Code's server and sharing; used by the backend only.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub vscode: VscodeConfig,
     /// How many recently-viewed windows the window-grid (`prefix + w`) shows.
     pub window_grid_count: u32,
     /// btmux version (compile-time `CARGO_PKG_VERSION`), shown in the UI.
@@ -1651,11 +1669,6 @@ pub fn generate_config_toml() -> String {
 # "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell.
 # editor = "neovim"
 
-# The server behind VS Code, read when it starts.
-# "code" = `code serve-web` from an installed VS Code (default),
-# "openvscode-server" = openvscode-server on PATH.
-# vscode-server = "code"
-
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
 # window-grid-count = {DEFAULT_WINDOW_GRID_COUNT}
@@ -1702,6 +1715,14 @@ pub fn generate_config_toml() -> String {
 # [log]
 # console-level = "{DEFAULT_CONSOLE_LOG}"    # stderr output (keep the terminal quiet)
 # file-level = "{DEFAULT_FILE_LOG}"       # file output ($XDG_STATE_HOME/btmux/log/btmux.log.YYYY-MM-DD, falling back to ~/.local/state/btmux/)
+
+# VS Code (editor = "vscode").
+# [vscode]
+# server = "code"   # "code" = `code serve-web` from an installed VS Code, "openvscode-server" = on PATH; read when it starts
+# desktop = false   # use desktop VS Code's settings, keybindings, and extensions
+# settings = "~/.config/Code/User/settings.json"   # instead of desktop VS Code's
+# keybindings = "~/.config/Code/User/keybindings.json"
+# extensions = ["~/.vscode/extensions"]   # extension folders, or folders of them
 
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.
@@ -1981,12 +2002,12 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         editor: file.editor.unwrap_or_else(Editor::detect),
         editors: [
             (Editor::Neovim, crate::ws::nvim::available()),
-            (Editor::Vscode, crate::vscode::available(file.vscode_server)),
+            (Editor::Vscode, crate::vscode::available(file.vscode.server)),
         ]
         .into_iter()
         .filter_map(|(editor, available)| available.then_some(editor))
         .collect(),
-        vscode_server: file.vscode_server,
+        vscode: file.vscode.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
         color_schemes,
@@ -2611,6 +2632,32 @@ palette:
         let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.backdrop_blur, 50.0);
         assert_eq!(resolved.backdrop_dim, 0.1);
+    }
+
+    #[test]
+    fn vscode_table_parses_and_the_generated_example_is_valid() {
+        let file: FileConfig = toml::from_str(
+            "[vscode]\nserver = \"openvscode-server\"\ndesktop = true\nextensions = [\"~/x\"]",
+        )
+        .unwrap();
+        assert_eq!(file.vscode.server, VscodeServer::OpenvscodeServer);
+        assert!(file.vscode.desktop);
+        assert_eq!(file.vscode.extensions, Some(vec!["~/x".to_string()]));
+        assert!(toml::from_str::<FileConfig>("vscode-server = \"code\"").is_err());
+
+        let example = generate_config_toml();
+        let table = example
+            .lines()
+            .skip_while(|line| *line != "# [vscode]")
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| line.trim_start_matches('#').trim_start())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: FileConfig = toml::from_str(&table).unwrap();
+        assert_eq!(
+            file.vscode.keybindings.as_deref(),
+            Some("~/.config/Code/User/keybindings.json")
+        );
     }
 
     #[test]

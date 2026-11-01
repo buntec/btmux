@@ -5,8 +5,10 @@
 //!
 //! The bundled extension (`extras/vscode`) is installed into the profile's
 //! extensions and connects back over a second private socket
-//! (`BTMUX_VSCODE_SOCKET`), which carries newline-delimited JSON: the color
-//! palette and terminal font, and files to open.
+//! (`BTMUX_VSCODE_SOCKET`), which carries newline-delimited JSON: user
+//! settings and keybindings to use, the color palette and terminal font, and
+//! files to open. With `[vscode] desktop` (or explicit paths), btmux shares
+//! desktop VS Code's settings, keybindings, and extensions.
 //!
 //! Not yet supported on Windows.
 #![cfg_attr(windows, allow(dead_code))]
@@ -37,7 +39,8 @@ use tokio::sync::{broadcast, watch, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::config::{
-    ClientConfig, VscodeServer as Kind, DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE, DEFAULT_FONT_WEIGHT,
+    ClientConfig, VscodeConfig, VscodeServer as Kind, DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE,
+    DEFAULT_FONT_WEIGHT,
 };
 use crate::ws::nvim::PrivateDir;
 
@@ -49,13 +52,16 @@ const MACOS_CODE: &str = "/Applications/Visual Studio Code.app/Contents/Resource
 const LICENSE_FILE: &str = "license-accepted";
 
 static SERVER: LazyLock<Mutex<Option<Server>>> = LazyLock::new(|| Mutex::new(None));
-/// Which server to start; from `vscode-server`.
+/// Which server to start; from `[vscode] server`.
 static KIND: std::sync::Mutex<Kind> = std::sync::Mutex::new(Kind::Code);
 /// Accepted without a profile to remember it in.
 static LICENSE_ACCEPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Per-profile user data and extensions.
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// What VS Code shares with desktop VS Code.
+static SHARED: LazyLock<watch::Sender<Shared>> =
+    LazyLock::new(|| watch::channel(Shared::default()).0);
 /// The `style` message for the current color scheme and terminal font.
 static STYLE: LazyLock<watch::Sender<Option<String>>> = LazyLock::new(|| watch::channel(None).0);
 /// `open` messages for connected extension hosts.
@@ -100,14 +106,81 @@ impl Drop for Server {
     }
 }
 
+/// A settings, keybindings, or extensions path, and whether it was configured
+/// explicitly rather than found as desktop VS Code's (missing is then an error).
+#[derive(Clone, Debug, PartialEq)]
+struct Source {
+    path: PathBuf,
+    explicit: bool,
+}
+
+/// Desktop VS Code's (or configured) user files, sent to each VS Code window,
+/// and extension folders, linked when the server starts.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Shared {
+    settings: Option<Source>,
+    keybindings: Option<Source>,
+    extensions: Vec<Source>,
+}
+
+impl Shared {
+    fn new(config: &VscodeConfig) -> Self {
+        let explicit = |value: &String| Source {
+            path: expand_home(value),
+            explicit: true,
+        };
+        let desktop = |path: Option<PathBuf>| {
+            path.filter(|_| config.desktop).map(|path| Source {
+                path,
+                explicit: false,
+            })
+        };
+        // `~/Library/Application Support/Code/User` on macOS, else `$XDG_CONFIG_HOME/Code/User`.
+        let user = dirs::config_dir().map(|dir| dir.join("Code").join("User"));
+        Self {
+            settings: config
+                .settings
+                .as_ref()
+                .map(explicit)
+                .or_else(|| desktop(user.as_ref().map(|dir| dir.join("settings.json")))),
+            keybindings: config
+                .keybindings
+                .as_ref()
+                .map(explicit)
+                .or_else(|| desktop(user.as_ref().map(|dir| dir.join("keybindings.json")))),
+            extensions: match &config.extensions {
+                Some(dirs) => dirs.iter().map(explicit).collect(),
+                None => desktop(dirs::home_dir().map(|home| home.join(".vscode/extensions")))
+                    .into_iter()
+                    .collect(),
+            },
+        }
+    }
+}
+
+fn expand_home(value: &str) -> PathBuf {
+    match (value.strip_prefix("~/"), dirs::home_dir()) {
+        (Some(rest), Some(home)) => home.join(rest),
+        _ => PathBuf::from(value),
+    }
+}
+
 pub fn set_data_dir(dir: PathBuf) {
     let _ = DATA_DIR.set(dir);
 }
 
-/// Pick the server to start next, and show the btmux color scheme and
-/// terminal font in VS Code.
+/// Pick the server to start next, what to share with desktop VS Code, and show
+/// the btmux color scheme and terminal font in VS Code.
 pub fn configure(config: &ClientConfig) {
-    *KIND.lock().unwrap() = config.vscode_server;
+    *KIND.lock().unwrap() = config.vscode.server;
+    let shared = Shared::new(&config.vscode);
+    SHARED.send_if_modified(|current| {
+        let changed = *current != shared;
+        if changed {
+            *current = shared;
+        }
+        changed
+    });
     let terminal = &config.terminal;
     let message = serde_json::json!({
         "type": "style",
@@ -177,10 +250,7 @@ fn install_extension(extensions: &Path) -> Result<(), String> {
     }
 
     let registry = extensions.join("extensions.json");
-    let mut entries: Vec<serde_json::Value> = std::fs::read(&registry)
-        .ok()
-        .and_then(|data| serde_json::from_slice(&data).ok())
-        .unwrap_or_default();
+    let mut entries = read_registry(&registry);
     let ours = |entry: &serde_json::Value| {
         entry["identifier"]["id"]
             .as_str()
@@ -202,6 +272,238 @@ fn install_extension(extensions: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The entries of an `extensions.json`, or none.
+fn read_registry(path: &Path) -> Vec<serde_json::Value> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default()
+}
+
+/// An extension's `publisher.name` and version, from its manifest.
+fn manifest_id(dir: &Path) -> Option<(String, String)> {
+    manifest_id_from(&std::fs::read(dir.join("package.json")).ok()?)
+}
+
+fn manifest_id_from(data: &[u8]) -> Option<(String, String)> {
+    let manifest: serde_json::Value = serde_json::from_slice(data).ok()?;
+    Some((
+        format!(
+            "{}.{}",
+            manifest["publisher"].as_str()?,
+            manifest["name"].as_str()?
+        ),
+        manifest["version"].as_str()?.to_owned(),
+    ))
+}
+
+/// The extension folders in `source`: itself if it is one, else those its
+/// `extensions.json` registers (as desktop VS Code and Home Manager keep
+/// them), else its subfolders.
+fn find_extensions(source: &Path) -> std::io::Result<Vec<PathBuf>> {
+    if source.join("package.json").is_file() {
+        return Ok(vec![source.to_owned()]);
+    }
+    let registry = source.join("extensions.json");
+    let found: Vec<PathBuf> = if registry.is_file() {
+        // Folders VS Code has uninstalled or replaced but not yet deleted.
+        let obsolete: serde_json::Map<String, serde_json::Value> =
+            std::fs::read(source.join(".obsolete"))
+                .ok()
+                .and_then(|data| serde_json::from_slice(&data).ok())
+                .unwrap_or_default();
+        read_registry(&registry)
+            .iter()
+            .filter_map(|entry| match &entry["relativeLocation"] {
+                serde_json::Value::String(relative) => Some(source.join(relative)),
+                _ => match &entry["location"] {
+                    serde_json::Value::String(location) => Some(source.join(location)),
+                    location => location["path"].as_str().map(PathBuf::from),
+                },
+            })
+            .filter(|dir| {
+                dir.file_name()
+                    .is_none_or(|name| !obsolete.contains_key(&*name.to_string_lossy()))
+            })
+            .collect()
+    } else {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(source)?
+            .flatten()
+            .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+            .map(|entry| entry.path())
+            .collect();
+        dirs.sort();
+        dirs
+    };
+    Ok(found
+        .into_iter()
+        .filter(|dir| dir.join("package.json").is_file())
+        .collect())
+}
+
+/// Register the extensions in `sources` in `extensions`' `extensions.json` by
+/// absolute location, replacing those `linked` lists from last time and other
+/// installs of the same extensions. The bundled extension stays as it is.
+fn link_extensions(extensions: &Path, linked: &Path, sources: &[Source]) -> Result<(), String> {
+    let error = |path: &Path, e: std::io::Error| format!("{}: {e}", path.display());
+    let bundled = Extension::get("package.json")
+        .and_then(|file| manifest_id_from(&file.data))
+        .map(|(id, _)| id.to_ascii_lowercase());
+    let mut wanted: Vec<serde_json::Value> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    for source in sources {
+        let dirs = match find_extensions(&source.path) {
+            Ok(dirs) => dirs,
+            Err(e) if !source.explicit && e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                tracing::warn!("VS Code extensions: {}", error(&source.path, e));
+                continue;
+            }
+        };
+        for dir in dirs {
+            let Some((id, version)) = manifest_id(&dir) else {
+                tracing::warn!("VS Code extension without an id: {}", dir.display());
+                continue;
+            };
+            let key = id.to_ascii_lowercase();
+            if bundled.as_ref() == Some(&key) || ids.contains(&key) {
+                continue;
+            }
+            ids.push(key);
+            wanted.push(serde_json::json!({
+                "identifier": { "id": id },
+                "version": version,
+                "location": { "$mid": 1, "path": dir, "scheme": "file" },
+            }));
+        }
+    }
+
+    let previous: Vec<String> = std::fs::read(linked)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default();
+    let registry = extensions.join("extensions.json");
+    let original = read_registry(&registry);
+    let mut entries: Vec<serde_json::Value> = original
+        .iter()
+        .filter(|entry| {
+            entry["identifier"]["id"].as_str().is_none_or(|id| {
+                let id = id.to_ascii_lowercase();
+                !previous.contains(&id) && !ids.contains(&id)
+            })
+        })
+        .cloned()
+        .collect();
+    entries.extend(wanted);
+    if entries != original {
+        std::fs::create_dir_all(extensions).map_err(|e| error(extensions, e))?;
+        std::fs::write(&registry, serde_json::to_vec(&entries).unwrap())
+            .map_err(|e| error(&registry, e))?;
+    }
+    if previous != ids {
+        std::fs::write(linked, serde_json::to_vec(&ids).unwrap()).map_err(|e| error(linked, e))?;
+    }
+    Ok(())
+}
+
+/// Parse JSON with comments and trailing commas, as VS Code's settings allow.
+fn parse_jsonc(text: &str) -> serde_json::Result<serde_json::Value> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    // Drop comments.
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            plain.push(c);
+            match c {
+                '\\' => plain.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('/', Some('/')) => while chars.next_if(|&c| c != '\n').is_some() {},
+            ('/', Some('*')) => {
+                chars.next();
+                let mut last = ' ';
+                for c in chars.by_ref() {
+                    if last == '*' && c == '/' {
+                        break;
+                    }
+                    last = c;
+                }
+                plain.push(' ');
+            }
+            _ => {
+                in_string = c == '"';
+                plain.push(c);
+            }
+        }
+    }
+    // Drop trailing commas.
+    let mut json = String::with_capacity(plain.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in plain.char_indices() {
+        if in_string {
+            in_string = escaped || c != '"';
+            escaped = !escaped && c == '\\';
+        } else if c == '"' {
+            in_string = true;
+        } else if c == ',' && plain[i + 1..].trim_start().starts_with(['}', ']']) {
+            continue;
+        }
+        json.push(c);
+    }
+    serde_json::from_str(&json)
+}
+
+/// Read a shared settings or keybindings file. Desktop VS Code's may be missing.
+async fn read_user_file(source: &Source) -> Option<serde_json::Value> {
+    let path = source.path.display();
+    let text = match tokio::fs::read_to_string(&source.path).await {
+        Ok(text) => text,
+        Err(e) if !source.explicit && e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::warn!("VS Code: {path}: {e}");
+            return None;
+        }
+    };
+    if text.trim().is_empty() {
+        return None;
+    }
+    parse_jsonc(&text)
+        .inspect_err(|e| tracing::warn!("VS Code: {path}: {e}"))
+        .ok()
+}
+
+/// The `user` message: settings and keybindings for VS Code's user files, each
+/// `null` to leave that file alone.
+async fn user_message(shared: &Shared) -> Option<String> {
+    let mut settings = None;
+    if let Some(source) = &shared.settings {
+        settings = read_user_file(source).await;
+        if settings.as_ref().is_some_and(|value| !value.is_object()) {
+            tracing::warn!("VS Code: {}: not an object", source.path.display());
+            settings = None;
+        }
+    }
+    let mut keybindings = None;
+    if let Some(source) = &shared.keybindings {
+        keybindings = read_user_file(source).await;
+        if keybindings.as_ref().is_some_and(|value| !value.is_array()) {
+            tracing::warn!("VS Code: {}: not an array", source.path.display());
+            keybindings = None;
+        }
+    }
+    (settings.is_some() || keybindings.is_some()).then(|| {
+        serde_json::json!({ "type": "user", "settings": settings, "keybindings": keybindings })
+            .to_string()
+    })
+}
+
 /// Accept connections from the bundled extension.
 #[cfg(unix)]
 fn listen_for_extension(path: &Path) -> Result<JoinHandle<()>, String> {
@@ -213,11 +515,14 @@ fn listen_for_extension(path: &Path) -> Result<JoinHandle<()>, String> {
     }))
 }
 
-/// Send the style, a pending or recent open, and then every change, until it
-/// disconnects.
+/// Send the user files, the style, a pending or recent open, and then every
+/// change, until it disconnects.
 #[cfg(unix)]
 async fn serve_extension(stream: UnixStream) {
     let (mut reader, mut writer) = stream.into_split();
+    let mut shared = SHARED.subscribe();
+    let current = shared.borrow_and_update().clone();
+    let user = user_message(&current).await;
     let mut style = STYLE.subscribe();
     let mut opens = OPENS.subscribe();
     let recent = LAST_OPEN
@@ -226,10 +531,9 @@ async fn serve_extension(stream: UnixStream) {
         .as_ref()
         .filter(|(at, _)| at.is_none_or(|at| at.elapsed() < OPEN_REPLAY))
         .map(|(_, message)| message.clone());
-    let mut pending: Vec<String> = style
-        .borrow_and_update()
-        .clone()
+    let mut pending: Vec<String> = user
         .into_iter()
+        .chain(style.borrow_and_update().clone())
         .chain(recent)
         .collect();
     let mut buf = [0u8; 64];
@@ -249,6 +553,13 @@ async fn serve_extension(stream: UnixStream) {
             }
         }
         tokio::select! {
+            changed = shared.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                let current = shared.borrow_and_update().clone();
+                pending.extend(user_message(&current).await);
+            }
             changed = style.changed() => {
                 if changed.is_err() {
                     return;
@@ -356,8 +667,14 @@ fn spawn(kind: Kind) -> Result<Server, String> {
         None => directory.path().join("data"),
     };
     // Both servers keep extensions under `<data>/extensions`.
-    if let Err(error) = install_extension(&data.join("extensions")) {
+    let extensions = data.join("extensions");
+    if let Err(error) = install_extension(&extensions) {
         tracing::warn!("btmux VS Code extension: {error}");
+    }
+    let sources = SHARED.borrow().extensions.clone();
+    if let Err(error) = link_extensions(&extensions, &data.join("linked-extensions.json"), &sources)
+    {
+        tracing::warn!("VS Code extensions: {error}");
     }
     let extension_socket = directory.path().join("btmux.sock");
     let mut child = server_command(kind, &data)?
@@ -614,5 +931,173 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parses_settings_with_comments_and_trailing_commas() {
+        let value = parse_jsonc(
+            "\u{feff}{\n  // line\n  \"a\": \"//not a comment\", /* block */\n  \"b\": [1, 2,],\n  \"c\": \"q\\\",\",\n}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({ "a": "//not a comment", "b": [1, 2], "c": "q\"," })
+        );
+        assert!(parse_jsonc("{\"a\": }").is_err());
+    }
+
+    fn write_extension(dir: &Path, publisher: &str, name: &str, version: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            serde_json::json!({ "publisher": publisher, "name": name, "version": version })
+                .to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn links_shared_extensions_and_replaces_them_later() {
+        let root =
+            std::env::temp_dir().join(format!("btmux-vscode-{}", uuid::Uuid::new_v4().simple()));
+        let extensions = root.join("data/extensions");
+        let linked = root.join("data/linked-extensions.json");
+        // A desktop folder registered by `extensions.json`, with an obsolete entry.
+        let desktop = root.join("desktop");
+        write_extension(
+            &desktop.join("vscodevim.vim-1.0.0"),
+            "vscodevim",
+            "vim",
+            "1.0.0",
+        );
+        write_extension(&desktop.join("old.ext-1.0.0"), "old", "ext", "1.0.0");
+        write_extension(
+            &root.join("store/rust"),
+            "rust-lang",
+            "rust-analyzer",
+            "0.4.0",
+        );
+        std::fs::write(
+            desktop.join("extensions.json"),
+            serde_json::json!([
+                { "identifier": { "id": "vscodevim.vim" }, "version": "1.0.0",
+                  "location": { "$mid": 1, "path": "/elsewhere", "scheme": "file" },
+                  "relativeLocation": "vscodevim.vim-1.0.0" },
+                { "identifier": { "id": "old.ext" }, "version": "1.0.0",
+                  "relativeLocation": "old.ext-1.0.0" },
+                { "identifier": { "id": "rust-lang.rust-analyzer" }, "version": "0.4.0",
+                  "location": { "$mid": 1, "path": root.join("store/rust"), "scheme": "file" } },
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(desktop.join(".obsolete"), r#"{"old.ext-1.0.0":true}"#).unwrap();
+        // A folder of extensions without a registry, and a single extension.
+        let folder = root.join("folder");
+        write_extension(&folder.join("a"), "Pub", "a", "2.0.0");
+        write_extension(&folder.join("vim"), "vscodevim", "vim", "0.9.0");
+        write_extension(&root.join("single"), "pub", "single", "3.0.0");
+        // Installed in btmux before: one replaced by a shared one, one kept.
+        std::fs::create_dir_all(&extensions).unwrap();
+        std::fs::write(
+            extensions.join("extensions.json"),
+            r#"[{"identifier":{"id":"btmux.btmux"},"version":"0.0.1","relativeLocation":"btmux.btmux-0.0.1"},
+                {"identifier":{"id":"pub.A"},"version":"1.0.0","relativeLocation":"pub.a-1.0.0"},
+                {"identifier":{"id":"user.ext"},"version":"1.0.0","relativeLocation":"user.ext-1.0.0"}]"#,
+        )
+        .unwrap();
+        let source = |path: PathBuf| Source {
+            path,
+            explicit: true,
+        };
+        let registered = || -> Vec<(String, Option<String>)> {
+            read_registry(&extensions.join("extensions.json"))
+                .iter()
+                .map(|entry| {
+                    (
+                        entry["identifier"]["id"].as_str().unwrap().to_owned(),
+                        entry["location"]["path"].as_str().map(str::to_owned),
+                    )
+                })
+                .collect()
+        };
+        let path = |p: PathBuf| Some(p.to_string_lossy().into_owned());
+
+        link_extensions(
+            &extensions,
+            &linked,
+            &[
+                source(desktop.clone()),
+                source(folder.clone()),
+                source(root.join("single")),
+                source(root.join("missing")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            registered(),
+            [
+                ("btmux.btmux".into(), None),
+                ("user.ext".into(), None),
+                (
+                    "vscodevim.vim".into(),
+                    path(desktop.join("vscodevim.vim-1.0.0"))
+                ),
+                (
+                    "rust-lang.rust-analyzer".into(),
+                    path(root.join("store/rust"))
+                ),
+                ("Pub.a".into(), path(folder.join("a"))),
+                ("pub.single".into(), path(root.join("single"))),
+            ]
+        );
+
+        // Unchanged sources rewrite nothing; removed ones are unlinked.
+        let modified = std::fs::metadata(extensions.join("extensions.json"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let sources = [
+            source(desktop.clone()),
+            source(folder.clone()),
+            source(root.join("single")),
+        ];
+        link_extensions(&extensions, &linked, &sources).unwrap();
+        assert_eq!(
+            std::fs::metadata(extensions.join("extensions.json"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            modified
+        );
+        link_extensions(&extensions, &linked, &[source(root.join("single"))]).unwrap();
+        assert_eq!(
+            registered(),
+            [
+                ("btmux.btmux".into(), None),
+                ("user.ext".into(), None),
+                ("pub.single".into(), path(root.join("single"))),
+            ]
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn shares_desktop_files_unless_paths_are_given() {
+        assert_eq!(Shared::new(&VscodeConfig::default()), Shared::default());
+        let config: VscodeConfig =
+            toml::from_str("desktop = true\nkeybindings = \"/k.json\"\nextensions = []").unwrap();
+        let shared = Shared::new(&config);
+        let settings = shared.settings.unwrap();
+        assert!(settings.path.ends_with("Code/User/settings.json") && !settings.explicit);
+        assert_eq!(
+            shared.keybindings,
+            Some(Source {
+                path: "/k.json".into(),
+                explicit: true
+            })
+        );
+        assert!(shared.extensions.is_empty());
     }
 }

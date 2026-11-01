@@ -325,9 +325,12 @@ try {
         meta: press({ key: '∫', code: 'KeyB', altKey: true }),
         ctrl: press({ ...at, ctrlKey: true }),
       };
+      const ctrlV = { key: 'v', code: 'KeyV', ctrlKey: true };
+      const legacyCtrlV = press(ctrlV);
       term.write('\x1b[>1u');
       const kitty = press(at);
-      return { platform: navigator.platform, legacy, kitty };
+      const kittyCtrlV = press(ctrlV);
+      return { platform: navigator.platform, legacy, kitty, legacyCtrlV, kittyCtrlV };
     } finally {
       off();
       term.dispose();
@@ -343,6 +346,9 @@ try {
   assert.notEqual(option.legacy.ctrl, '@', 'Ctrl+Option must stay a chord');
   assert.equal(option.kitty, '@', 'Option text must not be a kitty Alt chord');
   console.log('PASS macOS Option text is sent as text, with and without the kitty protocol');
+  assert.equal(option.legacyCtrlV, '\x16', 'macOS Ctrl+V must reach the application');
+  assert.equal(option.kittyCtrlV, '\x1b[118;5u', 'macOS Ctrl+V must be a kitty key');
+  console.log('PASS macOS Ctrl+V is sent as a key, with and without the kitty protocol');
 
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);

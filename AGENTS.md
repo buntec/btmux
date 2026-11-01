@@ -276,7 +276,9 @@ paste event so wterm's paste path (bracketed paste, ESC stripping) applies.
 A paste with an image and no text (which wterm ignores) is uploaded to
 `POST /api/panes/{id}/paste-image` (`paste_image.rs`), saved in a private
 temp dir removed on shutdown, and its path pasted instead; Claude Code and
-Codex attach a pasted image path as an image.
+Codex attach a pasted image path as an image. wterm leaves Ctrl+V to the
+browser as paste; on macOS, which doesn't paste with it, `PaneTerminal`
+marks it delivered so wterm encodes it as a key (Claude Code's image paste).
 wterm keeps cell measurement private, so `measureCell()` reads its CSS cell
 dimensions; the decoration overlay uses the same geometry. `open()` waits for
 fonts before measuring, including for mirrors. Recheck measurement when bumping

@@ -38,6 +38,7 @@ import type {
   GitCommitDiffResult,
   GitOp,
   GitRefsResult,
+  WorktreeOp,
   FileDiff,
   TreeNode,
   FileSearchResult,
@@ -453,6 +454,26 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       return payload.output;
     },
     [fileSend, currentPath, applyGitChange],
+  );
+
+  const gitRunWorktree = useCallback(
+    async (op: WorktreeOp) => {
+      const resp = await fileSend('git_worktree', { cwd: currentPath, session_id: sessionId, op });
+      const payload = resp.payload as { status: GitStatusResult; output: string };
+      // Visiting shows the worktree's new window instead.
+      if (op.kind === 'open' || (op.kind === 'add' && op.visit)) onClose();
+      else await applyGitChange(payload.status);
+      return payload.output;
+    },
+    [fileSend, currentPath, sessionId, onClose, applyGitChange],
+  );
+
+  const gitVisitPane = useCallback(
+    (paneId: string) => {
+      useStore.getState().navigateToPane(paneId);
+      onClose();
+    },
+    [onClose],
   );
 
   const trashFile = useCallback(
@@ -1708,7 +1729,15 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       <div className="contents" style={DEFAULT_TYPE_SCALE}>
         <CreateEntryModal open={createModalOpen} onOpenChange={handleCreateModalOpenChange} onCreate={createEntry} />
         <GitCommitModal open={commitModalOpen} onOpenChange={handleCommitModalOpenChange} onCommit={gitCommit} />
-        <GitPopup kind={gitPopup} onClose={closeGitPopup} loadRefs={gitLoadRefs} run={gitRun} />
+        <GitPopup
+          kind={gitPopup}
+          sessionId={sessionId}
+          onClose={closeGitPopup}
+          loadRefs={gitLoadRefs}
+          run={gitRun}
+          runWorktree={gitRunWorktree}
+          onVisitPane={gitVisitPane}
+        />
       </div>
     </VStack>
   );
@@ -1720,6 +1749,8 @@ const GIT_POPUP_KEYS: Partial<Record<string, GitPopupKind>> = {
   F: 'pull',
   P: 'push',
   z: 'stash',
+  // Magit's worktree key.
+  '%': 'worktree',
 };
 
 const DEFAULT_DIFF_CONTEXT = 3;

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
@@ -12,15 +12,28 @@ import { cn } from '@/lib/utils';
 import { useStore } from '@/state/store';
 import { KeyCap, KeyHint, type Hint } from '../KeyHint';
 import { usePressHint } from '@/hooks/usePressHint';
-import type { GitBranchInfo, GitOp, GitRefsResult } from '@/protocol/file-messages';
+import type { GitBranchInfo, GitOp, GitRefsResult, GitWorktreeInfo, WorktreeOp } from '@/protocol/file-messages';
 
-export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash';
+export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash' | 'worktree';
+
+type PopupOp = GitOp | WorktreeOp;
+
+const WORKTREE_OP_KINDS = new Set<string>(['add', 'open', 'remove', 'lock', 'unlock', 'prune']);
+
+function isWorktreeOp(op: PopupOp): op is WorktreeOp {
+  return WORKTREE_OP_KINDS.has(op.kind);
+}
 
 interface GitPopupProps {
   kind: GitPopupKind | null;
+  /** The browser's session, preferred when visiting a worktree. */
+  sessionId: string;
   onClose: () => void;
   loadRefs: () => Promise<GitRefsResult>;
   run: (op: GitOp) => Promise<string>;
+  runWorktree: (op: WorktreeOp) => Promise<string>;
+  /** Show an existing pane of a visited worktree. */
+  onVisitPane: (paneId: string) => void;
 }
 
 interface Switch {
@@ -42,7 +55,7 @@ interface Prompt {
   options?: PromptOption[];
   allowCustom?: boolean;
   allowEmpty?: boolean;
-  submit: (value: string) => GitOp;
+  submit: (value: string) => PopupOp;
 }
 
 interface Action {
@@ -50,14 +63,15 @@ interface Action {
   label: string;
   description?: string;
   isDisabled?: boolean;
-  /** An op to run immediately, or a prompt that produces one. */
-  next: () => GitOp | Prompt | Confirmation;
+  /** An op to run immediately, a prompt that produces one, or a local action. */
+  next: () => PopupOp | Prompt | Confirmation | (() => void);
 }
 
 interface Confirmation {
-  confirm: GitOp;
+  confirm: PopupOp;
   title: string;
   description: string;
+  label: string;
 }
 
 const TITLES: Record<GitPopupKind, string> = {
@@ -66,6 +80,7 @@ const TITLES: Record<GitPopupKind, string> = {
   pull: 'Pull',
   push: 'Push',
   stash: 'Stash',
+  worktree: 'Worktree',
 };
 
 const SWITCHES: Record<GitPopupKind, Switch[]> = {
@@ -87,7 +102,13 @@ const SWITCHES: Record<GitPopupKind, Switch[]> = {
     { key: 'u', flag: '--include-untracked', label: 'Also save untracked files' },
     { key: 'a', flag: '--all', label: 'Also save untracked and ignored files' },
   ],
+  worktree: [],
 };
+
+/** Popups that list refs to act on. */
+function isListKind(kind: GitPopupKind): kind is 'branch' | 'worktree' {
+  return kind === 'branch' || kind === 'worktree';
+}
 
 function remoteOptions(refs: GitRefsResult): PromptOption[] {
   return refs.remotes.map((remote) => ({ value: remote, label: remote }));
@@ -113,12 +134,36 @@ function stashOptions(refs: GitRefsResult): PromptOption[] {
   }));
 }
 
+interface ListContext {
+  selected?: GitBranchInfo;
+  remoteView: boolean;
+  worktree?: GitWorktreeInfo;
+  /** Pane IDs in each worktree, by path, the browser's session first. */
+  worktreePanes: Map<string, string[]>;
+  onVisitPane: (paneId: string) => void;
+}
+
+function worktreeName(worktree: GitWorktreeInfo): string {
+  return worktree.branch ?? (worktree.bare ? '(bare)' : `(detached ${worktree.head.slice(0, 7)})`);
+}
+
+function paneCount(count: number): string {
+  return count === 1 ? '1 pane' : `${count} panes`;
+}
+
+/** Branches a new worktree can check out or track, then remote ones. */
+function worktreeBranchOptions(refs: GitRefsResult): PromptOption[] {
+  const checkedOut = new Set(refs.worktrees.map((worktree) => worktree.branch));
+  return [...refs.local_branches.filter((branch) => !checkedOut.has(branch.name)), ...refs.remote_branches].map(
+    (branch) => ({ value: branch.name, label: branch.name, description: branch.subject }),
+  );
+}
+
 function buildActions(
   kind: GitPopupKind,
   refs: GitRefsResult,
   flags: Set<string>,
-  selected?: GitBranchInfo,
-  remoteView = false,
+  { selected, remoteView, worktree, worktreePanes, onVisitPane }: ListContext,
 ): Action[] {
   const on = (flag: string) => flags.has(flag);
   const branch = refs.branch;
@@ -189,10 +234,76 @@ function buildActions(
           next: () => ({
             title: `Force delete ${selected!.name}?`,
             description: 'This deletes the local branch even if its commits have not been merged.',
+            label: 'Force delete',
             confirm: { kind: 'delete_branch', name: selected!.name, force: true },
           }),
         },
       ];
+    case 'worktree': {
+      const panes = worktree ? (worktreePanes.get(worktree.path) ?? []) : [];
+      const removable = !!worktree && !worktree.main && !worktree.current && !worktree.prunable;
+      const closes = panes.length ? ` and closes its ${paneCount(panes.length)}` : '';
+      const createPrompt = (visit: boolean): Prompt => ({
+        title: visit ? 'Create and visit worktree' : 'Create worktree',
+        label: 'Branch (existing or new)',
+        options: worktreeBranchOptions(refs),
+        allowCustom: true,
+        // A remote branch is checked out as a local tracking branch.
+        submit: (value) => {
+          const remote = refs.remote_branches.some((branch) => branch.name === value);
+          return { kind: 'add', branch: remote ? splitRemoteBranch(refs, value).branch : value, visit };
+        },
+      });
+      return [
+        {
+          key: 'Enter',
+          label: 'Visit',
+          isDisabled: !worktree || worktree.bare || worktree.prunable,
+          next: () => (panes.length ? () => onVisitPane(panes[0]) : { kind: 'open', path: worktree!.path }),
+        },
+        { key: 'c', label: 'Create and visit', next: () => createPrompt(true) },
+        { key: 'n', label: 'Create', next: () => createPrompt(false) },
+        {
+          key: 'd',
+          label: 'Delete',
+          isDisabled: !removable,
+          next: () => {
+            const op: WorktreeOp = { kind: 'remove', path: worktree!.path };
+            return panes.length
+              ? {
+                  title: `Delete worktree ${worktreeName(worktree!)}?`,
+                  description: `This removes ${worktree!.path}${closes}. The branch is kept.`,
+                  label: 'Delete',
+                  confirm: op,
+                }
+              : op;
+          },
+        },
+        {
+          key: 'D',
+          label: 'Force delete',
+          isDisabled: !removable,
+          next: () => ({
+            title: `Force delete worktree ${worktreeName(worktree!)}?`,
+            description: `This removes ${worktree!.path} even if it has uncommitted changes${closes}. The branch is kept.`,
+            label: 'Force delete',
+            confirm: { kind: 'remove', path: worktree!.path, force: true },
+          }),
+        },
+        {
+          key: 'l',
+          label: worktree && worktree.locked !== null ? 'Unlock' : 'Lock',
+          isDisabled: !worktree || worktree.main,
+          next: () => ({ kind: worktree!.locked !== null ? 'unlock' : 'lock', path: worktree!.path }),
+        },
+        {
+          key: 'p',
+          label: 'Prune',
+          isDisabled: !refs.worktrees.some((worktree) => worktree.prunable),
+          next: () => ({ kind: 'prune' }),
+        },
+      ];
+    }
     case 'fetch': {
       const base = { prune: on('--prune'), tags: on('--tags') };
       return [
@@ -347,8 +458,20 @@ function buildActions(
   }
 }
 
-function describeOp(op: GitOp): string {
+function describeOp(op: PopupOp): string {
   switch (op.kind) {
+    case 'add':
+      return `Creating a worktree for ${op.branch}`;
+    case 'open':
+      return `Opening ${op.path}`;
+    case 'remove':
+      return `Removing ${op.path}`;
+    case 'lock':
+      return `Locking ${op.path}`;
+    case 'unlock':
+      return `Unlocking ${op.path}`;
+    case 'prune':
+      return 'Pruning worktrees';
     case 'checkout':
       return `Checking out ${op.target}`;
     case 'create_branch':
@@ -392,6 +515,23 @@ function branchDescription(branch: GitBranchInfo): string {
   return `${branch.commit.slice(0, 7)} ${upstream}${branch.subject}`;
 }
 
+function worktreeFlags(worktree: GitWorktreeInfo, panes: number): string {
+  return [
+    ...(worktree.current ? ['current'] : []),
+    ...(worktree.main ? ['main'] : []),
+    ...(worktree.locked !== null ? [worktree.locked ? `locked: ${worktree.locked}` : 'locked'] : []),
+    ...(worktree.prunable ? ['prunable'] : []),
+    ...(panes ? [paneCount(panes)] : []),
+  ].join(' · ');
+}
+
+/** Whether the popup stays open after `op` succeeds, to show the updated list. */
+function staysOpen(kind: GitPopupKind, op: PopupOp): boolean {
+  if (kind === 'branch') return op.kind !== 'checkout' && !(op.kind === 'create_branch' && op.checkout);
+  if (kind === 'worktree') return op.kind !== 'open' && !(op.kind === 'add' && op.visit);
+  return false;
+}
+
 // Switches persist per popup for the page lifetime, like transient.
 const savedFlags: Partial<Record<GitPopupKind, Set<string>>> = {};
 
@@ -400,7 +540,15 @@ export function GitPopup({ kind, ...props }: GitPopupProps) {
   return kind ? <GitPopupDialog key={kind} kind={kind} {...props} /> : null;
 }
 
-function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind: GitPopupKind }) {
+function GitPopupDialog({
+  kind,
+  sessionId,
+  onClose,
+  loadRefs,
+  run,
+  runWorktree,
+  onVisitPane,
+}: GitPopupProps & { kind: GitPopupKind }) {
   const [refs, setRefs] = useState<GitRefsResult | null>(null);
   const [flags, setFlags] = useState<Set<string>>(() => new Set(savedFlags[kind] ?? []));
   const [dashPending, setDashPending] = useState(false);
@@ -408,6 +556,7 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [remoteView, setRemoteView] = useState(false);
   const [branchIndex, setBranchIndex] = useState(0);
+  const [worktreeIndex, setWorktreeIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [optionIndex, setOptionIndex] = useState(0);
   const [running, setRunning] = useState<string | null>(null);
@@ -431,6 +580,12 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
             result.local_branches.findIndex((branch) => branch.is_head),
           ),
         );
+        setWorktreeIndex(
+          Math.max(
+            0,
+            result.worktrees.findIndex((worktree) => worktree.current),
+          ),
+        );
       },
       (err) => !cancelled && setError(err instanceof Error ? err.message : 'Failed to read refs'),
     );
@@ -447,24 +602,44 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   }, [prompt]);
 
   useLayoutEffect(() => {
-    if (kind === 'branch' && !prompt) contentRef.current?.focus();
+    if (isListKind(kind) && !prompt) contentRef.current?.focus();
   }, [kind, prompt, confirmation, running]);
 
   useEffect(() => {
     contentRef.current
       ?.querySelector('[aria-selected="true"], [aria-current="true"]')
       ?.scrollIntoView({ block: 'nearest' });
-  }, [optionIndex, branchIndex, remoteView, refs, prompt, running]);
+  }, [optionIndex, branchIndex, worktreeIndex, remoteView, refs, prompt, running]);
+
+  const allSessions = useStore((s) => s.allSessions);
+  const worktreePanes = useMemo(() => {
+    const panes = new Map<string, string[]>();
+    const ordered = [...allSessions].sort((a, b) => Number(b.id === sessionId) - Number(a.id === sessionId));
+    for (const session of ordered) {
+      for (const pane of session.windows.flatMap((window) => window.panes)) {
+        const root = pane.git?.worktree_root;
+        if (root) panes.set(root, [...(panes.get(root) ?? []), pane.id]);
+      }
+    }
+    return panes;
+  }, [allSessions, sessionId]);
 
   const switches = SWITCHES[kind];
   const branches = (remoteView ? refs?.remote_branches : refs?.local_branches) ?? [];
   const selected = branches[Math.min(branchIndex, Math.max(0, branches.length - 1))];
-  const actions = refs ? buildActions(kind, refs, flags, selected, remoteView) : [];
+  const worktrees = refs?.worktrees ?? [];
+  const worktree = worktrees[Math.min(worktreeIndex, Math.max(0, worktrees.length - 1))];
+  const listLength = kind === 'worktree' ? worktrees.length : branches.length;
+  const listIndex = kind === 'worktree' ? worktreeIndex : branchIndex;
+  const setListIndex = kind === 'worktree' ? setWorktreeIndex : setBranchIndex;
+  const actions = refs
+    ? buildActions(kind, refs, flags, { selected, remoteView, worktree, worktreePanes, onVisitPane })
+    : [];
   const options = prompt?.options ? filterOptions(prompt.options, query) : [];
 
   const close = () => {
     if (running) return;
-    if (kind === 'branch' && (prompt || confirmation)) {
+    if (isListKind(kind) && (prompt || confirmation)) {
       setPrompt(null);
       setConfirmation(null);
       setError(null);
@@ -484,24 +659,32 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
                 ]
               : []),
             { keys: ['enter'], label: 'run' },
-            { keys: ['esc'], label: kind === 'branch' ? 'back' : 'close' },
+            { keys: ['esc'], label: isListKind(kind) ? 'back' : 'close' },
           ]
         : [{ keys: ['esc', 'q'], label: 'close' }];
 
-  const execute = async (op: GitOp) => {
+  const execute = async (op: PopupOp) => {
     setPrompt(null);
     setConfirmation(null);
     setError(null);
     setRunning(describeOp(op));
     try {
-      const output = await run(op);
-      if (kind === 'branch' && op.kind !== 'checkout' && !(op.kind === 'create_branch' && op.checkout)) {
+      const output = isWorktreeOp(op) ? await runWorktree(op) : await run(op);
+      if (staysOpen(kind, op)) {
         const nextRefs = await loadRefs();
-        const nextBranches = remoteView ? nextRefs.remote_branches : nextRefs.local_branches;
-        const nextName = op.kind === 'rename_branch' ? op.to : selected?.name;
-        const nextIndex = nextBranches.findIndex((branch) => branch.name === nextName);
         setRefs(nextRefs);
-        setBranchIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(branchIndex, nextBranches.length - 1)));
+        if (kind === 'worktree') {
+          const nextIndex = nextRefs.worktrees.findIndex((next) =>
+            op.kind === 'add' ? next.branch === op.branch : next.path === worktree?.path,
+          );
+          const last = nextRefs.worktrees.length - 1;
+          setWorktreeIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(worktreeIndex, last)));
+        } else {
+          const nextBranches = remoteView ? nextRefs.remote_branches : nextRefs.local_branches;
+          const nextName = op.kind === 'rename_branch' ? op.to : selected?.name;
+          const nextIndex = nextBranches.findIndex((branch) => branch.name === nextName);
+          setBranchIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(branchIndex, nextBranches.length - 1)));
+        }
         setRunning(null);
       } else onClose();
       // git ends with its summary line (e.g. `main -> main`, `Already up to date.`).
@@ -518,7 +701,9 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
   const choose = (action: Action) => {
     if (action.isDisabled || running) return;
     const next = action.next();
-    if ('confirm' in next) {
+    if (typeof next === 'function') {
+      next();
+    } else if ('confirm' in next) {
       setError(null);
       setConfirmation(next);
     } else if ('kind' in next) {
@@ -605,15 +790,15 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
     }
 
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (kind === 'branch') {
+    if (isListKind(kind)) {
       const direction =
         event.key === 'j' || event.key === 'ArrowDown' ? 1 : event.key === 'k' || event.key === 'ArrowUp' ? -1 : 0;
       if (direction) {
         event.preventDefault();
-        if (branches.length) setBranchIndex((branchIndex + direction + branches.length) % branches.length);
+        if (listLength) setListIndex((listIndex + direction + listLength) % listLength);
         return;
       }
-      if (event.key === 'r') {
+      if (kind === 'branch' && event.key === 'r') {
         event.preventDefault();
         toggleBranchView();
         return;
@@ -663,7 +848,7 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
       ref={dialogRef}
       isOpen
       onOpenChange={(open) => !open && close()}
-      width={kind === 'branch' ? 760 : 520}
+      width={isListKind(kind) ? 760 : 520}
       onMouseDown={(event) => event.stopPropagation()}
       onKeyDown={onKeyDown}
     >
@@ -673,7 +858,11 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
             title={
               confirmation?.title ??
               prompt?.title ??
-              (kind === 'branch' ? `${remoteView ? 'Remote' : 'Local'} branches` : TITLES[kind])
+              (kind === 'branch'
+                ? `${remoteView ? 'Remote' : 'Local'} branches`
+                : kind === 'worktree'
+                  ? 'Worktrees'
+                  : TITLES[kind])
             }
             subtitle={refs ? (refs.branch ?? 'detached HEAD') : undefined}
             hasDivider
@@ -684,8 +873,8 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
           <LayoutContent
             ref={contentRef}
             padding={4}
-            tabIndex={kind === 'branch' ? -1 : undefined}
-            className={kind === 'branch' ? 'outline-none' : undefined}
+            tabIndex={isListKind(kind) ? -1 : undefined}
+            className={isListKind(kind) ? 'outline-none' : undefined}
           >
             <VStack gap={3}>
               {error && <Banner status="error" title={error} />}
@@ -726,6 +915,34 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
                 </VStack>
               ) : !refs ? (
                 !error && <Spinner label="Reading refs…" />
+              ) : kind === 'worktree' ? (
+                <List density="compact" className="btm-mono" aria-label="Worktrees">
+                  {worktrees.map((item, index) => (
+                    <ListItem
+                      key={item.path}
+                      label={worktreeName(item)}
+                      description={
+                        <>
+                          {item.path}
+                          <br />
+                          {item.head ? `${item.head.slice(0, 7)} ${item.subject}` : ''}
+                        </>
+                      }
+                      startContent={
+                        <Text type="code" color={item.current ? 'accent' : 'secondary'}>
+                          {item.current ? '*' : '·'}
+                        </Text>
+                      }
+                      endContent={
+                        <Text size="sm" color="secondary">
+                          {worktreeFlags(item, worktreePanes.get(item.path)?.length ?? 0)}
+                        </Text>
+                      }
+                      isSelected={item.path === worktree?.path}
+                      onClick={() => setWorktreeIndex(index)}
+                    />
+                  ))}
+                </List>
               ) : kind === 'branch' && !branches.length ? (
                 <Text color="secondary">No {remoteView ? 'remote' : 'local'} branches</Text>
               ) : kind === 'branch' ? (
@@ -825,12 +1042,16 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
                 <Button label="Cancel" onClick={close}>
                   <KeyHint keys={['esc']} label="cancel" />
                 </Button>
-                <Button label="Force delete" variant="destructive" onClick={() => void execute(confirmation.confirm)}>
-                  <KeyHint keys={['y']} label="Force delete" />
+                <Button
+                  label={confirmation.label}
+                  variant="destructive"
+                  onClick={() => void execute(confirmation.confirm)}
+                >
+                  <KeyHint keys={['y']} label={confirmation.label} />
                 </Button>
               </HStack>
             </LayoutFooter>
-          ) : !running && !prompt && kind === 'branch' ? (
+          ) : !running && !prompt && isListKind(kind) ? (
             <LayoutFooter hasDivider>
               <HStack gap={4} vAlign="center" wrap="wrap" className="gap-y-1">
                 {actions.map((action) => (
@@ -842,7 +1063,9 @@ function GitPopupDialog({ kind, onClose, loadRefs, run }: GitPopupProps & { kind
                     />
                   </HStack>
                 ))}
-                <KeyHint keys={['r']} label={remoteView ? 'local' : 'remote'} onPress={pressHint} />
+                {kind === 'branch' && (
+                  <KeyHint keys={['r']} label={remoteView ? 'local' : 'remote'} onPress={pressHint} />
+                )}
                 <KeyHint keys={['j', 'k', 'down', 'up']} label="select" onPress={pressHint} />
                 <KeyHint keys={['esc', 'q']} label="close" onPress={pressHint} />
               </HStack>

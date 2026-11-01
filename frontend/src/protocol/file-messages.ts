@@ -159,6 +159,22 @@ export interface GitStashInfo {
   message: string;
 }
 
+export interface GitWorktreeInfo {
+  /** The root, spelled as `PaneGit.worktree_root`. */
+  path: string;
+  /** Null when HEAD is detached. */
+  branch: string | null;
+  head: string;
+  subject: string;
+  main: boolean;
+  bare: boolean;
+  /** Contains the browsed directory. */
+  current: boolean;
+  /** The lock reason, possibly empty. */
+  locked: string | null;
+  prunable: boolean;
+}
+
 export interface GitRefsResult {
   branch: string | null;
   upstream: string | null;
@@ -166,6 +182,7 @@ export interface GitRefsResult {
   remote_branches: GitBranchInfo[];
   remotes: string[];
   stashes: GitStashInfo[];
+  worktrees: GitWorktreeInfo[];
 }
 
 export type GitOp =
@@ -190,3 +207,12 @@ export type GitOp =
   | { kind: 'stash_drop'; index: number }
   | { kind: 'stage_all' }
   | { kind: 'unstage_all' };
+
+/** `git_worktree` operations (`worktree::Op`). */
+export type WorktreeOp =
+  | { kind: 'add'; branch: string; visit?: boolean }
+  | { kind: 'open'; path: string }
+  | { kind: 'remove'; path: string; force?: boolean }
+  | { kind: 'lock'; path: string }
+  | { kind: 'unlock'; path: string }
+  | { kind: 'prune' };

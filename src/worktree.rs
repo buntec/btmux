@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::automation::Error;
@@ -30,6 +30,181 @@ pub struct Removed {
     pub closed_panes: Vec<Uuid>,
 }
 
+/// A worktree as git mode lists it.
+#[derive(Debug, Serialize)]
+pub struct Info {
+    /// The root, with symlinks resolved as in `PaneGit::worktree_root`.
+    pub path: String,
+    /// `None` when HEAD is detached.
+    pub branch: Option<String>,
+    /// Empty for a bare repo or an unborn branch.
+    pub head: String,
+    pub subject: String,
+    pub main: bool,
+    pub bare: bool,
+    /// Contains the directory it was listed from.
+    pub current: bool,
+    /// The lock reason, possibly empty.
+    pub locked: Option<String>,
+    /// Its directory is gone; `git worktree prune` removes it.
+    pub prunable: bool,
+}
+
+/// Git mode's worktree operations, run in a directory of the repo.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Op {
+    /// Add a worktree; `visit` also opens a window there and selects it.
+    Add {
+        branch: String,
+        #[serde(default)]
+        visit: bool,
+    },
+    /// Open a window in the worktree at `path` and select it.
+    Open {
+        path: String,
+    },
+    Remove {
+        path: String,
+        /// Discard uncommitted changes, like `git worktree remove --force`.
+        #[serde(default)]
+        force: bool,
+    },
+    Lock {
+        path: String,
+    },
+    Unlock {
+        path: String,
+    },
+    Prune,
+}
+
+/// Run `op` from `dir`, opening windows in `session_id`. Returns a summary.
+pub async fn run(
+    state: &AppState,
+    session_id: Option<Uuid>,
+    dir: &Path,
+    op: Op,
+) -> Result<String, Error> {
+    let session = || session_id.ok_or_else(|| Error::Invalid("Missing session".into()));
+    match op {
+        Op::Add { branch, visit } if visit => {
+            let created = create_in(state, session()?, dir, &branch, true).await?;
+            Ok(format!("Created {}", created.path))
+        }
+        Op::Add { branch, .. } => {
+            let (path, _) = add_async(state, dir, &branch).await?;
+            Ok(format!("Created {}", path.display()))
+        }
+        Op::Open { path } => {
+            open(state, session()?, Path::new(&path)).await?;
+            Ok(String::new())
+        }
+        Op::Remove { path, force } => {
+            let removed = remove_at(state, Path::new(&path), force).await?;
+            let panes = removed.closed_panes.len();
+            Ok(match panes {
+                0 => format!("Removed {}", removed.path),
+                1 => format!("Removed {} and closed its pane", removed.path),
+                n => format!("Removed {} and closed its {n} panes", removed.path),
+            })
+        }
+        // The list shows the result.
+        Op::Lock { path } => {
+            blocking(dir, move |dir| {
+                git(dir, &[&"worktree", &"lock", &"--", &path])
+            })
+            .await
+        }
+        Op::Unlock { path } => {
+            blocking(dir, move |dir| {
+                git(dir, &[&"worktree", &"unlock", &"--", &path])
+            })
+            .await
+        }
+        Op::Prune => {
+            blocking(dir, |dir| {
+                git(dir, &[&"worktree", &"prune", &"--verbose"]).map(|out| {
+                    if out.is_empty() {
+                        "Nothing to prune".into()
+                    } else {
+                        out
+                    }
+                })
+            })
+            .await
+        }
+    }
+}
+
+async fn blocking(
+    dir: &Path,
+    f: impl FnOnce(&Path) -> Result<String, String> + Send + 'static,
+) -> Result<String, Error> {
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || f(&dir))
+        .await
+        .map_err(|e| Error::Failed(e.to_string()))?
+        .map_err(Error::Failed)
+}
+
+/// The worktrees of the repo containing `dir`, the main one first.
+pub fn list(dir: &Path) -> Result<Vec<Info>, String> {
+    let output = git(dir, &[&"worktree", &"list", &"--porcelain"])?;
+    let current = crate::pane_git::worktree_of(dir).map(|(git, _)| git.worktree_root);
+    let repo = git2::Repository::discover(dir).ok();
+    let mut worktrees = Vec::new();
+    for block in output.split("\n\n") {
+        let mut info = Info {
+            path: String::new(),
+            branch: None,
+            head: String::new(),
+            subject: String::new(),
+            main: worktrees.is_empty(),
+            bare: false,
+            current: false,
+            locked: None,
+            prunable: false,
+        };
+        for line in block.lines() {
+            let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+            match key {
+                "worktree" => info.path = listed_path(value),
+                "HEAD" => info.head = value.to_string(),
+                "branch" => {
+                    let branch = value.strip_prefix("refs/heads/").unwrap_or(value);
+                    info.branch = Some(branch.to_string());
+                }
+                "bare" => info.bare = true,
+                "locked" => info.locked = Some(value.to_string()),
+                "prunable" => info.prunable = true,
+                _ => {}
+            }
+        }
+        if info.path.is_empty() {
+            continue;
+        }
+        info.current = current.as_deref() == Some(info.path.as_str());
+        info.subject = repo
+            .as_ref()
+            .zip(git2::Oid::from_str(&info.head).ok())
+            .and_then(|(repo, oid)| repo.find_commit(oid).ok())
+            .and_then(|commit| commit.summary().ok().flatten().map(str::to_string))
+            .unwrap_or_default();
+        worktrees.push(info);
+    }
+    Ok(worktrees)
+}
+
+/// A path from `git worktree list`, spelled as `pane_git` spells roots.
+fn listed_path(path: &str) -> String {
+    #[cfg(windows)]
+    let path = path.replace('/', "\\");
+    crate::pane_git::real_path(Path::new(&path))
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Create a worktree for `branch` in the repo of `pane_id`'s directory and
 /// open a window there, in the pane's session. An existing local or remote
 /// branch is checked out; otherwise it's created from the pane's HEAD.
@@ -39,20 +214,30 @@ pub async fn create(
     branch: &str,
     select: bool,
 ) -> Result<Created, Error> {
-    let branch = branch.trim().to_string();
-    let (session_id, cwd, template) = {
+    let (session_id, cwd) = {
         let mgr = state.read().await;
         let session_id = mgr
             .session_of_pane(pane_id)
             .ok_or(Error::PaneNotFound(pane_id))?;
         let cwd = mgr.find_pane(pane_id).and_then(|p| p.pty.local_cwd());
-        (session_id, cwd, mgr.worktree_path_template())
+        (session_id, cwd)
     };
     let cwd = cwd.ok_or_else(|| Error::Conflict("The pane has no local directory".into()))?;
-    let (path, branch) =
-        tokio::task::spawn_blocking(move || add(Path::new(&cwd), &branch, &template))
-            .await
-            .map_err(|e| Error::Failed(e.to_string()))??;
+    create_in(state, session_id, Path::new(&cwd), branch, select).await
+}
+
+/// [`create`] from `dir`, with the window in `session_id`.
+pub async fn create_in(
+    state: &AppState,
+    session_id: Uuid,
+    dir: &Path,
+    branch: &str,
+    select: bool,
+) -> Result<Created, Error> {
+    if !state.read().await.has_session(session_id) {
+        return Err(Error::Conflict("The session no longer exists".into()));
+    }
+    let (path, branch) = add_async(state, dir, branch).await?;
     let name = crate::git::sanitize_name(&branch);
     let mut mgr = state.write().await;
     let pane_id = mgr
@@ -68,6 +253,45 @@ pub async fn create(
     })
 }
 
+/// [`add`] off the lock, with the configured path template.
+async fn add_async(state: &AppState, dir: &Path, branch: &str) -> Result<(PathBuf, String), Error> {
+    let template = state.read().await.worktree_path_template();
+    let (dir, branch) = (dir.to_path_buf(), branch.trim().to_string());
+    tokio::task::spawn_blocking(move || add(&dir, &branch, &template))
+        .await
+        .map_err(|e| Error::Failed(e.to_string()))?
+}
+
+/// Open a window in `session_id` at the root of the worktree containing
+/// `dir`, named for its branch, and select it.
+pub async fn open(state: &AppState, session_id: Uuid, dir: &Path) -> Result<Uuid, Error> {
+    let dir = dir.to_path_buf();
+    let (git, _) = tokio::task::spawn_blocking(move || crate::pane_git::worktree_of(&dir))
+        .await
+        .map_err(|e| Error::Failed(e.to_string()))?
+        .ok_or_else(|| Error::Conflict("Not a git worktree".into()))?;
+    let root = PathBuf::from(&git.worktree_root);
+    let name = match &git.branch {
+        Some(branch) => branch.clone(),
+        None => root
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| git.repo_name.clone()),
+    };
+    let mut mgr = state.write().await;
+    let pane_id = mgr
+        .create_window_named(
+            session_id,
+            Some(crate::git::sanitize_name(&name)),
+            Some(root),
+            true,
+        )
+        .await
+        .ok_or_else(|| Error::Conflict("The session no longer exists".into()))?;
+    broadcast_state(&mgr);
+    Ok(pane_id)
+}
+
 /// Remove the linked worktree containing `pane_id`'s directory, closing every
 /// pane in it. Refuses a main, dirty, or locked worktree, one with
 /// submodules, and panes running a program. The branch is kept.
@@ -78,7 +302,14 @@ pub async fn remove(state: &AppState, pane_id: Uuid) -> Result<Removed, Error> {
         pane.pty.local_cwd()
     };
     let cwd = cwd.ok_or_else(|| Error::Conflict("The pane has no local directory".into()))?;
-    let target = tokio::task::spawn_blocking(move || removable(Path::new(&cwd)))
+    remove_at(state, Path::new(&cwd), false).await
+}
+
+/// [`remove`] for the worktree containing `dir`. `force` also removes one
+/// with uncommitted changes or submodules.
+pub async fn remove_at(state: &AppState, dir: &Path, force: bool) -> Result<Removed, Error> {
+    let dir = dir.to_path_buf();
+    let target = tokio::task::spawn_blocking(move || removable(&dir, force))
         .await
         .map_err(|e| Error::Failed(e.to_string()))??;
 
@@ -106,10 +337,17 @@ pub async fn remove(state: &AppState, pane_id: Uuid) -> Result<Removed, Error> {
     };
 
     let root = target.root.clone();
-    tokio::task::spawn_blocking(move || git(&root, &[&"worktree", &"remove", &"--", &root]))
-        .await
-        .map_err(|e| Error::Failed(e.to_string()))?
-        .map_err(|e| Error::Failed(format!("{e} (its panes were closed)")))?;
+    tokio::task::spawn_blocking(move || {
+        let mut args: Vec<&dyn AsRef<OsStr>> = vec![&"worktree", &"remove"];
+        if force {
+            args.push(&"--force");
+        }
+        args.extend([&"--" as &dyn AsRef<OsStr>, &root]);
+        git(&root, &args)
+    })
+    .await
+    .map_err(|e| Error::Failed(e.to_string()))?
+    .map_err(|e| Error::Failed(format!("{e} (its panes were closed)")))?;
     Ok(Removed {
         path: target.root.to_string_lossy().into_owned(),
         branch: target.branch,
@@ -180,8 +418,9 @@ struct Target {
     branch: Option<String>,
 }
 
-/// The linked worktree containing `dir`, if git would remove it.
-fn removable(dir: &Path) -> Result<Target, Error> {
+/// The linked worktree containing `dir`, if git would remove it (with
+/// `--force` when `force`).
+fn removable(dir: &Path, force: bool) -> Result<Target, Error> {
     let (git_info, git_dir) = crate::pane_git::worktree_of(dir)
         .ok_or_else(|| Error::Conflict("The pane isn't in a git worktree".into()))?;
     let root = PathBuf::from(&git_info.worktree_root);
@@ -193,6 +432,12 @@ fn removable(dir: &Path) -> Result<Target, Error> {
     }
     if git_dir.join("locked").exists() {
         return Err(Error::Conflict(format!("{} is locked", root.display())));
+    }
+    if force {
+        return Ok(Target {
+            root,
+            branch: git_info.branch,
+        });
     }
     // Explicit, as `status.showUntrackedFiles=no` would hide untracked files
     // that removal deletes.
@@ -409,26 +654,146 @@ mod tests {
     fn only_clean_linked_worktrees_are_removable() {
         let repo = Repo::new();
         let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
-        assert!(matches!(removable(&repo.main), Err(Error::Conflict(_))));
+        assert!(matches!(
+            removable(&repo.main, false),
+            Err(Error::Conflict(_))
+        ));
         std::fs::create_dir(path.join("sub")).unwrap();
         std::fs::write(path.join("sub/new.txt"), "x").unwrap();
         run(&path, &["config", "status.showUntrackedFiles", "no"]);
         assert!(matches!(
-            removable(&path.join("sub")),
+            removable(&path.join("sub"), false),
             Err(Error::Conflict(_))
         ));
         std::fs::remove_file(path.join("sub/new.txt")).unwrap();
-        let target = removable(&path.join("sub")).unwrap();
+        let target = removable(&path.join("sub"), false).unwrap();
         assert_eq!(target.root, path);
         assert_eq!(target.branch.as_deref(), Some("feat"));
         #[cfg(unix)]
         {
             let alias = repo.dir.join("alias");
             std::os::unix::fs::symlink(path.join("sub"), &alias).unwrap();
-            assert_eq!(removable(&alias).unwrap().root, path);
+            assert_eq!(removable(&alias, false).unwrap().root, path);
         }
         run(&repo.main, &["worktree", "lock", path.to_str().unwrap()]);
-        assert!(matches!(removable(&path), Err(Error::Conflict(_))));
+        assert!(matches!(removable(&path, false), Err(Error::Conflict(_))));
+    }
+
+    #[test]
+    fn lists_worktrees_with_their_state() {
+        let repo = Repo::new();
+        let (feat, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        let (gone, _) = add(&repo.main, "gone", DEFAULT_PATH).unwrap();
+        run(
+            &repo.main,
+            &[
+                "worktree",
+                "lock",
+                "--reason",
+                "usb",
+                "--",
+                feat.to_str().unwrap(),
+            ],
+        );
+        run(&feat, &["checkout", "-q", "--detach"]);
+        std::fs::remove_dir_all(&gone).unwrap();
+
+        let list = list(&feat.join(".")).unwrap();
+        let paths: Vec<_> = list.iter().map(|w| PathBuf::from(&w.path)).collect();
+        assert_eq!(paths, [repo.main.clone(), feat.clone(), gone.clone()]);
+        assert!(list[0].main && !list[0].current && list[0].locked.is_none());
+        assert_eq!(list[0].branch.as_deref(), Some("main"));
+        assert_eq!(list[0].subject, "init");
+        assert!(!list[1].main && list[1].current);
+        assert_eq!(list[1].branch, None);
+        assert_eq!(list[1].head.len(), 40);
+        assert_eq!(list[1].locked.as_deref(), Some("usb"));
+        assert!(list[2].prunable && !list[1].prunable);
+    }
+
+    #[tokio::test]
+    async fn git_mode_ops_manage_worktrees_and_windows() {
+        let repo = Repo::new();
+        let (state, panes) = panes(&[&repo.main]).await;
+        let session = state.read().await.session_of_pane(panes[0]);
+        let windows = |state: AppState| async move { state.read().await.pane_infos().len() };
+        let before = windows(state.clone()).await;
+
+        let op = |json: serde_json::Value| serde_json::from_value::<Op>(json).unwrap();
+        super::run(
+            &state,
+            session,
+            &repo.main,
+            op(serde_json::json!({"kind": "add", "branch": "a"})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(windows(state.clone()).await, before);
+        super::run(
+            &state,
+            session,
+            &repo.main,
+            op(serde_json::json!({"kind": "add", "branch": "b", "visit": true})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(windows(state.clone()).await, before + 1);
+
+        let a = repo.dir.join("proj-a");
+        let a_str = a.to_str().unwrap();
+        super::run(
+            &state,
+            session,
+            &repo.main,
+            op(serde_json::json!({"kind": "open", "path": a_str})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(windows(state.clone()).await, before + 2);
+
+        super::run(
+            &state,
+            session,
+            &repo.main,
+            op(serde_json::json!({"kind": "lock", "path": a_str})),
+        )
+        .await
+        .unwrap();
+        assert!(list(&repo.main).unwrap()[1].locked.is_some());
+        super::run(
+            &state,
+            session,
+            &repo.main,
+            op(serde_json::json!({"kind": "unlock", "path": a_str})),
+        )
+        .await
+        .unwrap();
+
+        // Uncommitted changes need force.
+        std::fs::write(a.join("new.txt"), "x").unwrap();
+        let remove =
+            |force| op(serde_json::json!({"kind": "remove", "path": a_str, "force": force}));
+        assert!(super::run(&state, session, &repo.main, remove(false))
+            .await
+            .is_err());
+        assert!(a.exists());
+        let summary = super::run(&state, session, &repo.main, remove(true))
+            .await
+            .unwrap();
+        assert!(summary.ends_with("closed its pane"), "{summary}");
+        assert!(!a.exists());
+        assert_eq!(windows(state.clone()).await, before + 1);
+
+        std::fs::remove_dir_all(repo.dir.join("proj-b")).unwrap();
+        super::run(
+            &state,
+            session,
+            &repo.main,
+            op(serde_json::json!({"kind": "prune"})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(list(&repo.main).unwrap().len(), 1);
     }
 
     #[cfg(unix)]
@@ -476,7 +841,7 @@ mod tests {
         run(&repo.main, &["commit", "-q", "-m", "lib"]);
         let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
         // git removes it while the submodule isn't checked out.
-        assert!(removable(&path).is_ok());
+        assert!(removable(&path, false).is_ok());
         run(
             &path,
             &[&file[..], &["submodule", "update", "-q", "--init"]].concat(),

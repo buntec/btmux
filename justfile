@@ -255,7 +255,7 @@ protocol:
 
 # Browser regressions, each file against its own fresh, isolated stack.
 test-browser:
-    cd frontend && bunx playwright install chromium webkit && bun browser-test-stack.ts reliability-test.ts terminal-browser-test.ts upgrade-browser-test.ts astryx-browser-test.ts git-branch-browser-test.ts git-log-browser-test.ts mobile-browser-test.ts
+    cd frontend && bunx playwright install chromium webkit && bun browser-test-stack.ts reliability-test.ts terminal-browser-test.ts upgrade-browser-test.ts astryx-browser-test.ts git-branch-browser-test.ts git-worktree-browser-test.ts git-log-browser-test.ts mobile-browser-test.ts
 
 # Shader wallpaper regressions (on demand; pixel checks need WebGPU).
 test-shader-browser:

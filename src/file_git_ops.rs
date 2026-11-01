@@ -35,6 +35,7 @@ pub struct GitRefsResult {
     pub remote_branches: Vec<GitBranchInfo>,
     pub remotes: Vec<String>,
     pub stashes: Vec<GitStashInfo>,
+    pub worktrees: Vec<crate::worktree::Info>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -425,6 +426,12 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
         true
     });
 
+    // Other popups still work without it.
+    let worktrees = crate::worktree::list(root).unwrap_or_else(|e| {
+        tracing::warn!("Failed to list worktrees: {}", e);
+        Vec::new()
+    });
+
     Ok(GitRefsResult {
         branch,
         upstream,
@@ -432,6 +439,7 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
         remote_branches,
         remotes,
         stashes,
+        worktrees,
     })
 }
 

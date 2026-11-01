@@ -58,9 +58,6 @@ export type Appearance = "auto" | "dark" | "light";
 export type ColorMode = "dark" | "light";
 
 // prettier-ignore
-export type VscodeServer = "code" | "openvscode-server";
-
-// prettier-ignore
 export type LogConfig = {
 /**
  * Log level for stderr output. Defaults to "warn".
@@ -296,10 +293,6 @@ editor: Editor,
  * The built-in editors the server can run, for the toolbar and palette.
  */
 editors: Array<Editor>,
-/**
- * The server behind VS Code.
- */
-vscode_server: VscodeServer,
 /**
  * How many recently-viewed windows the window-grid (`prefix + w`) shows.
  */

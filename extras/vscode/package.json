@@ -2,7 +2,7 @@
   "name": "btmux",
   "publisher": "btmux",
   "displayName": "btmux",
-  "description": "btmux integration: color scheme and font sync, and file opening.",
+  "description": "btmux integration: shared settings and keybindings, color scheme and font sync, and file opening.",
   "version": "0.0.1",
   "license": "MIT",
   "engines": {

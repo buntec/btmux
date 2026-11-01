@@ -399,7 +399,7 @@ With `editor = "vscode"`, `prefix + e` toggles VS Code over the active pane
 surface; only one of the two
 covers a pane. `src/vscode.rs` lazily spawns one VS Code server per btmux
 server, without a connection token, on a private Unix socket, and proxies
-`/vscode/` (HTTP and WebSocket) to it behind `auth.rs`. `vscode-server`
+`/vscode/` (HTTP and WebSocket) to it behind `auth.rs`. `[vscode] server`
 picks it, read when it starts: `code` (default) runs `code serve-web` from an
 installed VS Code (`code` on `PATH`, else the macOS app bundle), which
 downloads the matching server on first use; `openvscode-server` (on `PATH`)
@@ -419,9 +419,10 @@ The extension in `extras/vscode` is embedded and installed into the profile's
 extensions on each start, registered in VS Code's `extensions.json` (the
 server ignores `--builtin-extensions-dir`) under a folder named with a hash of
 its files, so any change makes VS Code rescan it. It connects back over
-`BTMUX_VSCODE_SOCKET`, which carries newline-delimited JSON: `style` (the
+`BTMUX_VSCODE_SOCKET`, which carries newline-delimited JSON: `user` (shared
+settings and keybindings, on connect and when their paths change), `style` (the
 base16/24 `color_palette` and the terminal font, on connect and on every
-change) and `open`
+change), and `open`
 (`editor = "vscode"`, `vscode_open`, `btmux open-editor`). The last open is
 replayed to extension hosts that connect within 30 s, as VS Code may still be
 starting or reloading. The extension writes the palette and font to user
@@ -431,6 +432,17 @@ the editor at 80% size;
 web keeps in the browser. Bundled fonts are web fonts, so the surface copies
 this page's `@font-face` rules into the iframe on each load. Change both sides
 of this protocol together.
+
+`[vscode] desktop` (or `settings`, `keybindings`, `extensions` paths) shares
+desktop VS Code's user files and extensions. The server parses the JSONC files
+and sends them as `user`; the extension, handling messages in order, replaces
+`vscode-userdata:/User/settings.json` (keeping the theme and font keys it
+wrote, so they don't flicker) and `keybindings.json`. These live in the
+browser's IndexedDB, so no file on disk can seed them, and machine settings
+ignore application-scoped keys. On each start, `link_extensions` registers
+shared extension folders in `extensions.json` by absolute location, reading a
+source's own `extensions.json` (minus `.obsolete`) when it has one, and
+replaces those `<state dir>/vscode/linked-extensions.json` lists.
 
 ### Layout tree — the shared contract
 

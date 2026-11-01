@@ -1,5 +1,6 @@
 // btmux integration for the VS Code surface (prefix + E). btmux sends
 // newline-delimited JSON over a private Unix socket (BTMUX_VSCODE_SOCKET):
+//   {"type":"user","settings":{…}|null,"keybindings":[…]|null}
 //   {"type":"style","palette":{base00…base0F[, base10…base17]},
 //    "font":{"family":"Geist Mono","size":18,"weight":200}}
 //   {"type":"open","path":"/abs/file","line":12}
@@ -28,6 +29,8 @@ const EDITOR_FONT_SCALE = 0.8;
 
 // Settings btmux wrote, as JSON by key, so turning a sync off clears only those.
 const WRITTEN = 'btmux.written';
+// In the browser, user settings and keybindings live in VS Code's IndexedDB.
+const USER_DIR = vscode.Uri.from({ scheme: 'vscode-userdata', path: '/User' });
 
 let style = null;
 let state = null;
@@ -43,13 +46,16 @@ function activate(context) {
     socket = net.createConnection(path);
     socket.setEncoding('utf8');
     let buffer = '';
+    // In order, so the user settings are in place before the style applies.
+    let queue = Promise.resolve();
     socket.on('data', (data) => {
       buffer += data;
       let end;
       while ((end = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, end);
         buffer = buffer.slice(end + 1);
-        handle(JSON.parse(line)).catch((e) => console.error('btmux:', e));
+        const message = JSON.parse(line);
+        queue = queue.then(() => handle(message)).catch((e) => console.error('btmux:', e));
       }
     });
     socket.on('error', () => {});
@@ -75,7 +81,9 @@ function activate(context) {
 }
 
 async function handle(message) {
-  if (message.type === 'style') {
+  if (message.type === 'user') {
+    await applyUser(message);
+  } else if (message.type === 'style') {
     style = message;
     await applyStyle();
   } else if (message.type === 'open') {
@@ -86,6 +94,34 @@ async function handle(message) {
     }
     await vscode.window.showTextDocument(vscode.Uri.file(message.path), options);
   }
+}
+
+/**
+ * Replace the user settings and keybindings with the shared ones, keeping the
+ * theme and font settings btmux wrote so they don't flicker.
+ */
+async function applyUser({ settings, keybindings }) {
+  if (settings) {
+    const config = vscode.workspace.getConfiguration();
+    const merged = { ...settings };
+    for (const key of Object.keys(state.get(WRITTEN, {}))) {
+      const value = config.inspect(key)?.globalValue;
+      if (value !== undefined) merged[key] = value;
+    }
+    await writeUserFile('settings.json', merged);
+  }
+  if (keybindings) await writeUserFile('keybindings.json', keybindings);
+}
+
+/** Write a user file as JSON, unless it already has that content. */
+async function writeUserFile(name, value) {
+  const uri = vscode.Uri.joinPath(USER_DIR, name);
+  const text = `${JSON.stringify(value, null, 2)}\n`;
+  const current = await vscode.workspace.fs.readFile(uri).then(
+    (data) => new TextDecoder().decode(data),
+    () => null,
+  );
+  if (current !== text) await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
 }
 
 /**

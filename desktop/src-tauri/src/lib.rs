@@ -15,6 +15,8 @@ use tauri::ipc::CapabilityBuilder;
 use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
 use tauri::webview::cookie::SameSite;
 use tauri::webview::{Cookie, NewWindowResponse, WebviewWindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::window::Color;
 use tauri::{AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
@@ -33,6 +35,9 @@ const ZOOM_IN: &str = "zoom-in";
 const ZOOM_OUT: &str = "zoom-out";
 const ACTUAL_SIZE: &str = "actual-size";
 const DESKTOP_PROFILE: &str = "desktop";
+// The picker page's background (`ui/index.html`).
+#[cfg(target_os = "macos")]
+const PICKER_BACKGROUND: Color = Color(0x17, 0x17, 0x17, 0xff);
 
 #[derive(Default)]
 struct Server {
@@ -94,6 +99,11 @@ fn show_picker(window: &WebviewWindow, reason: &str) {
     let state = window.state::<Server>();
     state.connection.fetch_add(1, Ordering::SeqCst);
     if let Some(picker) = state.picker.get() {
+        #[cfg(target_os = "macos")]
+        let _ = window
+            .as_ref()
+            .window()
+            .set_background_color(Some(PICKER_BACKGROUND));
         let mut url = picker.clone();
         url.set_query(Some(&format!("return={reason}")));
         let _ = window.navigate(url);
@@ -311,7 +321,8 @@ fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
         .permission("allow-notify")
         .permission("allow-desktop-info")
         .permission("allow-switch-server")
-        .permission("allow-zoom");
+        .permission("allow-zoom")
+        .permission("allow-set-background");
     app.add_capability(capability)
         .map_err(|_| "Could not open btmux.".to_string())?;
     allowed.insert(origin.to_string());
@@ -740,6 +751,19 @@ fn notify(window: WebviewWindow, id: String, title: String, body: String) {
     });
 }
 
+// Paints the window behind the transparent page and title bar (macOS).
+#[tauri::command]
+fn set_background(window: WebviewWindow, color: [u8; 4]) {
+    #[cfg(target_os = "macos")]
+    {
+        let [red, green, blue, alpha] = color;
+        let color = Color(red, green, blue, alpha);
+        let _ = window.as_ref().window().set_background_color(Some(color));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, color);
+}
+
 // The desktop app's own version, which may differ from the connected server's.
 #[tauri::command]
 fn desktop_info() -> &'static str {
@@ -782,6 +806,7 @@ pub fn run() {
             remove_remote_server,
             connect_remote_server,
             notify,
+            set_background,
             desktop_info,
             zoom
         ])
@@ -859,7 +884,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let window_builder = window_builder
                 .transparent(true)
-                .title_bar_style(TitleBarStyle::Visible)
+                // Shows the window background, which pages set to their own.
+                .title_bar_style(TitleBarStyle::Transparent)
+                .background_color(PICKER_BACKGROUND)
                 .initialization_script("window.__btmuxDesktopTransparency = true;");
             let window = window_builder.build()?;
             app.state::<zoom::Zoom>().apply(&window);

@@ -1,6 +1,11 @@
 type TauriWindow = Window & {
-  __TAURI_INTERNALS__?: { invoke: (command: string) => Promise<unknown> };
+  __TAURI_INTERNALS__?: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
 };
+
+/** Runs a desktop app command, or returns null outside the Tauri shell. */
+export function invokeDesktop(command: string, args?: Record<string, unknown>): Promise<unknown> | null {
+  return (window as TauriWindow).__TAURI_INTERNALS__?.invoke(command, args) ?? null;
+}
 
 let version: Promise<string | null> | null = null;
 

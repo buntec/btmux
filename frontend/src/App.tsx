@@ -39,7 +39,7 @@ import {
 import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
 import { useModalBackdrop } from './hooks/useModalBackdrop';
-import { pageBackground } from './lib/desktopTransparency';
+import { setPageBackground } from './lib/desktopTransparency';
 import { hasShaderWallpaper } from './lib/wallpaperCatalog';
 import { desktopVersionMismatch } from './lib/desktopApp';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
@@ -303,7 +303,7 @@ export function App() {
   }, [effectiveConfig?.terminal?.fontFamily, effectiveConfig?.terminal?.fontWeight]);
 
   useEffect(() => {
-    document.body.style.background = pageBackground(
+    setPageBackground(
       effectiveConfig ? effectiveConfig.theme.background : STARTUP_THEME.background,
       getDesktopBackgroundOpacity(effectiveConfig),
     );

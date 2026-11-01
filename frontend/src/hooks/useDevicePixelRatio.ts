@@ -4,10 +4,16 @@ import { useEffect, useState } from 'react';
 export function useDevicePixelRatio(): number {
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
   useEffect(() => {
-    const query = window.matchMedia(`(resolution: ${dpr}dppx)`);
     const update = () => setDpr(window.devicePixelRatio || 1);
+    update();
+    const query = window.matchMedia(`(resolution: ${dpr}dppx)`);
     query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
+    // WKWebView page zoom fires resize but not the query's change (WebKit bug 124862).
+    window.addEventListener('resize', update);
+    return () => {
+      query.removeEventListener('change', update);
+      window.removeEventListener('resize', update);
+    };
   }, [dpr]);
   return dpr;
 }

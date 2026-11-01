@@ -846,6 +846,7 @@ pub fn run() {
                     .inner_size(1200.0, 800.0)
                     .min_inner_size(640.0, 400.0)
                     .initialization_script(include_str!("notification.js"))
+                    .initialization_script(include_str!("zoom.js"))
                     // Some webviews reset zoom on navigation.
                     .on_page_load(|window, _| window.state::<zoom::Zoom>().apply(&window))
                     // Links (window.open, target=_blank) open in the default browser.
@@ -860,8 +861,6 @@ pub fn run() {
                 .transparent(true)
                 .title_bar_style(TitleBarStyle::Visible)
                 .initialization_script("window.__btmuxDesktopTransparency = true;");
-            #[cfg(not(target_os = "macos"))]
-            let window_builder = window_builder.initialization_script(include_str!("zoom.js"));
             let window = window_builder.build()?;
             app.state::<zoom::Zoom>().apply(&window);
             let _ = app.state::<Server>().picker.set(window.url()?);

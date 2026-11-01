@@ -11,6 +11,7 @@ fn main() {
             "remove_remote_server",
             "connect_remote_server",
             "notify",
+            "set_background",
             "desktop_info",
             "zoom",
         ]),

@@ -57,7 +57,7 @@ import '@fontsource/cascadia-code/400-italic.css';
 import '@fontsource/cascadia-code/500-italic.css';
 import '@fontsource/cascadia-code/600-italic.css';
 import '@fontsource/cascadia-code/700-italic.css';
-import { pageBackground } from './lib/desktopTransparency';
+import { setPageBackground } from './lib/desktopTransparency';
 
 // Set the same typography defaults used by terminal and chrome components
 // before React mounts, so CSS custom-property fallbacks do not become a second
@@ -65,7 +65,7 @@ import { pageBackground } from './lib/desktopTransparency';
 document.documentElement.style.setProperty('--btmux-font', `"${CONFIG_DEFAULTS.terminal.fontFamily}", monospace`);
 document.documentElement.style.setProperty('--btmux-font-weight', String(CONFIG_DEFAULTS.terminal.fontWeight));
 
-document.body.style.background = pageBackground(STARTUP_THEME.background, CONFIG_DEFAULTS.desktopBackgroundOpacity);
+setPageBackground(STARTUP_THEME.background, CONFIG_DEFAULTS.desktopBackgroundOpacity);
 
 function main() {
   const root = createRoot(document.getElementById('root')!);

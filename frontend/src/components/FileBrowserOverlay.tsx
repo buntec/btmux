@@ -441,10 +441,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, currentPath, applyGitChange],
   );
 
-  const gitLoadRefs = useCallback(async () => {
-    const resp = await fileSend('git_refs', { cwd: currentPath });
-    return resp.payload as unknown as GitRefsResult;
-  }, [fileSend, currentPath]);
+  const gitLoadRefs = useCallback(
+    async (worktrees: boolean) => {
+      const resp = await fileSend('git_refs', { cwd: currentPath, worktrees });
+      return resp.payload as unknown as GitRefsResult;
+    },
+    [fileSend, currentPath],
+  );
 
   const gitRun = useCallback(
     async (op: GitOp) => {
@@ -459,21 +462,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const gitRunWorktree = useCallback(
     async (op: WorktreeOp) => {
       const resp = await fileSend('git_worktree', { cwd: currentPath, session_id: sessionId, op });
-      const payload = resp.payload as { status: GitStatusResult; output: string };
-      // Visiting shows the worktree's new window instead.
-      if (op.kind === 'open' || (op.kind === 'add' && op.visit)) onClose();
-      else await applyGitChange(payload.status);
+      // No status when the op visits the worktree, which closes the browser.
+      const payload = resp.payload as { status: GitStatusResult | null; output: string };
+      if (payload.status) await applyGitChange(payload.status);
       return payload.output;
     },
-    [fileSend, currentPath, sessionId, onClose, applyGitChange],
-  );
-
-  const gitVisitPane = useCallback(
-    (paneId: string) => {
-      useStore.getState().navigateToPane(paneId);
-      onClose();
-    },
-    [onClose],
+    [fileSend, currentPath, sessionId, applyGitChange],
   );
 
   const trashFile = useCallback(
@@ -1732,11 +1726,12 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         <GitPopup
           kind={gitPopup}
           sessionId={sessionId}
+          paneId={paneId}
           onClose={closeGitPopup}
+          onLeave={onClose}
           loadRefs={gitLoadRefs}
           run={gitRun}
           runWorktree={gitRunWorktree}
-          onVisitPane={gitVisitPane}
         />
       </div>
     </VStack>

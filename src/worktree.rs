@@ -82,6 +82,13 @@ pub enum Op {
     Prune,
 }
 
+impl Op {
+    /// Whether it ends with a window of the worktree selected.
+    pub fn navigates(&self) -> bool {
+        matches!(self, Op::Open { .. } | Op::Add { visit: true, .. })
+    }
+}
+
 /// Run `op` from `dir`, opening windows in `session_id`. Returns a summary.
 pub async fn run(
     state: &AppState,
@@ -135,10 +142,9 @@ pub async fn run(
         // `--verbose` reports on stderr, so count instead.
         Op::Prune => {
             blocking(dir, |dir| {
-                let count = |dir| Ok::<_, String>(records(dir)?.len());
-                let before = count(dir)?;
+                let before = records(dir)?.len();
                 git(dir, &[&"worktree", &"prune"])?;
-                Ok(match before.saturating_sub(count(dir)?) {
+                Ok(match before.saturating_sub(records(dir)?.len()) {
                     0 => "Nothing to prune".into(),
                     1 => "Pruned 1 worktree".into(),
                     n => format!("Pruned {n} worktrees"),
@@ -149,32 +155,101 @@ pub async fn run(
     }
 }
 
-/// `path`, if it's a worktree of the repo containing `dir` as [`list`]
-/// spells it, so an op never resolves to an enclosing one.
+/// `path`, if it's the root of a worktree of the repo containing `dir`, as
+/// [`list_in`] spells it. An op on it then never resolves to an enclosing
+/// worktree (`path` is gone) or another repo's (a faked record).
 async fn listed(dir: &Path, path: String) -> Result<PathBuf, Error> {
     blocking(dir, move |dir| {
-        if list(dir)?.iter().any(|worktree| worktree.path == path) {
-            Ok(path)
-        } else {
-            Err(format!("{path} is not a worktree of this repo"))
+        let not_listed = || format!("{path} is not a worktree of this repo");
+        if !records(dir)?
+            .iter()
+            .any(|record| listed_path(&record.path) == path)
+        {
+            return Err(not_listed());
+        }
+        let common = git2::Repository::discover(dir)
+            .map_err(|e| e.message().to_string())?
+            .commondir()
+            .to_path_buf();
+        let common = common.canonicalize().unwrap_or(common);
+        match crate::pane_git::worktree_of(Path::new(&path)) {
+            Some((git, _))
+                if git.worktree_root == path && Path::new(&git.repo_id) == common.as_path() =>
+            {
+                Ok(path)
+            }
+            _ => Err(not_listed()),
         }
     })
     .await
     .map(PathBuf::from)
 }
 
-/// `git worktree list --porcelain -z` from `dir`.
-fn records(dir: &Path) -> Result<Vec<Vec<(String, String)>>, String> {
-    let output = git(dir, &[&"worktree", &"list", &"--porcelain", &"-z"])?;
-    Ok(crate::git::worktree_records(&output)
-        .into_iter()
-        .map(|record| {
-            record
-                .into_iter()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect()
-        })
-        .collect())
+/// A record of `git worktree list --porcelain`.
+#[derive(Debug, Default)]
+pub struct Record {
+    /// As git spells it.
+    pub path: String,
+    /// Empty for a bare repo or an unborn branch.
+    pub head: String,
+    /// Without `refs/heads/`; `None` when HEAD is detached.
+    pub branch: Option<String>,
+    pub bare: bool,
+    /// The lock reason, possibly empty.
+    pub locked: Option<String>,
+    pub prunable: bool,
+}
+
+/// The worktrees git lists from `dir`, the main one first.
+pub fn records(dir: &Path) -> Result<Vec<Record>, String> {
+    // NUL-delimited, as paths may contain newlines.
+    let Ok(output) = git(dir, &[&"worktree", &"list", &"--porcelain", &"-z"]) else {
+        // git before 2.36 lacks `-z`. A path or lock reason with a newline
+        // can fake a record there; one naming a worktree of the repo repeats
+        // its path, and ops check others with [`listed`].
+        let output = git(dir, &[&"worktree", &"list", &"--porcelain"])?;
+        return unambiguous(parse_records(&output, '\n'));
+    };
+    Ok(parse_records(&output, '\0'))
+}
+
+/// `records`, unless two share a path.
+fn unambiguous(records: Vec<Record>) -> Result<Vec<Record>, String> {
+    let mut paths: Vec<_> = records.iter().map(|record| &record.path).collect();
+    paths.sort();
+    if paths.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("A worktree path contains a newline; listing it needs git 2.36".into());
+    }
+    Ok(records)
+}
+
+/// Porcelain fields delimited by `end`, with an empty field ending a record.
+fn parse_records(output: &str, end: char) -> Vec<Record> {
+    let mut records = Vec::new();
+    let mut record: Option<Record> = None;
+    for field in output.split(end) {
+        if field.is_empty() {
+            records.extend(record.take());
+            continue;
+        }
+        let (key, value) = field.split_once(' ').unwrap_or((field, ""));
+        let record = record.get_or_insert_with(Record::default);
+        match key {
+            "worktree" => record.path = value.to_string(),
+            "HEAD" => record.head = value.to_string(),
+            "branch" => {
+                let branch = value.strip_prefix("refs/heads/").unwrap_or(value);
+                record.branch = Some(branch.to_string());
+            }
+            "bare" => record.bare = true,
+            "locked" => record.locked = Some(value.to_string()),
+            "prunable" => record.prunable = true,
+            _ => {}
+        }
+    }
+    records.extend(record);
+    records.retain(|record| !record.path.is_empty());
+    records
 }
 
 async fn blocking(
@@ -188,52 +263,32 @@ async fn blocking(
         .map_err(Error::Failed)
 }
 
-/// The worktrees of the repo containing `dir`, the main one first.
-pub fn list(dir: &Path) -> Result<Vec<Info>, String> {
-    let records = records(dir)?;
+/// The worktrees of `repo`, which contains `dir`, the main one first.
+pub fn list_in(repo: &git2::Repository, dir: &Path) -> Result<Vec<Info>, String> {
     let current = crate::pane_git::worktree_of(dir).map(|(git, _)| git.worktree_root);
-    let repo = git2::Repository::discover(dir).ok();
-    let mut worktrees = Vec::new();
-    for record in records {
-        let mut info = Info {
-            path: String::new(),
-            branch: None,
-            head: String::new(),
-            subject: String::new(),
-            main: worktrees.is_empty(),
-            bare: false,
-            current: false,
-            locked: None,
-            prunable: false,
-        };
-        for (key, value) in &record {
-            let value = value.as_str();
-            match key.as_str() {
-                "worktree" => info.path = listed_path(value),
-                "HEAD" => info.head = value.to_string(),
-                "branch" => {
-                    let branch = value.strip_prefix("refs/heads/").unwrap_or(value);
-                    info.branch = Some(branch.to_string());
-                }
-                "bare" => info.bare = true,
-                "locked" => info.locked = Some(value.to_string()),
-                "prunable" => info.prunable = true,
-                _ => {}
+    Ok(records(dir)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| {
+            let path = listed_path(&record.path);
+            let subject = git2::Oid::from_str(&record.head)
+                .ok()
+                .and_then(|oid| repo.find_commit(oid).ok())
+                .and_then(|commit| commit.summary().ok().flatten().map(str::to_string))
+                .unwrap_or_default();
+            Info {
+                current: current.as_deref() == Some(path.as_str()),
+                path,
+                branch: record.branch,
+                head: record.head,
+                subject,
+                main: index == 0,
+                bare: record.bare,
+                locked: record.locked,
+                prunable: record.prunable,
             }
-        }
-        if info.path.is_empty() {
-            continue;
-        }
-        info.current = current.as_deref() == Some(info.path.as_str());
-        info.subject = repo
-            .as_ref()
-            .zip(git2::Oid::from_str(&info.head).ok())
-            .and_then(|(repo, oid)| repo.find_commit(oid).ok())
-            .and_then(|commit| commit.summary().ok().flatten().map(str::to_string))
-            .unwrap_or_default();
-        worktrees.push(info);
-    }
-    Ok(worktrees)
+        })
+        .collect())
 }
 
 /// A path from `git worktree list`, spelled as `pane_git` spells roots.
@@ -423,9 +478,9 @@ fn add(
     )?;
     let main = records(dir)?
         .into_iter()
-        .flatten()
-        .find_map(|(key, value)| (key == "worktree").then_some(value))
-        .ok_or("git listed no worktrees")?;
+        .next()
+        .ok_or("git listed no worktrees")?
+        .path;
     let repo = crate::pane_git::repo_name(Path::new(&common));
     let path = worktree_path(template, Path::new(&main), &repo, &branch);
     if path.exists() {
@@ -684,6 +739,28 @@ mod tests {
         assert!(panes.iter().all(|&pane| mgr.find_pane(pane).is_some()));
     }
 
+    fn list(dir: &Path) -> Result<Vec<Info>, String> {
+        list_in(&git2::Repository::discover(dir).unwrap(), dir)
+    }
+
+    #[test]
+    fn parses_both_record_formats() {
+        let z = "worktree /a\0HEAD 1\0branch refs/heads/main\0\0worktree /a\nb\0detached\0locked why\0prunable gone\0\0";
+        let records = parse_records(z, '\0');
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].branch.as_deref(), Some("main"));
+        assert_eq!(records[1].path, "/a\nb");
+        assert_eq!(records[1].locked.as_deref(), Some("why"));
+        assert!(records[1].prunable && records[1].branch.is_none());
+
+        // Without `-z`, a newline in a path can name another worktree.
+        let lines = "worktree /a\nHEAD 1\n\nworktree /b\nworktree /a\nHEAD 2\n\n";
+        let records = parse_records(lines, '\n');
+        assert_eq!(records[1].path, "/a");
+        assert!(unambiguous(records).is_err());
+        assert!(unambiguous(parse_records("worktree /a\n\nworktree /b\n", '\n')).is_ok());
+    }
+
     #[test]
     fn paths_follow_the_template() {
         let main = Path::new("/src/proj");
@@ -917,10 +994,10 @@ mod tests {
         let list = list(&repo.main).unwrap();
         let entry = list.iter().find(|w| w.branch.as_deref() == Some("newline"));
         assert_eq!(entry.unwrap().path, newline.to_str().unwrap());
-        let paths: Vec<_> = crate::git::list_worktrees(&repo.main)
+        let paths: Vec<_> = records(&repo.main)
             .unwrap()
             .into_iter()
-            .map(|w| w.path)
+            .map(|w| PathBuf::from(w.path))
             .collect();
         assert_eq!(paths, [repo.main.clone(), victim.clone(), newline.clone()]);
 
@@ -932,6 +1009,30 @@ mod tests {
         super::run(&state, session, &repo.main, op).await.unwrap();
         assert!(!newline.exists());
         assert!(victim.join("keep.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn ops_never_resolve_to_an_enclosing_worktree() {
+        let repo = Repo::new();
+        let (outer, _) = add(&repo.main, "outer", None, DEFAULT_PATH).unwrap();
+        let nested = outer.join("nested");
+        let nested_str = nested.to_str().unwrap();
+        run(
+            &repo.main,
+            &["worktree", "add", "-q", "-b", "nested", "--", nested_str],
+        );
+        std::fs::remove_dir_all(&nested).unwrap();
+        assert!(list(&repo.main).unwrap()[2].prunable);
+
+        let (state, panes) = panes(&[&repo.main]).await;
+        let session = state.read().await.session_of_pane(panes[0]);
+        for kind in ["open", "remove"] {
+            let json = serde_json::json!({"kind": kind, "path": nested_str, "force": true});
+            let op = serde_json::from_value::<Op>(json).unwrap();
+            let error = super::run(&state, session, &repo.main, op).await;
+            assert!(matches!(error, Err(Error::Failed(_))), "{kind}");
+        }
+        assert!(outer.exists());
     }
 
     #[test]

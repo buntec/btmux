@@ -16,24 +16,21 @@ import type { GitBranchInfo, GitOp, GitRefsResult, GitWorktreeInfo, WorktreeOp }
 
 export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash' | 'worktree';
 
+/** A `WorktreeOp` in the worktree popup, a `GitOp` elsewhere. */
 type PopupOp = GitOp | WorktreeOp;
-
-const WORKTREE_OP_KINDS = new Set<string>(['add', 'open', 'remove', 'lock', 'unlock', 'prune']);
-
-function isWorktreeOp(op: PopupOp): op is WorktreeOp {
-  return WORKTREE_OP_KINDS.has(op.kind);
-}
 
 interface GitPopupProps {
   kind: GitPopupKind | null;
   /** The browser's session, preferred when visiting a worktree. */
   sessionId: string;
+  /** The browser's pane, whose worktree can't be deleted. */
+  paneId: string;
   onClose: () => void;
-  loadRefs: () => Promise<GitRefsResult>;
+  /** Close the browser, after visiting a worktree. */
+  onLeave: () => void;
+  loadRefs: (worktrees: boolean) => Promise<GitRefsResult>;
   run: (op: GitOp) => Promise<string>;
   runWorktree: (op: WorktreeOp) => Promise<string>;
-  /** Show an existing pane of a visited worktree. */
-  onVisitPane: (paneId: string) => void;
 }
 
 interface Switch {
@@ -140,7 +137,9 @@ interface ListContext {
   worktree?: GitWorktreeInfo;
   /** Pane IDs in each worktree, by path, the browser's session first. */
   worktreePanes: Map<string, string[]>;
-  onVisitPane: (paneId: string) => void;
+  /** The worktree of the browser's pane. */
+  hostWorktree?: string;
+  visitPane: (paneId: string) => void;
 }
 
 function worktreeName(worktree: GitWorktreeInfo): string {
@@ -163,7 +162,7 @@ function buildActions(
   kind: GitPopupKind,
   refs: GitRefsResult,
   flags: Set<string>,
-  { selected, remoteView, worktree, worktreePanes, onVisitPane }: ListContext,
+  { selected, remoteView, worktree, worktreePanes, hostWorktree, visitPane }: ListContext,
 ): Action[] {
   const on = (flag: string) => flags.has(flag);
   const branch = refs.branch;
@@ -241,7 +240,14 @@ function buildActions(
       ];
     case 'worktree': {
       const panes = worktree ? (worktreePanes.get(worktree.path) ?? []) : [];
-      const removable = !!worktree && !worktree.main && !worktree.current && !worktree.prunable;
+      // git refuses a locked one even with --force.
+      const removable =
+        !!worktree &&
+        !worktree.main &&
+        !worktree.current &&
+        !worktree.prunable &&
+        worktree.locked === null &&
+        worktree.path !== hostWorktree;
       const closes = panes.length ? ` and closes its ${paneCount(panes.length)}` : '';
       const createPrompt = (visit: boolean): Prompt => ({
         title: visit ? 'Create and visit worktree' : 'Create worktree',
@@ -259,7 +265,7 @@ function buildActions(
           key: 'Enter',
           label: 'Visit',
           isDisabled: !worktree || worktree.bare || worktree.prunable,
-          next: () => (panes.length ? () => onVisitPane(panes[0]) : { kind: 'open', path: worktree!.path }),
+          next: () => (panes.length ? () => visitPane(panes[0]) : { kind: 'open', path: worktree!.path }),
         },
         { key: 'c', label: 'Create and visit', next: () => createPrompt(true) },
         { key: 'n', label: 'Create', next: () => createPrompt(false) },
@@ -267,17 +273,13 @@ function buildActions(
           key: 'd',
           label: 'Delete',
           isDisabled: !removable,
-          next: () => {
-            const op: WorktreeOp = { kind: 'remove', path: worktree!.path };
-            return panes.length
-              ? {
-                  title: `Delete worktree ${worktreeName(worktree!)}?`,
-                  description: `This removes ${worktree!.path}${closes}. The branch is kept.`,
-                  label: 'Delete',
-                  confirm: op,
-                }
-              : op;
-          },
+          // Removal also deletes ignored files.
+          next: () => ({
+            title: `Delete worktree ${worktreeName(worktree!)}?`,
+            description: `This removes ${worktree!.path} with its ignored files${closes}. The branch is kept.`,
+            label: 'Delete',
+            confirm: { kind: 'remove', path: worktree!.path },
+          }),
         },
         {
           key: 'D',
@@ -285,7 +287,7 @@ function buildActions(
           isDisabled: !removable,
           next: () => ({
             title: `Force delete worktree ${worktreeName(worktree!)}?`,
-            description: `This removes ${worktree!.path} even if it has uncommitted changes${closes}. The branch is kept.`,
+            description: `This removes ${worktree!.path} with its ignored files, even if it has uncommitted changes${closes}. The branch is kept.`,
             label: 'Force delete',
             confirm: { kind: 'remove', path: worktree!.path, force: true },
           }),
@@ -543,11 +545,12 @@ export function GitPopup({ kind, ...props }: GitPopupProps) {
 function GitPopupDialog({
   kind,
   sessionId,
+  paneId,
   onClose,
+  onLeave,
   loadRefs,
   run,
   runWorktree,
-  onVisitPane,
 }: GitPopupProps & { kind: GitPopupKind }) {
   const [refs, setRefs] = useState<GitRefsResult | null>(null);
   const [flags, setFlags] = useState<Set<string>>(() => new Set(savedFlags[kind] ?? []));
@@ -570,7 +573,7 @@ function GitPopupDialog({
 
   useEffect(() => {
     let cancelled = false;
-    loadRefs().then(
+    loadRefs(kind === 'worktree').then(
       (result) => {
         if (cancelled) return;
         setRefs(result);
@@ -592,7 +595,7 @@ function GitPopupDialog({
     return () => {
       cancelled = true;
     };
-  }, [loadRefs]);
+  }, [loadRefs, kind]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -612,17 +615,23 @@ function GitPopupDialog({
   }, [optionIndex, branchIndex, worktreeIndex, remoteView, refs, prompt, running]);
 
   const allSessions = useStore((s) => s.allSessions);
-  const worktreePanes = useMemo(() => {
+  const { worktreePanes, hostWorktree } = useMemo(() => {
     const panes = new Map<string, string[]>();
+    let host: string | undefined;
     const ordered = [...allSessions].sort((a, b) => Number(b.id === sessionId) - Number(a.id === sessionId));
     for (const session of ordered) {
       for (const pane of session.windows.flatMap((window) => window.panes)) {
         const root = pane.git?.worktree_root;
         if (root) panes.set(root, [...(panes.get(root) ?? []), pane.id]);
+        if (pane.id === paneId) host = root;
       }
     }
-    return panes;
-  }, [allSessions, sessionId]);
+    return { worktreePanes: panes, hostWorktree: host };
+  }, [allSessions, sessionId, paneId]);
+  const visitPane = (id: string) => {
+    useStore.getState().navigateToPane(id);
+    onLeave();
+  };
 
   const switches = SWITCHES[kind];
   const branches = (remoteView ? refs?.remote_branches : refs?.local_branches) ?? [];
@@ -633,7 +642,7 @@ function GitPopupDialog({
   const listIndex = kind === 'worktree' ? worktreeIndex : branchIndex;
   const setListIndex = kind === 'worktree' ? setWorktreeIndex : setBranchIndex;
   const actions = refs
-    ? buildActions(kind, refs, flags, { selected, remoteView, worktree, worktreePanes, onVisitPane })
+    ? buildActions(kind, refs, flags, { selected, remoteView, worktree, worktreePanes, hostWorktree, visitPane })
     : [];
   const options = prompt?.options ? filterOptions(prompt.options, query) : [];
 
@@ -669,9 +678,9 @@ function GitPopupDialog({
     setError(null);
     setRunning(describeOp(op));
     try {
-      const output = isWorktreeOp(op) ? await runWorktree(op) : await run(op);
+      const output = kind === 'worktree' ? await runWorktree(op as WorktreeOp) : await run(op as GitOp);
       if (staysOpen(kind, op)) {
-        const nextRefs = await loadRefs();
+        const nextRefs = await loadRefs(kind === 'worktree');
         setRefs(nextRefs);
         if (kind === 'worktree') {
           const nextIndex = nextRefs.worktrees.findIndex((next) =>
@@ -686,6 +695,9 @@ function GitPopupDialog({
           setBranchIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(branchIndex, nextBranches.length - 1)));
         }
         setRunning(null);
+      } else if (kind === 'worktree') {
+        // It visited the worktree.
+        onLeave();
       } else onClose();
       // git ends with its summary line (e.g. `main -> main`, `Already up to date.`).
       const summary = output.trim().split('\n').pop()?.trim();

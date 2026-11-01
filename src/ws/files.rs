@@ -454,9 +454,14 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("cwd")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
+            let worktrees = request
+                .payload
+                .get("worktrees")
+                .and_then(|p| p.as_bool())
+                .unwrap_or(false);
             let git_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
-            match file_git_ops::git_refs(&git_root).await {
+            match file_git_ops::git_refs(&git_root, worktrees).await {
                 Ok(result) => ServerMessage {
                     id,
                     msg_type: "git_refs_result".to_string(),
@@ -519,18 +524,26 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
             };
             let status_root = fs_ops::validate_path(&root, cwd).unwrap_or_else(|_| root.clone());
 
+            // The browser closes to show the worktree's window.
+            let navigates = op.navigates();
             let output = match crate::worktree::run(&state.app, session_id, &status_root, op).await
             {
                 Ok(output) => output,
                 Err(e) => return error_response(id, &e.to_string()),
             };
-            match file_git::git_status(&status_root, true).await {
-                Ok(status) => ServerMessage {
-                    id,
-                    msg_type: "git_worktree_result".to_string(),
-                    payload: serde_json::json!({ "status": status, "output": output }),
-                },
-                Err(e) => error_response(id, &e),
+            // The op succeeded either way.
+            let status = if navigates {
+                None
+            } else {
+                file_git::git_status(&status_root, true)
+                    .await
+                    .inspect_err(|e| tracing::warn!("git status after a worktree op: {e}"))
+                    .ok()
+            };
+            ServerMessage {
+                id,
+                msg_type: "git_worktree_result".to_string(),
+                payload: serde_json::json!({ "status": status, "output": output }),
             }
         }
         "rename_file" => {

@@ -1,11 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub struct Worktree {
-    pub path: PathBuf,
-    pub branch: Option<String>,
-}
-
 /// A git repo discovered under a base directory, resolved into the windows a
 /// btmux session should get. Produced by `discover_repo_layouts`, which shells
 /// out to `git` — run it on a blocking thread so the subprocess calls don't
@@ -67,7 +62,7 @@ fn repo_layout_for(repo: PathBuf) -> RepoLayout {
         .and_then(|n| n.to_str())
         .map(sanitize_name)
         .unwrap_or_else(|| "repo".to_string());
-    let windows = match list_worktrees(&repo) {
+    let windows = match crate::worktree::records(&repo) {
         Ok(wts) => wts
             .into_iter()
             .filter_map(|wt| {
@@ -75,12 +70,12 @@ fn repo_layout_for(repo: PathBuf) -> RepoLayout {
                 // branch), matching the previous behavior; name the window
                 // after the folder the worktree lives in, not the branch.
                 wt.branch?;
-                let name = wt
-                    .path
+                let path = PathBuf::from(wt.path);
+                let name = path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .map(sanitize_name)?;
-                Some((name, wt.path))
+                Some((name, path))
             })
             .collect(),
         Err(e) => {
@@ -109,58 +104,6 @@ fn discover_child_repo_layouts(base_dir: &Path) -> Vec<RepoLayout> {
         .collect();
     repos.sort();
     repos.into_iter().map(repo_layout_for).collect()
-}
-
-/// Run `git -C <repo> worktree list --porcelain -z` and parse the result.
-pub fn list_worktrees(repo: &Path) -> Result<Vec<Worktree>, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["worktree", "list", "--porcelain", "-z"])
-        .output()
-        .map_err(|e| format!("git: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    let output = String::from_utf8_lossy(&output.stdout);
-    Ok(worktree_records(&output)
-        .into_iter()
-        .filter_map(|record| {
-            let mut path = None;
-            let mut branch = None;
-            for (key, value) in record {
-                match key {
-                    "worktree" => path = Some(PathBuf::from(value)),
-                    "branch" => branch = value.strip_prefix("refs/heads/").map(str::to_string),
-                    _ => {}
-                }
-            }
-            Some(Worktree {
-                path: path?,
-                branch,
-            })
-        })
-        .collect())
-}
-
-/// `git worktree list --porcelain -z` output as records of `(key, value)`
-/// fields. NUL-delimited, as paths may contain newlines.
-pub(crate) fn worktree_records(output: &str) -> Vec<Vec<(&str, &str)>> {
-    let mut records = Vec::new();
-    let mut record = Vec::new();
-    for field in output.split('\0') {
-        if field.is_empty() {
-            if !record.is_empty() {
-                records.push(std::mem::take(&mut record));
-            }
-        } else {
-            record.push(field.split_once(' ').unwrap_or((field, "")));
-        }
-    }
-    if !record.is_empty() {
-        records.push(record);
-    }
-    records
 }
 
 /// Sanitize a string for use as a btmux session or window name (replace `.`, `:`, whitespace with `-`).

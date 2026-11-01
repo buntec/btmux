@@ -51,14 +51,14 @@ try {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return !!useStore.getState().config;
   });
-  const openGitMode = async () => {
+  const openGitMode = async (host = pane) => {
     await page.evaluate(
       async ({ pane, repo }) => {
         const { useStore } = await import('/src/state/store.tsx' as string);
         useStore.getState().navigateToPane(pane);
         useStore.getState().setFileBrowserOpen(true, repo, pane, 'git');
       },
-      { pane, repo },
+      { pane: host, repo },
     );
     await page.getByText('main', { exact: true }).first().waitFor();
     await page
@@ -94,6 +94,10 @@ try {
   await page.keyboard.press('l');
   await list.getByText(/locked/).waitFor();
   assert.match(git('worktree', 'list', '--porcelain').toString(), /locked/);
+  // git refuses to remove a locked worktree.
+  await page.keyboard.press('d');
+  await page.keyboard.press('D');
+  assert.equal(await page.getByRole('dialog', { name: /Delete worktree/ }).count(), 0);
   await page.keyboard.press('l');
   await list.getByText(/locked/).waitFor({ state: 'detached' });
   // The list is replaced by a spinner while the op runs.
@@ -102,6 +106,9 @@ try {
 
   writeFileSync(path.join(sibling('feat'), 'new.txt'), 'x\n');
   await page.keyboard.press('d');
+  const safe = page.getByRole('dialog', { name: 'Delete worktree feat?', exact: true });
+  await safe.getByText(/with its ignored files/).waitFor();
+  await page.keyboard.press('y');
   await dialog.getByText(/has uncommitted changes/).waitFor();
   assert(existsSync(sibling('feat')));
   await page.keyboard.press('D');
@@ -138,6 +145,17 @@ try {
   await page.waitForURL(/\/w\/existing$/);
   assert.equal((await windows()).length, 2);
   console.log('PASS visit an existing window');
+
+  // Not from a pane in it.
+  await openGitMode((await windows())[1].panes[0].id);
+  await page.keyboard.press('%');
+  await list.getByText('existing', { exact: true }).click();
+  await page.keyboard.press('d');
+  assert.equal(await page.getByRole('dialog', { name: /Delete worktree/ }).count(), 0);
+  await page.keyboard.press('q');
+  await dialog.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Close file browser' }).click();
+  console.log("PASS the browser's own worktree is kept");
 
   await openGitMode();
   await page.keyboard.press('%');

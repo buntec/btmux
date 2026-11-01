@@ -182,6 +182,7 @@ export interface GitRefsResult {
   remote_branches: GitBranchInfo[];
   remotes: string[];
   stashes: GitStashInfo[];
+  /** Empty unless requested. */
   worktrees: GitWorktreeInfo[];
 }
 

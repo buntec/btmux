@@ -111,9 +111,10 @@ pub enum GitOp {
     UnstageAll,
 }
 
-pub async fn git_refs(root: &Path) -> Result<GitRefsResult, String> {
+/// The refs to act on, and the worktrees if `worktrees`.
+pub async fn git_refs(root: &Path, worktrees: bool) -> Result<GitRefsResult, String> {
     let root = root.to_path_buf();
-    tokio::task::spawn_blocking(move || git_refs_sync(&root))
+    tokio::task::spawn_blocking(move || git_refs_sync(&root, worktrees))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -368,7 +369,7 @@ fn branch_info(repo: &Repository, branch: &git2::Branch<'_>) -> Option<GitBranch
     })
 }
 
-fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
+fn git_refs_sync(root: &Path, worktrees: bool) -> Result<GitRefsResult, String> {
     let mut repo = open_repo(root)?;
     let branch = repo
         .head()
@@ -426,11 +427,11 @@ fn git_refs_sync(root: &Path) -> Result<GitRefsResult, String> {
         true
     });
 
-    // Other popups still work without it.
-    let worktrees = crate::worktree::list(root).unwrap_or_else(|e| {
-        tracing::warn!("Failed to list worktrees: {}", e);
+    let worktrees = if worktrees {
+        crate::worktree::list_in(&repo, root)?
+    } else {
         Vec::new()
-    });
+    };
 
     Ok(GitRefsResult {
         branch,
@@ -594,7 +595,7 @@ mod tests {
             )
             .unwrap();
 
-        let refs = git_refs(&root).await.unwrap();
+        let refs = git_refs(&root, false).await.unwrap();
         let branch = &refs.local_branches[0];
         assert_eq!(branch.name, name);
         assert!(branch.is_head);
@@ -621,7 +622,7 @@ mod tests {
             .unwrap()
             .set_target(remote_tip, "test")
             .unwrap();
-        let refs = git_refs(&root).await.unwrap();
+        let refs = git_refs(&root, false).await.unwrap();
         assert_eq!(
             (refs.local_branches[0].ahead, refs.local_branches[0].behind),
             (1, 1)
@@ -631,7 +632,7 @@ mod tests {
             .unwrap()
             .delete()
             .unwrap();
-        let refs = git_refs(&root).await.unwrap();
+        let refs = git_refs(&root, false).await.unwrap();
         assert_eq!(
             refs.local_branches[0].upstream.as_deref(),
             Some("origin/main")
@@ -707,7 +708,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let refs = git_refs(&root).await.unwrap();
+        let refs = git_refs(&root, false).await.unwrap();
         assert_eq!(refs.branch.as_deref(), Some("topic"));
         assert_eq!(refs.local_branches.len(), 2);
 
@@ -723,7 +724,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let refs = git_refs(&root).await.unwrap();
+        let refs = git_refs(&root, false).await.unwrap();
         assert_eq!(refs.stashes.len(), 1);
         assert!(refs.stashes[0].message.contains("saved"));
         assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "one\n");
@@ -738,7 +739,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "two\n");
-        assert!(git_refs(&root).await.unwrap().stashes.is_empty());
+        assert!(git_refs(&root, false).await.unwrap().stashes.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

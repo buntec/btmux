@@ -96,6 +96,8 @@ interface WTermInput {
   positionTextarea(): void;
   // Set by Escape: a following Tab leaves the terminal instead of reaching it.
   tabExitArmed: boolean;
+  // Keys whose press reached the application; wterm encodes their repeats.
+  deliveredKeys: Set<string>;
 }
 
 /** `KeyboardEvent.code` for a key, for listeners that match physical keys. */
@@ -428,6 +430,12 @@ export class PaneTerminal {
    */
   private onKeyDown = (event: KeyboardEvent) => {
     if (!IS_MAC || event.isComposing) return;
+    if (event.ctrlKey && !event.metaKey && !event.altKey && event.key === 'v') {
+      // wterm leaves Ctrl+V to the browser as paste, which macOS doesn't do;
+      // marked delivered, it encodes it as a key (Claude Code reads the clipboard).
+      (this.wterm as unknown as { input: WTermInput | null }).input?.deliveredKeys.add(event.code || event.key);
+      return;
+    }
     const text = macEditKey(event) ?? macOptionText(event);
     if (text === null) return;
     event.preventDefault();

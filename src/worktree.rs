@@ -440,13 +440,14 @@ pub async fn remove_at(state: &AppState, dir: &Path, force: bool) -> Result<Remo
     };
 
     let root = target.root.clone();
+    let common_dir = target.common_dir.clone();
     tokio::task::spawn_blocking(move || {
         let mut args: Vec<&dyn AsRef<OsStr>> = vec![&"worktree", &"remove"];
         if force {
             args.push(&"--force");
         }
         args.extend([&"--" as &dyn AsRef<OsStr>, &root]);
-        git(&root, &args)
+        git(&common_dir, &args)
     })
     .await
     .map_err(|e| Error::Failed(e.to_string()))?
@@ -560,6 +561,8 @@ fn worktree_path(template: &str, main: &Path, repo: &str, branch: &str) -> PathB
 
 struct Target {
     root: PathBuf,
+    /// Where git runs: a process in `root` blocks its removal on Windows.
+    common_dir: PathBuf,
     branch: Option<String>,
 }
 
@@ -578,9 +581,14 @@ fn removable(dir: &Path, force: bool) -> Result<Target, Error> {
     if git_dir.join("locked").exists() {
         return Err(Error::Conflict(format!("{} is locked", root.display())));
     }
+    let common_dir = PathBuf::from(git(
+        &root,
+        &[&"rev-parse", &"--path-format=absolute", &"--git-common-dir"],
+    )?);
     if force {
         return Ok(Target {
             root,
+            common_dir,
             branch: git_info.branch,
         });
     }
@@ -604,6 +612,7 @@ fn removable(dir: &Path, force: bool) -> Result<Target, Error> {
     }
     Ok(Target {
         root,
+        common_dir,
         branch: git_info.branch,
     })
 }
@@ -660,9 +669,8 @@ mod tests {
         fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("btmux-worktree-{}", Uuid::new_v4()));
             std::fs::create_dir_all(dir.join("proj")).unwrap();
-            // Worktree roots are canonical on Unix.
-            #[cfg(unix)]
-            let dir = dir.canonicalize().unwrap();
+            // Spelled as worktree roots (`TEMP` may hold 8.3 names).
+            let dir = crate::pane_git::real_path(&dir);
             let main = dir.join("proj");
             run(&main, &["init", "-q", "-b", "main"]);
             run(&main, &["commit", "-q", "--allow-empty", "-m", "init"]);

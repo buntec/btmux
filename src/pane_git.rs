@@ -293,12 +293,19 @@ fn resolve(dir: &Path) -> Option<(PathBuf, Worktree)> {
     Some((root, Worktree { git, git_dir }))
 }
 
-/// `dir` with symlinks resolved, as git finds its repo. Unchanged on Windows,
-/// where a UNC path (WSL) would become a verbatim `\\?\UNC\` one.
+/// `dir` with symlinks (and on Windows, 8.3 short names) resolved, as git
+/// finds its repo. Unchanged where Windows would make it a verbatim `\\?\`
+/// path, as for UNC paths (WSL).
 pub(crate) fn real_path(dir: &Path) -> PathBuf {
     #[cfg(unix)]
     if let Ok(real) = dir.canonicalize() {
         return real;
+    }
+    #[cfg(windows)]
+    if let Ok(real) = dunce::canonicalize(dir) {
+        if !real.as_os_str().to_string_lossy().starts_with(r"\\?\") {
+            return real;
+        }
     }
     dir.to_path_buf()
 }

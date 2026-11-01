@@ -26,8 +26,12 @@ use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
 mod discovery;
 mod remote;
 mod servers;
+mod zoom;
 
 const SWITCH_SERVER: &str = "switch-server";
+const ZOOM_IN: &str = "zoom-in";
+const ZOOM_OUT: &str = "zoom-out";
+const ACTUAL_SIZE: &str = "actual-size";
 const DESKTOP_PROFILE: &str = "desktop";
 
 #[derive(Default)]
@@ -306,7 +310,8 @@ fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
         .window("main")
         .permission("allow-notify")
         .permission("allow-desktop-info")
-        .permission("allow-switch-server");
+        .permission("allow-switch-server")
+        .permission("allow-zoom");
     app.add_capability(capability)
         .map_err(|_| "Could not open btmux.".to_string())?;
     allowed.insert(origin.to_string());
@@ -741,6 +746,16 @@ fn desktop_info() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+// Zooms the page in, out, or to actual size ("reset").
+#[tauri::command]
+fn zoom(window: WebviewWindow, state: State<'_, zoom::Zoom>, step: String) {
+    state.step(
+        &window,
+        config_dir(window.app_handle()).ok().as_deref(),
+        &step,
+    );
+}
+
 fn unused_loopback_port() -> std::io::Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
@@ -767,26 +782,37 @@ pub fn run() {
             remove_remote_server,
             connect_remote_server,
             notify,
-            desktop_info
+            desktop_info,
+            zoom
         ])
         .on_menu_event(|app, event| {
-            if event.id() == SWITCH_SERVER
-                && let Some(window) = app.get_webview_window("main")
-            {
-                show_picker(&window, "switch");
-            }
+            let Some(window) = app.get_webview_window("main") else {
+                return;
+            };
+            let step = match event.id().as_ref() {
+                SWITCH_SERVER => return show_picker(&window, "switch"),
+                ZOOM_IN => "in",
+                ZOOM_OUT => "out",
+                ACTUAL_SIZE => "reset",
+                _ => return,
+            };
+            zoom(window, app.state(), step.into());
         })
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
                 let menu = Menu::default(app.handle())?;
-                let file = menu.items()?.into_iter().find_map(|item| match item {
-                    MenuItemKind::Submenu(menu) if menu.text().is_ok_and(|text| text == "File") => {
-                        Some(menu)
-                    }
-                    _ => None,
-                });
-                if let Some(file) = file {
+                let submenu = |name: &str| {
+                    menu.items().ok()?.into_iter().find_map(|item| match item {
+                        MenuItemKind::Submenu(menu)
+                            if menu.text().is_ok_and(|text| text == name) =>
+                        {
+                            Some(menu)
+                        }
+                        _ => None,
+                    })
+                };
+                if let Some(file) = submenu("File") {
                     let switch = MenuItem::with_id(
                         app,
                         SWITCH_SERVER,
@@ -797,14 +823,31 @@ pub fn run() {
                     file.insert(&switch, 0)?;
                     file.insert(&PredefinedMenuItem::separator(app)?, 1)?;
                 }
+                if let Some(view) = submenu("View") {
+                    let items = [
+                        (ACTUAL_SIZE, "Actual Size", "CmdOrCtrl+0"),
+                        (ZOOM_IN, "Zoom In", "CmdOrCtrl+="),
+                        (ZOOM_OUT, "Zoom Out", "CmdOrCtrl+-"),
+                    ];
+                    for (position, (id, text, key)) in items.into_iter().enumerate() {
+                        view.insert(
+                            &MenuItem::with_id(app, id, text, true, Some(key))?,
+                            position,
+                        )?;
+                    }
+                    view.insert(&PredefinedMenuItem::separator(app)?, items.len())?;
+                }
                 app.set_menu(menu)?;
             }
+            app.manage(zoom::Zoom::load(&config_dir(app.handle())?));
             let window_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("")
                     .inner_size(1200.0, 800.0)
                     .min_inner_size(640.0, 400.0)
                     .initialization_script(include_str!("notification.js"))
+                    // Some webviews reset zoom on navigation.
+                    .on_page_load(|window, _| window.state::<zoom::Zoom>().apply(&window))
                     // Links (window.open, target=_blank) open in the default browser.
                     .on_new_window(|url, _| {
                         if matches!(url.scheme(), "http" | "https") {
@@ -817,7 +860,10 @@ pub fn run() {
                 .transparent(true)
                 .title_bar_style(TitleBarStyle::Visible)
                 .initialization_script("window.__btmuxDesktopTransparency = true;");
+            #[cfg(not(target_os = "macos"))]
+            let window_builder = window_builder.initialization_script(include_str!("zoom.js"));
             let window = window_builder.build()?;
+            app.state::<zoom::Zoom>().apply(&window);
             let _ = app.state::<Server>().picker.set(window.url()?);
             Ok(())
         })

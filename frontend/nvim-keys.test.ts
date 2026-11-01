@@ -96,6 +96,9 @@ test('Cmd sends <D-…>, except shortcuts the browser or app keeps', () => {
     expect(key({ key: letter, code: `Key${letter.toUpperCase()}`, metaKey: true })).toBeNull();
   }
   expect(key({ key: '1', code: 'Digit1', metaKey: true })).toBeNull();
+  for (const [k, code] of [['=', 'Equal'], ['+', 'Equal'], ['-', 'Minus']]) {
+    expect(key({ key: k, code, metaKey: true, shiftKey: k === '+' })).toBeNull();
+  }
 });
 
 test('leaves modifiers, IME, dead keys and Cmd+V to the browser', () => {

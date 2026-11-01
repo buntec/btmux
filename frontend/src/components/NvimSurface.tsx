@@ -28,6 +28,7 @@ import {
   type WidgetState,
 } from '../lib/nvimWidgets';
 import { NvimFloatFrames, NvimWidgets } from './NvimWidgets';
+import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio';
 
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/nvim`;
 const BUTTONS = ['left', 'middle', 'right'];
@@ -129,6 +130,7 @@ export function NvimSurface({
   const theme = config?.theme ?? STARTUP_THEME;
   const transparent = terminalTransparency(config);
   const cellOpacity = config?.terminal.cellBackgroundOpacity ?? 1;
+  const dpr = useDevicePixelRatio();
   const font = {
     family,
     size,
@@ -570,7 +572,7 @@ export function NvimSurface({
     return () => window.clearTimeout(id);
   }, [focused, modalOpen, generation, activeSessionId]);
 
-  // Re-measure once the configured font is loaded or changes.
+  // Re-measure once the configured font is loaded or changes, and on zoom.
   useEffect(() => {
     let cancelled = false;
     const style = guifont.italic ? 'italic ' : '';
@@ -600,6 +602,7 @@ export function NvimSurface({
     transparent,
     cellOpacity,
     generation,
+    dpr,
   ]);
 
   return (

@@ -248,11 +248,11 @@ function buildActions(
         label: 'Branch (existing or new)',
         options: worktreeBranchOptions(refs),
         allowCustom: true,
-        // A remote branch is checked out as a local tracking branch.
-        submit: (value) => {
-          const remote = refs.remote_branches.some((branch) => branch.name === value);
-          return { kind: 'add', branch: remote ? splitRemoteBranch(refs, value).branch : value, visit };
-        },
+        // A remote branch is checked out as a local branch tracking it.
+        submit: (value) =>
+          refs.remote_branches.some((branch) => branch.name === value)
+            ? { kind: 'add', branch: splitRemoteBranch(refs, value).branch, track: value, visit }
+            : { kind: 'add', branch: value, visit },
       });
       return [
         {

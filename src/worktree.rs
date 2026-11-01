@@ -57,6 +57,9 @@ pub enum Op {
     /// Add a worktree; `visit` also opens a window there and selects it.
     Add {
         branch: String,
+        /// A remote branch (`origin/x`) for a new `branch` to track.
+        #[serde(default)]
+        track: Option<String>,
         #[serde(default)]
         visit: bool,
     },
@@ -88,20 +91,27 @@ pub async fn run(
 ) -> Result<String, Error> {
     let session = || session_id.ok_or_else(|| Error::Invalid("Missing session".into()));
     match op {
-        Op::Add { branch, visit } if visit => {
-            let created = create_in(state, session()?, dir, &branch, true).await?;
+        Op::Add {
+            branch,
+            track,
+            visit,
+        } if visit => {
+            let created =
+                create_in(state, session()?, dir, &branch, track.as_deref(), true).await?;
             Ok(format!("Created {}", created.path))
         }
-        Op::Add { branch, .. } => {
-            let (path, _) = add_async(state, dir, &branch).await?;
+        Op::Add { branch, track, .. } => {
+            let (path, _) = add_async(state, dir, &branch, track.as_deref()).await?;
             Ok(format!("Created {}", path.display()))
         }
         Op::Open { path } => {
-            open(state, session()?, Path::new(&path)).await?;
+            let path = listed(dir, path).await?;
+            open(state, session()?, &path).await?;
             Ok(String::new())
         }
         Op::Remove { path, force } => {
-            let removed = remove_at(state, Path::new(&path), force).await?;
+            let path = listed(dir, path).await?;
+            let removed = remove_at(state, &path, force).await?;
             let panes = removed.closed_panes.len();
             Ok(match panes {
                 0 => format!("Removed {}", removed.path),
@@ -122,19 +132,49 @@ pub async fn run(
             })
             .await
         }
+        // `--verbose` reports on stderr, so count instead.
         Op::Prune => {
             blocking(dir, |dir| {
-                git(dir, &[&"worktree", &"prune", &"--verbose"]).map(|out| {
-                    if out.is_empty() {
-                        "Nothing to prune".into()
-                    } else {
-                        out
-                    }
+                let count = |dir| Ok::<_, String>(records(dir)?.len());
+                let before = count(dir)?;
+                git(dir, &[&"worktree", &"prune"])?;
+                Ok(match before.saturating_sub(count(dir)?) {
+                    0 => "Nothing to prune".into(),
+                    1 => "Pruned 1 worktree".into(),
+                    n => format!("Pruned {n} worktrees"),
                 })
             })
             .await
         }
     }
+}
+
+/// `path`, if it's a worktree of the repo containing `dir` as [`list`]
+/// spells it, so an op never resolves to an enclosing one.
+async fn listed(dir: &Path, path: String) -> Result<PathBuf, Error> {
+    blocking(dir, move |dir| {
+        if list(dir)?.iter().any(|worktree| worktree.path == path) {
+            Ok(path)
+        } else {
+            Err(format!("{path} is not a worktree of this repo"))
+        }
+    })
+    .await
+    .map(PathBuf::from)
+}
+
+/// `git worktree list --porcelain -z` from `dir`.
+fn records(dir: &Path) -> Result<Vec<Vec<(String, String)>>, String> {
+    let output = git(dir, &[&"worktree", &"list", &"--porcelain", &"-z"])?;
+    Ok(crate::git::worktree_records(&output)
+        .into_iter()
+        .map(|record| {
+            record
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect()
+        })
+        .collect())
 }
 
 async fn blocking(
@@ -150,11 +190,11 @@ async fn blocking(
 
 /// The worktrees of the repo containing `dir`, the main one first.
 pub fn list(dir: &Path) -> Result<Vec<Info>, String> {
-    let output = git(dir, &[&"worktree", &"list", &"--porcelain"])?;
+    let records = records(dir)?;
     let current = crate::pane_git::worktree_of(dir).map(|(git, _)| git.worktree_root);
     let repo = git2::Repository::discover(dir).ok();
     let mut worktrees = Vec::new();
-    for block in output.split("\n\n") {
+    for record in records {
         let mut info = Info {
             path: String::new(),
             branch: None,
@@ -166,9 +206,9 @@ pub fn list(dir: &Path) -> Result<Vec<Info>, String> {
             locked: None,
             prunable: false,
         };
-        for line in block.lines() {
-            let (key, value) = line.split_once(' ').unwrap_or((line, ""));
-            match key {
+        for (key, value) in &record {
+            let value = value.as_str();
+            match key.as_str() {
                 "worktree" => info.path = listed_path(value),
                 "HEAD" => info.head = value.to_string(),
                 "branch" => {
@@ -223,21 +263,23 @@ pub async fn create(
         (session_id, cwd)
     };
     let cwd = cwd.ok_or_else(|| Error::Conflict("The pane has no local directory".into()))?;
-    create_in(state, session_id, Path::new(&cwd), branch, select).await
+    create_in(state, session_id, Path::new(&cwd), branch, None, select).await
 }
 
-/// [`create`] from `dir`, with the window in `session_id`.
+/// [`create`] from `dir`, with the window in `session_id`, tracking the
+/// remote branch `track` if given.
 pub async fn create_in(
     state: &AppState,
     session_id: Uuid,
     dir: &Path,
     branch: &str,
+    track: Option<&str>,
     select: bool,
 ) -> Result<Created, Error> {
     if !state.read().await.has_session(session_id) {
         return Err(Error::Conflict("The session no longer exists".into()));
     }
-    let (path, branch) = add_async(state, dir, branch).await?;
+    let (path, branch) = add_async(state, dir, branch, track).await?;
     let name = crate::git::sanitize_name(&branch);
     let mut mgr = state.write().await;
     let pane_id = mgr
@@ -254,10 +296,16 @@ pub async fn create_in(
 }
 
 /// [`add`] off the lock, with the configured path template.
-async fn add_async(state: &AppState, dir: &Path, branch: &str) -> Result<(PathBuf, String), Error> {
+async fn add_async(
+    state: &AppState,
+    dir: &Path,
+    branch: &str,
+    track: Option<&str>,
+) -> Result<(PathBuf, String), Error> {
     let template = state.read().await.worktree_path_template();
     let (dir, branch) = (dir.to_path_buf(), branch.trim().to_string());
-    tokio::task::spawn_blocking(move || add(&dir, &branch, &template))
+    let track = track.map(|track| track.trim().to_string());
+    tokio::task::spawn_blocking(move || add(&dir, &branch, track.as_deref(), &template))
         .await
         .map_err(|e| Error::Failed(e.to_string()))?
 }
@@ -356,7 +404,14 @@ pub async fn remove_at(state: &AppState, dir: &Path, force: bool) -> Result<Remo
 }
 
 /// Add the worktree; returns its path and the branch name git resolved.
-fn add(dir: &Path, branch: &str, template: &str) -> Result<(PathBuf, String), Error> {
+/// With `track`, a new `branch` tracks that remote branch; an existing one
+/// must already track it.
+fn add(
+    dir: &Path,
+    branch: &str,
+    track: Option<&str>,
+    template: &str,
+) -> Result<(PathBuf, String), Error> {
     if branch.is_empty() || branch.starts_with('-') {
         return Err(Error::Invalid(format!("Invalid branch name: {branch:?}")));
     }
@@ -366,13 +421,13 @@ fn add(dir: &Path, branch: &str, template: &str) -> Result<(PathBuf, String), Er
         dir,
         &[&"rev-parse", &"--path-format=absolute", &"--git-common-dir"],
     )?;
-    let list = git(dir, &[&"worktree", &"list", &"--porcelain"])?;
-    let main = list
-        .lines()
-        .find_map(|line| line.strip_prefix("worktree "))
+    let main = records(dir)?
+        .into_iter()
+        .flatten()
+        .find_map(|(key, value)| (key == "worktree").then_some(value))
         .ok_or("git listed no worktrees")?;
     let repo = crate::pane_git::repo_name(Path::new(&common));
-    let path = worktree_path(template, Path::new(main), &repo, &branch);
+    let path = worktree_path(template, Path::new(&main), &repo, &branch);
     if path.exists() {
         return Err(Error::Conflict(format!(
             "{} already exists",
@@ -382,6 +437,41 @@ fn add(dir: &Path, branch: &str, template: &str) -> Result<(PathBuf, String), Er
 
     let local_ref = format!("refs/heads/{branch}");
     let local = git(dir, &[&"show-ref", &"--verify", &"--quiet", &local_ref]).is_ok();
+    if let Some(track) = track {
+        let remote_ref = format!("refs/remotes/{track}");
+        if track.starts_with('-')
+            || git(dir, &[&"show-ref", &"--verify", &"--quiet", &remote_ref]).is_err()
+        {
+            return Err(Error::Invalid(format!("No remote branch {track:?}")));
+        }
+        if local {
+            let upstream = git(
+                dir,
+                &[&"for-each-ref", &"--format=%(upstream)", &"--", &local_ref],
+            )?;
+            if upstream != remote_ref {
+                return Err(Error::Conflict(format!(
+                    "Local branch {branch} exists and doesn't track {track}"
+                )));
+            }
+            git(dir, &[&"worktree", &"add", &"--", &path, &branch])?;
+        } else {
+            git(
+                dir,
+                &[
+                    &"worktree",
+                    &"add",
+                    &"--track",
+                    &"-b",
+                    &branch,
+                    &"--",
+                    &path,
+                    &track,
+                ],
+            )?;
+        }
+        return Ok((path, branch));
+    }
     let remote = git(
         dir,
         &[
@@ -616,25 +706,25 @@ mod tests {
         let repo = Repo::new();
         run(&repo.main, &["branch", "existing"]);
         let dir = repo.dir.canonicalize().unwrap();
-        let (path, branch) = add(&repo.main, "feat/new", DEFAULT_PATH).unwrap();
+        let (path, branch) = add(&repo.main, "feat/new", None, DEFAULT_PATH).unwrap();
         assert_eq!(path.canonicalize().unwrap(), dir.join("proj-feat-new"));
         assert_eq!(branch, "feat/new");
         // From a linked worktree, still beside the main one.
-        let (path, _) = add(&path, "existing", DEFAULT_PATH).unwrap();
+        let (path, _) = add(&path, "existing", None, DEFAULT_PATH).unwrap();
         assert_eq!(path.canonicalize().unwrap(), dir.join("proj-existing"));
         let head = git(&path, &[&"branch", &"--show-current"]).unwrap();
         assert_eq!(head, "existing");
 
         assert!(matches!(
-            add(&repo.main, "existing", DEFAULT_PATH),
+            add(&repo.main, "existing", None, DEFAULT_PATH),
             Err(Error::Conflict(_))
         ));
         assert!(matches!(
-            add(&repo.main, "-x", DEFAULT_PATH),
+            add(&repo.main, "-x", None, DEFAULT_PATH),
             Err(Error::Invalid(_))
         ));
         assert!(matches!(
-            add(&repo.main, "a..b", DEFAULT_PATH),
+            add(&repo.main, "a..b", None, DEFAULT_PATH),
             Err(Error::Invalid(_))
         ));
     }
@@ -645,7 +735,7 @@ mod tests {
         run(&repo.main, &["branch", "remote-only"]);
         let clone = repo.dir.join("clone");
         run(&repo.dir, &["clone", "-q", "proj", "clone"]);
-        let (path, _) = add(&clone, "remote-only", DEFAULT_PATH).unwrap();
+        let (path, _) = add(&clone, "remote-only", None, DEFAULT_PATH).unwrap();
         let upstream = git(&path, &[&"rev-parse", &"--abbrev-ref", &"@{upstream}"]).unwrap();
         assert_eq!(upstream, "origin/remote-only");
     }
@@ -653,7 +743,7 @@ mod tests {
     #[test]
     fn only_clean_linked_worktrees_are_removable() {
         let repo = Repo::new();
-        let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        let (path, _) = add(&repo.main, "feat", None, DEFAULT_PATH).unwrap();
         assert!(matches!(
             removable(&repo.main, false),
             Err(Error::Conflict(_))
@@ -682,8 +772,8 @@ mod tests {
     #[test]
     fn lists_worktrees_with_their_state() {
         let repo = Repo::new();
-        let (feat, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
-        let (gone, _) = add(&repo.main, "gone", DEFAULT_PATH).unwrap();
+        let (feat, _) = add(&repo.main, "feat", None, DEFAULT_PATH).unwrap();
+        let (gone, _) = add(&repo.main, "gone", None, DEFAULT_PATH).unwrap();
         run(
             &repo.main,
             &[
@@ -785,22 +875,106 @@ mod tests {
         assert_eq!(windows(state.clone()).await, before + 1);
 
         std::fs::remove_dir_all(repo.dir.join("proj-b")).unwrap();
-        super::run(
-            &state,
-            session,
-            &repo.main,
-            op(serde_json::json!({"kind": "prune"})),
-        )
-        .await
-        .unwrap();
+        let prune = || {
+            super::run(
+                &state,
+                session,
+                &repo.main,
+                op(serde_json::json!({"kind": "prune"})),
+            )
+        };
+        assert_eq!(prune().await.unwrap(), "Pruned 1 worktree");
         assert_eq!(list(&repo.main).unwrap().len(), 1);
+        assert_eq!(prune().await.unwrap(), "Nothing to prune");
+
+        // Not a worktree root, though inside one.
+        let sub = repo.main.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let sub = sub.to_str().unwrap();
+        for kind in ["open", "remove"] {
+            let json = serde_json::json!({"kind": kind, "path": sub, "force": true});
+            let error = super::run(&state, session, &repo.main, op(json)).await;
+            assert!(matches!(error, Err(Error::Failed(_))), "{kind}");
+        }
+        assert!(repo.main.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn newline_paths_name_their_own_worktree() {
+        let repo = Repo::new();
+        let victim = repo.dir.join("victim");
+        let newline = repo.dir.join("victim\nother");
+        for (branch, path) in [("victim", &victim), ("newline", &newline)] {
+            let path = path.to_str().unwrap();
+            run(
+                &repo.main,
+                &["worktree", "add", "-q", "-b", branch, "--", path],
+            );
+        }
+        std::fs::write(victim.join("keep.txt"), "x").unwrap();
+
+        let list = list(&repo.main).unwrap();
+        let entry = list.iter().find(|w| w.branch.as_deref() == Some("newline"));
+        assert_eq!(entry.unwrap().path, newline.to_str().unwrap());
+        let paths: Vec<_> = crate::git::list_worktrees(&repo.main)
+            .unwrap()
+            .into_iter()
+            .map(|w| w.path)
+            .collect();
+        assert_eq!(paths, [repo.main.clone(), victim.clone(), newline.clone()]);
+
+        let (state, panes) = panes(&[&repo.main]).await;
+        let session = state.read().await.session_of_pane(panes[0]);
+        let json =
+            serde_json::json!({"kind": "remove", "path": entry.unwrap().path, "force": true});
+        let op = serde_json::from_value::<Op>(json).unwrap();
+        super::run(&state, session, &repo.main, op).await.unwrap();
+        assert!(!newline.exists());
+        assert!(victim.join("keep.txt").exists());
+    }
+
+    #[test]
+    fn remote_branches_are_tracked_as_selected() {
+        let repo = Repo::new();
+        run(&repo.main, &["branch", "shared"]);
+        let clone = repo.dir.join("clone");
+        let up = repo.dir.join("up");
+        run(&repo.dir, &["clone", "-q", "proj", "clone"]);
+        run(&repo.dir, &["clone", "-q", "-b", "shared", "proj", "up"]);
+        run(&up, &["commit", "-q", "--allow-empty", "-m", "up"]);
+        run(&clone, &["remote", "add", "upstream", up.to_str().unwrap()]);
+        run(&clone, &["fetch", "-q", "upstream"]);
+        run(&clone, &["config", "checkout.defaultRemote", "origin"]);
+        let rev = |dir: &Path, rev: &str| git(dir, &[&"rev-parse", &rev]).unwrap();
+
+        // Not origin/shared, though it's the default remote.
+        let (path, branch) = add(&clone, "shared", Some("upstream/shared"), DEFAULT_PATH).unwrap();
+        assert_eq!(branch, "shared");
+        assert_eq!(rev(&path, "@{upstream}"), rev(&clone, "upstream/shared"));
+        assert_eq!(rev(&path, "HEAD"), rev(&clone, "upstream/shared"));
+
+        // An existing local branch must already track it.
+        run(&clone, &["branch", "--no-track", "mine", "origin/shared"]);
+        assert!(matches!(
+            add(&clone, "mine", Some("upstream/shared"), DEFAULT_PATH),
+            Err(Error::Conflict(_))
+        ));
+        run(&clone, &["branch", "-u", "upstream/shared", "mine"]);
+        let (path, _) = add(&clone, "mine", Some("upstream/shared"), DEFAULT_PATH).unwrap();
+        assert_eq!(rev(&path, "HEAD"), rev(&clone, "origin/shared"));
+
+        assert!(matches!(
+            add(&clone, "x", Some("upstream/missing"), DEFAULT_PATH),
+            Err(Error::Invalid(_))
+        ));
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn programs_that_replaced_the_shell_keep_the_worktree() {
         let repo = Repo::new();
-        let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        let (path, _) = add(&repo.main, "feat", None, DEFAULT_PATH).unwrap();
         let (state, panes) = panes(&[&path]).await;
         type_in(&state, panes[0], "exec sleep 30\n").await;
         wait_until(&state, panes[0], |pty| pty.foreground_program().is_some()).await;
@@ -811,7 +985,7 @@ mod tests {
     #[tokio::test]
     async fn panes_in_the_worktree_through_symlinks_keep_it() {
         let repo = Repo::new();
-        let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        let (path, _) = add(&repo.main, "feat", None, DEFAULT_PATH).unwrap();
         let alias = repo.dir.join("alias");
         std::os::unix::fs::symlink(&path, &alias).unwrap();
         let (state, panes) = panes(&[&path, &alias]).await;
@@ -839,7 +1013,7 @@ mod tests {
             &[&file[..], &["submodule", "add", "-q", lib, "lib"]].concat(),
         );
         run(&repo.main, &["commit", "-q", "-m", "lib"]);
-        let (path, _) = add(&repo.main, "feat", DEFAULT_PATH).unwrap();
+        let (path, _) = add(&repo.main, "feat", None, DEFAULT_PATH).unwrap();
         // git removes it while the submodule isn't checked out.
         assert!(removable(&path, false).is_ok());
         run(

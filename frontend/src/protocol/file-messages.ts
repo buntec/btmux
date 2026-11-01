@@ -210,7 +210,7 @@ export type GitOp =
 
 /** `git_worktree` operations (`worktree::Op`). */
 export type WorktreeOp =
-  | { kind: 'add'; branch: string; visit?: boolean }
+  | { kind: 'add'; branch: string; /** A remote branch to track. */ track?: string; visit?: boolean }
   | { kind: 'open'; path: string }
   | { kind: 'remove'; path: string; force?: boolean }
   | { kind: 'lock'; path: string }

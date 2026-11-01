@@ -111,46 +111,56 @@ fn discover_child_repo_layouts(base_dir: &Path) -> Vec<RepoLayout> {
     repos.into_iter().map(repo_layout_for).collect()
 }
 
-/// Run `git -C <repo> worktree list --porcelain` and parse the result.
+/// Run `git -C <repo> worktree list --porcelain -z` and parse the result.
 pub fn list_worktrees(repo: &Path) -> Result<Vec<Worktree>, String> {
     let output = Command::new("git")
-        .args([
-            "-C",
-            repo.to_str().unwrap_or("."),
-            "worktree",
-            "list",
-            "--porcelain",
-        ])
+        .arg("-C")
+        .arg(repo)
+        .args(["worktree", "list", "--porcelain", "-z"])
         .output()
         .map_err(|e| format!("git: {e}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    Ok(parse_porcelain(&String::from_utf8_lossy(&output.stdout)))
+    let output = String::from_utf8_lossy(&output.stdout);
+    Ok(worktree_records(&output)
+        .into_iter()
+        .filter_map(|record| {
+            let mut path = None;
+            let mut branch = None;
+            for (key, value) in record {
+                match key {
+                    "worktree" => path = Some(PathBuf::from(value)),
+                    "branch" => branch = value.strip_prefix("refs/heads/").map(str::to_string),
+                    _ => {}
+                }
+            }
+            Some(Worktree {
+                path: path?,
+                branch,
+            })
+        })
+        .collect())
 }
 
-fn parse_porcelain(output: &str) -> Vec<Worktree> {
-    let mut worktrees = Vec::new();
-    let mut path: Option<PathBuf> = None;
-    let mut branch: Option<String> = None;
-
-    for line in output.lines() {
-        if let Some(p) = line.strip_prefix("worktree ") {
-            if let Some(prev) = path.take() {
-                worktrees.push(Worktree {
-                    path: prev,
-                    branch: branch.take(),
-                });
+/// `git worktree list --porcelain -z` output as records of `(key, value)`
+/// fields. NUL-delimited, as paths may contain newlines.
+pub(crate) fn worktree_records(output: &str) -> Vec<Vec<(&str, &str)>> {
+    let mut records = Vec::new();
+    let mut record = Vec::new();
+    for field in output.split('\0') {
+        if field.is_empty() {
+            if !record.is_empty() {
+                records.push(std::mem::take(&mut record));
             }
-            path = Some(PathBuf::from(p));
-        } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
-            branch = Some(b.to_string());
+        } else {
+            record.push(field.split_once(' ').unwrap_or((field, "")));
         }
     }
-    if let Some(p) = path {
-        worktrees.push(Worktree { path: p, branch });
+    if !record.is_empty() {
+        records.push(record);
     }
-    worktrees
+    records
 }
 
 /// Sanitize a string for use as a btmux session or window name (replace `.`, `:`, whitespace with `-`).

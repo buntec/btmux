@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useCallback, useRef, useState } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
@@ -173,6 +173,17 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   }, [store, currentPath, isGitMode, gitView, searchMode, isFilterActive]);
 
   useEffect(() => () => store.getState().setPreviewFullscreen(false), [store]);
+
+  // Narrow screens hide the preview unless it's shown, and already fill the screen.
+  useEffect(() => {
+    if (narrow) store.getState().setPreviewFullscreen(false);
+  }, [store, narrow]);
+
+  // Hiding a panel with focus would leave the browser without its keys.
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (rootRef.current?.contains(active) && !active?.checkVisibility()) rootRef.current.focus();
+  }, [narrow, previewShown, previewFullscreen]);
 
   // A selection doesn't outlive the browser; the yank register does.
   useEffect(() => () => store.getState().clearSelection(), [store]);

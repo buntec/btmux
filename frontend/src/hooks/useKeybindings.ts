@@ -25,6 +25,7 @@ import { pasteImage } from '../lib/pasteImage';
 import { inPaneTerminal, macEditKey } from '../lib/macEditKeys';
 import { isTouchPrimary } from '../lib/touch';
 import { sendToNvim } from '../components/NvimSurface';
+import { sendPrefixToBrowser } from '../components/BrowserSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
@@ -38,7 +39,10 @@ let paneNumbersTimer = 0;
 function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
   const keys = prefixNvimKeys(p);
   if (keys && useStore.getState().nvimOpen && sendToNvim(keys)) return;
-  const paneId = useStore.getState().getActivePaneId(sessionId);
+  const { getActivePaneId, browserOpen, browserPaneId } = useStore.getState();
+  const paneId = getActivePaneId(sessionId);
+  // The browser covers this pane's terminal, which mustn't get its keys.
+  if (browserOpen && paneId === browserPaneId) return sendPrefixToBrowser(p);
   const text = prefixBytes(p);
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
 }

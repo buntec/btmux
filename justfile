@@ -267,7 +267,7 @@ test-nvim-browser:
 
 # Browser surface regressions against a fresh, isolated stack (requires Chrome or Chromium).
 test-browser-surface:
-    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts browser-surface-test.ts
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts browser-surface-test.ts browser-surface-input-test.ts
 
 # Bundled Neovim plugin regressions (requires Neovim).
 test-nvim-theme:

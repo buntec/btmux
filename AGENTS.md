@@ -490,7 +490,11 @@ whose writes stay in Chromium.
 The device scale is process-wide, from the first viewer (at most 2):
 `--force-device-scale-factor` is the only way to get 2x frames, and
 `setDeviceMetricsOverride` must pass scale 0 to keep it. Sizing follows the PTY
-rule: the first tab owns it until another sends input. On a macOS server,
+rule: the first tab owns it until another sends input, and a click claims it
+only on release, since its coordinates are for the frame the tab was showing.
+Keys whose text comes from the browser (dead keys, IMEs, AltGr) and the client's
+paste chords aren't canceled, so they reach `input` and `paste`, and `prefix
+prefix` goes to the page when the browser covers the active pane. On a macOS server,
 Cmd and Option editing chords need explicit CDP `commands` (`mac_commands`).
 
 ### Layout tree — the shared contract

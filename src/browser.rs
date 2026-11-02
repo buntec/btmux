@@ -285,6 +285,9 @@ impl Viewers {
     }
 
     fn claim(&mut self, id: u64) -> Option<(u32, u32)> {
+        if !self.sizes.contains_key(&id) {
+            return None;
+        }
         self.owner = Some(id);
         self.owner_size()
     }
@@ -1164,9 +1167,6 @@ fn handle_message(
             delta_x,
             delta_y,
         } => {
-            if kind == "mousePressed" {
-                browser.claim(viewer);
-            }
             if kind == "mouseMoved" {
                 *browser.pointer.lock().unwrap() = Some((x, y));
                 browser.pointer_moved.notify_one();
@@ -1185,6 +1185,11 @@ fn handle_message(
                     "deltaY": delta_y,
                 }),
             );
+            // After the click, whose coordinates are for the frame the tab was
+            // showing: claiming first would resize the page under it.
+            if kind == "mouseReleased" {
+                browser.claim(viewer);
+            }
         }
         BrowserClientMessage::InsertText { text } => {
             browser.claim(viewer);
@@ -1315,6 +1320,17 @@ mod tests {
         let third = viewers.join();
         assert_eq!(viewers.resize(third, (100, 100)), None);
         assert_eq!(viewers.leave(second), Some((100, 100)));
+    }
+
+    #[test]
+    fn a_viewer_that_left_cannot_claim() {
+        let mut viewers = Viewers::default();
+        let first = viewers.join();
+        let second = viewers.join();
+        assert_eq!(viewers.resize(first, (800, 600)), Some((800, 600)));
+        viewers.leave(second);
+        assert_eq!(viewers.claim(second), None);
+        assert_eq!(viewers.owner, Some(first));
     }
 
     #[test]

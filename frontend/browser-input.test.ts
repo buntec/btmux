@@ -1,5 +1,14 @@
 import { expect, test } from 'bun:test';
-import { addressToUrl, buttonName, containRect, keyMessage, modifierBits } from './src/lib/browserInput';
+import {
+  addressToUrl,
+  buttonName,
+  containRect,
+  isPasteChord,
+  keyMessage,
+  leftToComposition,
+  modifierBits,
+  prefixKeyMessages,
+} from './src/lib/browserInput';
 
 const key = { key: 'a', code: 'KeyA', keyCode: 65, repeat: false, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
 
@@ -32,6 +41,37 @@ test('keys carry text only when they type', () => {
   expect(keyMessage({ ...key, key: 'Enter', code: 'Enter', keyCode: 13 }, true)).toMatchObject({ text: '\r' });
   expect(keyMessage({ ...key, key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 }, true)).toMatchObject({ text: null });
   expect(keyMessage({ ...key, key: 'å', altKey: true }, true)).toMatchObject({ text: 'å', modifiers: 1 });
+});
+
+test('keys that compose are left to the browser', () => {
+  const event = (key: string, altGraph = false, isComposing = false) => ({ key, isComposing, getModifierState: () => altGraph });
+  for (const key of ['Dead', 'Process', 'Unidentified']) expect(leftToComposition(event(key))).toBe(true);
+  expect(leftToComposition(event('a', false, true))).toBe(true);
+  expect(leftToComposition(event('@', true))).toBe(true);
+  expect(leftToComposition(event('€', true))).toBe(true);
+  expect(leftToComposition(event('a'))).toBe(false);
+  expect(leftToComposition(event('ArrowLeft', true))).toBe(false);
+  expect(leftToComposition({ key: 'a', isComposing: false })).toBe(false);
+});
+
+test('paste chords depend on the client platform', () => {
+  const none = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+  expect(isPasteChord({ ...none, key: 'v', ctrlKey: true }, false)).toBe(true);
+  expect(isPasteChord({ ...none, key: 'V', ctrlKey: true, shiftKey: true }, false)).toBe(true);
+  expect(isPasteChord({ ...none, key: 'Insert', shiftKey: true }, false)).toBe(true);
+  expect(isPasteChord({ ...none, key: 'v', metaKey: true }, true)).toBe(true);
+  // On macOS, Ctrl+V is a key for the page.
+  expect(isPasteChord({ ...none, key: 'v', ctrlKey: true }, true)).toBe(false);
+  expect(isPasteChord({ ...none, key: 'v' }, false)).toBe(false);
+  expect(isPasteChord({ ...none, key: 'v', ctrlKey: true, altKey: true }, false)).toBe(false);
+});
+
+test('the prefix key becomes a press and release', () => {
+  const [down, up] = prefixKeyMessages({ ctrl: true, alt: false, key: 'a' });
+  expect(down).toMatchObject({ type: 'key', down: true, key: 'a', code: 'KeyA', key_code: 65, modifiers: 2, text: null });
+  expect(up).toMatchObject({ type: 'key', down: false, key: 'a', modifiers: 2 });
+  expect(prefixKeyMessages({ ctrl: true, alt: false, key: ' ' })[0]).toMatchObject({ code: 'Space', key_code: 32 });
+  expect(prefixKeyMessages({ ctrl: false, alt: true, key: 'Enter' })[0]).toMatchObject({ code: 'Enter', key_code: 13, modifiers: 1 });
 });
 
 test('modifiers and buttons use CDP values', () => {

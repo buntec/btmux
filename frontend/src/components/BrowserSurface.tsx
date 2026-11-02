@@ -9,7 +9,17 @@ import { Spinner } from '@astryxdesign/core/Spinner';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import type { BrowserClientMessage, BrowserServerMessage } from '../generated/protocol';
-import { addressToUrl, buttonName, containRect, keyMessage, modifierBits } from '../lib/browserInput';
+import {
+  addressToUrl,
+  buttonName,
+  containRect,
+  isPasteChord,
+  keyMessage,
+  leftToComposition,
+  modifierBits,
+  prefixKeyMessages,
+} from '../lib/browserInput';
+import type { ParsedKey } from '../lib/prefixKey';
 import { RESERVED_CMD_KEYS } from '../lib/nvimKeys';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
@@ -26,6 +36,13 @@ const MAX_RECONNECTS = 8;
 const IS_MAC = navigator.platform.startsWith('Mac');
 
 type PageInfo = Extract<BrowserServerMessage, { type: 'page' }>;
+
+let activeSend: ((message: BrowserClientMessage) => void) | null = null;
+
+/** Press the prefix key on the page (`prefix prefix`). */
+export function sendPrefixToBrowser(prefix: ParsedKey) {
+  for (const message of prefixKeyMessages(prefix)) activeSend?.(message);
+}
 
 /** A shared Chromium on the server (`/ws/browser`), pinned over a pane like the Neovim surface. */
 export function BrowserSurface({
@@ -74,6 +91,13 @@ export function BrowserSurface({
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     else if (message.type === 'navigate') pendingUrl.current = message.url;
   };
+  useEffect(() => {
+    activeSend = send;
+    return () => {
+      activeSend = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const close = () => useStore.getState().setBrowserOpen(false);
 
   const reportSize = () => {
@@ -326,8 +350,13 @@ export function BrowserSurface({
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     const native = e.nativeEvent;
-    // Composed text and phone keyboards arrive through `input`.
-    if (native.isComposing || e.key === 'Process' || e.key === 'Unidentified') return;
+    // Their text arrives through `input`, which canceling this would prevent.
+    if (leftToComposition(native)) {
+      lastEsc.current = -Infinity;
+      return;
+    }
+    // The client's clipboard arrives through `paste`.
+    if (isPasteChord(e, IS_MAC)) return;
     const key = e.key.toLowerCase();
     if ((e.metaKey || e.ctrlKey) && key === 'l') {
       e.preventDefault();
@@ -390,7 +419,18 @@ export function BrowserSurface({
         background: theme.background,
       }}
     >
-      <HStack gap={1} vAlign="center" className="btm-mono shrink-0 bg-body p-1">
+      <HStack
+        gap={1}
+        vAlign="center"
+        className="btm-mono shrink-0 bg-body p-1"
+        // Using the toolbar selects the pane, like clicking the page.
+        onPointerDownCapture={() => {
+          if (!focused) onActivate();
+        }}
+        onFocusCapture={() => {
+          if (!focused) onActivate();
+        }}
+      >
         <IconButton
           label="Back"
           tooltip="Back"

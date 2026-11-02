@@ -1088,6 +1088,50 @@ mod pane_notification_tests {
     }
 
     #[tokio::test]
+    async fn session_start_broadcasts_the_new_agent() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let mut events = manager.events().subscribe();
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        let post = || {
+            Request::post(format!("/api/panes/{pane}/notify"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"hook_event_name": "SessionStart", "session_id": "s"})
+                        .to_string(),
+                ))
+                .unwrap()
+        };
+        let mut announced = || {
+            std::iter::from_fn(|| events.try_recv().ok()).any(|text| {
+                let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                event["type"] == "state"
+                    && event["agent_panes"] == serde_json::json!([pane.to_string()])
+            })
+        };
+
+        let response = app.clone().oneshot(post()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(announced());
+
+        // A repeat changes nothing, so it stays quiet.
+        app.oneshot(post()).await.unwrap();
+        assert!(!announced());
+    }
+
+    #[tokio::test]
     async fn notify_broadcasts_to_every_client() {
         use axum::http::Request;
         use tower::ServiceExt;

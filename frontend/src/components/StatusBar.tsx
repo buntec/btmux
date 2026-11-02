@@ -7,7 +7,7 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Spinner } from '@astryxdesign/core/Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, FolderOpen, GitBranch } from 'lucide-react';
+import { Activity, FolderOpen, GitBranch, Globe } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -149,6 +149,20 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
           />
         );
       })}
+      {config?.browser && (
+        <IconButton
+          label="Browser"
+          tooltip="Browser"
+          variant="ghost"
+          size="sm"
+          icon={<Globe />}
+          onClick={() => {
+            closeModals();
+            state().setFileBrowserOpen(false);
+            runAction('browser', session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
+          }}
+        />
+      )}
       <IconButton
         label="File browser"
         tooltip="File browser"

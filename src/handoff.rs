@@ -312,6 +312,7 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
         return error;
     }
     crate::vscode::shutdown().await;
+    crate::browser::shutdown().await;
     let (sessions, panes) = match manager.export_handoff(Duration::from_secs(2)) {
         Ok(exported) => exported,
         Err(error) => return error,

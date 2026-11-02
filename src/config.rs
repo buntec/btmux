@@ -546,6 +546,27 @@ pub struct VscodeConfig {
     pub extensions: Option<Vec<String>>,
 }
 
+/// `[browser]`: the browser surface.
+#[derive(Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct BrowserConfig {
+    /// Where the address bar sends text that isn't a URL; `%s` is the text.
+    #[serde(deserialize_with = "search_url")]
+    pub search_url: Option<String>,
+}
+
+fn search_url<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let url = String::deserialize(deserializer)?;
+    if !(url.starts_with("http://") || url.starts_with("https://")) || !url.contains("%s") {
+        return Err(serde::de::Error::custom(
+            "search-url must be an http(s) URL containing %s",
+        ));
+    }
+    Ok(Some(url))
+}
+
 impl Editor {
     /// The default: Neovim if the built-in one can start, else the pane.
     fn detect() -> Self {
@@ -700,6 +721,8 @@ pub struct FileConfig {
     pub editor: Option<Editor>,
     /// VS Code's server and what it shares with desktop VS Code.
     pub vscode: VscodeConfig,
+    /// The browser surface.
+    pub browser: BrowserConfig,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -765,6 +788,7 @@ impl Default for FileConfig {
             window_sort: WindowSort::default(),
             editor: None,
             vscode: VscodeConfig::default(),
+            browser: BrowserConfig::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -1191,6 +1215,10 @@ pub struct ClientConfig {
     pub editor: Editor,
     /// The built-in editors the server can run, for the toolbar and palette.
     pub editors: Vec<Editor>,
+    /// Whether the server found Chrome or Chromium for the browser surface.
+    pub browser: bool,
+    /// Where the browser's address bar searches; `%s` is the text.
+    pub browser_search_url: Option<String>,
     /// VS Code's server and sharing; used by the backend only.
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
@@ -1268,6 +1296,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("g", "git-view"),
     ("t", "process-view"),
     ("e", "editor"),
+    ("b", "browser"),
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling
@@ -1724,6 +1753,10 @@ pub fn generate_config_toml() -> String {
 # keybindings = "~/.config/Code/User/keybindings.json"
 # extensions = ["~/.vscode/extensions"]   # extension folders, or folders of them
 
+# The browser surface (prefix + b).
+# [browser]
+# search-url = "https://duckduckgo.com/?q=%s"   # where the address bar sends text that isn't a URL
+
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.
 # [notifications]
@@ -2007,6 +2040,8 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .into_iter()
         .filter_map(|(editor, available)| available.then_some(editor))
         .collect(),
+        browser: crate::browser::available(),
+        browser_search_url: file.browser.search_url.clone(),
         vscode: file.vscode.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),
@@ -2658,6 +2693,31 @@ palette:
             file.vscode.keybindings.as_deref(),
             Some("~/.config/Code/User/keybindings.json")
         );
+    }
+
+    #[test]
+    fn browser_search_url_must_be_http_with_a_placeholder() {
+        let parse = |url: &str| {
+            toml::from_str::<FileConfig>(&format!("[browser]\nsearch-url = \"{url}\"\n"))
+                .map(|file| file.browser.search_url)
+        };
+        assert_eq!(
+            parse("https://example.com/?q=%s").unwrap().as_deref(),
+            Some("https://example.com/?q=%s")
+        );
+        assert!(parse("https://example.com/").is_err());
+        assert!(parse("javascript:alert('%s')").is_err());
+        assert_eq!(FileConfig::default().browser.search_url, None);
+        let example = generate_config_toml();
+        let table = example
+            .lines()
+            .skip_while(|line| *line != "# [browser]")
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| line.trim_start_matches('#').trim_start())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: FileConfig = toml::from_str(&table).unwrap();
+        assert!(file.browser.search_url.is_some());
     }
 
     #[test]

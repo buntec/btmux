@@ -25,6 +25,7 @@ import { pasteImage } from '../lib/pasteImage';
 import { inPaneTerminal, macEditKey } from '../lib/macEditKeys';
 import { isTouchPrimary } from '../lib/touch';
 import { sendToNvim } from '../components/NvimSurface';
+import { sendPrefixToBrowser } from '../components/BrowserSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
@@ -38,7 +39,10 @@ let paneNumbersTimer = 0;
 function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
   const keys = prefixNvimKeys(p);
   if (keys && useStore.getState().nvimOpen && sendToNvim(keys)) return;
-  const paneId = useStore.getState().getActivePaneId(sessionId);
+  const { getActivePaneId, browserOpen, browserPaneId } = useStore.getState();
+  const paneId = getActivePaneId(sessionId);
+  // The browser covers this pane's terminal, which mustn't get its keys.
+  if (browserOpen && paneId === browserPaneId) return sendPrefixToBrowser(p);
   const text = prefixBytes(p);
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
 }
@@ -131,9 +135,10 @@ export function useKeybindings(
 
     const handler = (e: KeyboardEvent) => {
       const isFKey = e.key.startsWith('F') && e.key.length >= 2 && e.key.length <= 3 && !isNaN(Number(e.key.slice(1)));
-      // The built-in Neovim decides itself which of these to keep (see nvimKey).
-      const fromNvim = (e.target as HTMLElement | null)?.dataset?.nvimInput !== undefined;
-      if ((e.metaKey || isFKey) && !fromNvim) {
+      // The built-in Neovim and the browser decide themselves which of these to keep.
+      const dataset = (e.target as HTMLElement | null)?.dataset;
+      const fromSurface = dataset?.nvimInput !== undefined || dataset?.browserInput !== undefined;
+      if ((e.metaKey || isFKey) && !fromSurface) {
         // PaneTerminal translates Cmd editing chords; other surfaces never see them.
         if (macosEditKeysRef.current && macEditKey(e) !== null && inPaneTerminal(e.target)) return;
         e.stopPropagation();
@@ -569,6 +574,13 @@ export function runAction(
       } else {
         store.setNvimOpen(!(store.nvimOpen && store.nvimPaneId === paneId), paneId);
       }
+      break;
+    }
+    case 'browser': {
+      // Toggle the browser over the active pane, or move it there.
+      const win = session?.windows[session.active_window];
+      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      if (paneId) store.setBrowserOpen(!(store.browserOpen && store.browserPaneId === paneId), paneId);
       break;
     }
     case 'process-view': {

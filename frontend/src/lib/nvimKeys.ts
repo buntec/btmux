@@ -20,14 +20,14 @@ export const NVIM_SPECIAL_KEYS: Record<string, string> = {
 };
 
 /** Cmd shortcuts the browser or desktop app keeps (Cmd+V arrives as a paste event, digits and -/=/+ zoom). */
-const RESERVED_CMD_KEYS = new Set(['q', 'w', 't', 'n', 'r', 'l', 'm', 'h', 'v', '-', '=', '+']);
+export const RESERVED_CMD_KEYS = new Set(['q', 'w', 't', 'n', 'r', 'l', 'm', 'h', 'v', '-', '=', '+']);
 
 /** Escape literal text for `nvim_input`, where `<` starts a key name. */
 export function escapeNvimText(text: string): string {
   return text.replace(/</g, '<lt>');
 }
 
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Key notation for `e`, or null when the browser should handle it (modifiers, IME, app shortcuts). */
 export function nvimKey(e: KeyboardEvent, mac = IS_MAC): string | null {

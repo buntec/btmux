@@ -132,6 +132,22 @@ your shell's). The configured editor comes first. The `editor-neovim` and
 command palette or a `[keys]` binding, and `btmux open-editor --kind vscode`
 opens one from a pane.
 
+The `browser` action (`prefix + b`) toggles a browser over the active pane. It
+runs a headless Chrome or Chromium on the server, found on the server's `PATH`
+or in `/Applications`, so it shows any site, and `localhost` means the server.
+Its profile, with your logins, is kept apart from your everyday browser's. As
+with the editors, a quick double Esc hides it. It reopens your last page after
+a restart. To copy, select text and press Cmd+C (Ctrl+C elsewhere); a page's own
+copy buttons don't reach your clipboard yet.
+
+Text in its address bar that isn't a URL is searched with DuckDuckGo, or with
+`search-url`, where `%s` is the text:
+
+```toml
+[browser]
+search-url = "https://www.google.com/search?q=%s"
+```
+
 With `"vscode"`, `<prefix> + e` toggles VS Code over the active pane, opened
 in the pane's folder; pressing Esc twice quickly also hides it. The first time,
 btmux asks you to accept the VS Code Server license (once per profile).

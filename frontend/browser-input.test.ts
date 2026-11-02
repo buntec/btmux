@@ -16,6 +16,14 @@ test('address bar text becomes a URL or a search', () => {
   expect(addressToUrl('what is tmux.conf')).toBe('https://duckduckgo.com/?q=what%20is%20tmux.conf');
 });
 
+test('searches use the configured URL', () => {
+  const url = 'https://example.com/s?q=%s&again=%s';
+  expect(addressToUrl('tmux', url)).toBe('https://example.com/s?q=tmux&again=tmux');
+  expect(addressToUrl('a b&c', url)).toBe('https://example.com/s?q=a%20b%26c&again=a%20b%26c');
+  expect(addressToUrl('$& x', 'https://example.com/?q=%s')).toBe('https://example.com/?q=%24%26%20x');
+  expect(addressToUrl('example.com', url)).toBe('https://example.com');
+});
+
 test('keys carry text only when they type', () => {
   expect(keyMessage(key, true)).toMatchObject({ text: 'a', modifiers: 0, down: true });
   expect(keyMessage(key, false).type === 'key' && keyMessage(key, false)).toMatchObject({ text: null });

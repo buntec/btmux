@@ -255,7 +255,8 @@ export function BrowserSurface({
   };
   const focusPage = () => inputRef.current?.focus();
   const navigate = () => {
-    if (address?.trim()) send({ type: 'navigate', url: addressToUrl(address) });
+    if (address?.trim())
+      send({ type: 'navigate', url: addressToUrl(address, config?.browser_search_url ?? undefined) });
     setAddress(null);
     focusPage();
   };

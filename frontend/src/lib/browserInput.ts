@@ -1,5 +1,7 @@
 import type { BrowserClientMessage } from '../generated/protocol';
 
+const DEFAULT_SEARCH_URL = 'https://duckduckgo.com/?q=%s';
+
 type Modifiers = Pick<KeyboardEvent, 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>;
 
 /** CDP's input modifier bits. */
@@ -45,18 +47,15 @@ export function containRect(boxWidth: number, boxHeight: number, frameWidth: num
 }
 
 /** What an address bar makes of typed text: a URL, or else a search. */
-export function addressToUrl(input: string): string {
+export function addressToUrl(input: string, searchUrl = DEFAULT_SEARCH_URL): string {
   const text = input.trim();
+  const search = () => searchUrl.split('%s').join(encodeURIComponent(text));
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) || /^(about|data|file|chrome):/i.test(text)) return text;
-  if (/\s/.test(text)) return search(text);
+  if (/\s/.test(text)) return search();
   const host = text.split(/[/?#]/)[0];
   if (/^(localhost|\[[0-9a-f:]+\]|\d+\.\d+\.\d+\.\d+)(:\d+)?$/i.test(host) || /^[^.]+\.local(:\d+)?$/i.test(host)) {
     return `http://${text}`;
   }
   if (/:\d+$/.test(host)) return `http://${text}`;
-  return host.includes('.') ? `https://${text}` : search(text);
-}
-
-function search(text: string): string {
-  return `https://duckduckgo.com/?q=${encodeURIComponent(text)}`;
+  return host.includes('.') ? `https://${text}` : search();
 }

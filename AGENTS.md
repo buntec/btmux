@@ -457,6 +457,7 @@ that refuse framing, it is a canvas showing one headless Chromium per server
 (`src/browser.rs`), so `localhost` means the server. `ClientConfig.browser` says
 whether Chrome or Chromium was found (`PATH`, then the macOS app bundles); Unix
 only. The profile (`<state dir>/browser`) keeps logins, not the open page.
+`[browser] search-url` sets where the address bar searches (`addressToUrl`).
 
 Chromium is driven over `--remote-debugging-pipe` (fds 3 and 4, NUL-delimited
 JSON), so it opens no port and exits when btmux does. There is one page: a page

@@ -298,6 +298,10 @@ editors: Array<Editor>,
  */
 browser: boolean,
 /**
+ * Where the browser's address bar searches; `%s` is the text.
+ */
+browser_search_url: string | null,
+/**
  * How many recently-viewed windows the window-grid (`prefix + w`) shows.
  */
 window_grid_count: number,

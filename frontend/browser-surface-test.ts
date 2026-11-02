@@ -1,5 +1,7 @@
 /** Requires Chrome or Chromium on the server. Run with `just test-browser-surface`. */
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { chromium, type Page } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 
@@ -292,6 +294,25 @@ try {
   await page.keyboard.press('Control+l');
   await waitForAsync(page, () => !!document.querySelector(`input[placeholder="Search or enter address"]:focus`));
   await page.keyboard.press('Escape');
+  await waitForAsync(page, () => document.activeElement?.hasAttribute('data-browser-input'));
+
+  // A configured search URL applies live, to text that isn't a URL.
+  const configFile = join(process.env.BTMUX_TEST_CONFIG_HOME!, 'btmux', 'config.toml');
+  mkdirSync(dirname(configFile), { recursive: true });
+  writeFileSync(configFile, `[browser]\nsearch-url = "${pageUrl}found?q=%s"\n`);
+  await waitForAsync(page, async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return !!useStore.getState().config?.browser_search_url;
+  });
+  await page.keyboard.press('Control+l');
+  await page.keyboard.type('two words');
+  await page.keyboard.press('Enter');
+  await waitForAsync(
+    page,
+    (expected) => (document.querySelector('input[placeholder="Search or enter address"]') as HTMLInputElement).value === expected,
+    `${pageUrl}found?q=two%20words`,
+  );
+  await painted(page);
   await waitForAsync(page, () => document.activeElement?.hasAttribute('data-browser-input'));
 
   // A second tab shares the page: it gets the last frame of an idle page, and input makes it the size owner.

@@ -462,6 +462,10 @@ impl PtyHandle {
         }
     }
 
+    pub fn size(&self) -> (u16, u16) {
+        *self.size.lock().unwrap()
+    }
+
     pub fn is_spawned(&self) -> bool {
         *self.spawned.lock().unwrap()
     }

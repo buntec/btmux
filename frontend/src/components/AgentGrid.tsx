@@ -64,23 +64,31 @@ const CHROME_W = 24;
 const CHROME_H = 56;
 const FALLBACK_SIZE = { w: 640, h: 400 };
 const MIN_SCALE = 0.1;
+// How long a mirror may take to report its size before it gets the fallback.
+const SIZE_WAIT_MS = 2000;
+
+interface Size {
+  w: number;
+  h: number;
+}
 
 interface Packed {
   /** Entry indices per visual row. */
   lines: number[][];
-  /** Terminal box size per entry index. */
-  sizes: { w: number; h: number }[];
+  /** Terminal box size per entry index; `null` is not laid out yet. */
+  sizes: (Size | null)[];
 }
 
 /** Flows tiles left to right, wrapping at `width`; returns rows and total height. */
-function flow(naturals: { w: number; h: number }[], scale: number, width: number): Packed & { height: number } {
-  const sizes = naturals.map((n) => ({ w: n.w * scale, h: n.h * scale }));
+function flow(naturals: (Size | null)[], scale: number, width: number): Packed & { height: number } {
+  const sizes = naturals.map((n) => n && { w: n.w * scale, h: n.h * scale });
   const lines: number[][] = [];
   let line: number[] = [];
   let used = 0;
   let height = 0;
   let lineH = 0;
   sizes.forEach((size, i) => {
+    if (!size) return;
     const tileW = size.w + CHROME_W;
     if (line.length && used + GAP + tileW > width) {
       lines.push(line);
@@ -101,8 +109,8 @@ function flow(naturals: { w: number; h: number }[], scale: number, width: number
 }
 
 /** Largest shared scale (at most 1:1) at which all tiles fit without scrolling. */
-function pack(naturals: { w: number; h: number }[], width: number, height: number): Packed {
-  const widest = Math.max(1, ...naturals.map((n) => n.w));
+function pack(naturals: (Size | null)[], width: number, height: number): Packed {
+  const widest = Math.max(1, ...naturals.map((n) => n?.w ?? 0));
   let lo = MIN_SCALE;
   let hi = Math.max(MIN_SCALE, Math.min(1, (width - CHROME_W) / widest));
   if (flow(naturals, hi, width).height <= height) return flow(naturals, hi, width);
@@ -112,6 +120,15 @@ function pack(naturals: { w: number; h: number }[], width: number, height: numbe
     else hi = mid;
   }
   return flow(naturals, lo, width);
+}
+
+/** Each tile's own wait for its mirror's size; a stuck mirror can't affect later tiles. */
+function SizeDeadline({ paneId, onExpire }: { paneId: string; onExpire: (paneId: string) => void }) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => onExpire(paneId), SIZE_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [paneId, onExpire]);
+  return null;
 }
 
 /** Full-screen live mirrors of panes with detected or reported agents. */
@@ -142,13 +159,27 @@ export function AgentGrid({ send }: Props) {
 
   // Tiles are each terminal's natural size times one shared scale, so fonts
   // match across tiles (a mirror can't change the PTY size).
-  const [naturals, setNaturals] = useState<Record<string, { w: number; h: number }>>({});
+  const [naturals, setNaturals] = useState<Record<string, Size>>({});
   const reportSize = useCallback((paneId: string, w: number, h: number) => {
     setNaturals((prev) => {
       const old = prev[paneId];
       return old && old.w === w && old.h === h ? prev : { ...prev, [paneId]: { w, h } };
     });
   }, []);
+  // Tiles first appear together, once sized. An agent that starts later joins
+  // once sized, so each change of the tile set is one layout change.
+  const [timedOutPanes, setTimedOutPanes] = useState<ReadonlySet<string>>(new Set());
+  const sizeTimedOut = useCallback((paneId: string) => setTimedOutPanes((prev) => new Set(prev).add(paneId)), []);
+  const allSized = entries.every((entry) => naturals[entry.paneId] || timedOutPanes.has(entry.paneId));
+  const [tilesShown, setTilesShown] = useState(false);
+  useEffect(() => {
+    if (open) {
+      if (allSized) setTilesShown(true);
+    } else {
+      setTilesShown(false);
+      setTimedOutPanes(new Set());
+    }
+  }, [open, allSized]);
   const [area, setArea] = useState<{ w: number; h: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const areaRef = useCallback((el: HTMLDivElement | null) => {
@@ -164,12 +195,12 @@ export function AgentGrid({ send }: Props) {
     () =>
       area && area.w > 0 && area.h > 0
         ? pack(
-            entries.map((entry) => naturals[entry.paneId] ?? FALLBACK_SIZE),
+            entries.map((entry) => naturals[entry.paneId] ?? (timedOutPanes.has(entry.paneId) ? FALLBACK_SIZE : null)),
             area.w,
             area.h,
           )
         : null,
-    [area, entries, naturals],
+    [area, entries, naturals, timedOutPanes],
   );
   const [selectedIdx, setSelectedIdx] = useState(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -292,15 +323,30 @@ export function AgentGrid({ send }: Props) {
             ) : (
               <div
                 ref={areaRef}
+                data-agent-tiles
                 className="flex h-full min-h-0 flex-wrap content-center items-center justify-center overflow-auto"
-                style={{ gap: GAP }}
+                style={{ gap: GAP, opacity: tilesShown || allSized ? 1 : 0 }}
               >
                 {packed &&
                   entries.map((entry, i) => {
                     const paneLabel = entry.paneTitle || `pane ${entry.paneIndex + 1}`;
                     const size = packed.sizes[i];
                     return (
-                      <div key={entry.paneId} style={{ width: size.w + CHROME_W, height: size.h + CHROME_H }}>
+                      <div
+                        key={entry.paneId}
+                        // An unsized tile keeps its mirror mounted, which reports the size.
+                        style={
+                          size
+                            ? { width: size.w + CHROME_W, height: size.h + CHROME_H }
+                            : {
+                                position: 'absolute',
+                                width: FALLBACK_SIZE.w,
+                                height: FALLBACK_SIZE.h,
+                                opacity: 0,
+                                pointerEvents: 'none',
+                              }
+                        }
+                      >
                         <SelectableCard
                           label={`${entry.sessionName} › ${entry.windowName} › ${paneLabel}`}
                           isSelected={i === clampedIdx}
@@ -338,6 +384,9 @@ export function AgentGrid({ send }: Props) {
                               className="relative min-h-0 flex-1 overflow-hidden"
                               style={{ background: terminalBg }}
                             >
+                              {!naturals[entry.paneId] && (
+                                <SizeDeadline paneId={entry.paneId} onExpire={sizeTimedOut} />
+                              )}
                               {mirrorsReady && (
                                 <MirrorPane
                                   paneId={entry.paneId}

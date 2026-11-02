@@ -8,6 +8,7 @@ import { ClientConfig, LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
 import { useStore } from '../state/store';
+import { useFileStore } from '../state/fileStore';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
 import { useWindowAttended } from '../lib/windowAttention';
@@ -64,6 +65,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const activePaneId = activeWindow?.panes[activeWindow.active_pane]?.id ?? null;
   // Narrow screens show only the active pane, as if zoomed (locally).
   const narrow = useMediaQuery(NARROW_QUERY);
+  const previewFullscreen = useFileStore((s) => s.previewFullscreen);
   const zoomedPaneId =
     activeWindow?.zoomed_pane ?? (narrow && (activeWindow?.panes.length ?? 0) > 1 ? activePaneId : null);
   const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
@@ -344,7 +346,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           aria-label={fileBrowserMode === 'process' ? 'Processes' : fileBrowserMode === 'git' ? 'Git' : 'Files'}
           padding={0}
           // Fullscreen's 100dvh ignores the iOS keyboard; useVisualViewport tracks it.
-          {...(narrow
+          {...(narrow || previewFullscreen
             ? {
                 variant: 'fullscreen',
                 style: {

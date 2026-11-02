@@ -174,6 +174,7 @@ function DiffStat({ additions, deletions, showZeroes = false }: LineStats & { sh
 export function GitStatus({ onPreview }: { onPreview?: () => void } = {}) {
   const gitStatus = useFileStore((s) => s.gitStatus);
   const gitFocusedIndex = useFileStore((s) => s.gitFocusedIndex);
+  const previewFullscreen = useFileStore((s) => s.previewFullscreen);
   const gitExpandedSections = useFileStore((s) => s.gitExpandedSections);
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const filterQuery = useFileStore((s) => s.filterQuery);
@@ -187,7 +188,8 @@ export function GitStatus({ onPreview }: { onPreview?: () => void } = {}) {
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-git-index="${gitFocusedIndex}"]`);
     el?.scrollIntoView({ block: 'nearest' });
-  }, [gitFocusedIndex]);
+    // Focus can move while fullscreen hides the list.
+  }, [gitFocusedIndex, previewFullscreen]);
 
   if (!gitStatus) {
     return <Placeholder isLoading>Loading…</Placeholder>;

@@ -221,6 +221,74 @@ try {
   assert.equal(await summary.getByRole('listitem').count(), 0);
   console.log('PASS commit navigation, filtering and empty commit totals');
 
+  // The preview takes over the window; moving keeps it, a filter or Esc leaves.
+  await page.keyboard.press('Escape');
+  const list = page.locator('[aria-label="Git commit history"]');
+  const dialog = page.getByRole('dialog', { name: 'Git', exact: true });
+  await list.waitFor();
+  const windowed = (await dialog.boundingBox())!;
+  assert(windowed.height < 900);
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await waitForAsync(page, () => {
+    const rect = document.querySelector('dialog[open]')!.getBoundingClientRect();
+    return rect.width === innerWidth && rect.height === innerHeight;
+  });
+  assert((await preview.boundingBox())!.width > 1400);
+  await page.keyboard.press('j');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Escape');
+  await list.waitFor();
+  await waitForAsync(page, () => document.querySelector('dialog[open]')!.getBoundingClientRect().height < innerHeight);
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('/');
+  await list.waitFor();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('m');
+  await list.waitFor();
+  // Leaving reveals a row focused while the list was hidden.
+  await page.keyboard.press('g');
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('G');
+  await page.keyboard.press('m');
+  await list.waitFor();
+  await page.locator('[data-git-log-index="59"]').evaluate(
+    (row) =>
+      new Promise<void>((resolve, reject) => {
+        new IntersectionObserver(([entry]) =>
+          entry.isIntersecting ? resolve() : reject(new Error('focused row is scrolled out of view')),
+        ).observe(row);
+      }),
+  );
+
+  // File mode: the preview stays while the focus moves between files.
+  await page.evaluate(
+    async ({ pane, repo }) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      useStore.getState().setFileBrowserOpen(false);
+      useStore.getState().setFileBrowserOpen(true, repo, pane, 'files');
+    },
+    { pane, repo },
+  );
+  const fileRow = page.locator('[data-index]', { hasText: 'README' });
+  await fileRow.waitFor();
+  await page.getByRole('button', { name: 'Close file browser' }).evaluate((button) => {
+    (button.closest('[tabindex="-1"]') as HTMLElement).focus();
+  });
+  await page.getByRole('button', { name: 'm: fullscreen', exact: true }).waitFor();
+  await page.keyboard.press('m');
+  await fileRow.waitFor({ state: 'hidden' });
+  await page.keyboard.press('j');
+  await fileRow.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Escape');
+  await fileRow.waitFor();
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'Esc leaves fullscreen, not the browser');
+  console.log('PASS preview fullscreen toggle');
+
   assert.deepEqual(errors, []);
 } catch (error) {
   console.error('Open dialogs:', await page.locator('dialog[open]').allTextContents());

@@ -35,7 +35,7 @@ trash = "5"
 rmcp = { version = "3.7.0", features = ["server", "macros", "transport-streamable-http-server"] }
 strip-ansi-escapes = "0.2.1"
 schemars = "1.2.3"
-sysinfo = "0.39"
+sysinfo = "0.40"
 vt100 = "0.18"
 regex = "1"
 netstat2 = "0.11.2"

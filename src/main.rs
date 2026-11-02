@@ -777,7 +777,7 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
                 process_checked = Some(now);
                 let pane_shells = state.read().await.pane_shells();
                 let scan = tokio::task::spawn_blocking(move || {
-                    let mut system = System::new();
+                    let mut system = System::new().ok()?;
                     system.refresh_processes_specifics(
                         ProcessesToUpdate::All,
                         true,
@@ -812,10 +812,11 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
                         .map(|process| (process.pid, process.start_time))
                         .collect();
                     let detected = detect_pane_agents(&processes, &pane_shells);
-                    (starts, detected)
+                    Some((starts, detected))
                 })
                 .await;
-                if let Ok((starts, detected)) = scan {
+                // Without a scan, `alive` would report every agent dead.
+                if let Ok(Some((starts, detected))) = scan {
                     let mut mgr = state.write().await;
                     let alive = |process: crate::session::agent::AgentProcess| {
                         starts.get(&process.pid) == Some(&process.start_time)

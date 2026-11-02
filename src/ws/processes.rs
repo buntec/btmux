@@ -177,11 +177,11 @@ struct UserNames {
 }
 
 impl UserNames {
-    fn new() -> Self {
-        Self {
-            users: Users::new_with_refreshed_list(),
+    fn new() -> Result<Self, sysinfo::Error> {
+        Ok(Self {
+            users: Users::new_with_refreshed_list()?,
             names: HashMap::new(),
-        }
+        })
     }
 
     fn resolve(&mut self, uid: &Uid, reloaded: &mut bool) -> String {
@@ -211,12 +211,12 @@ struct ProcessSampler {
 }
 
 impl ProcessSampler {
-    fn new() -> Self {
-        Self {
+    fn new() -> Result<Self, sysinfo::Error> {
+        Ok(Self {
             system: System::new_with_specifics(
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()),
-            ),
-            users: UserNames::new(),
+            )?,
+            users: UserNames::new()?,
             ports_enabled: false,
             refresh: ProcessRefreshKind::nothing()
                 .with_cpu()
@@ -225,7 +225,7 @@ impl ProcessSampler {
                 .with_cmd(UpdateKind::OnlyIfNotSet),
             // Per-process CPU% is relative to one logical CPU.
             cpu_count: std::thread::available_parallelism().map_or(1, usize::from),
-        }
+        })
     }
 
     fn refresh(&mut self) {
@@ -274,7 +274,8 @@ impl ProcessSampler {
         } else {
             (None, None)
         };
-        let load = System::load_average();
+        let load_average =
+            System::load_average().map_or([0.0; 3], |load| [load.one, load.five, load.fifteen]);
         ProcessSnapshot {
             message_type: "snapshot",
             processes,
@@ -283,7 +284,7 @@ impl ProcessSampler {
             cpu_count: self.cpu_count,
             mem_used: self.system.used_memory(),
             mem_total: self.system.total_memory(),
-            load_average: [load.one, load.five, load.fifteen],
+            load_average,
         }
     }
 
@@ -361,8 +362,9 @@ pub async fn handle(ws: WebSocketUpgrade) -> impl IntoResponse {
 
 async fn handle_socket(socket: WebSocket) {
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let Ok(sampler) =
-        tokio::task::spawn_blocking(|| Arc::new(Mutex::new(ProcessSampler::new()))).await
+    let Ok(Ok(sampler)) =
+        tokio::task::spawn_blocking(|| ProcessSampler::new().map(|s| Arc::new(Mutex::new(s))))
+            .await
     else {
         return;
     };
@@ -479,7 +481,7 @@ mod tests {
 
     #[test]
     fn process_snapshots_skip_ports_until_requested() {
-        let mut sampler = ProcessSampler::new();
+        let mut sampler = ProcessSampler::new().unwrap();
         let snapshot = sampler.snapshot();
         assert!(snapshot.ports.is_none());
         assert!(snapshot.ports_error.is_none());
@@ -504,7 +506,7 @@ mod tests {
     #[test]
     fn kill_rejects_mismatched_start_time() {
         let mut child = spawn_sleeper();
-        let mut sampler = ProcessSampler::new();
+        let mut sampler = ProcessSampler::new().unwrap();
         let pid = child.id();
         sampler.system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
@@ -528,7 +530,7 @@ mod tests {
 
     #[test]
     fn kill_refuses_server_and_init() {
-        let mut sampler = ProcessSampler::new();
+        let mut sampler = ProcessSampler::new().unwrap();
         assert!(
             !sampler
                 .kill(std::process::id(), 0, KillSignal::Term)

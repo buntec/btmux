@@ -90,52 +90,58 @@ pub async fn report(state: &AppState) -> SystemInfo {
 }
 
 fn collect() -> SystemInfo {
-    let mut sys = System::new();
-    sys.refresh_memory();
-    sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing().with_frequency());
-    sys.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        false,
-        sysinfo::ProcessRefreshKind::nothing(),
-    );
-    let cpu = sys.cpus().first().map(|cpu| CpuInfo {
+    let sys = System::new().ok().map(|mut sys| {
+        sys.refresh_memory();
+        sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing().with_frequency());
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            false,
+            sysinfo::ProcessRefreshKind::nothing(),
+        );
+        sys
+    });
+    let bytes = |read: fn(&System) -> u64| sys.as_ref().map_or(0, read);
+    let cpus = sys.as_ref().map_or(&[][..], System::cpus);
+    let cpu = cpus.first().map(|cpu| CpuInfo {
         brand: cpu.brand().trim().to_string(),
-        threads: sys.cpus().len(),
-        cores: System::physical_core_count(),
+        threads: cpus.len(),
+        cores: System::physical_core_count().ok(),
         mhz: cpu.frequency(),
     });
-    let load = (!cfg!(windows)).then(|| {
-        let load = System::load_average();
-        [load.one, load.five, load.fifteen]
-    });
+    let load = (!cfg!(windows))
+        .then(System::load_average)
+        .and_then(Result::ok)
+        .map(|load| [load.one, load.five, load.fifteen]);
     SystemInfo {
         user: std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
             .ok(),
-        host_name: System::host_name(),
-        os: System::long_os_version(),
+        host_name: System::host_name().ok(),
+        os: System::long_os_version().ok(),
         os_id: System::distribution_id(),
         arch: System::cpu_arch(),
         model: model(),
-        kernel: System::kernel_version().map(|version| match System::name() {
-            Some(name) if !cfg!(target_os = "linux") => format!("{name} {version}"),
-            _ => format!("Linux {version}"),
-        }),
-        uptime: System::uptime(),
+        kernel: System::kernel_version()
+            .ok()
+            .map(|version| match System::name() {
+                Ok(name) if !cfg!(target_os = "linux") => format!("{name} {version}"),
+                _ => format!("Linux {version}"),
+            }),
+        uptime: System::uptime().unwrap_or(0),
         shell: String::new(),
         cpu,
         memory: Usage {
-            used: sys.used_memory(),
-            total: sys.total_memory(),
+            used: bytes(System::used_memory),
+            total: bytes(System::total_memory),
         },
         swap: Usage {
-            used: sys.used_swap(),
-            total: sys.total_swap(),
+            used: bytes(System::used_swap),
+            total: bytes(System::total_swap),
         },
         disks: disks(),
         addresses: addresses(),
         load,
-        processes: sys.processes().len(),
+        processes: sys.as_ref().map_or(0, |sys| sys.processes().len()),
         locale: ["LC_ALL", "LC_CTYPE", "LANG"]
             .iter()
             .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty())),
@@ -147,11 +153,14 @@ fn model() -> Option<String> {
     if let Some(name) = mac_product_name() {
         return Some(name);
     }
-    let name = Product::name().filter(|name| !placeholder(name))?;
+    let name = Product::name().ok().filter(|name| !placeholder(name))?;
     let vendor = Product::vendor_name()
+        .ok()
         .filter(|vendor| !placeholder(vendor))
         .map(|vendor| vendor.trim_end_matches(" Inc.").to_string());
-    let version = Product::version().filter(|v| !placeholder(v) && v != &name);
+    let version = Product::version()
+        .ok()
+        .filter(|v| !placeholder(v) && v != &name);
     let mut model = match vendor {
         Some(vendor) if !name.starts_with(&vendor) => format!("{vendor} {name}"),
         _ => name,
@@ -198,9 +207,10 @@ fn placeholder(value: &str) -> bool {
 }
 
 fn disks() -> Vec<DiskInfo> {
-    let disks = Disks::new_with_refreshed_list();
+    let Ok(disks) = Disks::new_with_refreshed_list() else {
+        return Vec::new();
+    };
     let mut list: Vec<_> = disks
-        .list()
         .iter()
         .filter(|disk| disk.total_space() > 0)
         .filter(|disk| {
@@ -249,7 +259,9 @@ fn dedupe_devices<T>(list: &mut Vec<T>, device: impl Fn(&T) -> &OsStr) {
 }
 
 fn addresses() -> Vec<Address> {
-    let networks = Networks::new_with_refreshed_list();
+    let Ok(networks) = Networks::new_with_refreshed_list() else {
+        return Vec::new();
+    };
     let mut list: Vec<_> = networks
         .iter()
         .flat_map(|(interface, data)| {
@@ -258,7 +270,7 @@ fn addresses() -> Vec<Address> {
                 .filter_map(move |net| match net.addr {
                     IpAddr::V4(addr) if !addr.is_loopback() && !addr.is_link_local() => {
                         Some(Address {
-                            interface: interface.clone(),
+                            interface: interface.to_string_lossy().into_owned(),
                             address: format!("{addr}/{}", net.prefix),
                         })
                     }

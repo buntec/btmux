@@ -606,7 +606,9 @@ fn is_nvim(process: &sysinfo::Process) -> bool {
 
 async fn foreground_neovim_pids(pgrp: crate::process::Pid) -> Vec<u32> {
     tokio::task::spawn_blocking(move || {
-        let mut system = System::new();
+        let Ok(mut system) = System::new() else {
+            return Vec::new();
+        };
         system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,

@@ -28,8 +28,10 @@ pub async fn handle(ws: WebSocketUpgrade) -> impl IntoResponse {
 }
 
 async fn handle_socket(mut socket: WebSocket) {
-    let mut sys = System::new();
-    let mut networks = Networks::new_with_refreshed_list();
+    let (Ok(mut sys), Ok(mut networks)) = (System::new(), Networks::new_with_refreshed_list())
+    else {
+        return;
+    };
     let mut tick = interval(Duration::from_secs(1));
 
     // Prime CPU readings (first call always returns 0 without a prior refresh).
@@ -43,7 +45,7 @@ async fn handle_socket(mut socket: WebSocket) {
         sys.refresh_memory();
         networks.refresh(false);
 
-        let cpu: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
+        let cpu: Vec<f32> = sys.cpus().iter().map(|c| c.usage()).collect();
         let mem_used = sys.used_memory();
         let mem_total = sys.total_memory();
         let (net_rx, net_tx) = networks.iter().fold((0u64, 0u64), |(rx, tx), (_, n)| {

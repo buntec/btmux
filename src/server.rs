@@ -600,7 +600,7 @@ fn hook_process(headers: &HeaderMap) -> Option<AgentProcess> {
     if pid <= 1 {
         return None;
     }
-    let mut system = System::new();
+    let mut system = System::new().ok()?;
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
         true,

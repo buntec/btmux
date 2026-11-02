@@ -475,8 +475,7 @@ exist only while the surface is shown.
 The device scale is process-wide, from the first viewer (at most 2):
 `--force-device-scale-factor` is the only way to get 2x frames, and
 `setDeviceMetricsOverride` must pass scale 0 to keep it. Sizing follows the PTY
-rule: the first tab owns it until another sends input. Wheel deltas are
-multiplied by the scale, which Chromium divides them by. On a macOS server,
+rule: the first tab owns it until another sends input. On a macOS server,
 Cmd and Option editing chords need explicit CDP `commands` (`mac_commands`).
 
 ### Layout tree — the shared contract

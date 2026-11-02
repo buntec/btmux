@@ -280,7 +280,15 @@ impl Browser {
         // Scale 0 keeps `--force-device-scale-factor`; a value here gives 1x frames.
         self.post(
             "Emulation.setDeviceMetricsOverride",
-            json!({ "width": width, "height": height, "deviceScaleFactor": 0, "mobile": false }),
+            json!({
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": 0,
+                "mobile": false,
+                // Headless defaults to 400x300, which sites take for a phone.
+                "screenWidth": width,
+                "screenHeight": height,
+            }),
         );
         self.start_screencast(size);
         self.painted.notify_one();
@@ -710,6 +718,13 @@ async fn start(scale: u32) -> Result<Arc<Browser>, String> {
             .ok_or("Target.attachToTarget returned no session")?
             .to_string();
         cdp.call(Some(&session), "Page.enable", json!({})).await?;
+        // Headless pages otherwise report no focus until the first input.
+        cdp.call(
+            Some(&session),
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": true }),
+        )
+        .await?;
         cdp.call(
             Some(&session),
             "Emulation.setUserAgentOverride",
@@ -906,9 +921,8 @@ fn handle_message(browser: &Arc<Browser>, viewer: u64, message: BrowserClientMes
                     "buttons": buttons,
                     "clickCount": click_count,
                     "modifiers": modifiers,
-                    // Chromium divides these by the device scale.
-                    "deltaX": delta_x * browser.scale as f64,
-                    "deltaY": delta_y * browser.scale as f64,
+                    "deltaX": delta_x,
+                    "deltaY": delta_y,
                 }),
             );
         }

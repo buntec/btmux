@@ -363,6 +363,8 @@ export function BrowserSurface({
             onFocus={focusAddress}
             onBlur={() => setAddress(null)}
             onKeyDown={(e) => {
+              // Focus moves to the page's input, which mustn't get the newline.
+              if (e.key === 'Enter') e.preventDefault();
               if (e.key === 'Escape') {
                 e.preventDefault();
                 setAddress(null);

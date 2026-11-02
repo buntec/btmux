@@ -21,6 +21,13 @@ addEventListener('wheel', (e) => report('wheel:' + e.deltaY));
 document.getElementById('field').addEventListener('input', (e) => report('value:' + e.target.value));
 report('size:' + innerWidth + 'x' + innerHeight + ':' + devicePixelRatio);
 report('agent:' + navigator.userAgent);
+report('focus:' + document.hasFocus());
+report('screen-fits:' + (screen.width >= innerWidth && screen.height >= innerHeight));
+addEventListener('click', (e) => {
+  if (e.target.id === 'popup') return;
+  document.body.style.background = 'rgb(30,60,200)';
+  report('clicked');
+});
 </script>`;
 const site = Bun.serve({
   port: 0,
@@ -104,11 +111,17 @@ try {
     const Original = window.WebSocket;
     (window as any).browserSockets = [];
     (window as any).browserFrames = 0;
+    (window as any).browserSent = [];
     window.WebSocket = class extends Original {
       constructor(address: string | URL, protocols?: string | string[]) {
         super(address, protocols);
         if (!String(address).includes('/ws/browser')) return;
         (window as any).browserSockets.push(this);
+        const send = this.send.bind(this);
+        this.send = (data: any) => {
+          (window as any).browserSent.push(JSON.parse(data).type);
+          send(data);
+        };
         this.addEventListener('message', (event: MessageEvent) => {
           if (typeof event.data !== 'string') (window as any).browserFrames++;
         });
@@ -142,6 +155,9 @@ try {
   await waitForAsync(page, (selector) => document.querySelector(selector as string)?.getAttribute('aria-label') === 'Surface test', canvas);
   const agent = log.find((entry) => entry.startsWith('agent:'))!;
   assert(!agent.includes('Headless'), agent);
+  assert(log.includes('focus:true'), JSON.stringify(log));
+  // Enter in the address bar stays out of the page.
+  assert(!(await page.evaluate(() => (window as any).browserSent)).includes('insert_text'));
 
   // Frames are true device pixels at the pane's size.
   await waitForAsync(page, (selector) => {
@@ -162,6 +178,20 @@ try {
   await clickPage(page, 200, 70);
   await logged('click:200,70');
 
+  // The page's response reaches the canvas, including jitter while the button is down.
+  await clickPage(page, 600, 400);
+  await logged('clicked');
+  await waitForAsync(
+    page,
+    (selector) => {
+      const element = document.querySelector(selector as string) as HTMLCanvasElement;
+      const [r, , b] = element.getContext('2d')!.getImageData(Math.floor(element.width * 0.9), Math.floor(element.height * 0.9), 1, 1).data;
+      return r < 70 && b > 170;
+    },
+    canvas,
+  );
+  await clickPage(page, 200, 70);
+
   // Typing, editing keys, and paste reach the page.
   await page.keyboard.type('hey');
   await logged('value:hey');
@@ -180,7 +210,8 @@ try {
   const box = (await page.locator(canvas).boundingBox())!;
   await page.mouse.move(box.x + 300, box.y + 300);
   await page.mouse.wheel(0, 120);
-  await logged('wheel:120');
+  // The outer page's emulated 2x halves Playwright's delta; the rest passes through as is.
+  await logged('wheel:60');
 
   // Prefix keys stay btmux's: the page sees neither key, only the bare Control.
   const beforePrefix = log.length;
@@ -222,6 +253,15 @@ try {
   assert.equal(log.filter((entry) => entry === 'down:Escape').length, 1);
   await waitForAsync(page, () => (window as any).browserSockets.every((s: WebSocket) => s.readyState === 3));
   await waitForAsync(page, () => document.activeElement?.getAttribute('aria-label') === 'Terminal');
+
+  // The click above turned the page blue; a reload resets it for the checks below.
+  await prefix(page, 'b');
+  await waitForAsync(page, () => (window as any).browserSockets.at(-1).readyState === 1);
+  await page.getByRole('button', { name: 'Reload', exact: true }).click();
+  await painted(page);
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('b');
+  await waitForAsync(page, (selector) => getComputedStyle(document.querySelector(selector as string)!).visibility === 'hidden', canvas);
 
   // Opening it again keeps the page.
   await prefix(page, 'b');

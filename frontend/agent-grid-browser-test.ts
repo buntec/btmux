@@ -26,8 +26,33 @@ const connect = async (pane: string, query: string) => {
   return ws;
 };
 
-/** A hook-reported agent in a new session, whose resize history ends at `cols`×`rows`. */
-const startAgent = async (name: string, cols: number, rows: number): Promise<Owner> => {
+/** Resolves when the socket sees the size take effect; call before sending the resize. */
+const sizeApplied = (ws: WebSocket, cols: number, rows: number) =>
+  new Promise<void>((resolve, reject) => {
+    const finish = (settle: () => void) => {
+      clearTimeout(timer);
+      ws.removeEventListener('message', onMessage);
+      settle();
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.data !== 'string') return;
+      const frame = JSON.parse(event.data);
+      if (frame.type === 'size' && frame.cols === cols && frame.rows === rows) finish(resolve);
+    };
+    const timer = setTimeout(() => finish(() => reject(new Error(`resize to ${cols}x${rows} not applied`))), 15_000);
+    ws.addEventListener('message', onMessage);
+  });
+
+/**
+ * A hook-reported agent in a new session, whose resize history ends at `cols`×`rows`.
+ * `beforeAnnounce` runs before tabs can learn of the agent.
+ */
+const startAgent = async (
+  name: string,
+  cols: number,
+  rows: number,
+  beforeAnnounce?: (pane: string) => Promise<unknown>,
+): Promise<Owner> => {
   const created = await fetch(`${url}/api/sessions`, { method: 'POST', headers, body: JSON.stringify({ name }) });
   assert(created.ok);
   const session = await created.json();
@@ -39,15 +64,18 @@ const startAgent = async (name: string, cols: number, rows: number): Promise<Own
     [cols - 30, rows - 8],
     [cols + 40, rows + 6],
     [cols - 50, rows - 4],
-    [cols, rows],
   ]) {
     ws.send(JSON.stringify({ type: 'resize', cols: c, rows: r }));
     ws.send(encoder.encode('seq 1 20000\n'));
     await Bun.sleep(300);
   }
+  const applied = sizeApplied(ws, cols, rows);
+  ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+  await applied;
   // Hook-only agents end at a shell prompt.
   ws.send(encoder.encode('clear; sleep 99999\n'));
   await Bun.sleep(200);
+  await beforeAnnounce?.(id);
   const hook = await fetch(`${url}/api/panes/${id}/notify`, {
     method: 'POST',
     headers,
@@ -140,11 +168,27 @@ const browser = await chromium.launch({ headless: true, channel: process.env.BTM
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await context.addInitScript(() => {
   const sockets: WebSocket[] = [];
+  // Pane id -> ms to delay its mirrors' current_size frames, or null to drop them.
+  const holds = new Map<string, number | null>();
   (window as any).__sockets = sockets;
+  (window as any).__currentSizeHolds = holds;
+  const onmessage = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage')!;
   (window as any).WebSocket = new Proxy(window.WebSocket, {
     construct(target, args) {
-      const socket = new (target as any)(...args);
+      const socket: WebSocket = new (target as any)(...args);
       sockets.push(socket);
+      const pane = /\/ws\/pane\/([^?]+)\?mirror=1/.exec(socket.url)?.[1];
+      if (pane) {
+        Object.defineProperty(socket, 'onmessage', {
+          set(handler: (event: MessageEvent) => void) {
+            onmessage.set!.call(socket, (event: MessageEvent) => {
+              const held = typeof event.data === 'string' && event.data.includes('"current_size"') && holds.has(pane);
+              if (!held) handler(event);
+              else if (holds.get(pane) !== null) setTimeout(() => handler(event), holds.get(pane)!);
+            });
+          },
+        });
+      }
       return socket;
     },
   });
@@ -238,6 +282,26 @@ try {
   const joined = await stopWatching(page);
   assert.equal(joined.length, 2, `new agent: ${JSON.stringify(joined)}`);
   assert.equal(joined[1].length, 5);
+
+  // A mirror that never reports its size gets the fallback, on its own timer.
+  const hold = (delay: number | null) => (pane: string) =>
+    page.evaluate(([pane, delay]) => (window as any).__currentSizeHolds.set(pane, delay), [pane, delay] as const);
+  const tileCount = (count: number) =>
+    waitForAsync(page, (count) => (window as any).__watch.layouts.at(-1).length === count, count);
+  await watchLayouts(page);
+  await baseline(page);
+  agents.push(await startAgent('agent-stuck', 110, 30, hold(null)));
+  await tileCount(6);
+  await stopWatching(page);
+
+  // Meanwhile, a slow agent still joins at its own size, not the fallback.
+  await watchLayouts(page);
+  await baseline(page);
+  agents.push(await startAgent('agent-slow', 70, 20, hold(600)));
+  await tileCount(7);
+  await page.waitForTimeout(1000);
+  const slow = await stopWatching(page);
+  assert.equal(slow.length, 2, `slow agent beside a stuck one: ${JSON.stringify(slow)}`);
 
   assert.deepEqual(errors, []);
 } finally {

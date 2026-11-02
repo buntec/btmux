@@ -122,6 +122,15 @@ function pack(naturals: (Size | null)[], width: number, height: number): Packed 
   return flow(naturals, lo, width);
 }
 
+/** Each tile's own wait for its mirror's size; a stuck mirror can't affect later tiles. */
+function SizeDeadline({ paneId, onExpire }: { paneId: string; onExpire: (paneId: string) => void }) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => onExpire(paneId), SIZE_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [paneId, onExpire]);
+  return null;
+}
+
 /** Full-screen live mirrors of panes with detected or reported agents. */
 export function AgentGrid({ send }: Props) {
   const open = useStore((s) => s.agentGridOpen);
@@ -159,20 +168,17 @@ export function AgentGrid({ send }: Props) {
   }, []);
   // Tiles first appear together, once sized. An agent that starts later joins
   // once sized, so each change of the tile set is one layout change.
-  const allSized = entries.every((entry) => naturals[entry.paneId]);
+  const [timedOutPanes, setTimedOutPanes] = useState<ReadonlySet<string>>(new Set());
+  const sizeTimedOut = useCallback((paneId: string) => setTimedOutPanes((prev) => new Set(prev).add(paneId)), []);
+  const allSized = entries.every((entry) => naturals[entry.paneId] || timedOutPanes.has(entry.paneId));
   const [tilesShown, setTilesShown] = useState(false);
-  const [sizeTimedOut, setSizeTimedOut] = useState(false);
   useEffect(() => {
-    if (!open || allSized) {
-      setTilesShown(open);
-      setSizeTimedOut(false);
-      return;
+    if (open) {
+      if (allSized) setTilesShown(true);
+    } else {
+      setTilesShown(false);
+      setTimedOutPanes(new Set());
     }
-    const timer = window.setTimeout(() => {
-      setTilesShown(true);
-      setSizeTimedOut(true);
-    }, SIZE_WAIT_MS);
-    return () => clearTimeout(timer);
   }, [open, allSized]);
   const [area, setArea] = useState<{ w: number; h: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -189,12 +195,12 @@ export function AgentGrid({ send }: Props) {
     () =>
       area && area.w > 0 && area.h > 0
         ? pack(
-            entries.map((entry) => naturals[entry.paneId] ?? (sizeTimedOut ? FALLBACK_SIZE : null)),
+            entries.map((entry) => naturals[entry.paneId] ?? (timedOutPanes.has(entry.paneId) ? FALLBACK_SIZE : null)),
             area.w,
             area.h,
           )
         : null,
-    [area, entries, naturals, sizeTimedOut],
+    [area, entries, naturals, timedOutPanes],
   );
   const [selectedIdx, setSelectedIdx] = useState(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -378,6 +384,9 @@ export function AgentGrid({ send }: Props) {
                               className="relative min-h-0 flex-1 overflow-hidden"
                               style={{ background: terminalBg }}
                             >
+                              {!naturals[entry.paneId] && (
+                                <SizeDeadline paneId={entry.paneId} onExpire={sizeTimedOut} />
+                              )}
                               {mirrorsReady && (
                                 <MirrorPane
                                   paneId={entry.paneId}

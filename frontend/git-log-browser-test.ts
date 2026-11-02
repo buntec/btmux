@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
@@ -220,6 +220,140 @@ try {
   await preview.getByText('No changes', { exact: true }).waitFor();
   assert.equal(await summary.getByRole('listitem').count(), 0);
   console.log('PASS commit navigation, filtering and empty commit totals');
+
+  // The preview takes over the window; moving keeps it, a filter or Esc leaves.
+  await page.keyboard.press('Escape');
+  const list = page.locator('[aria-label="Git commit history"]');
+  const dialog = page.getByRole('dialog', { name: 'Git', exact: true });
+  await list.waitFor();
+  const windowed = (await dialog.boundingBox())!;
+  assert(windowed.height < 900);
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await waitForAsync(page, () => {
+    const rect = document.querySelector('dialog[open]')!.getBoundingClientRect();
+    return rect.width === innerWidth && rect.height === innerHeight;
+  });
+  assert((await preview.boundingBox())!.width > 1400);
+  await page.keyboard.press('j');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Escape');
+  await list.waitFor();
+  await waitForAsync(page, () => document.querySelector('dialog[open]')!.getBoundingClientRect().height < innerHeight);
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('/');
+  await list.waitFor();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('m');
+  await list.waitFor();
+  // Leaving reveals a row focused while the list was hidden.
+  await page.keyboard.press('g');
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await page.keyboard.press('G');
+  await page.keyboard.press('m');
+  await list.waitFor();
+  await page.locator('[data-git-log-index="59"]').evaluate(
+    (row) =>
+      new Promise<void>((resolve, reject) => {
+        new IntersectionObserver(([entry]) =>
+          entry.isIntersecting ? resolve() : reject(new Error('focused row is scrolled out of view')),
+        ).observe(row);
+      }),
+  );
+
+  // Chromium drops focus from a hidden element only later, so check for it directly.
+  const assertFocusKept = async () =>
+    assert(
+      await page.evaluate(() => {
+        const active = document.activeElement!;
+        return !!active.closest('dialog[open]') && active.checkVisibility();
+      }),
+      'focus stays visible and in the browser',
+    );
+  const clickListRow = async (row: typeof list, label: string) => {
+    await row.click();
+    assert.equal(await page.evaluate(() => document.activeElement!.getAttribute('aria-label')), label);
+  };
+
+  // Clicking an overflowing list focuses it; hiding it must keep the keys working.
+  await clickListRow(page.locator('[data-git-log-index="40"]'), 'Commit history');
+  await page.keyboard.press('m');
+  await list.waitFor({ state: 'hidden' });
+  await assertFocusKept();
+  await page.keyboard.press('j');
+  await page.keyboard.press('m');
+  await list.waitFor();
+  await page.locator('[data-git-log-index="41"][aria-current="true"]').waitFor();
+
+  // File mode: the preview stays while the focus moves between files.
+  await page.evaluate(
+    async ({ pane, repo }) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      useStore.getState().setFileBrowserOpen(false);
+      useStore.getState().setFileBrowserOpen(true, repo, pane, 'files');
+    },
+    { pane, repo },
+  );
+  const fileRow = page.locator('[data-index]', { hasText: 'README' });
+  await fileRow.waitFor();
+  await page.getByRole('button', { name: 'Close file browser' }).evaluate((button) => {
+    (button.closest('[tabindex="-1"]') as HTMLElement).focus();
+  });
+  await page.getByRole('button', { name: 'm: fullscreen', exact: true }).waitFor();
+  await page.keyboard.press('m');
+  await fileRow.waitFor({ state: 'hidden' });
+  await page.keyboard.press('j');
+  await fileRow.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Escape');
+  await fileRow.waitFor();
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'Esc leaves fullscreen, not the browser');
+
+  // As in the log, after clicking an overflowing list.
+  const many = path.join(repo, 'many');
+  mkdirSync(many);
+  for (let index = 0; index < 60; index++) writeFileSync(path.join(many, `file-${index}.txt`), 'text\n');
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setFileBrowserOpen(false);
+  });
+  await page.locator('dialog[open]').waitFor({ state: 'detached' });
+  await page.evaluate(
+    async ({ pane, many }) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      useStore.getState().setFileBrowserOpen(true, many, pane, 'files');
+    },
+    { pane, many },
+  );
+  const manyRow = page.locator('[data-index]', { hasText: 'file-30.txt' });
+  await manyRow.waitFor();
+  await clickListRow(manyRow, 'Files');
+  await page.keyboard.press('m');
+  await manyRow.waitFor({ state: 'hidden' });
+  await assertFocusKept();
+  await page.keyboard.press('m');
+  await manyRow.waitFor();
+
+  // The narrow layout has no fullscreen: the list comes back.
+  await page.keyboard.press('m');
+  await manyRow.waitFor({ state: 'hidden' });
+  await page.setViewportSize({ width: 600, height: 900 });
+  await manyRow.waitFor();
+
+  // Its preview hides the clicked list, and Back hides the clicked button.
+  await manyRow.click();
+  await manyRow.waitFor({ state: 'hidden' });
+  await assertFocusKept();
+  await page.keyboard.press('Escape');
+  await manyRow.waitFor();
+  await manyRow.click();
+  await page.getByRole('button', { name: 'Back to list', exact: true }).click();
+  await manyRow.waitFor();
+  await assertFocusKept();
+  console.log('PASS preview fullscreen toggle');
 
   assert.deepEqual(errors, []);
 } catch (error) {

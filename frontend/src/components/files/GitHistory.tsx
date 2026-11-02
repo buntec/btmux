@@ -68,6 +68,7 @@ export function GitHistory({ onPreview }: { onPreview?: () => void } = {}) {
   const gitStatus = useFileStore((s) => s.gitStatus);
   const gitLog = useFileStore((s) => s.gitLog);
   const gitLogFocusedIndex = useFileStore((s) => s.gitLogFocusedIndex);
+  const previewFullscreen = useFileStore((s) => s.previewFullscreen);
   const filterQuery = useFileStore((s) => s.filterQuery);
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const listRef = useRef<HTMLDivElement>(null);
@@ -89,7 +90,8 @@ export function GitHistory({ onPreview }: { onPreview?: () => void } = {}) {
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-git-log-index="${gitLogFocusedIndex}"]`);
     el?.scrollIntoView({ block: 'nearest' });
-  }, [gitLogFocusedIndex]);
+    // Focus can move while fullscreen hides the list.
+  }, [gitLogFocusedIndex, previewFullscreen]);
 
   useLayoutEffect(() => {
     const list = listRef.current;

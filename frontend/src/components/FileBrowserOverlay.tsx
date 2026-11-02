@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useCallback, useRef, useState } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
@@ -144,6 +144,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const narrow = useMediaQuery(NARROW_QUERY);
   const [previewShown, setPreviewShown] = useState(false);
   const showPreview = useCallback(() => setPreviewShown(true), []);
+  const previewFullscreen = useFileStore((s) => s.previewFullscreen);
   // Touch screens type filters into an input, which opens the keyboard.
   const filterInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -166,7 +167,23 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   }, [touch, isFilterActive]);
 
   // Moving elsewhere returns to the list.
-  useEffect(() => setPreviewShown(false), [currentPath, isGitMode, gitView, searchMode]);
+  useEffect(() => {
+    setPreviewShown(false);
+    store.getState().setPreviewFullscreen(false);
+  }, [store, currentPath, isGitMode, gitView, searchMode, isFilterActive]);
+
+  useEffect(() => () => store.getState().setPreviewFullscreen(false), [store]);
+
+  // Narrow screens hide the preview unless it's shown, and already fill the screen.
+  useEffect(() => {
+    if (narrow) store.getState().setPreviewFullscreen(false);
+  }, [store, narrow]);
+
+  // Hiding a panel with focus would leave the browser without its keys.
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (rootRef.current?.contains(active) && !active?.checkVisibility()) rootRef.current.focus();
+  }, [narrow, previewShown, previewFullscreen]);
 
   // A selection doesn't outlive the browser; the yank register does.
   useEffect(() => () => store.getState().clearSelection(), [store]);
@@ -816,6 +833,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           setPendingDelete(null);
         } else if (narrow && previewShown) {
           setPreviewShown(false);
+        } else if (previewFullscreen) {
+          store.getState().setPreviewFullscreen(false);
         } else if (selectedPaths.size > 0) {
           store.getState().clearSelection();
         } else if (searchMode !== 'off') {
@@ -871,6 +890,20 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         (e.key === 'Backspace' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey))
       )
         return;
+
+      if (
+        e.key === 'm' &&
+        !narrow &&
+        !isFilterActive &&
+        searchMode === 'off' &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        store.getState().setPreviewFullscreen(!previewFullscreen);
+        return;
+      }
 
       // Git mode keybindings
       if (isGitMode) {
@@ -1445,6 +1478,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     pendingDelete,
     narrow,
     previewShown,
+    previewFullscreen,
     commitModalOpen,
     gitPopup,
     createModalOpen,
@@ -1535,7 +1569,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             ...BROWSE_HINTS.slice(-1),
           ];
   // Popup keys only work once status confirms a repository.
-  const hints = gitStatus?.is_repo ? allHints : allHints.filter((hint) => !GIT_POPUP_HINTS.includes(hint));
+  const repoHints = gitStatus?.is_repo ? allHints : allHints.filter((hint) => !GIT_POPUP_HINTS.includes(hint));
+  // Narrow screens already fill the screen.
+  const hints = narrow ? repoHints.filter((hint) => hint !== FULLSCREEN_HINT) : repoHints;
 
   return (
     <VStack
@@ -1580,6 +1616,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             'min-h-0 min-w-0 overflow-hidden',
             narrow ? 'flex-1' : 'flex-none',
             narrow && previewShown && 'hidden',
+            previewFullscreen && 'hidden',
           )}
           style={narrow ? undefined : { width: `${sidebarRatio * 100}%` }}
         >
@@ -1608,7 +1645,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             </>
           )}
         </VStack>
-        {!narrow && (
+        {!narrow && !previewFullscreen && (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -1760,6 +1797,8 @@ function nextDiffContext(key: string, lines: number): number {
 
 const GIT_POPUP_HINTS: Hint[] = Object.entries(GIT_POPUP_KEYS).map(([key, kind]) => ({ keys: [key], label: kind }));
 
+const FULLSCREEN_HINT: Hint = { keys: ['m'], label: 'fullscreen' };
+
 const GIT_EXIT_HINTS: Hint[] = [{ keys: ['esc', 'q'], label: 'exit git' }];
 
 const GIT_FILTER_HINTS: Hint[] = [
@@ -1771,6 +1810,7 @@ const GIT_LOG_HINTS: Hint[] = [
   { keys: ['j', 'k'], label: 'navigate commits' },
   { keys: ['g', 'G'], label: 'top/bottom' },
   { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll diff' },
+  FULLSCREEN_HINT,
   { keys: ['/'], label: 'filter' },
   { keys: ['s'], label: 'status' },
 ];
@@ -1784,6 +1824,7 @@ const GIT_STATUS_HINTS: Hint[] = [
   { keys: ['h', 'l'], label: 'fold/unfold' },
   { keys: ['enter'], label: 'open' },
   { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll diff' },
+  FULLSCREEN_HINT,
   { keys: ['s'], label: 'stage' },
   { keys: ['S'], label: 'stage all' },
   { keys: ['u'], label: 'unstage' },
@@ -1820,6 +1861,7 @@ const BROWSE_HINTS: Hint[] = [
   { keys: ['h'], label: 'up' },
   { keys: ['~'], label: 'home' },
   { keys: ['ctrl+d', 'ctrl+u'], label: 'scroll' },
+  FULLSCREEN_HINT,
   { keys: ['/'], label: 'filter' },
   { keys: ['f', 's'], label: 'search' },
   { keys: ['.'], label: 'dotfiles' },

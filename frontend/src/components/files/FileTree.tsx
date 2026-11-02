@@ -23,6 +23,7 @@ export function FileTree({ fileSend, onNavigate, onPreview }: FileTreeProps) {
   const entries = useFileStore((s) => s.entries);
   const currentPath = useFileStore((s) => s.currentPath);
   const focusedIndex = useFileStore((s) => s.focusedIndex);
+  const previewFullscreen = useFileStore((s) => s.previewFullscreen);
   const filterQuery = useFileStore((s) => s.filterQuery);
   const isFilterActive = useFileStore((s) => s.isFilterActive);
   const showDotFiles = useFileStore((s) => s.showDotFiles);
@@ -89,7 +90,8 @@ export function FileTree({ fileSend, onNavigate, onPreview }: FileTreeProps) {
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-index="${focusedIndex}"]`);
     el?.scrollIntoView({ block: 'nearest' });
-  }, [focusedIndex]);
+    // Focus can move while fullscreen hides the list.
+  }, [focusedIndex, previewFullscreen]);
 
   if (isLoading) {
     return <Placeholder isLoading>Loading…</Placeholder>;

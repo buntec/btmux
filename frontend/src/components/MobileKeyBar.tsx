@@ -29,9 +29,9 @@ const ARROWS = [
   { key: 'ArrowRight', label: 'Right', icon: ArrowRight },
 ];
 
-// Inputs the key bar types into: pane terminals and the built-in Neovim.
+// Inputs the key bar types into: pane terminals, the built-in Neovim, and the browser.
 const takesKeys = (target: EventTarget | null) =>
-  target instanceof Element && target.closest('[data-pane-terminal], [data-nvim-input]') !== null;
+  target instanceof Element && target.closest('[data-pane-terminal], [data-nvim-input], [data-browser-input]') !== null;
 
 /** Keys phone keyboards lack. Ctrl and Alt apply to the next key, from here or the keyboard. */
 export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
@@ -46,6 +46,7 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
   const editor = useStore((state) => {
     const paneId = state.getActivePaneId(sessionId);
     if (!paneId) return null;
+    if (state.browserOpen && state.browserPaneId === paneId) return 'Browser';
     if (state.vscodeOpen && state.vscodePaneId === paneId) return 'VS Code';
     if (state.nvimOpen && state.nvimPaneId === paneId) return 'Neovim';
     return null;
@@ -62,6 +63,7 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     if (
       focused instanceof HTMLElement &&
       (focused.dataset.nvimInput !== undefined ||
+        focused.dataset.browserInput !== undefined ||
         (focused.matches(TEXT_FIELDS) && !focused.closest('[data-pane-terminal]')))
     ) {
       return dispatchKey(focused, key, modifiers);
@@ -72,6 +74,11 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     if (!paneId) return;
     if (state.nvimOpen && state.nvimPaneId === paneId) {
       const input = document.querySelector('[data-nvim-input]');
+      if (input) dispatchKey(input, key, modifiers);
+      return;
+    }
+    if (state.browserOpen && state.browserPaneId === paneId) {
+      const input = document.querySelector('[data-browser-input]');
       if (input) dispatchKey(input, key, modifiers);
       return;
     }
@@ -195,7 +202,8 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
             icon={<PanelBottomClose />}
             onClick={() => {
               const state = useStore.getState();
-              if (editor === 'VS Code') state.setVscodeOpen(false);
+              if (editor === 'Browser') state.setBrowserOpen(false);
+              else if (editor === 'VS Code') state.setVscodeOpen(false);
               else state.setNvimOpen(false);
             }}
           />

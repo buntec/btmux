@@ -45,6 +45,8 @@ fn generated_protocol_is_current() {
         ClientConfig::decl(&config),
         crate::server::ServerInfo::decl(&config),
         crate::vscode::VscodeStatus::decl(&config),
+        crate::browser::BrowserClientMessage::decl(&config),
+        crate::browser::BrowserServerMessage::decl(&config),
         crate::update_check::UpdateStatus::decl(&config),
         crate::system_info::SystemInfo::decl(&config),
         crate::system_info::CpuInfo::decl(&config),

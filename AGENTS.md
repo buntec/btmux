@@ -38,6 +38,7 @@ gives each file a fresh stack (debug backend and Vite on free ports, a random to
 repo state don't affect it; failures keep the stack logs. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
 returned Promise as truthy and doesn't wait.
+`just test-browser-surface`, also on demand, covers the browser surface and needs Chrome or Chromium.
 `just test-frontend` runs the frontend unit tests (`bun test`, the LaTeX detector and theme mapping).
 
 The CLI also accepts `--host`, `--port`, `--profile`, `--shell`, `--public-url`,
@@ -85,6 +86,8 @@ derived from each browser tab's URL, so session navigation is per-tab.
 4. **`/ws/sysstat`** (`src/ws/sysstat.rs`) — emits one JSON frame per second with per-core CPU, memory, and aggregate network rates for the StatusBar. The frontend reconnects this auxiliary socket independently.
 
 5. **`/ws/nvim`** (`src/ws/nvim.rs`) — a byte proxy between the browser and a new connection to the shared built-in Neovim's RPC socket. The browser speaks msgpack-RPC itself; see *Built-in Neovim* below.
+
+6. **`/ws/browser`** (`src/browser.rs`) — the shared server-side Chromium: JPEG frames as binary messages and page state as JSON, with input and navigation coming back as JSON. See *Browser surface* below.
 
 REST handlers and MCP tools share the same `SessionManager`; structural mutations must call `broadcast_state` so browser tabs stay synchronized. REST lives under `/api` and includes session/window/pane/layout operations, pane input/output, notifications, and raw local-file serving. `GET /api/system` (`system_info.rs`) reports the server host fastfetch-style (`sysinfo`, plus `ioreg` for the Mac model name and the shell's `--version`) for the About dialog's System tab and the `system_info` MCP tool, which adds what the browser reports about its own machine (`lib/clientInfo.ts`). MCP is mounted at `/mcp`; tools cover session/window/pane lifecycle, `send_keys` (text plus tmux-style key names), `read_pane_output` (the rendered screen or scrollback), `run_command`, `system_info`, and agents (`list_agents`, `wait_for_agent`, `send_prompt`). `automation.rs` implements the pane and agent operations that REST, MCP, and the `btmux agents`/`wait` commands share; waits recheck agent status on each state broadcast. `run_command` appends Enter, captures ANSI-stripped output until 400 ms of quiet by default, and has a 15 s default timeout; quiet output does not prove process exit.
 
@@ -443,6 +446,38 @@ ignore application-scoped keys. On each start, `link_extensions` registers
 shared extension folders in `extensions.json` by absolute location, reading a
 source's own `extensions.json` (minus `.obsolete`) when it has one, and
 replaces those `<state dir>/vscode/linked-extensions.json` lists.
+
+### Browser surface
+
+`prefix + b` (`browser` action) toggles a browser over the active pane
+(`BrowserSurface.tsx`), or moves it there; it is pinned and hidden by a double
+Esc like the Neovim surface, and only one surface covers a pane. Unlike an
+iframe, which can't take keys from a cross-origin page or show the many sites
+that refuse framing, it is a canvas showing one headless Chromium per server
+(`src/browser.rs`), so `localhost` means the server. `ClientConfig.browser` says
+whether Chrome or Chromium was found (`PATH`, then the macOS app bundles); Unix
+only. The profile (`<state dir>/browser`) keeps logins, not the open page.
+
+Chromium is driven over `--remote-debugging-pipe` (fds 3 and 4, NUL-delimited
+JSON), so it opens no port and exits when btmux does. There is one page: a page
+opening another (`target=_blank`, `window.open`) navigates it instead, and
+JavaScript dialogs are answered automatically. Internal pages Chromium opens
+itself are left alone, so only targets whose `openerId` is ours count.
+
+`Page.screencastFrame`s are acked at once, and each socket sends a tab the
+latest frame only after the tab acks drawing the last, so a slow link skips
+frames. The screencast can't be trusted for a quiet page's final state: it
+misses a paint made while it attaches, and its last frame may be low resolution.
+So `Browser::settle` captures a screenshot after 150 ms of quiet; frames right
+after a capture don't count as paint, since a capture itself makes one. Sockets
+exist only while the surface is shown.
+
+The device scale is process-wide, from the first viewer (at most 2):
+`--force-device-scale-factor` is the only way to get 2x frames, and
+`setDeviceMetricsOverride` must pass scale 0 to keep it. Sizing follows the PTY
+rule: the first tab owns it until another sends input. Wheel deltas are
+multiplied by the scale, which Chromium divides them by. On a macOS server,
+Cmd and Option editing chords need explicit CDP `commands` (`mac_commands`).
 
 ### Layout tree — the shared contract
 

@@ -4,6 +4,7 @@ mod api;
 mod api_client;
 mod auth;
 mod automation;
+mod browser;
 mod config;
 // The desktop launcher also compiles this shared module.
 #[allow(dead_code)]
@@ -357,6 +358,7 @@ async fn main() {
     let auth = Arc::new(auth);
     if let Some(dir) = state_file.as_ref().and_then(|p| p.parent()) {
         vscode::set_data_dir(dir.join("vscode"));
+        browser::set_data_dir(dir.join("browser"));
     }
     let inherited_listener = if let Some(inherited) = inherited {
         Some(inherited.restore(&state).await)
@@ -510,6 +512,7 @@ async fn main() {
     }
     ws::nvim::shutdown().await;
     vscode::shutdown().await;
+    browser::shutdown().await;
     tailscale::shutdown().await;
     paste_image::shutdown();
     if let Some(path) = state_file {

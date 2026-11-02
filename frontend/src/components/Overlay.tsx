@@ -67,6 +67,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'editor',
       'editor-neovim',
       'editor-vscode',
+      'browser',
     ],
   },
   {
@@ -125,10 +126,11 @@ const SWITCH_SERVER: Command = {
   confirm: null,
 };
 
-/** Editor actions the server can't run. */
+/** Actions for surfaces the server can't run. */
 const UNAVAILABLE_EDITOR: Record<string, (config: ClientConfig | null) => boolean> = {
   'editor-neovim': (config) => !config?.editors.includes('neovim'),
   'editor-vscode': (config) => !config?.editors.includes('vscode'),
+  browser: (config) => !config?.browser,
 };
 
 /** Keybinding actions as palette entries, after the server's own commands. */

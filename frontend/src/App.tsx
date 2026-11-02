@@ -10,6 +10,7 @@ import { SessionView } from './components/SessionView';
 import { SessionPool } from './components/SessionPool';
 import { NvimSurface } from './components/NvimSurface';
 import { VscodeSurface } from './components/VscodeSurface';
+import { BrowserSurface } from './components/BrowserSurface';
 import { StatusBar } from './components/StatusBar';
 import { ConfigErrorBanner } from './components/ConfigErrorBanner';
 import { Overlay } from './components/Overlay';
@@ -69,6 +70,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   useEffect(() => {
     if (vscodeOpen) setVscodeMounted(true);
   }, [vscodeOpen]);
+  const browserOpen = useStore((s) => s.browserOpen);
+  const browserPaneId = useStore((s) => s.browserPaneId);
+  const browserRect = useStore((s) => s.browserRect);
+  const [browserMounted, setBrowserMounted] = useState(browserOpen);
+  useEffect(() => {
+    if (browserOpen) setBrowserMounted(true);
+  }, [browserOpen]);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const overlay = useStore((s) => s.overlay);
   const navigate = useNavigate();
@@ -139,6 +147,13 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   useEffect(() => {
     if (vscodePaneGone) useStore.getState().setVscodeOpen(false);
   }, [vscodePaneGone]);
+  const browserPane = allSessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).find((p) => p.id === browserPaneId);
+  const browserInActiveWindow = !!activeWindow?.panes.some((p) => p.id === browserPaneId);
+  const browserShownRect = browserInActiveWindow && browserRect?.paneId === browserPaneId ? browserRect : null;
+  const browserPaneGone = browserOpen && !browserPane;
+  useEffect(() => {
+    if (browserPaneGone) useStore.getState().setBrowserOpen(false);
+  }, [browserPaneGone]);
 
   // Remember current session per tab (stored as name), and keep the
   // previously-active session name so `prefix + L` (last-session) can toggle
@@ -239,6 +254,19 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
                     send({ type: 'select_pane', session_id: activeSessionId, pane_id: vscodePaneId });
                 }}
                 cwd={vscodePane?.cwd ?? null}
+              />
+            )}
+            {(browserOpen || browserMounted) && (
+              <BrowserSurface
+                config={effectiveConfig}
+                open={browserOpen}
+                rect={browserOpen ? browserShownRect : null}
+                focused={browserOpen && browserShownRect !== null && focusPaneId === browserPaneId}
+                zoomed={activeWindow?.zoomed_pane === browserPaneId}
+                onActivate={() => {
+                  if (activeSessionId && browserPaneId)
+                    send({ type: 'select_pane', session_id: activeSessionId, pane_id: browserPaneId });
+                }}
               />
             )}
             {settingsOpen && config && <ConfigPage config={config} send={send} />}

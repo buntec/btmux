@@ -294,6 +294,10 @@ editor: Editor,
  */
 editors: Array<Editor>,
 /**
+ * Whether the server found Chrome or Chromium for the browser surface.
+ */
+browser: boolean,
+/**
  * How many recently-viewed windows the window-grid (`prefix + w`) shows.
  */
 window_grid_count: number,
@@ -341,6 +345,20 @@ pid: number, };
 
 // prettier-ignore
 export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "state": "error", message: string, };
+
+// prettier-ignore
+export type BrowserClientMessage = { "type": "ack" } | { "type": "resize", width: number, height: number, } | { "type": "key", down: boolean, key: string, code: string, key_code: number, text: string | null, modifiers: number, repeat: boolean, } | { "type": "mouse",
+/**
+ * CDP's `mousePressed`, `mouseReleased`, `mouseMoved`, or `mouseWheel`.
+ */
+kind: string, x: number, y: number,
+/**
+ * CDP's `none`, `left`, `middle`, or `right`.
+ */
+button: string, buttons: number, click_count: number, modifiers: number, delta_x: number, delta_y: number, } | { "type": "insert_text", text: string, } | { "type": "navigate", url: string, } | { "type": "back" } | { "type": "forward" } | { "type": "reload" };
+
+// prettier-ignore
+export type BrowserServerMessage = { "type": "page", url: string, title: string, loading: boolean, } | { "type": "error", message: string, };
 
 // prettier-ignore
 export type UpdateStatus = { "state": "disabled" } | { "state": "current", latest: string, } | { "state": "available", latest: string, url: string, } | { "state": "error", message: string, };

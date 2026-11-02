@@ -1191,6 +1191,8 @@ pub struct ClientConfig {
     pub editor: Editor,
     /// The built-in editors the server can run, for the toolbar and palette.
     pub editors: Vec<Editor>,
+    /// Whether the server found Chrome or Chromium for the browser surface.
+    pub browser: bool,
     /// VS Code's server and sharing; used by the backend only.
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
@@ -1268,6 +1270,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("g", "git-view"),
     ("t", "process-view"),
     ("e", "editor"),
+    ("b", "browser"),
 ];
 
 /// Resolve the config file path: `$XDG_CONFIG_HOME/btmux/config.toml`, falling
@@ -2007,6 +2010,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .into_iter()
         .filter_map(|(editor, available)| available.then_some(editor))
         .collect(),
+        browser: crate::browser::available(),
         vscode: file.vscode.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),

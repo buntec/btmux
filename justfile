@@ -265,6 +265,10 @@ test-shader-browser:
 test-nvim-browser:
     cd frontend && bunx playwright install chromium && bun browser-test-stack.ts nvim-browser-test.ts
 
+# Browser surface regressions against a fresh, isolated stack (requires Chrome or Chromium).
+test-browser-surface:
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts browser-surface-test.ts
+
 # Bundled Neovim plugin regressions (requires Neovim).
 test-nvim-theme:
     nvim --headless -u NONE -i NONE --cmd "set rtp+=extras/nvim" -l extras/nvim/tests/theme.lua

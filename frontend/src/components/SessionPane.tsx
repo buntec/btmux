@@ -48,6 +48,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
   const nvimPaneId = useStore((s) => (s.nvimOpen ? s.nvimPaneId : null));
   const vscodePaneId = useStore((s) => (s.vscodeOpen ? s.vscodePaneId : null));
+  const browserPaneId = useStore((s) => (s.browserOpen ? s.browserPaneId : null));
   const fileBrowserPaneId = useStore((s) => s.fileBrowserPaneId);
   const fileBrowserCwd = useStore((s) => s.fileBrowserCwd);
   const fileBrowserMode = useStore((s) => s.fileBrowserInitialMode);
@@ -123,7 +124,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     // Don't steal focus into the terminal while the file browser occupies that pane.
     const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
     // Neovim takes focus itself when it covers the active pane.
-    const nvimOwnsActivePane = nvimPaneId === focusId || vscodePaneId === focusId;
+    const nvimOwnsActivePane = nvimPaneId === focusId || vscodePaneId === focusId || browserPaneId === focusId;
     if (
       settingsOpen ||
       overlay ||
@@ -157,6 +158,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     fileBrowserPaneId,
     nvimPaneId,
     vscodePaneId,
+    browserPaneId,
     isActiveSession,
     settingsOpen,
     previewConfig,
@@ -241,6 +243,17 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   useLayoutEffect(() => {
     if (isActiveSession) useStore.getState().setVscodeRect(vscodeRect);
   }, [isActiveSession, vscodeRect?.paneId, vscodeRect?.top, vscodeRect?.left, vscodeRect?.width, vscodeRect?.height]);
+  const browserRect = pinnedRect(browserPaneId);
+  useLayoutEffect(() => {
+    if (isActiveSession) useStore.getState().setBrowserRect(browserRect);
+  }, [
+    isActiveSession,
+    browserRect?.paneId,
+    browserRect?.top,
+    browserRect?.left,
+    browserRect?.width,
+    browserRect?.height,
+  ]);
 
   // The keep-alive pool: one TerminalPane per pane across *every* window of the
   // session, keyed by paneId so the instance survives window switches (same key

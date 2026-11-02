@@ -138,9 +138,12 @@ export function TerminalPane({
   const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
-  // Whether the Neovim or VS Code surface is pinned over this pane.
+  // Whether a Neovim, VS Code, or browser surface is pinned over this pane.
   const nvimOpen = useStore(
-    (s) => (s.nvimOpen && s.nvimPaneId === paneId) || (s.vscodeOpen && s.vscodePaneId === paneId),
+    (s) =>
+      (s.nvimOpen && s.nvimPaneId === paneId) ||
+      (s.vscodeOpen && s.vscodePaneId === paneId) ||
+      (s.browserOpen && s.browserPaneId === paneId),
   );
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const termOptions = useTerminalOptions(config);

@@ -131,9 +131,10 @@ export function useKeybindings(
 
     const handler = (e: KeyboardEvent) => {
       const isFKey = e.key.startsWith('F') && e.key.length >= 2 && e.key.length <= 3 && !isNaN(Number(e.key.slice(1)));
-      // The built-in Neovim decides itself which of these to keep (see nvimKey).
-      const fromNvim = (e.target as HTMLElement | null)?.dataset?.nvimInput !== undefined;
-      if ((e.metaKey || isFKey) && !fromNvim) {
+      // The built-in Neovim and the browser decide themselves which of these to keep.
+      const dataset = (e.target as HTMLElement | null)?.dataset;
+      const fromSurface = dataset?.nvimInput !== undefined || dataset?.browserInput !== undefined;
+      if ((e.metaKey || isFKey) && !fromSurface) {
         // PaneTerminal translates Cmd editing chords; other surfaces never see them.
         if (macosEditKeysRef.current && macEditKey(e) !== null && inPaneTerminal(e.target)) return;
         e.stopPropagation();
@@ -569,6 +570,13 @@ export function runAction(
       } else {
         store.setNvimOpen(!(store.nvimOpen && store.nvimPaneId === paneId), paneId);
       }
+      break;
+    }
+    case 'browser': {
+      // Toggle the browser over the active pane, or move it there.
+      const win = session?.windows[session.active_window];
+      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      if (paneId) store.setBrowserOpen(!(store.browserOpen && store.browserPaneId === paneId), paneId);
       break;
     }
     case 'process-view': {

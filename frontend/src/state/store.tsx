@@ -50,6 +50,9 @@ interface AppStore {
   vscodeOpen: boolean;
   vscodePaneId: string | null;
   vscodeRect: LayoutRect | null;
+  browserOpen: boolean;
+  browserPaneId: string | null;
+  browserRect: LayoutRect | null;
   // File browser overlay (prefix + f / g)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
@@ -113,6 +116,8 @@ interface AppStore {
   setNvimRect: (rect: LayoutRect | null) => void;
   setVscodeOpen: (open: boolean, paneId?: string | null) => void;
   setVscodeRect: (rect: LayoutRect | null) => void;
+  setBrowserOpen: (open: boolean, paneId?: string | null) => void;
+  setBrowserRect: (rect: LayoutRect | null) => void;
   // Hide the editor surfaces over paneId, revealing its terminal.
   hideEditorSurfaces: (paneId: string) => void;
   setNavigateFn: (fn: ((path: string) => void) | null) => void;
@@ -123,6 +128,13 @@ interface AppStore {
   getSession: (sessionId: string) => SessionState | null;
   getActivePaneId: (sessionId: string) => string | null;
 }
+
+/** Closes whichever surface covers `paneId`: only one can. */
+const surfacesOff = (s: AppStore, paneId: string | null): Partial<AppStore> => ({
+  ...(s.nvimOpen && s.nvimPaneId === paneId && { nvimOpen: false }),
+  ...(s.vscodeOpen && s.vscodePaneId === paneId && { vscodeOpen: false }),
+  ...(s.browserOpen && s.browserPaneId === paneId && { browserOpen: false }),
+});
 
 const sameRect = (a: LayoutRect | null, b: LayoutRect | null) =>
   a === b ||
@@ -156,6 +168,9 @@ export const useStore = create<AppStore>((set, get) => ({
   vscodeOpen: false,
   vscodePaneId: null,
   vscodeRect: null,
+  browserOpen: false,
+  browserPaneId: null,
+  browserRect: null,
   fileBrowserOpen: false,
   fileBrowserCwd: null,
   fileBrowserInitialMode: 'files',
@@ -204,26 +219,26 @@ export const useStore = create<AppStore>((set, get) => ({
   setTailscale: (tailscale) => set({ tailscale }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
-  // One editor surface per pane: opening one over the other's pane closes the other.
+  // One surface per pane: opening one over another's pane closes the other.
   setNvimOpen: (open, paneId) =>
     set((s) => {
       const nvimPaneId = open && paneId !== undefined ? paneId : s.nvimPaneId;
-      const covers = open && s.vscodeOpen && s.vscodePaneId === nvimPaneId;
-      return { nvimOpen: open, nvimPaneId, ...(covers && { vscodeOpen: false }) };
+      return { ...(open && surfacesOff(s, nvimPaneId)), nvimOpen: open, nvimPaneId };
     }),
   setNvimRect: (rect) => set((s) => (sameRect(s.nvimRect, rect) ? s : { nvimRect: rect })),
   setVscodeOpen: (open, paneId) =>
     set((s) => {
       const vscodePaneId = open && paneId !== undefined ? paneId : s.vscodePaneId;
-      const covers = open && s.nvimOpen && s.nvimPaneId === vscodePaneId;
-      return { vscodeOpen: open, vscodePaneId, ...(covers && { nvimOpen: false }) };
+      return { ...(open && surfacesOff(s, vscodePaneId)), vscodeOpen: open, vscodePaneId };
     }),
   setVscodeRect: (rect) => set((s) => (sameRect(s.vscodeRect, rect) ? s : { vscodeRect: rect })),
-  hideEditorSurfaces: (paneId) =>
-    set((s) => ({
-      ...(s.nvimOpen && s.nvimPaneId === paneId && { nvimOpen: false }),
-      ...(s.vscodeOpen && s.vscodePaneId === paneId && { vscodeOpen: false }),
-    })),
+  setBrowserOpen: (open, paneId) =>
+    set((s) => {
+      const browserPaneId = open && paneId !== undefined ? paneId : s.browserPaneId;
+      return { ...(open && surfacesOff(s, browserPaneId)), browserOpen: open, browserPaneId };
+    }),
+  setBrowserRect: (rect) => set((s) => (sameRect(s.browserRect, rect) ? s : { browserRect: rect })),
+  hideEditorSurfaces: (paneId) => set((s) => surfacesOff(s, paneId)),
   showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
   toggleLatex: (paneId) =>
     set((s) => {

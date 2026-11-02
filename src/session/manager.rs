@@ -439,10 +439,14 @@ impl SessionManager {
             current.end(now);
             return Some(true);
         }
-        self.agents
+        let was_active = self.agent_status(pane_id).is_some();
+        let agent = self
+            .agents
             .entry(pane_id)
-            .or_insert_with(|| AgentLifecycle::reported(now))
-            .apply(report, revision, now)
+            .or_insert_with(|| AgentLifecycle::reported(now));
+        let changed = agent.apply(report, revision, now)?;
+        // A new agent starts idle, so a report can announce it without changing its status.
+        Some(changed || agent.is_active() != was_active)
     }
 
     pub fn register_client(&mut self) -> u32 {

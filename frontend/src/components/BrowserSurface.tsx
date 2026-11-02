@@ -20,6 +20,10 @@ const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.ho
 const FRAME_HEADER = 4;
 const RESIZE_DEBOUNCE_MS = 80;
 const BLANK = 'about:blank';
+const RECONNECT_MS = 2000;
+/** Long enough for an in-place upgrade; a Chromium that keeps dying gets a prompt. */
+const MAX_RECONNECTS = 8;
+const IS_MAC = navigator.platform.startsWith('Mac');
 
 type PageInfo = Extract<BrowserServerMessage, { type: 'page' }>;
 
@@ -55,6 +59,10 @@ export function BrowserSurface({
   const [painted, setPainted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
+  const [reconnecting, setReconnecting] = useState(false);
+  const reconnects = useRef(0);
+  /** Resolves the running copy with the selected text. */
+  const pendingCopy = useRef<((text: string) => void) | null>(null);
   const modalOpen = useStore(
     (s) => !!s.overlay || s.settingsOpen || s.fileBrowserOpen || s.switcherOpen || s.windowGridOpen || s.agentGridOpen,
   );
@@ -75,10 +83,15 @@ export function BrowserSurface({
     }
   };
 
+  useEffect(() => {
+    reconnects.current = 0;
+  }, [visible]);
+
   // Connected only while shown, so a hidden surface costs no frames.
   useEffect(() => {
     if (!visible) return;
     setError(null);
+    let retry = 0;
     const socket = new WebSocket(`${WS_URL}?dpr=${window.devicePixelRatio}`);
     socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
@@ -99,6 +112,8 @@ export function BrowserSurface({
       frame.bitmap.close();
       pageSize.current = { width: frame.width, height: frame.height };
       setPainted(true);
+      reconnects.current = 0;
+      setReconnecting(false);
       // The server skips to the latest frame, so a slow link or hidden tab can't fall behind.
       send({ type: 'ack' });
     };
@@ -111,7 +126,12 @@ export function BrowserSurface({
       if (typeof event.data === 'string') {
         const message = JSON.parse(event.data) as BrowserServerMessage;
         if (message.type === 'page') setPage(message);
-        else {
+        else if (message.type === 'cursor') {
+          if (canvasRef.current) canvasRef.current.style.cursor = message.cursor;
+        } else if (message.type === 'clipboard') {
+          pendingCopy.current?.(message.text);
+          pendingCopy.current = null;
+        } else {
           failed = true;
           setError(message.message);
         }
@@ -135,10 +155,21 @@ export function BrowserSurface({
       );
     };
     socket.onclose = (event) => {
-      if (!disposed && !failed) setError(event.reason || 'The connection to the browser closed.');
+      if (disposed || failed) return;
+      pendingCopy.current?.('');
+      pendingCopy.current = null;
+      // An upgrade or a crash: the server reopens the page.
+      if (reconnects.current++ < MAX_RECONNECTS) {
+        setReconnecting(true);
+        retry = window.setTimeout(() => setGeneration((g) => g + 1), RECONNECT_MS);
+      } else {
+        setReconnecting(false);
+        setError(event.reason || 'The connection to the browser closed.');
+      }
     };
     return () => {
       disposed = true;
+      window.clearTimeout(retry);
       cancelAnimationFrame(raf);
       next?.bitmap.close();
       next = null;
@@ -249,6 +280,38 @@ export function BrowserSurface({
     touchAt.current = { x: e.clientX, y: e.clientY };
   };
 
+  // Starts within the key press, as Safari requires, with the text to follow.
+  const copySelection = () => {
+    pendingCopy.current?.('');
+    const text = new Promise<string>((resolve) => {
+      pendingCopy.current = resolve;
+    });
+    send({ type: 'copy' });
+    const failed = () =>
+      text.then((copied) => {
+        if (copied) useStore.getState().showToast('Could not copy the selection', 'error');
+      });
+    // Absent outside secure contexts, e.g. plain HTTP from another machine.
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      // An empty selection rejects, leaving the clipboard as it was.
+      const blob = text.then((copied) => {
+        if (!copied) throw new Error('Nothing selected');
+        return new Blob([copied], { type: 'text/plain' });
+      });
+      navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]).catch(failed);
+      return;
+    }
+    text.then((copied) => {
+      const input = inputRef.current;
+      if (!copied || !input) return;
+      input.value = copied;
+      input.select();
+      const done = document.execCommand('copy');
+      input.value = '';
+      if (!done) failed();
+    });
+  };
+
   const focusAddress = () => {
     addressRef.current?.focus();
     addressRef.current?.select();
@@ -276,6 +339,8 @@ export function BrowserSurface({
       send({ type: 'reload' });
       return;
     }
+    // The page sees the key too, for its own shortcuts.
+    if (key === 'c' && !e.shiftKey && !e.altKey && (IS_MAC ? e.metaKey : e.ctrlKey)) copySelection();
     // Cmd chords the browser or desktop app keeps, including paste.
     if (e.metaKey && (RESERVED_CMD_KEYS.has(key) || /^Digit\d$/.test(e.code))) return;
     e.preventDefault();
@@ -446,16 +511,23 @@ export function BrowserSurface({
                   </Text>
                 </VStack>
                 <HStack gap={2} vAlign="center">
-                  <Button label="Restart" variant="primary" onClick={() => setGeneration((g) => g + 1)} />
+                  <Button
+                    label="Restart"
+                    variant="primary"
+                    onClick={() => {
+                      reconnects.current = 0;
+                      setGeneration((g) => g + 1);
+                    }}
+                  />
                   <Button label="Close" onClick={close} />
                 </HStack>
               </VStack>
             </Card>
           </Center>
         ) : (
-          !painted && (
+          (!painted || reconnecting) && (
             <Center className="pointer-events-none absolute inset-0 bg-body/90">
-              <Spinner label="Starting the browser…" />
+              <Spinner label={reconnecting ? 'Reconnecting…' : 'Starting the browser…'} />
             </Center>
           )
         )}

@@ -359,10 +359,10 @@ kind: string, x: number, y: number,
 /**
  * CDP's `none`, `left`, `middle`, or `right`.
  */
-button: string, buttons: number, click_count: number, modifiers: number, delta_x: number, delta_y: number, } | { "type": "insert_text", text: string, } | { "type": "navigate", url: string, } | { "type": "back" } | { "type": "forward" } | { "type": "reload" };
+button: string, buttons: number, click_count: number, modifiers: number, delta_x: number, delta_y: number, } | { "type": "insert_text", text: string, } | { "type": "navigate", url: string, } | { "type": "back" } | { "type": "forward" } | { "type": "reload" } | { "type": "copy" };
 
 // prettier-ignore
-export type BrowserServerMessage = { "type": "page", url: string, title: string, loading: boolean, } | { "type": "error", message: string, };
+export type BrowserServerMessage = { "type": "page", url: string, title: string, loading: boolean, } | { "type": "cursor", cursor: string, } | { "type": "clipboard", text: string, } | { "type": "error", message: string, };
 
 // prettier-ignore
 export type UpdateStatus = { "state": "disabled" } | { "state": "current", latest: string, } | { "state": "available", latest: string, url: string, } | { "state": "error", message: string, };

@@ -456,7 +456,9 @@ iframe, which can't take keys from a cross-origin page or show the many sites
 that refuse framing, it is a canvas showing one headless Chromium per server
 (`src/browser.rs`), so `localhost` means the server. `ClientConfig.browser` says
 whether Chrome or Chromium was found (`PATH`, then the macOS app bundles); Unix
-only. The profile (`<state dir>/browser`) keeps logins, not the open page.
+only. The profile (`<state dir>/browser`) keeps logins and the last web page
+(`btmux-last-url`), which is reopened whenever Chromium starts, and a tab
+reconnects by itself after a crash or an upgrade, so both only flash a spinner.
 `[browser] search-url` sets where the address bar searches (`addressToUrl`).
 
 Chromium is driven over `--remote-debugging-pipe` (fds 3 and 4, NUL-delimited
@@ -476,6 +478,14 @@ misses a paint made while it attaches, and its last frame may be low resolution.
 So `Browser::settle` captures a screenshot after 150 ms of quiet; frames right
 after a capture don't count as paint, since a capture itself makes one. Sockets
 exist only while the surface is shown.
+
+CDP reports neither the cursor nor the selection, so both use `Runtime.evaluate`.
+`track_cursor` asks what is under the pointer at most every 50 ms, and tabs get
+only keywords from `CURSORS`, since a page's `url()` cursor would load in the
+tab. Cmd+C (Ctrl+C off macOS) sends `copy` for the selection, never a password
+field's, and starts a `ClipboardItem` write with a promise, within the key
+press, as Safari requires. It covers selections, not a page's own copy buttons,
+whose writes stay in Chromium.
 
 The device scale is process-wide, from the first viewer (at most 2):
 `--force-device-scale-factor` is the only way to get 2x frames, and

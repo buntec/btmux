@@ -34,6 +34,105 @@ const SETTLE_DELAY: Duration = Duration::from_millis(150);
 /// Frame header: page width and height in CSS px (u16s).
 const HEADER_LEN: usize = 4;
 const STDERR_LINES: usize = 10;
+/// How often the cursor under the pointer is looked up while it moves.
+const CURSOR_INTERVAL: Duration = Duration::from_millis(50);
+/// The page to reopen, in the profile.
+const LAST_URL_FILE: &str = "btmux-last-url";
+
+/// CDP doesn't report the cursor, so ask the page what is under the pointer.
+const CURSOR_SCRIPT: &str = r#"(x, y) => {
+  let doc = document, el;
+  for (;;) {
+    el = doc.elementFromPoint(x, y);
+    while (el?.shadowRoot) {
+      const inner = el.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    if (el?.tagName !== 'IFRAME') break;
+    let inner = null;
+    try { inner = el.contentDocument; } catch {}
+    if (!inner) break;
+    const box = el.getBoundingClientRect();
+    x -= box.left + el.clientLeft;
+    y -= box.top + el.clientTop;
+    doc = inner;
+  }
+  if (!el) return 'default';
+  const style = getComputedStyle(el);
+  if (style.cursor !== 'auto') return style.cursor;
+  if (el.isContentEditable) return 'text';
+  if (style.userSelect === 'none') return 'default';
+  const node = doc.caretRangeFromPoint?.(x, y)?.startContainer;
+  if (node?.nodeType !== Node.TEXT_NODE) return 'default';
+  const range = doc.createRange();
+  range.selectNodeContents(node);
+  const over = [...range.getClientRects()].some(
+    (b) => x >= b.left && x <= b.right && y >= b.top && y <= b.bottom,
+  );
+  return over ? 'text' : 'default';
+}"#;
+
+/// The selected text, as a browser would copy it: never a password field's.
+const COPY_SCRIPT: &str = r#"(() => {
+  const read = (doc) => {
+    let active = doc.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    if (active?.tagName === 'IFRAME') {
+      let inner = null;
+      try { inner = active.contentDocument; } catch {}
+      const text = inner && read(inner);
+      if (text) return text;
+    }
+    if (active?.tagName === 'TEXTAREA' || active?.tagName === 'INPUT') {
+      if (active.type === 'password') return '';
+      const text = (active.value ?? '').slice(active.selectionStart ?? 0, active.selectionEnd ?? 0);
+      if (text) return text;
+    }
+    return doc.getSelection()?.toString() ?? '';
+  };
+  return read(document);
+})()"#;
+
+/// CSS cursors a tab may show. A page's `url()` cursors would load in the
+/// tab, outside the sandbox of the server's browser.
+const CURSORS: &[&str] = &[
+    "default",
+    "none",
+    "context-menu",
+    "help",
+    "pointer",
+    "progress",
+    "wait",
+    "cell",
+    "crosshair",
+    "text",
+    "vertical-text",
+    "alias",
+    "copy",
+    "move",
+    "no-drop",
+    "not-allowed",
+    "grab",
+    "grabbing",
+    "e-resize",
+    "n-resize",
+    "ne-resize",
+    "nw-resize",
+    "s-resize",
+    "se-resize",
+    "sw-resize",
+    "w-resize",
+    "ew-resize",
+    "ns-resize",
+    "nesw-resize",
+    "nwse-resize",
+    "col-resize",
+    "row-resize",
+    "all-scroll",
+    "zoom-in",
+    "zoom-out",
+];
 
 const PATH_PROGRAMS: &[&str] = &[
     "google-chrome",
@@ -119,6 +218,8 @@ pub enum BrowserClientMessage {
     Back,
     Forward,
     Reload,
+    /// Send the page's selected text back as `Clipboard`.
+    Copy,
 }
 
 /// To a tab; frames are binary.
@@ -130,6 +231,14 @@ pub enum BrowserServerMessage {
         url: String,
         title: String,
         loading: bool,
+    },
+    /// A CSS cursor, from `CURSORS`.
+    Cursor {
+        cursor: String,
+    },
+    /// The reply to `Copy`; empty if nothing is selected.
+    Clipboard {
+        text: String,
     },
     Error {
         message: String,
@@ -252,6 +361,10 @@ struct Browser {
     /// Something painted or may have; see `settle`.
     painted: Notify,
     last_capture: std::sync::Mutex<Option<Instant>>,
+    /// The pointer's latest position, until `track_cursor` takes it.
+    pointer: std::sync::Mutex<Option<(f64, f64)>>,
+    pointer_moved: Notify,
+    cursor: watch::Sender<String>,
     closed: watch::Receiver<bool>,
     viewers: std::sync::Mutex<Viewers>,
     /// Pages opened by `window.open` or `target=_blank`, until their URL is known.
@@ -414,6 +527,42 @@ impl Browser {
         }
     }
 
+    /// Look up the cursor under the pointer as it moves.
+    async fn track_cursor(self: Arc<Self>) {
+        let mut closed = self.closed.clone();
+        loop {
+            tokio::select! {
+                _ = self.pointer_moved.notified() => {}
+                _ = closed.wait_for(|closed| *closed) => return,
+            }
+            let Some((x, y)) = self.pointer.lock().unwrap().take() else {
+                continue;
+            };
+            let params = json!({
+                "expression": format!("({CURSOR_SCRIPT})({x},{y})"),
+                "returnByValue": true,
+            });
+            let reply = self
+                .cdp
+                .call(Some(&self.session), "Runtime.evaluate", params)
+                .await;
+            // Nothing to show on an error, such as during a navigation.
+            if let Ok(reply) = reply {
+                if let Some(value) = reply["result"]["value"].as_str() {
+                    let cursor = allowed_cursor(value);
+                    self.cursor.send_if_modified(|current| {
+                        let changed = current != cursor;
+                        if changed {
+                            *current = cursor.to_string();
+                        }
+                        changed
+                    });
+                }
+            }
+            tokio::time::sleep(CURSOR_INTERVAL).await;
+        }
+    }
+
     /// There is one page, so a new one becomes a navigation of it.
     fn on_other_target(&self, info: &Value, id: &str) {
         let url = info["url"].as_str().unwrap_or_default();
@@ -479,8 +628,12 @@ impl Browser {
                 self.on_other_target(info, info_id);
             }
             "Target.targetInfoChanged" if info_id == self.target => {
+                let url = info["url"].as_str().unwrap_or_default();
+                if restorable(url) && self.page.borrow().url != url {
+                    save_last_url(url);
+                }
                 self.page.send_modify(|page| {
-                    page.url = info["url"].as_str().unwrap_or_default().to_string();
+                    page.url = url.to_string();
                     page.title = info["title"].as_str().unwrap_or_default().to_string();
                 });
             }
@@ -566,6 +719,29 @@ fn spawn_process(
     _scale: u32,
 ) -> Result<Pipes, String> {
     Err("The browser surface isn't supported on Windows yet.".into())
+}
+
+/// Whether a page is worth reopening. Error pages and `about:` aren't.
+fn restorable(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn save_last_url(url: &str) {
+    if let Some(dir) = DATA_DIR.get() {
+        if let Err(error) = std::fs::write(dir.join(LAST_URL_FILE), url) {
+            tracing::debug!(%error, "saving the browser's page failed");
+        }
+    }
+}
+
+/// A page's computed `cursor` as a keyword, dropping any `url()` before its fallback.
+fn allowed_cursor(value: &str) -> &'static str {
+    let keyword = value.rsplit(',').next().unwrap_or_default().trim();
+    CURSORS
+        .iter()
+        .find(|cursor| **cursor == keyword)
+        .copied()
+        .unwrap_or("default")
 }
 
 fn create_profile(path: &std::path::Path) -> Result<(), String> {
@@ -664,6 +840,10 @@ async fn start(scale: u32) -> Result<Arc<Browser>, String> {
         .get()
         .ok_or("No state directory to keep the browser profile in.")?;
     create_profile(profile)?;
+    let restore = std::fs::read_to_string(profile.join(LAST_URL_FILE))
+        .ok()
+        .map(|url| url.trim().to_string())
+        .filter(|url| restorable(url));
     let (mut child, reader, mut writer) = spawn_process(&program, profile, scale)?;
 
     let stderr: Arc<std::sync::Mutex<VecDeque<String>>> = Arc::default();
@@ -792,18 +972,25 @@ async fn start(scale: u32) -> Result<Arc<Browser>, String> {
         target,
         scale,
         page: watch::Sender::new(PageState {
-            url: "about:blank".into(),
+            url: restore.clone().unwrap_or_else(|| "about:blank".into()),
             ..PageState::default()
         }),
         frames: watch::Sender::new(None),
         painted: Notify::new(),
         last_capture: Default::default(),
+        pointer: Default::default(),
+        pointer_moved: Notify::new(),
+        cursor: watch::Sender::new("default".into()),
         closed,
         viewers: Default::default(),
         popups: Default::default(),
         kill: std::sync::Mutex::new(Some(kill_tx)),
     });
+    if let Some(url) = restore {
+        browser.post("Page.navigate", json!({ "url": url }));
+    }
     tokio::spawn(browser.clone().settle());
+    tokio::spawn(browser.clone().track_cursor());
     let handler = browser.clone();
     tokio::spawn(async move {
         while let Some(message) = events.recv().await {
@@ -854,13 +1041,16 @@ pub async fn handle(ws: WebSocketUpgrade, Query(query): Query<BrowserQuery>) -> 
         .on_upgrade(move |socket| handle_socket(socket, scale))
 }
 
+fn server_message(message: &BrowserServerMessage) -> Message {
+    Message::Text(serde_json::to_string(message).unwrap().into())
+}
+
 fn page_message(page: &PageState) -> Message {
-    let message = BrowserServerMessage::Page {
+    server_message(&BrowserServerMessage::Page {
         url: page.url.clone(),
         title: page.title.clone(),
         loading: page.loading,
-    };
-    Message::Text(serde_json::to_string(&message).unwrap().into())
+    })
 }
 
 /// CDP's commands for macOS editing chords, which headless Chromium doesn't map.
@@ -904,8 +1094,29 @@ fn mac_commands(code: &str, modifiers: u8) -> &'static [&'static str] {
     }
 }
 
-fn handle_message(browser: &Arc<Browser>, viewer: u64, message: BrowserClientMessage) {
+fn handle_message(
+    browser: &Arc<Browser>,
+    viewer: u64,
+    replies: &mpsc::UnboundedSender<BrowserServerMessage>,
+    message: BrowserClientMessage,
+) {
     match message {
+        BrowserClientMessage::Copy => {
+            let browser = browser.clone();
+            let replies = replies.clone();
+            tokio::spawn(async move {
+                let params = json!({ "expression": COPY_SCRIPT, "returnByValue": true });
+                let reply = browser
+                    .cdp
+                    .call(Some(&browser.session), "Runtime.evaluate", params)
+                    .await;
+                let text = reply
+                    .ok()
+                    .and_then(|reply| reply["result"]["value"].as_str().map(str::to_string))
+                    .unwrap_or_default();
+                let _ = replies.send(BrowserServerMessage::Clipboard { text });
+            });
+        }
         // Handled by the socket.
         BrowserClientMessage::Ack => {}
         BrowserClientMessage::Resize { width, height } => browser.resize(viewer, width, height),
@@ -955,6 +1166,10 @@ fn handle_message(browser: &Arc<Browser>, viewer: u64, message: BrowserClientMes
         } => {
             if kind == "mousePressed" {
                 browser.claim(viewer);
+            }
+            if kind == "mouseMoved" {
+                *browser.pointer.lock().unwrap() = Some((x, y));
+                browser.pointer_moved.notify_one();
             }
             browser.post(
                 "Input.dispatchMouseEvent",
@@ -1010,7 +1225,9 @@ async fn handle_socket(socket: WebSocket, scale: u32) {
     let viewer = browser.join();
     let mut frames = browser.frames.subscribe();
     let mut page = browser.page.subscribe();
+    let mut cursor = browser.cursor.subscribe();
     let mut closed = browser.closed.clone();
+    let (replies, mut pending_replies) = mpsc::unbounded_channel();
     // A new tab gets the current page and last frame, since an idle page sends none.
     frames.mark_changed();
     page.mark_changed();
@@ -1035,6 +1252,14 @@ async fn handle_socket(socket: WebSocket, scale: u32) {
                 let message = page_message(&page.borrow_and_update());
                 message
             }
+            changed = cursor.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let cursor = cursor.borrow_and_update().clone();
+                server_message(&BrowserServerMessage::Cursor { cursor })
+            }
+            Some(reply) = pending_replies.recv() => server_message(&reply),
             _ = async { let _ = closed.wait_for(|closed| *closed).await; } => {
                 let frame = CloseFrame {
                     code: close_code::ERROR,
@@ -1051,7 +1276,7 @@ async fn handle_socket(socket: WebSocket, scale: u32) {
                                 if matches!(message, BrowserClientMessage::Ack) {
                                     awaiting_ack = false;
                                 }
-                                handle_message(&browser, viewer, message);
+                                handle_message(&browser, viewer, &replies, message);
                             }
                             Err(error) => tracing::warn!(%error, "bad browser message"),
                         }
@@ -1107,6 +1332,28 @@ mod tests {
             desktop_user_agent("Mozilla/5.0 HeadlessChrome/156.0.0.0 Safari/537.36"),
             "Mozilla/5.0 Chrome/156.0.0.0 Safari/537.36"
         );
+    }
+
+    #[test]
+    fn cursors_are_keywords_without_page_urls() {
+        assert_eq!(allowed_cursor("pointer"), "pointer");
+        assert_eq!(allowed_cursor("url(\"https://x/a.png\") 2 2, grab"), "grab");
+        assert_eq!(
+            allowed_cursor("url(\"https://x/a,b.png\"), auto"),
+            "default"
+        );
+        assert_eq!(allowed_cursor("url(https://x/a.png)"), "default");
+        assert_eq!(allowed_cursor("bogus"), "default");
+    }
+
+    #[test]
+    fn only_web_pages_are_reopened() {
+        assert!(restorable("https://example.com/a"));
+        assert!(restorable("http://localhost:5173/"));
+        assert!(!restorable("about:blank"));
+        assert!(!restorable("chrome-error://chromewebdata/"));
+        assert!(!restorable("chrome://settings/help"));
+        assert!(!restorable("file:///etc/passwd"));
     }
 
     #[test]

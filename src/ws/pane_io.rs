@@ -18,8 +18,9 @@ pub struct PaneParams {
     /// Read-only mirror attach for window-grid thumbnails. A mirror subscribes to
     /// the pane's output and scrollback but never resizes the PTY and ignores all
     /// input — so it can attach alongside the real viewer without reflowing the
-    /// live shell or clearing its scrollback. The PTY's real size is pushed to the
-    /// mirror via a `{"type":"size",...}` frame (initially and on every resize).
+    /// live shell or clearing its scrollback. The PTY's size is pushed first as a
+    /// `{"type":"current_size",...}` frame, then in stream order as `{"type":"size",...}`
+    /// frames: replayed ones are history, those after `ready` are live.
     ///
     /// Parsed as a string (not `bool`) so `?mirror=1` works too — `serde_urlencoded`
     /// only accepts `true`/`false` for `bool`, and a parse failure would reject the
@@ -54,6 +55,11 @@ fn size_frame(cols: u16, rows: u16) -> String {
     format!(r#"{{"type":"size","cols":{cols},"rows":{rows}}}"#)
 }
 
+/// The PTY's size now, ahead of a mirror's replay of older sizes.
+fn current_size_frame((cols, rows): (u16, u16)) -> Message {
+    Message::Text(format!(r#"{{"type":"current_size","cols":{cols},"rows":{rows}}}"#).into())
+}
+
 /// Tell a viewer whether its size drives the PTY.
 fn owner_frame(owner: bool) -> Message {
     Message::Text(format!(r#"{{"type":"owner","owner":{owner}}}"#).into())
@@ -78,15 +84,18 @@ async fn handle_socket(
                 pane.pty.attach_viewer(viewer_id, cols, rows);
             }
             let (rx, replay) = pane.pty.subscribe_replay();
+            // After subscribing, so a later resize arrives as a live frame.
+            let size = pane.pty.size();
             Ok::<_, String>((
                 pane.pty.input_tx.clone(),
                 rx,
                 replay,
                 pane.pty.subscribe_owner(),
+                size,
             ))
         })
     };
-    let (input_tx, mut output_rx, replay, mut owner_rx) = match attachment {
+    let (input_tx, mut output_rx, replay, mut owner_rx, size) = match attachment {
         Some(Ok(attachment)) => attachment,
         failure => {
             let error = failure
@@ -108,16 +117,15 @@ async fn handle_socket(
         let mut pending = replay;
         let mut replaying = true;
         let mut owner = is_owner(&owner_rx.borrow_and_update());
-        if !mirror
-            && !matches!(
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    ws_tx.send(owner_frame(owner))
-                )
-                .await,
-                Ok(Ok(()))
-            )
-        {
+        let first = if mirror {
+            current_size_frame(size)
+        } else {
+            owner_frame(owner)
+        };
+        if !matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(first)).await,
+            Ok(Ok(()))
+        ) {
             return;
         }
         loop {

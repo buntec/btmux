@@ -17,7 +17,7 @@ interface Props {
    * back in we resume and recompute the fit-scale (offsetWidth is 0 while hidden).
    */
   visible: boolean;
-  /** Reports the terminal's natural (unscaled) pixel size whenever it changes. */
+  /** Reports the pane's current natural (unscaled) pixel size: on attach, then on live resizes. */
   onNaturalSize?: (width: number, height: number) => void;
 }
 
@@ -72,8 +72,12 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
         const naturalH = term.rows * size.height;
         term.element.style.width = `${naturalW}px`;
         term.element.style.height = `${naturalH}px`;
-        onNaturalSizeRef.current?.(naturalW, naturalH);
         scaler.style.transform = `scale(${Math.min(cell.clientWidth / naturalW, cell.clientHeight / naturalH)})`;
+      };
+      // Not from the emulator's grid, which walks the replay's old sizes.
+      const reportNaturalSize = (cols: number, rows: number) => {
+        const size = term.measureCell();
+        if (size) onNaturalSizeRef.current?.(cols * size.width, rows * size.height);
       };
       // Keep painting stopped until the replay's `ready` marker.
       term.setPaused(true);
@@ -123,9 +127,13 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
                 replayReadyRef.current = true;
                 revealWhenReady();
               }
+              if (msg.type === 'current_size' && msg.cols > 0 && msg.rows > 0) {
+                reportNaturalSize(msg.cols, msg.rows);
+              }
               if (msg.type === 'size' && msg.cols > 0 && msg.rows > 0) {
                 term.resize(msg.cols, msg.rows);
                 refit();
+                if (replayReadyRef.current) reportNaturalSize(msg.cols, msg.rows);
               }
             } catch {
               term.write(ev.data);

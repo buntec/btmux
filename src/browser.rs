@@ -34,6 +34,12 @@ const SETTLE_DELAY: Duration = Duration::from_millis(150);
 /// Frame header: page width and height in CSS px (u16s).
 const HEADER_LEN: usize = 4;
 const STDERR_LINES: usize = 10;
+/// How long a popup may stay on `about:blank` before it's closed: nothing shows it.
+const POPUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// A page crashing this often stops being reloaded.
+const CRASH_LIMIT: usize = 3;
+const CRASH_WINDOW: Duration = Duration::from_secs(60);
+const CRASHED_PAGE: &str = "data:text/html;charset=utf-8,<title>Page crashed</title><p>This page kept crashing, so btmux stopped reloading it.</p>";
 /// How often the cursor under the pointer is looked up while it moves.
 const CURSOR_INTERVAL: Duration = Duration::from_millis(50);
 /// The page to reopen, in the profile.
@@ -147,6 +153,7 @@ const MACOS_APPS: &[&str] = &[
 
 // CDP input modifier bits.
 const ALT: u8 = 1;
+const CTRL: u8 = 2;
 const META: u8 = 4;
 const SHIFT: u8 = 8;
 
@@ -305,6 +312,24 @@ impl Viewers {
 /// Calls waiting for their replies, by id.
 type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
 
+/// Recent crashes of the page.
+#[derive(Default)]
+struct Crashes(VecDeque<Instant>);
+
+impl Crashes {
+    /// Record one; whether the page has now crashed too often to reload.
+    fn record(&mut self, now: Instant) -> bool {
+        self.0
+            .retain(|at| now.saturating_duration_since(*at) < CRASH_WINDOW);
+        self.0.push_back(now);
+        let too_many = self.0.len() >= CRASH_LIMIT;
+        if too_many {
+            self.0.clear();
+        }
+        too_many
+    }
+}
+
 #[derive(Clone)]
 struct Cdp {
     tx: mpsc::UnboundedSender<Vec<u8>>,
@@ -372,6 +397,7 @@ struct Browser {
     viewers: std::sync::Mutex<Viewers>,
     /// Pages opened by `window.open` or `target=_blank`, until their URL is known.
     popups: std::sync::Mutex<HashSet<String>>,
+    crashes: std::sync::Mutex<Crashes>,
     /// Sending or dropping this kills Chromium.
     kill: std::sync::Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -629,6 +655,16 @@ impl Browser {
             {
                 self.popups.lock().unwrap().insert(info_id.to_string());
                 self.on_other_target(info, info_id);
+                let browser = self.clone();
+                let id = info_id.to_string();
+                tokio::spawn(async move {
+                    tokio::time::sleep(POPUP_TIMEOUT).await;
+                    if browser.popups.lock().unwrap().remove(&id) {
+                        browser
+                            .cdp
+                            .post(None, "Target.closeTarget", json!({ "targetId": id }));
+                    }
+                });
             }
             "Target.targetInfoChanged" if info_id == self.target => {
                 let url = info["url"].as_str().unwrap_or_default();
@@ -642,7 +678,20 @@ impl Browser {
             }
             "Target.targetInfoChanged" => self.on_other_target(info, info_id),
             "Target.targetCrashed" if params["targetId"].as_str() == Some(&self.target) => {
-                self.post("Page.reload", json!({}));
+                if self.crashes.lock().unwrap().record(Instant::now()) {
+                    // Nor is it reopened after a restart.
+                    if let Some(dir) = DATA_DIR.get() {
+                        let _ = std::fs::remove_file(dir.join(LAST_URL_FILE));
+                    }
+                    self.post("Page.navigate", json!({ "url": CRASHED_PAGE }));
+                } else {
+                    self.post("Page.reload", json!({}));
+                }
+            }
+            "Target.targetDestroyed" if params["targetId"].as_str() != Some(&self.target) => {
+                if let Some(id) = params["targetId"].as_str() {
+                    self.popups.lock().unwrap().remove(id);
+                }
             }
             // The page closed itself, which leaves nothing to show.
             "Target.targetDestroyed" if params["targetId"].as_str() == Some(&self.target) => {
@@ -987,6 +1036,7 @@ async fn start(scale: u32) -> Result<Arc<Browser>, String> {
         closed,
         viewers: Default::default(),
         popups: Default::default(),
+        crashes: Default::default(),
         kill: std::sync::Mutex::new(Some(kill_tx)),
     });
     if let Some(url) = restore {
@@ -1030,6 +1080,9 @@ pub async fn shutdown() {
 #[derive(Deserialize)]
 pub struct BrowserQuery {
     dpr: Option<f64>,
+    /// Whether the tab's keyboard is a Mac's.
+    #[serde(default)]
+    mac: bool,
 }
 
 /// The device scale for a viewer's `devicePixelRatio`; 3x frames aren't worth
@@ -1040,8 +1093,9 @@ fn device_scale(dpr: Option<f64>) -> u32 {
 
 pub async fn handle(ws: WebSocketUpgrade, Query(query): Query<BrowserQuery>) -> impl IntoResponse {
     let scale = device_scale(query.dpr);
+    let client_mac = query.mac;
     ws.max_message_size(16 * 1024 * 1024)
-        .on_upgrade(move |socket| handle_socket(socket, scale))
+        .on_upgrade(move |socket| handle_socket(socket, scale, client_mac))
 }
 
 fn server_message(message: &BrowserServerMessage) -> Message {
@@ -1056,11 +1110,14 @@ fn page_message(page: &PageState) -> Message {
     })
 }
 
-/// CDP's commands for macOS editing chords, which headless Chromium doesn't map.
-fn mac_commands(code: &str, modifiers: u8) -> &'static [&'static str] {
-    if !cfg!(target_os = "macos") {
-        return &[];
-    }
+/// CDP's commands for the tab's editing chords, where Chromium won't map them:
+/// headless on macOS maps none, and elsewhere it doesn't map a Mac's.
+fn editing_commands(
+    code: &str,
+    modifiers: u8,
+    client_mac: bool,
+    server_mac: bool,
+) -> &'static [&'static str] {
     let shift = modifiers & SHIFT != 0;
     let choose = |plain: &'static [&'static str], selecting: &'static [&'static str]| {
         if shift {
@@ -1069,6 +1126,23 @@ fn mac_commands(code: &str, modifiers: u8) -> &'static [&'static str] {
             plain
         }
     };
+    if !client_mac {
+        if !server_mac {
+            return &[];
+        }
+        return match (modifiers & (CTRL | ALT | META), code) {
+            (CTRL, "KeyA") => &["selectAll"],
+            (CTRL, "KeyZ") => choose(&["undo"], &["redo"]),
+            (CTRL, "KeyY") => &["redo"],
+            (CTRL, "ArrowLeft") => choose(&["moveWordLeft"], &["moveWordLeftAndModifySelection"]),
+            (CTRL, "ArrowRight") => {
+                choose(&["moveWordRight"], &["moveWordRightAndModifySelection"])
+            }
+            (CTRL, "Backspace") => &["deleteWordBackward"],
+            (CTRL, "Delete") => &["deleteWordForward"],
+            _ => &[],
+        };
+    }
     match (modifiers & (META | ALT), code) {
         (META, "KeyA") => &["selectAll"],
         (META, "KeyZ") => choose(&["undo"], &["redo"]),
@@ -1100,6 +1174,7 @@ fn mac_commands(code: &str, modifiers: u8) -> &'static [&'static str] {
 fn handle_message(
     browser: &Arc<Browser>,
     viewer: u64,
+    client_mac: bool,
     replies: &mpsc::UnboundedSender<BrowserServerMessage>,
     message: BrowserClientMessage,
 ) {
@@ -1148,7 +1223,12 @@ fn handle_message(
             params["type"] = kind.into();
             if down {
                 browser.claim(viewer);
-                params["commands"] = json!(mac_commands(&code, modifiers));
+                params["commands"] = json!(editing_commands(
+                    &code,
+                    modifiers,
+                    client_mac,
+                    cfg!(target_os = "macos"),
+                ));
                 if let Some(text) = text {
                     params["text"] = text.clone().into();
                     params["unmodifiedText"] = text.into();
@@ -1216,7 +1296,7 @@ fn handle_message(
     }
 }
 
-async fn handle_socket(socket: WebSocket, scale: u32) {
+async fn handle_socket(socket: WebSocket, scale: u32, client_mac: bool) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let browser = match connect(scale).await {
         Ok(browser) => browser,
@@ -1236,6 +1316,7 @@ async fn handle_socket(socket: WebSocket, scale: u32) {
     // A new tab gets the current page and last frame, since an idle page sends none.
     frames.mark_changed();
     page.mark_changed();
+    cursor.mark_changed();
     let mut awaiting_ack = false;
     loop {
         let send = tokio::select! {
@@ -1281,7 +1362,7 @@ async fn handle_socket(socket: WebSocket, scale: u32) {
                                 if matches!(message, BrowserClientMessage::Ack) {
                                     awaiting_ack = false;
                                 }
-                                handle_message(&browser, viewer, &replies, message);
+                                handle_message(&browser, viewer, client_mac, &replies, message);
                             }
                             Err(error) => tracing::warn!(%error, "bad browser message"),
                         }
@@ -1386,12 +1467,49 @@ mod tests {
         assert_eq!(chromium["brands"].as_array().unwrap().len(), 2);
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn mac_chords_map_to_commands() {
-        assert_eq!(mac_commands("KeyA", META), ["selectAll"]);
-        assert_eq!(mac_commands("KeyZ", META | SHIFT), ["redo"]);
-        assert_eq!(mac_commands("ArrowLeft", ALT), ["moveWordLeft"]);
-        assert!(mac_commands("KeyA", 0).is_empty());
+    fn editing_commands_follow_the_tab_and_server() {
+        // A Mac tab, on either server.
+        for server_mac in [true, false] {
+            assert_eq!(
+                editing_commands("KeyA", META, true, server_mac),
+                ["selectAll"]
+            );
+            assert_eq!(
+                editing_commands("KeyZ", META | SHIFT, true, server_mac),
+                ["redo"]
+            );
+            assert_eq!(
+                editing_commands("ArrowLeft", ALT, true, server_mac),
+                ["moveWordLeft"]
+            );
+            assert!(editing_commands("KeyA", CTRL, true, server_mac).is_empty());
+            assert!(editing_commands("KeyA", 0, true, server_mac).is_empty());
+        }
+        // Another tab on a Mac server, which doesn't map its chords.
+        assert_eq!(editing_commands("KeyA", CTRL, false, true), ["selectAll"]);
+        assert_eq!(editing_commands("KeyZ", CTRL, false, true), ["undo"]);
+        assert_eq!(
+            editing_commands("ArrowLeft", CTRL | SHIFT, false, true),
+            ["moveWordLeftAndModifySelection"]
+        );
+        assert!(editing_commands("KeyA", META, false, true).is_empty());
+        // Neither is a Mac: Chromium maps them itself, so commands would repeat them.
+        assert!(editing_commands("KeyA", CTRL, false, false).is_empty());
+    }
+
+    #[test]
+    fn a_page_crashing_too_often_stops_reloading() {
+        let mut crashes = Crashes::default();
+        let start = Instant::now();
+        assert!(!crashes.record(start));
+        assert!(!crashes.record(start + Duration::from_secs(1)));
+        assert!(crashes.record(start + Duration::from_secs(2)));
+        // Counted afresh after that.
+        assert!(!crashes.record(start + Duration::from_secs(3)));
+        // Old crashes don't count.
+        let later = start + CRASH_WINDOW * 2;
+        assert!(!crashes.record(later));
+        assert!(!crashes.record(later + Duration::from_secs(1)));
     }
 }

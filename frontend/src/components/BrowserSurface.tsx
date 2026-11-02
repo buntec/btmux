@@ -13,6 +13,7 @@ import {
   addressToUrl,
   buttonName,
   containRect,
+  heldButton,
   isPasteChord,
   keyMessage,
   leftToComposition,
@@ -20,7 +21,7 @@ import {
   prefixKeyMessages,
 } from '../lib/browserInput';
 import type { ParsedKey } from '../lib/prefixKey';
-import { RESERVED_CMD_KEYS } from '../lib/nvimKeys';
+import { IS_MAC, RESERVED_CMD_KEYS } from '../lib/nvimKeys';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
@@ -33,7 +34,6 @@ const BLANK = 'about:blank';
 const RECONNECT_MS = 2000;
 /** Long enough for an in-place upgrade; a Chromium that keeps dying gets a prompt. */
 const MAX_RECONNECTS = 8;
-const IS_MAC = navigator.platform.startsWith('Mac');
 
 type PageInfo = Extract<BrowserServerMessage, { type: 'page' }>;
 
@@ -78,6 +78,7 @@ export function BrowserSurface({
   const [generation, setGeneration] = useState(0);
   const [reconnecting, setReconnecting] = useState(false);
   const reconnects = useRef(0);
+  const addressFocusedForBlank = useRef(false);
   /** Resolves the running copy with the selected text. */
   const pendingCopy = useRef<((text: string) => void) | null>(null);
   const modalOpen = useStore(
@@ -116,7 +117,7 @@ export function BrowserSurface({
     if (!visible) return;
     setError(null);
     let retry = 0;
-    const socket = new WebSocket(`${WS_URL}?dpr=${window.devicePixelRatio}`);
+    const socket = new WebSocket(`${WS_URL}?dpr=${window.devicePixelRatio}&mac=${IS_MAC}`);
     socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
     let disposed = false;
@@ -226,12 +227,24 @@ export function BrowserSurface({
     if (!focused || modalOpen || !visible) return;
     const id = window.setTimeout(() => {
       if (document.activeElement === addressRef.current) return;
-      if (page.url === BLANK) addressRef.current?.focus();
-      else inputRef.current?.focus();
+      if (page.url === BLANK) {
+        addressRef.current?.focus();
+        addressFocusedForBlank.current = true;
+      } else inputRef.current?.focus();
     }, 0);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focused, modalOpen, visible]);
+
+  // The server reports a reopened page only after that, unless something's been typed.
+  useEffect(() => {
+    if (page.url === BLANK) return;
+    if (addressFocusedForBlank.current && address === null && document.activeElement === addressRef.current) {
+      inputRef.current?.focus();
+    }
+    addressFocusedForBlank.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page.url]);
 
   const pagePoint = (e: { clientX: number; clientY: number }) => {
     const canvas = canvasRef.current;
@@ -277,7 +290,7 @@ export function BrowserSurface({
       type: 'mouse',
       kind,
       ...pagePoint(e),
-      button: kind === 'mouseMoved' ? 'none' : buttonName(e.button),
+      button: kind === 'mouseMoved' ? heldButton(e.buttons) : buttonName(e.button),
       buttons: e.buttons,
       click_count: kind === 'mouseMoved' ? 0 : Math.max(e.detail, 1),
       modifiers: modifierBits(e),
@@ -290,10 +303,14 @@ export function BrowserSurface({
   const lastMove = useRef<React.MouseEvent<HTMLCanvasElement> | null>(null);
   const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     lastMove.current = e;
-    moveRaf.current ||= requestAnimationFrame(() => {
-      moveRaf.current = 0;
-      if (lastMove.current) sendMouse('mouseMoved', lastMove.current);
-    });
+    moveRaf.current ||= requestAnimationFrame(flushMove);
+  };
+  // Before a press or release too, or the page sees the move after it with stale buttons.
+  const flushMove = () => {
+    cancelAnimationFrame(moveRaf.current);
+    moveRaf.current = 0;
+    if (lastMove.current) sendMouse('mouseMoved', lastMove.current);
+    lastMove.current = null;
   };
 
   // A finger drag scrolls; a tap arrives as mouse events.
@@ -506,10 +523,14 @@ export function BrowserSurface({
             e.preventDefault();
             focusPage();
             if (!focused) onActivate();
+            flushMove();
             sendMouse('mousePressed', e);
           }}
           onMouseMove={onMouseMove}
-          onMouseUp={(e) => sendMouse('mouseReleased', e)}
+          onMouseUp={(e) => {
+            flushMove();
+            sendMouse('mouseReleased', e);
+          }}
           onContextMenu={(e) => e.preventDefault()}
         />
         <textarea

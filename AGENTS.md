@@ -464,7 +464,9 @@ reconnects by itself after a crash or an upgrade, so both only flash a spinner.
 Chromium is driven over `--remote-debugging-pipe` (fds 3 and 4, NUL-delimited
 JSON), so it opens no port and exits when btmux does. There is one page: a page
 opening another (`target=_blank`, `window.open`) navigates it instead, and
-JavaScript dialogs are answered automatically. Internal pages Chromium opens
+JavaScript dialogs are answered automatically. A popup still on `about:blank`
+after 5 s is closed, and a page crashing three times in a minute is replaced with
+a notice and no longer reopened. Internal pages Chromium opens
 itself are left alone, so only targets whose `openerId` is ours count.
 A person drives this browser, so it doesn't report automation:
 `--disable-blink-features=AutomationControlled`, and the user agent and its
@@ -494,8 +496,10 @@ rule: the first tab owns it until another sends input, and a click claims it
 only on release, since its coordinates are for the frame the tab was showing.
 Keys whose text comes from the browser (dead keys, IMEs, AltGr) and the client's
 paste chords aren't canceled, so they reach `input` and `paste`, and `prefix
-prefix` goes to the page when the browser covers the active pane. On a macOS server,
-Cmd and Option editing chords need explicit CDP `commands` (`mac_commands`).
+prefix` goes to the page when the browser covers the active pane. Headless
+Chromium on macOS maps no editing chords, and elsewhere doesn't map a Mac's, so
+`editing_commands` sends CDP `commands` based on the tab's platform (`?mac=`) and
+the server's; with neither a Mac, Chromium maps them itself.
 
 ### Layout tree — the shared contract
 

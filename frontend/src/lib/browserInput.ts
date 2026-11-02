@@ -10,6 +10,11 @@ export function modifierBits(e: Modifiers): number {
   return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
 }
 
+/** The button CDP should report for a move with DOM `buttons` held. */
+export function heldButton(buttons: number): 'left' | 'middle' | 'right' | 'none' {
+  return buttons & 1 ? 'left' : buttons & 2 ? 'right' : buttons & 4 ? 'middle' : 'none';
+}
+
 /** A DOM mouse button as CDP names it. */
 export function buttonName(button: number): 'left' | 'middle' | 'right' | 'none' {
   return button === 0 ? 'left' : button === 1 ? 'middle' : button === 2 ? 'right' : 'none';
@@ -39,6 +44,11 @@ export function isPasteChord(
   if (e.altKey) return false;
   if (e.shiftKey && !e.ctrlKey && !e.metaKey && e.key === 'Insert') return true;
   return e.key.toLowerCase() === 'v' && (isMac ? e.metaKey : e.ctrlKey);
+}
+
+/** The Windows virtual key code, which Chromium's editing needs, for a key from its name. */
+function keyCodeFor(key: string): number {
+  return NAMED_KEY_CODES[key] ?? (/^[a-z\d]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0);
 }
 
 const NAMED_KEY_CODES: Record<string, number> = {
@@ -74,7 +84,7 @@ export function prefixKeyMessages(p: ParsedKey): BrowserClientMessage[] {
           : p.key.length > 1
             ? p.key
             : '',
-    keyCode: NAMED_KEY_CODES[p.key] ?? (letter || digit ? p.key.toUpperCase().charCodeAt(0) : 0),
+    keyCode: 0,
     repeat: false,
     altKey: p.alt,
     ctrlKey: p.ctrl,
@@ -93,7 +103,8 @@ export function keyMessage(
     down,
     key: e.key,
     code: e.code,
-    key_code: e.keyCode,
+    // Synthetic keys, as from the mobile key bar, have none.
+    key_code: e.keyCode || keyCodeFor(e.key),
     text: down ? keyText(e) : null,
     modifiers: modifierBits(e),
     repeat: e.repeat,

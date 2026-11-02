@@ -27,7 +27,7 @@ export function escapeNvimText(text: string): string {
   return text.replace(/</g, '<lt>');
 }
 
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Key notation for `e`, or null when the browser should handle it (modifiers, IME, app shortcuts). */
 export function nvimKey(e: KeyboardEvent, mac = IS_MAC): string | null {

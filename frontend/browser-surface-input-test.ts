@@ -11,6 +11,9 @@ const log: string[] = [];
 const PAGE = `<!doctype html><title>Input test</title>
 <style>html,body{margin:0;height:100%;background:rgb(200,30,60)}input{position:absolute;left:50px;top:50px;width:300px;height:40px}</style>
 <input id="field" />
+<p id="words" style="position:absolute;left:50px;top:150px;margin:0;font:20px/1 sans-serif;color:white;white-space:nowrap">alpha beta gamma delta</p>
+<input id="slider" type="range" value="0" style="position:absolute;left:50px;top:200px;width:300px;margin:0" />
+<button id="opener" style="position:absolute;left:50px;top:250px;width:100px;height:30px">open</button>
 <button id="corner" style="position:fixed;right:0;bottom:0;width:20%;height:20%">corner</button>
 <script>
 const report = (m) => navigator.sendBeacon('/log?m=' + encodeURIComponent(m));
@@ -18,6 +21,18 @@ addEventListener('keydown', (e) => report('down:' + e.key));
 addEventListener('mousedown', (e) => report('click:' + e.clientX + ',' + e.clientY));
 addEventListener('click', (e) => report('hit:' + e.target.id));
 addEventListener('resize', () => report('size:' + innerWidth + 'x' + innerHeight));
+addEventListener('mouseup', () => report('selected:' + getSelection().toString()));
+document.getElementById('slider').addEventListener('input', (e) => report('slider:' + e.target.value));
+document.getElementById('opener').addEventListener('click', () => {
+  const popup = window.open('');
+  popup.document.write('hidden');
+  const timer = setInterval(() => {
+    if (popup.closed) {
+      clearInterval(timer);
+      report('popup-closed');
+    }
+  }, 100);
+});
 document.getElementById('field').addEventListener('input', (e) => report('value:' + e.target.value));
 </script>`;
 const site = Bun.serve({
@@ -204,6 +219,117 @@ try {
     const sent = await takeSent(page);
     assert.deepEqual(sent.filter((s) => s.message.type === 'write_pane_input'), [], 'the prefix reached the hidden shell');
     assert(keysSent(sent).some((s) => s.message.down && s.message.key === 'a' && s.message.modifiers === 2), 'no Ctrl+A key');
+  });
+
+  await check('R1. A drag selects text and moves a slider', async () => {
+    await clickPage(page, 700, 300);
+    const box = (await page.locator(canvas).boundingBox())!;
+    const drag = async (from: [number, number], to: [number, number]) => {
+      await page.mouse.move(box.x + from[0], box.y + from[1]);
+      await page.mouse.down();
+      await page.mouse.move(box.x + to[0], box.y + to[1], { steps: 6 });
+      await page.waitForTimeout(100);
+      await page.mouse.up();
+    };
+    log.length = 0;
+    // Inside the text: past it, on this page, is the document's start, which selects nothing.
+    await drag([52, 160], [200, 160]);
+    await until('selection', () => log.some((entry) => entry.startsWith('selected:')));
+    assert(log.some((entry) => entry.includes('alpha beta')), `nothing selected: ${JSON.stringify(log)}`);
+    log.length = 0;
+    await drag([52, 208], [300, 208]);
+    await until('slider', () => log.some((entry) => entry.startsWith('slider:')), 2000);
+  });
+
+  await check('R2. Keys without a keyCode, as from the key bar, still edit', async () => {
+    await clickPage(page, 200, 70);
+    await page.keyboard.type('qwe');
+    log.length = 0;
+    await page.evaluate(async () => {
+      const { dispatchKey } = await import('/src/lib/paneTerminal.ts' as string);
+      const input = document.querySelector('[data-browser-input]')!;
+      dispatchKey(input, 'ArrowLeft');
+      dispatchKey(input, 'Backspace');
+    });
+    await until('the edit', () => log.some((entry) => entry.startsWith('value:') && entry.endsWith('qe')), 2000);
+  });
+
+  await check('R3. A Ctrl editing chord works from a non-Mac tab', async () => {
+    await clickPage(page, 200, 70);
+    await page.keyboard.type('ab');
+    log.length = 0;
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Control+a'); // Prefix prefix: a real Ctrl+A.
+    await page.waitForTimeout(150);
+    await page.keyboard.type('z');
+    await until('replaced text', () => log.includes('value:z'), 2000);
+  });
+
+  await check('R4. A queued mouse move stays before the press and release', async () => {
+    await takeSent(page);
+    await page.evaluate((selector) => {
+      const element = document.querySelector(selector as string)!;
+      const at = { clientX: 800, clientY: 400, bubbles: true, cancelable: true };
+      element.dispatchEvent(new MouseEvent('mousemove', at));
+      element.dispatchEvent(new MouseEvent('mousedown', { ...at, buttons: 1, detail: 1 }));
+      element.dispatchEvent(new MouseEvent('mouseup', { ...at, detail: 1 }));
+    }, canvas);
+    await page.waitForTimeout(100);
+    const kinds = (await takeSent(page)).filter((s) => s.message.type === 'mouse').map((s) => s.message.kind);
+    assert.deepEqual(kinds, ['mouseMoved', 'mousePressed', 'mouseReleased']);
+  });
+
+  await check('R7. A new tab gets the current cursor', async () => {
+    const box = (await page.locator(canvas).boundingBox())!;
+    await page.mouse.move(box.x + 90, box.y + 158);
+    await waitForAsync(page, (selector) => (document.querySelector(selector as string) as HTMLElement).style.cursor === 'text', canvas, 3000);
+    const other = await context.newPage();
+    await other.setViewportSize({ width: 800, height: 600 });
+    await connect(other);
+    await other.waitForTimeout(300);
+    await prefix(other, 'b');
+    await waitForAsync(other, (selector) => (document.querySelector(selector as string) as HTMLElement | null)?.style.cursor === 'text', canvas, 4000).finally(() => other.close());
+  });
+
+  await check('R10. A popup left on about:blank is closed', async () => {
+    await page.bringToFront();
+    log.length = 0;
+    await clickPage(page, 100, 265);
+    await until('popup-closed', () => log.includes('popup-closed'), 9000);
+  });
+
+  await check('R9. A restored page takes the keyboard, not the address bar', async () => {
+    await page.reload();
+    await waitForAsync(page, async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().terminals.size > 0;
+    });
+    await waitForAsync(page, () => document.activeElement?.getAttribute('aria-label') === 'Terminal');
+    await prefix(page, 'b');
+    await page.waitForTimeout(800);
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Browser input');
+  });
+
+  await check('R5. A page that keeps crashing stops reloading', async () => {
+    // chrome://crash never commits, so each reload returns to the last page: crash it each time.
+    const urlValue = () => page.inputValue(addressBar);
+    for (let crash = 0; crash < 3; crash++) {
+      await pageFocused(page);
+      await page.keyboard.press('Control+l');
+      await page.keyboard.type('chrome://crash');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(1500);
+    }
+    await waitForAsync(page, () => (document.querySelector('input[placeholder="Search or enter address"]') as HTMLInputElement).value.startsWith('data:'), undefined, 10_000).catch(async (error) => {
+      throw new Error(`address is ${await urlValue()}: ${String(error).slice(0, 60)}`);
+    });
+    await clickPage(page, 100, 100);
+    await page.keyboard.press('Control+l');
+    await page.keyboard.type(pageUrl);
+    await page.keyboard.press('Enter');
+    await waitForAsync(page, (expected) => (document.querySelector('input[placeholder="Search or enter address"]') as HTMLInputElement).value === expected, pageUrl, 10_000);
+    await pageFocused(page);
+    await page.waitForTimeout(500);
   });
 
   const activePane = () =>

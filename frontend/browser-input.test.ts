@@ -3,6 +3,7 @@ import {
   addressToUrl,
   buttonName,
   containRect,
+  heldButton,
   isPasteChord,
   keyMessage,
   leftToComposition,
@@ -72,6 +73,20 @@ test('the prefix key becomes a press and release', () => {
   expect(up).toMatchObject({ type: 'key', down: false, key: 'a', modifiers: 2 });
   expect(prefixKeyMessages({ ctrl: true, alt: false, key: ' ' })[0]).toMatchObject({ code: 'Space', key_code: 32 });
   expect(prefixKeyMessages({ ctrl: false, alt: true, key: 'Enter' })[0]).toMatchObject({ code: 'Enter', key_code: 13, modifiers: 1 });
+});
+
+test('keys get a key code from their name when they have none', () => {
+  const synthetic = { code: '', keyCode: 0, repeat: false, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+  expect(keyMessage({ ...synthetic, key: 'ArrowLeft' }, true)).toMatchObject({ key_code: 37 });
+  expect(keyMessage({ ...synthetic, key: 'Backspace' }, true)).toMatchObject({ key_code: 8 });
+  expect(keyMessage({ ...synthetic, key: 'a' }, true)).toMatchObject({ key_code: 65 });
+  expect(keyMessage({ ...synthetic, key: '7' }, true)).toMatchObject({ key_code: 55 });
+  expect(keyMessage({ ...synthetic, key: '@' }, true)).toMatchObject({ key_code: 0 });
+  expect(keyMessage({ ...synthetic, key: 'a', keyCode: 90 }, true)).toMatchObject({ key_code: 90 });
+});
+
+test('moves report the held button', () => {
+  expect([0, 1, 2, 4, 3].map(heldButton)).toEqual(['none', 'left', 'right', 'middle', 'left']);
 });
 
 test('modifiers and buttons use CDP values', () => {

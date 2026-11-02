@@ -22,6 +22,8 @@ document.getElementById('field').addEventListener('input', (e) => report('value:
 report('size:' + innerWidth + 'x' + innerHeight + ':' + devicePixelRatio);
 report('agent:' + navigator.userAgent);
 report('focus:' + document.hasFocus());
+report('webdriver:' + navigator.webdriver);
+report('brands:' + navigator.userAgentData.brands.map((b) => b.brand).join());
 report('screen-fits:' + (screen.width >= innerWidth && screen.height >= innerHeight));
 addEventListener('click', (e) => {
   if (e.target.id === 'popup') return;
@@ -156,6 +158,9 @@ try {
   const agent = log.find((entry) => entry.startsWith('agent:'))!;
   assert(!agent.includes('Headless'), agent);
   assert(log.includes('focus:true'), JSON.stringify(log));
+  assert(log.includes('webdriver:false'), JSON.stringify(log));
+  const brands = log.find((entry) => entry.startsWith('brands:'))!;
+  assert(brands.includes('Chromium') && !brands.includes('Headless'), brands);
   // Enter in the address bar stays out of the page.
   assert(!(await page.evaluate(() => (window as any).browserSent)).includes('insert_text'));
 

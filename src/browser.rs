@@ -528,6 +528,8 @@ fn spawn_process(
             // No keychain prompt from a hidden process.
             "--use-mock-keychain",
             "--password-store=basic",
+            // A person drives this browser. Anything agent-driven should keep reporting automation.
+            "--disable-blink-features=AutomationControlled",
         ])
         .arg(format!("--force-device-scale-factor={scale}"))
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -623,6 +625,35 @@ async fn read_messages(
 /// Headless Chromium says so in its user agent, which some sites refuse.
 fn desktop_user_agent(agent: &str) -> String {
     agent.replace("HeadlessChrome", "Chrome")
+}
+
+/// What the desktop browser reports through `navigator.userAgentData` and
+/// `Sec-CH-UA`. An override without this leaves its brands empty. `product` is
+/// `Browser.getVersion`'s, like `Chrome/156.0.8078.79`.
+fn user_agent_metadata(product: &str, google_chrome: bool, platform_version: &str) -> Value {
+    let full = product.rsplit('/').next().unwrap_or_default();
+    let major = full.split('.').next().unwrap_or_default();
+    let brands = |version: &str| {
+        let mut brands = vec![
+            json!({ "brand": "Not.A/Brand", "version": "99" }),
+            json!({ "brand": "Chromium", "version": version }),
+        ];
+        if google_chrome {
+            brands.push(json!({ "brand": "Google Chrome", "version": version }));
+        }
+        brands
+    };
+    json!({
+        "brands": brands(major),
+        "fullVersionList": brands(full),
+        "fullVersion": full,
+        "platform": if cfg!(target_os = "macos") { "macOS" } else { "Linux" },
+        "platformVersion": platform_version,
+        "architecture": if cfg!(target_arch = "aarch64") { "arm" } else { "x86" },
+        "bitness": "64",
+        "model": "",
+        "mobile": false,
+    })
 }
 
 async fn start(scale: u32) -> Result<Arc<Browser>, String> {
@@ -725,10 +756,24 @@ async fn start(scale: u32) -> Result<Arc<Browser>, String> {
             json!({ "enabled": true }),
         )
         .await?;
+        let google_chrome = program.to_string_lossy().to_lowercase().contains("chrome");
+        let platform_version = if cfg!(target_os = "macos") {
+            sysinfo::System::os_version()
+        } else {
+            sysinfo::System::kernel_version()
+        }
+        .unwrap_or_default();
         cdp.call(
             Some(&session),
             "Emulation.setUserAgentOverride",
-            json!({ "userAgent": desktop_user_agent(version["userAgent"].as_str().unwrap_or_default()) }),
+            json!({
+                "userAgent": desktop_user_agent(version["userAgent"].as_str().unwrap_or_default()),
+                "userAgentMetadata": user_agent_metadata(
+                    version["product"].as_str().unwrap_or_default(),
+                    google_chrome,
+                    &platform_version,
+                ),
+            }),
         )
         .await?;
         Ok::<_, String>((target, session))
@@ -1062,6 +1107,20 @@ mod tests {
             desktop_user_agent("Mozilla/5.0 HeadlessChrome/156.0.0.0 Safari/537.36"),
             "Mozilla/5.0 Chrome/156.0.0.0 Safari/537.36"
         );
+    }
+
+    #[test]
+    fn metadata_names_the_browser_with_its_version() {
+        let metadata = user_agent_metadata("Chrome/156.0.8078.79", true, "26.0");
+        let brands = metadata["brands"].as_array().unwrap();
+        assert!(brands.contains(&json!({ "brand": "Google Chrome", "version": "156" })));
+        assert!(metadata["fullVersionList"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({ "brand": "Chromium", "version": "156.0.8078.79" })));
+        assert_eq!(metadata["platformVersion"], "26.0");
+        let chromium = user_agent_metadata("Chrome/156.0.8078.79", false, "");
+        assert_eq!(chromium["brands"].as_array().unwrap().len(), 2);
     }
 
     #[cfg(target_os = "macos")]

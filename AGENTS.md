@@ -463,6 +463,10 @@ JSON), so it opens no port and exits when btmux does. There is one page: a page
 opening another (`target=_blank`, `window.open`) navigates it instead, and
 JavaScript dialogs are answered automatically. Internal pages Chromium opens
 itself are left alone, so only targets whose `openerId` is ours count.
+A person drives this browser, so it doesn't report automation:
+`--disable-blink-features=AutomationControlled`, and the user agent and its
+metadata read as the desktop browser. Agent-driven control (such as MCP tools)
+should report it, so keep that out of this path.
 
 `Page.screencastFrame`s are acked at once, and each socket sends a tab the
 latest frame only after the tab acks drawing the last, so a slow link skips

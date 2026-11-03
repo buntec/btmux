@@ -29,6 +29,35 @@ reported costs, for all panes or one selected pane. It keeps one hour of
 per-minute history in memory; restarting or upgrading the server clears it.
 Telemetry does not change agent lifecycle state or replace notification hooks.
 
+Launch agents through btmux to enable collection for the current pane:
+
+```sh
+btmux claude --resume
+btmux codex
+btmux codex exec "Explain this project"
+```
+
+Every argument after `claude` or `codex` goes to that agent, including `--help`,
+`--version`, `--profile`, and `--`. Both wrappers use the executable on `PATH`
+and inherit the working directory and terminal streams. On Unix the agent
+replaces the wrapper, preserving its PID, signals, and exit status; Windows
+runs the agent and returns its exit code. Missing executables exit with 127.
+
+Inside a pane, `btmux claude` sets the log and metric exporter environment for
+this invocation. Exports use HTTP/protobuf with 10-second metric and 5-second
+log intervals unless you already set custom intervals. `btmux codex` prepends
+an `otel.exporter` config override; its authorization value comes from a child
+environment variable, so the credential never enters the command line. Codex
+arguments that follow can override the injected config; managed agent settings
+keep their normal precedence. Neither wrapper edits agent config files.
+
+Outside a btmux pane, these commands run the raw agent without adding telemetry
+settings. Inside a pane with missing or invalid telemetry configuration, they
+print an error and exit with 1. Older panes derive their endpoint from
+`BTMUX_API_URL` and `BTMUX_PANE_ID` when `BTMUX_OTEL_ENDPOINT` is absent.
+
+The manual setup below is also available for launching agents directly.
+
 The OTLP/HTTP receiver runs on the existing authenticated server. Each new pane
 gets `BTMUX_OTEL_ENDPOINT`, a base URL that associates exports with that pane:
 
@@ -77,10 +106,11 @@ a baseline; the graph counts its subsequent increases.
 Configure the log exporter for this invocation:
 
 ```sh
+BTMUX_OTEL_AUTHORIZATION="Bearer $BTMUX_AUTH_TOKEN" \
 codex \
   -c "otel.exporter.otlp-http.endpoint=\"${BTMUX_OTEL_ENDPOINT}/v1/logs\"" \
   -c 'otel.exporter.otlp-http.protocol="binary"' \
-  -c 'otel.exporter.otlp-http.headers.Authorization="Bearer ${BTMUX_AUTH_TOKEN}"'
+  -c 'otel.exporter.otlp-http.headers.Authorization="${BTMUX_OTEL_AUTHORIZATION}"'
 ```
 
 Codex expands the header's environment reference. These flags leave the user's

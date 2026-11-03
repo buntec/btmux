@@ -170,7 +170,7 @@ export function AgentUsageView() {
       <VStack hAlign="center" vAlign="center" className="h-full">
         <EmptyState
           title="No usage received yet"
-          description="Enable OpenTelemetry for Claude Code or Codex in a btmux pane to see tokens, costs, and tool activity here."
+          description="Run btmux claude or btmux codex in a pane to see tokens, costs, and tool activity here."
         />
         <Text color="secondary">Usage history covers the last hour and clears when the server restarts.</Text>
       </VStack>

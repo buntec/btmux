@@ -337,6 +337,18 @@ pub struct CliArgs {
 pub enum SubCommand {
     /// Print the btmux version and exit.
     Version,
+    /// Run Claude Code with telemetry collection in this pane. All arguments go to Claude.
+    #[command(disable_help_flag = true)]
+    Claude {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
+        args: Vec<std::ffi::OsString>,
+    },
+    /// Run Codex with telemetry collection in this pane. All arguments go to Codex.
+    #[command(disable_help_flag = true)]
+    Codex {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Open FILE (or just the editor), jumping to LINE. In a btmux pane with
     /// `editor = "neovim"` or `"vscode"`, this opens that editor over the
     /// pane; otherwise `$EDITOR` (falling back to `vi`).

@@ -471,7 +471,9 @@ reconnects by itself after a crash or an upgrade, so both only flash a spinner.
 `block-autoplay` (`AUTOPLAY_SCRIPT`, in every frame: `Target.setAutoAttach`
 reaches iframes in other processes) default on and are read when Chromium
 starts, so changing either restarts it. A playing video keeps the page
-painting, and each paint is a full-size JPEG.
+painting, and each paint is a full-size JPEG. Activation doesn't reach
+cross-origin children, so the script posts input down to frames with
+`allow="autoplay"`, which count as activated for 5 s, like a click on them.
 
 Chromium is driven over `--remote-debugging-pipe` (fds 3 and 4, NUL-delimited
 JSON), so it opens no port and exits when btmux does. There is one page: a page

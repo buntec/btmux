@@ -104,10 +104,57 @@ const COPY_SCRIPT: &str = r#"(() => {
 /// frame. Muted video is exempt from `--autoplay-policy`, and it repaints the
 /// page, which costs a full frame encode each time. A video the user started
 /// stays allowed, for players that call `play()` again later.
+///
+/// Activation doesn't reach cross-origin children, so input also grants it to
+/// those with `allow="autoplay"`, the delegation Chromium's own policy honors.
+/// Children register, as `frames` omits those in shadow roots. The grant is
+/// posted before the page can react to the input, so it arrives first.
+///
+/// Out of reach: closed declarative shadow roots, which nothing exposes, and a
+/// frame loaded by a click calling `play()` before its join is answered.
 const AUTOPLAY_SCRIPT: &str = r#"(() => {
+  const JOIN = 'btmux-autoplay-join';
+  const GRANT = 'btmux-autoplay-grant';
+  const up = window.parent;
+  const children = new Set();
+  let grantedUntil = 0;
+  const active = () => navigator.userActivation?.isActive || performance.now() < grantedUntil;
+  const grantChildren = () => {
+    for (const child of children) {
+      if (child.closed) children.delete(child);
+      else child.postMessage(GRANT, '*');
+    }
+  };
+  addEventListener(
+    'message',
+    (event) => {
+      if (event.data !== JOIN && event.data !== GRANT) return;
+      event.stopImmediatePropagation();
+      if (event.data === JOIN) {
+        if (event.source?.parent !== window) return;
+        children.add(event.source);
+        if (active()) event.source.postMessage(GRANT, '*');
+      } else if (event.source === up && document.featurePolicy?.allowsFeature('autoplay')) {
+        grantedUntil = performance.now() + 5000;
+        grantChildren();
+      }
+    },
+    true,
+  );
+  if (up !== window) up.postMessage(JOIN, '*');
+  for (const type of ['keydown', 'mousedown', 'pointerup']) {
+    addEventListener(
+      type,
+      (event) => {
+        if (event.isTrusted && navigator.userActivation?.isActive) grantChildren();
+      },
+      true,
+    );
+  }
+
   const started = new WeakSet();
   const allowed = (media) => {
-    if (navigator.userActivation?.isActive) started.add(media);
+    if (active()) started.add(media);
     return started.has(media);
   };
   const play = HTMLMediaElement.prototype.play;
@@ -122,11 +169,40 @@ const AUTOPLAY_SCRIPT: &str = r#"(() => {
     if (event.target instanceof HTMLMediaElement && !allowed(event.target)) event.target.pause();
   };
   addEventListener('play', stop, true);
-  // Media events don't leave a shadow root.
+
+  // Media events don't leave a shadow root, and the parser, `setHTMLUnsafe`,
+  // and cloning create roots without `attachShadow`.
+  const watched = new WeakSet();
+  const scan = (node) => {
+    if (node.shadowRoot) watch(node.shadowRoot);
+    for (const element of node.querySelectorAll('*')) {
+      if (element.shadowRoot) watch(element.shadowRoot);
+    }
+  };
+  const observer = new MutationObserver((records) => {
+    for (const { addedNodes } of records) {
+      for (const node of addedNodes) if (node instanceof Element) scan(node);
+    }
+  });
+  const watch = (root) => {
+    if (!watched.has(root)) {
+      watched.add(root);
+      root.addEventListener('play', stop, true);
+      observer.observe(root, { childList: true, subtree: true });
+      // It may have started before this root was found.
+      for (const media of root.querySelectorAll('video, audio')) {
+        if (!media.paused && !allowed(media)) media.pause();
+      }
+    }
+    scan(root);
+  };
+  observer.observe(document, { childList: true, subtree: true });
+  // A host is inserted before the parser reaches its template.
+  document.addEventListener('DOMContentLoaded', () => scan(document));
   const attachShadow = Element.prototype.attachShadow;
   Element.prototype.attachShadow = function (init) {
     const root = attachShadow.call(this, init);
-    root.addEventListener('play', stop, true);
+    watch(root);
     return root;
   };
 })()"#;

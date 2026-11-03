@@ -1,9 +1,19 @@
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFileStore } from '@/state/fileStore';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { Placeholder } from '../Placeholder';
+import { chunkDiffs, DiffRows } from '../DiffRows';
 
 export function DiffPreview() {
   const gitDiff = useFileStore((s) => s.gitDiff);
+  const hunks = gitDiff?.hunks;
+  const path = gitDiff?.path;
+  const chunks = useMemo(() => chunkDiffs([hunks ?? []])[0], [hunks]);
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (viewportRef.current) viewportRef.current.scrollTop = 0;
+  }, [path]);
 
   if (!gitDiff) {
     return <Placeholder>Select a file to view diff</Placeholder>;
@@ -18,36 +28,14 @@ export function DiffPreview() {
   }
 
   return (
-    <ScrollableArea label="Diff" axis="block" data-preview-viewport className="h-full overflow-auto">
+    <ScrollableArea ref={viewportRef} label="Diff" axis="block" data-preview-viewport className="h-full overflow-auto">
       <div className="px-3 py-2 leading-5">
         <div className="mb-2 text-secondary">
           {gitDiff.old_path ? `${gitDiff.old_path} → ${gitDiff.path}` : gitDiff.path}
         </div>
-        {gitDiff.hunks.map((hunk, hunkIdx) => (
-          <div key={hunkIdx} className="mb-4">
-            <div className="text-purple-vivid mb-1 [overflow-wrap:anywhere]">{hunk.header}</div>
-            {hunk.lines.map((line, lineIdx) => {
-              let bgClass = '';
-              let textClass = '';
-              if (line.origin === '+') {
-                bgClass = 'bg-green-vivid/15';
-                textClass = 'text-green-vivid';
-              } else if (line.origin === '-') {
-                bgClass = 'bg-red-vivid/15';
-                textClass = 'text-red-vivid';
-              }
-
-              return (
-                <div key={lineIdx} className={`${bgClass} ${textClass} flex px-2`}>
-                  <span className="w-4 shrink-0 select-none text-secondary opacity-60">
-                    {line.origin === ' ' ? ' ' : line.origin}
-                  </span>
-                  <span className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{line.content}</span>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+        {/* A new file starts over, so it draws only what it needs. */}
+        <DiffRows key={gitDiff.path} chunks={chunks} />
+        {gitDiff.truncated && <div className="mt-4 text-secondary">Diff truncated: too large to show in full</div>}
       </div>
     </ScrollableArea>
   );

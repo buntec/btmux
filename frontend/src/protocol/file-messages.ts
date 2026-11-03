@@ -104,7 +104,15 @@ export interface GitLogResult {
 
 export interface GitCommitDiffResult {
   commit_id: string;
-  files: FileDiff[];
+  total_files: number;
+  additions: number;
+  deletions: number;
+  files: CommitFileDiff[];
+}
+
+export interface CommitFileDiff extends FileDiff {
+  additions: number;
+  deletions: number;
 }
 
 export interface DiffLine {
@@ -124,6 +132,7 @@ export interface FileDiff {
   old_path: string | null;
   hunks: DiffHunk[];
   is_binary: boolean;
+  truncated: boolean;
 }
 
 export interface ClientFileMessage {

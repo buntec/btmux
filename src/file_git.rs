@@ -59,6 +59,12 @@ pub struct GitLogRef {
     pub kind: String,
 }
 
+const MAX_COMMIT_DIFF_FILES: usize = 1000;
+const MAX_COMMIT_DIFF_LINES: usize = 50_000;
+const MAX_DIFF_FILE_LINES: usize = 20_000;
+const MAX_DIFF_BYTES: usize = 8 * 1024 * 1024;
+const MAX_DIFF_LINE_BYTES: usize = 4096;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GitLogCommit {
     pub id: String,
@@ -80,7 +86,18 @@ pub struct GitLogResult {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitCommitDiff {
     pub commit_id: String,
-    pub files: Vec<FileDiff>,
+    pub total_files: usize,
+    pub additions: usize,
+    pub deletions: usize,
+    pub files: Vec<CommitFileDiff>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CommitFileDiff {
+    #[serde(flatten)]
+    pub diff: FileDiff,
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -103,6 +120,7 @@ pub struct FileDiff {
     pub old_path: Option<String>,
     pub hunks: Vec<DiffHunk>,
     pub is_binary: bool,
+    pub truncated: bool,
 }
 
 pub async fn git_status(root: &Path, include_diff_stats: bool) -> Result<GitStatusResult, String> {
@@ -491,17 +509,33 @@ fn git_commit_diff_sync(
         )
         .map_err(|e| format!("Failed to get commit diff: {}", e))?;
 
-    Ok(GitCommitDiff {
-        commit_id: oid.to_string(),
-        files: diff_to_file_diffs(&diff)?,
-    })
+    commit_diff_from(oid.to_string(), &diff)
 }
 
-fn diff_to_file_diffs(diff: &git2::Diff<'_>) -> Result<Vec<FileDiff>, String> {
-    let mut files = Vec::with_capacity(diff.deltas().len());
+/// Counts every file, but sends only what a browser can parse and show.
+fn commit_diff_from(commit_id: String, diff: &git2::Diff<'_>) -> Result<GitCommitDiff, String> {
+    let mut result = GitCommitDiff {
+        commit_id,
+        total_files: diff.deltas().len(),
+        additions: 0,
+        deletions: 0,
+        files: Vec::new(),
+    };
+    let mut budget = DiffBudget::new(MAX_COMMIT_DIFF_LINES);
 
     for delta_idx in 0..diff.deltas().len() {
-        let delta = diff.deltas().nth(delta_idx).unwrap();
+        let delta = diff.get_delta(delta_idx).unwrap();
+        let patch = git2::Patch::from_diff(diff, delta_idx).ok().flatten();
+        let (_, additions, deletions) = patch
+            .as_ref()
+            .and_then(|patch| patch.line_stats().ok())
+            .unwrap_or_default();
+        result.additions += additions;
+        result.deletions += deletions;
+        if result.files.len() == MAX_COMMIT_DIFF_FILES {
+            continue;
+        }
+
         let diff_path = delta
             .new_file()
             .path()
@@ -513,45 +547,125 @@ fn diff_to_file_diffs(diff: &git2::Diff<'_>) -> Result<Vec<FileDiff>, String> {
             (path != diff_path).then_some(path)
         });
 
-        let mut hunks = Vec::new();
-        if let Ok(Some(patch)) = git2::Patch::from_diff(diff, delta_idx) {
-            for hunk_idx in 0..patch.num_hunks() {
-                let (hunk, _num_lines) = patch
-                    .hunk(hunk_idx)
-                    .map_err(|e| format!("Failed to get commit diff hunk: {}", e))?;
-                let num_lines = patch
-                    .num_lines_in_hunk(hunk_idx)
-                    .map_err(|e| format!("Failed to get commit diff line count: {}", e))?;
-                let mut lines = Vec::with_capacity(num_lines);
+        budget.next_file();
+        let (hunks, truncated) = match patch {
+            Some(patch) => patch_hunks(&patch, &mut budget)?,
+            None => (Vec::new(), false),
+        };
 
-                for line_idx in 0..num_lines {
-                    let line = patch
-                        .line_in_hunk(hunk_idx, line_idx)
-                        .map_err(|e| format!("Failed to get commit diff line: {}", e))?;
-                    lines.push(DiffLine {
-                        origin: line.origin(),
-                        content: String::from_utf8_lossy(line.content()).into_owned(),
-                    });
-                }
-
-                hunks.push(DiffHunk {
-                    header: String::from_utf8_lossy(hunk.header()).trim().to_string(),
-                    old_start: hunk.old_start(),
-                    new_start: hunk.new_start(),
-                    lines,
-                });
-            }
-        }
-
-        files.push(FileDiff {
-            path: diff_path,
-            old_path,
-            hunks,
-            is_binary: delta.flags().is_binary(),
+        result.files.push(CommitFileDiff {
+            diff: FileDiff {
+                path: diff_path,
+                old_path,
+                hunks,
+                is_binary: delta.flags().is_binary(),
+                truncated,
+            },
+            additions,
+            deletions,
         });
     }
 
-    Ok(files)
+    Ok(result)
+}
+
+/// What a diff may still send, since a browser must parse and show it.
+struct DiffBudget {
+    lines: usize,
+    file_lines: usize,
+    bytes: usize,
+}
+
+impl DiffBudget {
+    fn new(lines: usize) -> Self {
+        Self {
+            lines,
+            file_lines: MAX_DIFF_FILE_LINES,
+            bytes: MAX_DIFF_BYTES,
+        }
+    }
+
+    fn next_file(&mut self) {
+        self.file_lines = MAX_DIFF_FILE_LINES;
+    }
+
+    /// The line's capped text, or `None` once the budget is spent.
+    fn take_line(&mut self, content: &[u8]) -> Option<String> {
+        if self.lines == 0 || self.file_lines == 0 {
+            return None;
+        }
+        // Charged as sent: invalid bytes grow to U+FFFD.
+        let text = capped_line_content(content);
+        if self.bytes < text.len() {
+            return None;
+        }
+        self.lines -= 1;
+        self.file_lines -= 1;
+        self.bytes -= text.len();
+        Some(text)
+    }
+}
+
+fn capped_line_content(content: &[u8]) -> String {
+    if content.len() <= MAX_DIFF_LINE_BYTES {
+        return String::from_utf8_lossy(content).into_owned();
+    }
+    let cut = &content[..MAX_DIFF_LINE_BYTES];
+    // Don't cut a character in half.
+    let end = match std::str::from_utf8(cut) {
+        Err(error) if error.error_len().is_none() => error.valid_up_to(),
+        _ => cut.len(),
+    };
+    let mut text = String::from_utf8_lossy(&cut[..end]).into_owned();
+    text.push('…');
+    text
+}
+
+/// The patch's hunks within the budget, and whether any line was cut or didn't fit.
+fn patch_hunks(
+    patch: &git2::Patch<'_>,
+    budget: &mut DiffBudget,
+) -> Result<(Vec<DiffHunk>, bool), String> {
+    let mut hunks = Vec::new();
+    let mut shortened = false;
+    for hunk_idx in 0..patch.num_hunks() {
+        let (hunk, _num_lines) = patch
+            .hunk(hunk_idx)
+            .map_err(|e| format!("Failed to get diff hunk: {}", e))?;
+        let num_lines = patch
+            .num_lines_in_hunk(hunk_idx)
+            .map_err(|e| format!("Failed to get diff line count: {}", e))?;
+        let mut lines = Vec::with_capacity(num_lines.min(budget.file_lines));
+        let mut spent = false;
+
+        for line_idx in 0..num_lines {
+            let line = patch
+                .line_in_hunk(hunk_idx, line_idx)
+                .map_err(|e| format!("Failed to get diff line: {}", e))?;
+            let Some(content) = budget.take_line(line.content()) else {
+                spent = true;
+                break;
+            };
+            shortened |= line.content().len() > MAX_DIFF_LINE_BYTES;
+            lines.push(DiffLine {
+                origin: line.origin(),
+                content,
+            });
+        }
+
+        if !lines.is_empty() {
+            hunks.push(DiffHunk {
+                header: String::from_utf8_lossy(hunk.header()).trim().to_string(),
+                old_start: hunk.old_start(),
+                new_start: hunk.new_start(),
+                lines,
+            });
+        }
+        if spent {
+            return Ok((hunks, true));
+        }
+    }
+    Ok((hunks, shortened))
 }
 
 fn diff_line_stats(
@@ -708,17 +822,24 @@ fn wt_status_to_enum(st: Status) -> FileStatus {
 fn diff_untracked_file(abs_path: &Path, path: &str) -> Result<FileDiff, String> {
     let content =
         std::fs::read_to_string(abs_path).map_err(|e| format!("Cannot read file: {}", e))?;
+    let mut budget = DiffBudget::new(MAX_DIFF_FILE_LINES);
     let lines: Vec<DiffLine> = content
         .lines()
-        .map(|l| DiffLine {
-            origin: '+',
-            content: format!("{}\n", l),
+        .map_while(|line| {
+            let mut content = budget.take_line(line.as_bytes())?;
+            content.push('\n');
+            Some(DiffLine {
+                origin: '+',
+                content,
+            })
         })
         .collect();
-    let num_lines = lines.len() as u32;
+    let num_lines = content.lines().count();
     Ok(FileDiff {
         path: path.to_string(),
         old_path: None,
+        truncated: lines.len() < num_lines
+            || content.lines().any(|line| line.len() > MAX_DIFF_LINE_BYTES),
         hunks: vec![DiffHunk {
             header: format!("@@ -0,0 +1,{} @@ new file", num_lines),
             old_start: 0,
@@ -772,12 +893,14 @@ fn git_diff_file_sync(
     };
 
     let mut hunks: Vec<DiffHunk> = Vec::new();
+    let mut truncated = false;
+    let mut budget = DiffBudget::new(MAX_DIFF_FILE_LINES);
     let mut is_binary = false;
     let mut diff_path = path.to_string();
     let mut old_path: Option<String> = None;
 
     for patch_idx in 0..diff.deltas().len() {
-        let delta = diff.deltas().nth(patch_idx).unwrap();
+        let delta = diff.get_delta(patch_idx).unwrap();
         let new_path = delta
             .new_file()
             .path()
@@ -791,7 +914,6 @@ fn git_diff_file_sync(
         if staged && delta_path.as_deref() != Some(path) {
             continue;
         }
-        is_binary = delta.flags().is_binary();
         if let Some(p) = new_path {
             diff_path = p;
         }
@@ -800,37 +922,15 @@ fn git_diff_file_sync(
             (old != diff_path).then_some(old)
         });
 
-        let Ok(Some(patch)) = git2::Patch::from_diff(&diff, patch_idx) else {
+        let patch = git2::Patch::from_diff(&diff, patch_idx);
+        // Loading the patch detects binary content.
+        is_binary = delta.flags().is_binary();
+        let Ok(Some(patch)) = patch else {
             continue;
         };
-        let num_hunks = patch.num_hunks();
-        for hunk_idx in 0..num_hunks {
-            let (hunk, _num_lines) = patch
-                .hunk(hunk_idx)
-                .map_err(|e| format!("Failed to get hunk: {}", e))?;
-
-            let mut lines = Vec::new();
-            let num_lines_in_hunk = patch
-                .num_lines_in_hunk(hunk_idx)
-                .map_err(|e| format!("Failed to get line count: {}", e))?;
-
-            for line_idx in 0..num_lines_in_hunk {
-                let line = patch
-                    .line_in_hunk(hunk_idx, line_idx)
-                    .map_err(|e| format!("Failed to get line: {}", e))?;
-                lines.push(DiffLine {
-                    origin: line.origin(),
-                    content: String::from_utf8_lossy(line.content()).to_string(),
-                });
-            }
-
-            hunks.push(DiffHunk {
-                header: String::from_utf8_lossy(hunk.header()).trim().to_string(),
-                old_start: hunk.old_start(),
-                new_start: hunk.new_start(),
-                lines,
-            });
-        }
+        let (patch_hunks, patch_truncated) = patch_hunks(&patch, &mut budget)?;
+        hunks.extend(patch_hunks);
+        truncated |= patch_truncated;
     }
 
     Ok(FileDiff {
@@ -838,6 +938,7 @@ fn git_diff_file_sync(
         old_path,
         hunks,
         is_binary,
+        truncated,
     })
 }
 
@@ -984,7 +1085,8 @@ mod tests {
     use super::{
         count_untracked_lines, git_commit_diff_sync, git_commit_sync,
         git_delete_untracked_file_sync, git_diff_file_sync, git_log_sync, git_status_sync,
-        git_unstage_file_sync,
+        git_unstage_file_sync, MAX_COMMIT_DIFF_FILES, MAX_COMMIT_DIFF_LINES, MAX_DIFF_BYTES,
+        MAX_DIFF_FILE_LINES, MAX_DIFF_LINE_BYTES,
     };
     use git2::{Repository, Signature};
     use std::fs;
@@ -1294,8 +1396,224 @@ mod tests {
         let diff = git_commit_diff_sync(&root, &oid.to_string(), 3).unwrap();
         assert_eq!(diff.commit_id, oid.to_string());
         assert_eq!(diff.files.len(), 1);
-        assert_eq!(diff.files[0].path, "file.txt");
-        assert_eq!(diff.files[0].hunks[0].lines[0].origin, '+');
+        assert_eq!(diff.files[0].diff.path, "file.txt");
+        assert_eq!(diff.files[0].diff.hunks[0].lines[0].origin, '+');
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn commit_all(root: &Path) -> String {
+        let repo = Repository::open(root).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = Signature::now("btmux", "btmux@example.invalid").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "large", &tree, &[])
+            .unwrap()
+            .to_string()
+    }
+
+    fn shown_lines(file: &super::CommitFileDiff) -> usize {
+        file.diff.hunks.iter().map(|hunk| hunk.lines.len()).sum()
+    }
+
+    #[test]
+    fn commit_diff_caps_each_file_but_counts_all_lines() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        let extra = 5;
+        let huge = "line\n".repeat(MAX_DIFF_FILE_LINES + extra);
+        fs::write(root.join("a-huge.txt"), huge).unwrap();
+        fs::write(root.join("b-small.txt"), "one\ntwo\n").unwrap();
+        let id = commit_all(&root);
+
+        let diff = git_commit_diff_sync(&root, &id, 3).unwrap();
+        assert_eq!(diff.total_files, 2);
+        assert_eq!(diff.additions, MAX_DIFF_FILE_LINES + extra + 2);
+        let (huge, small) = (&diff.files[0], &diff.files[1]);
+        assert!(huge.diff.truncated);
+        assert_eq!(huge.additions, MAX_DIFF_FILE_LINES + extra);
+        assert_eq!(shown_lines(huge), MAX_DIFF_FILE_LINES);
+        assert!(!small.diff.truncated);
+        assert_eq!(shown_lines(small), 2);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn file_diffs_cap_tracked_and_untracked_files() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        let count = MAX_DIFF_FILE_LINES + 5;
+        fs::write(root.join("tracked.txt"), "old\n".repeat(count)).unwrap();
+        fs::write(root.join("small.txt"), "old\n").unwrap();
+        commit_all(&root);
+        fs::write(root.join("tracked.txt"), "new\n".repeat(count)).unwrap();
+        fs::write(root.join("small.txt"), "new\n").unwrap();
+        fs::write(root.join("untracked.txt"), "new\n".repeat(count)).unwrap();
+
+        let shown = |diff: &super::FileDiff| -> usize {
+            diff.hunks.iter().map(|hunk| hunk.lines.len()).sum()
+        };
+        let tracked = git_diff_file_sync(&root, "tracked.txt", false, false, 3).unwrap();
+        assert!(tracked.truncated);
+        assert_eq!(shown(&tracked), MAX_DIFF_FILE_LINES);
+        let untracked = git_diff_file_sync(&root, "untracked.txt", false, false, 3).unwrap();
+        assert!(untracked.truncated);
+        assert_eq!(shown(&untracked), MAX_DIFF_FILE_LINES);
+        assert_eq!(
+            untracked.hunks[0].header,
+            format!("@@ -0,0 +1,{count} @@ new file")
+        );
+        assert!(
+            !git_diff_file_sync(&root, "small.txt", false, false, 3)
+                .unwrap()
+                .truncated
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn commit_diff_stops_at_the_commit_budgets() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        let count = MAX_COMMIT_DIFF_LINES / MAX_DIFF_FILE_LINES + 2;
+        let text = "line\n".repeat(MAX_DIFF_FILE_LINES);
+        for index in 0..count {
+            fs::write(root.join(format!("{index:02}.txt")), &text).unwrap();
+        }
+        let id = commit_all(&root);
+
+        let diff = git_commit_diff_sync(&root, &id, 3).unwrap();
+        assert_eq!(diff.additions, count * MAX_DIFF_FILE_LINES);
+        assert_eq!(
+            diff.files.iter().map(shown_lines).sum::<usize>(),
+            MAX_COMMIT_DIFF_LINES
+        );
+        let last = diff.files.last().unwrap();
+        assert!(last.diff.truncated && last.diff.hunks.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn commit_diff_caps_files_and_long_lines() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        for index in 0..=MAX_COMMIT_DIFF_FILES {
+            fs::write(root.join(format!("{index:04}.txt")), "one\n").unwrap();
+        }
+        // The cap lands inside a multibyte character.
+        let long = format!(
+            "{}é{}\n",
+            "x".repeat(MAX_DIFF_LINE_BYTES - 1),
+            "y".repeat(9)
+        );
+        fs::write(root.join("0000.txt"), long).unwrap();
+        let id = commit_all(&root);
+
+        let diff = git_commit_diff_sync(&root, &id, 3).unwrap();
+        assert_eq!(diff.total_files, MAX_COMMIT_DIFF_FILES + 1);
+        assert_eq!(diff.additions, MAX_COMMIT_DIFF_FILES + 1);
+        assert_eq!(diff.files.len(), MAX_COMMIT_DIFF_FILES);
+        let content = &diff.files[0].diff.hunks[0].lines[0].content;
+        assert_eq!(
+            *content,
+            format!("{}…", "x".repeat(MAX_DIFF_LINE_BYTES - 1))
+        );
+        assert!(diff.files[0].diff.truncated);
+        assert!(!diff.files[1].diff.truncated);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tracked_binary_change_is_reported_as_binary() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        fs::write(root.join("image.bin"), [0u8, 1, 2]).unwrap();
+        commit_all(&root);
+        fs::write(root.join("image.bin"), [0u8, 3, 4]).unwrap();
+
+        let diff = git_diff_file_sync(&root, "image.bin", false, false, 3).unwrap();
+        assert!(diff.is_binary);
+        assert!(diff.hunks.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn byte_budget_counts_replacement_characters() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        // Half the budget in bytes, 1.5 times it once each byte becomes U+FFFD.
+        let mut line = vec![0xE9u8; 999];
+        line.push(b'\n');
+        fs::write(root.join("latin1.txt"), line.repeat(MAX_DIFF_BYTES / 2000)).unwrap();
+        let id = commit_all(&root);
+
+        let diff = git_commit_diff_sync(&root, &id, 3).unwrap();
+        let file = &diff.files[0].diff;
+        assert!(!file.is_binary);
+        assert!(file.truncated);
+        let sent: usize = file
+            .hunks
+            .iter()
+            .flat_map(|hunk| &hunk.lines)
+            .map(|line| line.content.len())
+            .sum();
+        assert!(sent <= MAX_DIFF_BYTES);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shortened_lines_mark_diffs_truncated_and_keep_later_rows() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        let long = |tail: &str| format!("{}{tail}\nnext\n", "x".repeat(MAX_DIFF_LINE_BYTES));
+        // Git counts the newline.
+        let fits = format!("{}\n", "x".repeat(MAX_DIFF_LINE_BYTES - 1));
+        let has_next = |diff: &super::FileDiff| {
+            diff.hunks
+                .iter()
+                .flat_map(|hunk| &hunk.lines)
+                .any(|line| line.content == "next\n")
+        };
+
+        fs::write(root.join("fits.txt"), &fits).unwrap();
+        fs::write(root.join("tracked.txt"), long("OLD")).unwrap();
+        let id = commit_all(&root);
+        let commit = git_commit_diff_sync(&root, &id, 3).unwrap();
+        let (fits_file, tracked_file) = (&commit.files[0].diff, &commit.files[1].diff);
+        assert!(!fits_file.truncated);
+        assert!(tracked_file.truncated && has_next(tracked_file));
+
+        fs::write(root.join("fits.txt"), format!("{fits}{fits}")).unwrap();
+        fs::write(root.join("tracked.txt"), long("NEW")).unwrap();
+        fs::write(root.join("untracked.txt"), long("NEW")).unwrap();
+        fs::write(root.join("untracked-fits.txt"), &fits).unwrap();
+        for (path, truncated) in [
+            ("fits.txt", false),
+            ("tracked.txt", true),
+            ("untracked.txt", true),
+            ("untracked-fits.txt", false),
+        ] {
+            let diff = git_diff_file_sync(&root, path, false, false, 3).unwrap();
+            assert_eq!(diff.truncated, truncated, "{path}");
+            assert_eq!(has_next(&diff), truncated, "{path}");
+        }
 
         fs::remove_dir_all(root).unwrap();
     }

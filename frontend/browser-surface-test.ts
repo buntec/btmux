@@ -35,6 +35,44 @@ addEventListener('click', (e) => {
   report('clicked');
 });
 </script>`;
+const silence = (() => {
+  const samples = 16000;
+  const wav = Buffer.alloc(44 + samples, 128);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + samples, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24);
+  wav.writeUInt32LE(8000, 28);
+  wav.writeUInt16LE(1, 32);
+  wav.writeUInt16LE(8, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(samples, 40);
+  return `data:audio/wav;base64,${wav.toString('base64')}`;
+})();
+/** Muted video started every way a page can, reported under `where`. */
+const autoplayPage = (where: string, body = '') => `<!doctype html><title>Autoplay ${where}</title>
+<style>html,body{margin:0;height:100%;background:rgb(200,30,60)}iframe{position:absolute;left:0;top:200px;width:400px;height:200px;border:0;background:rgb(200,30,60)}</style>
+<video id="attr" autoplay muted loop src="${silence}"></video>
+<div id="host"></div>${body}
+<script>
+const report = (m) => navigator.sendBeacon('/log?m=' + encodeURIComponent('${where}:' + m));
+const scripted = document.createElement('video');
+scripted.muted = scripted.loop = true;
+scripted.src = '${silence}';
+scripted.play().then(() => report('scripted-played'), (e) => report('scripted-' + e.name));
+const shadow = document.getElementById('host').attachShadow({ mode: 'closed' });
+shadow.innerHTML = '<video autoplay muted loop src="${silence}"></video>';
+setTimeout(() => {
+  report('attr-paused-' + document.getElementById('attr').paused);
+  report('shadow-paused-' + shadow.firstChild.paused);
+}, 1000);
+addEventListener('click', () => {
+  scripted.play().then(() => report('clicked-played'), (e) => report('clicked-' + e.name));
+});
+</script>`;
 const site = Bun.serve({
   port: 0,
   hostname: '127.0.0.1',
@@ -44,7 +82,17 @@ const site = Bun.serve({
       log.push(searchParams.get('m') ?? '');
       return new Response(null, { status: 204 });
     }
-    const body = pathname === '/second' ? '<!doctype html><title>Second page</title>second' : PAGE;
+    // Another site, so another process.
+    const iframe = `<iframe src="http://localhost:${site.port}/autoplay-frame"></iframe>`;
+    const body =
+      pathname === '/autoplay'
+        ? autoplayPage('top', iframe)
+        : pathname === '/autoplay-frame'
+          ? autoplayPage('frame')
+          : pathname === '/second'
+            ? '<!doctype html><title>Second page</title>second'
+            : PAGE;
+    if (pathname === '/autoplay-frame') return new Response(body, { headers: { 'Content-Type': 'text/html' } });
     return new Response(body, {
       headers: {
         'Content-Type': 'text/html',
@@ -379,13 +427,13 @@ try {
 
   // Chromium dying reconnects by itself and reopens the page.
   const searched = `${pageUrl}found?q=two%20words`;
-  const reopened = async () => {
+  const reopened = async (expected = searched) => {
     await waitForAsync(page, () => !!document.body.textContent?.includes('Reconnecting'), undefined, 10_000);
     await waitForAsync(page, () => !document.body.textContent?.includes('Reconnecting'), undefined, 30_000);
     await waitForAsync(
       page,
       (expected) => (document.querySelector('input[placeholder="Search or enter address"]') as HTMLInputElement).value === expected,
-      searched,
+      expected,
       10_000,
     );
     await painted(page);
@@ -411,6 +459,33 @@ try {
   assert.equal(upgrade.status, 202);
   await reopened();
   assert.equal((await (await fetch(`${url}/api/info`, { headers: auth })).json()).pid, info.pid);
+
+  // Nothing plays until the user acts, in any frame or shadow root.
+  const autoplayUrl = `${pageUrl}autoplay`;
+  log.length = 0;
+  await page.click('input[placeholder="Search or enter address"]');
+  await page.keyboard.type(autoplayUrl);
+  await page.keyboard.press('Enter');
+  for (const where of ['top', 'frame']) {
+    await logged(`${where}:scripted-NotAllowedError`);
+    await logged(`${where}:attr-paused-true`);
+    await logged(`${where}:shadow-paused-true`);
+  }
+  // Clicking plays, in the frame clicked.
+  await clickPage(page, 450, 100);
+  await logged('top:clicked-played');
+  await clickPage(page, 200, 300);
+  await logged('frame:clicked-played');
+
+  // Opting out restarts Chromium, which reopens the page.
+  log.length = 0;
+  writeFileSync(configFile, '[browser]\nblock-autoplay = false\n');
+  await reopened(autoplayUrl);
+  for (const where of ['top', 'frame']) {
+    await logged(`${where}:scripted-played`);
+    await logged(`${where}:attr-paused-false`);
+    await logged(`${where}:shadow-paused-false`);
+  }
 
   assert.deepEqual(errors, []);
   console.log('browser surface test passed');

@@ -100,6 +100,40 @@ const COPY_SCRIPT: &str = r#"(() => {
   return read(document);
 })()"#;
 
+/// Keeps media from playing until the user acts, in the main world of every
+/// frame. Muted video is exempt from `--autoplay-policy`, and it repaints the
+/// page, which costs a full frame encode each time. A video the user started
+/// stays allowed, for players that call `play()` again later.
+const AUTOPLAY_SCRIPT: &str = r#"(() => {
+  const started = new WeakSet();
+  const allowed = (media) => {
+    if (navigator.userActivation?.isActive) started.add(media);
+    return started.has(media);
+  };
+  const play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    if (allowed(this)) return play.call(this);
+    return Promise.reject(
+      new DOMException("play() failed because the user didn't interact with the document first.", 'NotAllowedError'),
+    );
+  };
+  // The `autoplay` attribute starts media without `play()`.
+  const stop = (event) => {
+    if (event.target instanceof HTMLMediaElement && !allowed(event.target)) event.target.pause();
+  };
+  addEventListener('play', stop, true);
+  // Media events don't leave a shadow root.
+  const attachShadow = Element.prototype.attachShadow;
+  Element.prototype.attachShadow = function (init) {
+    const root = attachShadow.call(this, init);
+    root.addEventListener('play', stop, true);
+    return root;
+  };
+})()"#;
+
+/// See `ad_host_rules`.
+const AD_HOSTS: &str = include_str!("../extras/browser/ad-hosts.txt");
+
 /// CSS cursors a tab may show. A page's `url()` cursors would load in the
 /// tab, outside the sandbox of the server's browser.
 const CURSORS: &[&str] = &[
@@ -159,6 +193,26 @@ const SHIFT: u8 = 8;
 
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static SERVER: LazyLock<Mutex<Option<Arc<Browser>>>> = LazyLock::new(|| Mutex::new(None));
+static BLOCKING: std::sync::Mutex<Blocking> = std::sync::Mutex::new(Blocking {
+    ads: true,
+    autoplay: true,
+});
+
+/// What Chromium blocks, read when it starts.
+#[derive(Clone, Copy, PartialEq)]
+struct Blocking {
+    ads: bool,
+    autoplay: bool,
+}
+
+/// Follow `[browser]`. A change restarts Chromium; tabs reconnect and reopen the page.
+pub async fn set_blocking(ads: bool, autoplay: bool) {
+    let next = Blocking { ads, autoplay };
+    let previous = std::mem::replace(&mut *BLOCKING.lock().unwrap(), next);
+    if previous != next {
+        shutdown().await;
+    }
+}
 
 pub fn set_data_dir(dir: PathBuf) {
     let _ = DATA_DIR.set(dir);
@@ -592,6 +646,30 @@ impl Browser {
         }
     }
 
+    /// Give a frame's process the autoplay script before it runs anything,
+    /// and the same for any iframe in another process inside it.
+    fn block_autoplay(&self, session: &str) {
+        let session = Some(session);
+        self.cdp.post(session, "Page.enable", json!({}));
+        self.cdp.post(
+            session,
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": AUTOPLAY_SCRIPT }),
+        );
+        self.cdp.post(
+            session,
+            "Target.setAutoAttach",
+            json!({
+                "autoAttach": true,
+                "waitForDebuggerOnStart": true,
+                "flatten": true,
+                "filter": [{ "type": "iframe" }, { "exclude": true }],
+            }),
+        );
+        self.cdp
+            .post(session, "Runtime.runIfWaitingForDebugger", json!({}));
+    }
+
     /// There is one page, so a new one becomes a navigation of it.
     fn on_other_target(&self, info: &Value, id: &str) {
         let url = info["url"].as_str().unwrap_or_default();
@@ -629,12 +707,22 @@ impl Browser {
         let params = &message["params"];
         let info = &params["targetInfo"];
         let info_id = info["targetId"].as_str().unwrap_or_default();
-        match message["method"].as_str().unwrap_or_default() {
+        let method = message["method"].as_str().unwrap_or_default();
+        // The iframes `block_autoplay` attached to report their own.
+        if method.starts_with("Page.") && message["sessionId"].as_str() != Some(&self.session) {
+            return;
+        }
+        match method {
             "Page.screencastFrame" => self.on_frame(params),
+            "Target.attachedToTarget" if params["waitingForDebugger"] == true => {
+                if let Some(session) = params["sessionId"].as_str() {
+                    self.block_autoplay(session);
+                }
+            }
             "Page.frameStartedLoading" | "Page.frameStoppedLoading"
                 if params["frameId"].as_str() == Some(&self.target) =>
             {
-                let loading = message["method"] == "Page.frameStartedLoading";
+                let loading = method == "Page.frameStartedLoading";
                 self.page.send_modify(|page| page.loading = loading);
                 if !loading {
                     self.refresh_title();
@@ -708,11 +796,24 @@ type Pipes = (
     Box<dyn AsyncWrite + Send + Unpin>,
 );
 
+/// `--host-resolver-rules` covers every frame and worker without attaching to
+/// them, but only by host, so it misses ads a site serves itself.
+fn ad_host_rules() -> String {
+    AD_HOSTS
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|host| format!("MAP {host} ~NOTFOUND,MAP *.{host} ~NOTFOUND"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(unix)]
 fn spawn_process(
     program: &std::path::Path,
     profile: &std::path::Path,
     scale: u32,
+    block_ads: bool,
 ) -> Result<Pipes, String> {
     use std::os::fd::{AsRawFd, OwnedFd};
     use std::process::Stdio;
@@ -738,6 +839,7 @@ fn spawn_process(
         ])
         .arg(format!("--force-device-scale-factor={scale}"))
         .arg(format!("--user-data-dir={}", profile.display()))
+        .args(block_ads.then(|| format!("--host-resolver-rules={}", ad_host_rules())))
         .arg("about:blank")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -769,6 +871,7 @@ fn spawn_process(
     _program: &std::path::Path,
     _profile: &std::path::Path,
     _scale: u32,
+    _block_ads: bool,
 ) -> Result<Pipes, String> {
     Err("The browser surface isn't supported on Windows yet.".into())
 }
@@ -896,7 +999,8 @@ async fn start(scale: u32) -> Result<Arc<Browser>, String> {
         .ok()
         .map(|url| url.trim().to_string())
         .filter(|url| restorable(url));
-    let (mut child, reader, mut writer) = spawn_process(&program, profile, scale)?;
+    let blocking = *BLOCKING.lock().unwrap();
+    let (mut child, reader, mut writer) = spawn_process(&program, profile, scale, blocking.ads)?;
 
     let stderr: Arc<std::sync::Mutex<VecDeque<String>>> = Arc::default();
     if let Some(output) = child.stderr.take() {
@@ -1039,6 +1143,9 @@ async fn start(scale: u32) -> Result<Arc<Browser>, String> {
         crashes: Default::default(),
         kill: std::sync::Mutex::new(Some(kill_tx)),
     });
+    if blocking.autoplay {
+        browser.block_autoplay(&browser.session);
+    }
     if let Some(url) = restore {
         browser.post("Page.navigate", json!({ "url": url }));
     }
@@ -1412,6 +1519,25 @@ mod tests {
         viewers.leave(second);
         assert_eq!(viewers.claim(second), None);
         assert_eq!(viewers.owner, Some(first));
+    }
+
+    #[test]
+    fn ad_hosts_cover_their_subdomains() {
+        let rules = ad_host_rules();
+        assert!(rules.starts_with("MAP 2mdn.net ~NOTFOUND,MAP *.2mdn.net ~NOTFOUND,"));
+        assert!(rules.contains("MAP *.doubleclick.net ~NOTFOUND"));
+        assert!(!rules.contains('#'));
+        for rule in rules.split(',') {
+            let host = rule
+                .strip_prefix("MAP ")
+                .unwrap()
+                .strip_suffix(" ~NOTFOUND");
+            let host = host.unwrap().trim_start_matches("*.");
+            assert!(
+                host.contains('.') && !host.contains(char::is_whitespace),
+                "{rule}"
+            );
+        }
     }
 
     #[test]

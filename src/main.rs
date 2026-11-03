@@ -311,6 +311,11 @@ async fn main() {
 
     // PTY reader threads report a pane's id here when its shell exits (EOF). The
     // drain task below removes the pane and broadcasts the new state to all tabs.
+    browser::set_blocking(
+        file_config.browser.block_ads,
+        file_config.browser.block_autoplay,
+    )
+    .await;
     let (exit_tx, exit_rx) = tokio::sync::mpsc::unbounded_channel::<uuid::Uuid>();
     // PTY reader threads signal here when OSC title/cwd metadata changes so the
     // debounced task below re-broadcasts state without a full structural mutation.
@@ -853,6 +858,10 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
         }
     };
 
+    let blocking = (
+        file_config.browser.block_ads,
+        file_config.browser.block_autoplay,
+    );
     let json = {
         let mut mgr = state.write().await;
         // Also drops any session-only overrides picked from the command palette.
@@ -872,6 +881,8 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
     let mgr = state.read().await;
     let _ = mgr.events().send(json);
     let _ = mgr.events().send(toast_json);
+    drop(mgr);
+    browser::set_blocking(blocking.0, blocking.1).await;
     tracing::info!("config reloaded from {}", path.display());
 }
 

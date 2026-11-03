@@ -13,6 +13,7 @@ assert(token, 'BTMUX_AUTH_TOKEN is required');
 const parent = realpathSync(mkdtempSync(path.join(tmpdir(), 'btmux-session-git-')));
 const repo = path.join(parent, 'proj');
 const feat = path.join(parent, 'proj-feat');
+const other = path.join(parent, 'proj-other');
 const git = (...args: string[]) =>
   execFileSync('git', ['-c', 'user.name=btmux', '-c', 'user.email=btmux@example.invalid', ...args], {
     cwd: repo,
@@ -47,6 +48,11 @@ assert(window.ok);
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await context.newPage();
+const setSwitcherOpen = (target: typeof page, open: boolean) =>
+  target.evaluate(async (open) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setSwitcherOpen(open);
+  }, open);
 try {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -57,10 +63,7 @@ try {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return !!useStore.getState().config;
   });
-  await page.evaluate(async () => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    useStore.getState().setSwitcherOpen(true);
-  });
+  await setSwitcherOpen(page, true);
   const dialog = page.getByRole('dialog', { name: 'Sessions', exact: true });
   await dialog.waitFor();
 
@@ -91,8 +94,72 @@ try {
   console.log('PASS branch tokens show their own status');
 
   assert.deepEqual(errors, []);
+  await page.close();
+
+  // Routing replaces every WebSocket on the page with a mock that throws on
+  // frames after close(), so this page doesn't assert on page errors.
+  const held: (() => void)[] = [];
+  let holding = true;
+  const scans: string[] = [];
+  const routed = await context.newPage();
+  await routed.routeWebSocket(/\/ws\/files$/, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((message) => {
+      const { type, payload } = JSON.parse(String(message));
+      if (type === 'git_status') scans.push(payload.root);
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      if (holding) held.push(() => socket.send(message));
+      else socket.send(message);
+    });
+  });
+  const until = async (condition: () => boolean) => {
+    const deadline = Date.now() + 10_000;
+    while (!condition()) {
+      assert(Date.now() < deadline, `timed out: ${condition}`);
+      await routed.waitForTimeout(50);
+    }
+  };
+  await routed.goto(`${url}/s/${encodeURIComponent(name)}`);
+  await waitForAsync(routed, async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return useStore.getState().allSessions.length > 0;
+  });
+
+  // Pending scans are joined across reopenings, so none repeats.
+  await setSwitcherOpen(routed, true);
+  await until(() => scans.length === 2);
+  for (const open of [false, true, false, true]) {
+    await setSwitcherOpen(routed, open);
+    await routed.waitForTimeout(100);
+  }
+  assert.deepEqual([...scans].sort(), [repo, feat].sort());
+  console.log('PASS reopening the picker joins pending scans');
+
+  // A changed root list scans only the new root.
+  git('worktree', 'add', '-q', '-b', 'other', other);
+  const otherWindow = await fetch(`${url}/api/sessions/${session.id}/windows`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: 'other-win', cwd: other, select: false }),
+  });
+  assert(otherWindow.ok);
+  await until(() => scans.includes(other));
+  await routed.waitForTimeout(100);
+  assert.deepEqual([...scans].sort(), [repo, feat, other].sort());
+  console.log('PASS a new root joins pending scans');
+
+  // Replies from before the reopening still arrive.
+  holding = false;
+  for (const reply of held) reply();
+  await routed
+    .getByRole('dialog', { name: 'Sessions', exact: true })
+    .getByLabel('1 ahead, 1 changed, 1 untracked', { exact: true })
+    .waitFor();
+  console.log('PASS pending scans report after reopening');
 } catch (error) {
-  await page.screenshot({ path: path.join(tmpdir(), 'btmux-session-git-failure.png') });
+  await context.pages()[0]?.screenshot({ path: path.join(tmpdir(), 'btmux-session-git-failure.png') });
   throw error;
 } finally {
   await browser.close();

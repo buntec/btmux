@@ -206,11 +206,5 @@ function GitStatusIndicators({ status }: { status: GitStatusResult }) {
     counts.ahead = 0;
     counts.behind = 0;
   }
-  return (
-    <GitIndicators
-      counts={counts}
-      branch={status.is_repo_root ? status.head.branch : null}
-      style={{ fontSize: '0.85em' }}
-    />
-  );
+  return <GitIndicators counts={counts} branch={status.is_repo_root ? status.head.branch : null} size="sm" />;
 }

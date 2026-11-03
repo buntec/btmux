@@ -17,7 +17,12 @@ const git = (...args: string[]) =>
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
   });
 git('init', '--initial-branch=main');
-for (let index = 0; index < 57; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
+const hugeLines = Array.from({ length: 30000 }, (_, index) => `huge ${index}`);
+writeFileSync(path.join(repo, 'a-huge.txt'), `${hugeLines.join('\n')}\n`);
+writeFileSync(path.join(repo, 'z-after.txt'), 'after 0\nafter 1\n');
+git('add', '.');
+git('commit', '-m', 'Huge');
+for (let index = 0; index < 56; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
 const readmeContext = 'ctx1\nctx2\nctx3\nctx4\nctx5\n';
 writeFileSync(path.join(repo, 'README'), `${readmeContext}one\n`);
 git('add', 'README');
@@ -28,6 +33,9 @@ writeFileSync(path.join(repo, 'image.bin'), new Uint8Array([0, 1, 2]));
 git('add', '.');
 git('commit', '-m', 'Changes');
 git('commit', '--allow-empty', '-m', 'Empty');
+const untracked = Array.from({ length: 30000 }, (_, index) => `untracked ${index}`);
+writeFileSync(path.join(repo, 'u-huge.txt'), `${untracked.join('\n')}\n`);
+writeFileSync(path.join(repo, 'z-after.txt'), 'after 0\nafter 2\n');
 const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 const response = await fetch(`${url}/api/sessions`, {
   method: 'POST',
@@ -221,8 +229,53 @@ try {
   assert.equal(await summary.getByRole('listitem').count(), 0);
   console.log('PASS commit navigation, filtering and empty commit totals');
 
-  // The preview takes over the window; moving keeps it, a filter or Esc leaves.
   await page.keyboard.press('Escape');
+
+  // Exact totals, capped rows, drawn near the viewport.
+  await page.keyboard.press('/');
+  await page.keyboard.type('Huge');
+  await page.keyboard.press('Enter');
+  await summary.getByRole('status').filter({ hasText: '2 files changed, 30002 insertions(+), 0 deletions(−)' }).waitFor();
+  assert(await changedFile('a-huge.txt').getByText('+30000', { exact: true }).isVisible());
+  assert(await summary.getByText('git show', { exact: false }).isVisible());
+  assert.equal(await preview.getByText('Diff truncated', { exact: true }).count(), 1);
+  const lineCount = (text: string) => preview.getByText(text, { exact: true }).count();
+  assert.equal(await lineCount('huge 0'), 1);
+  assert.equal(await lineCount('huge 19999'), 0, 'distant rows are not drawn');
+  assert(await preview.evaluate((element) => element.querySelectorAll('*').length < 3000));
+  await changedFile('z-after.txt').getByRole('button').press('Enter');
+  await preview.getByText('huge 19999', { exact: true }).waitFor();
+  await preview.getByText('after 1', { exact: true }).waitFor();
+  assert.equal(await lineCount('huge 20000'), 0, 'a file stops at its cap');
+  assert.equal(await lineCount('huge 10000'), 0, 'skipped rows are not drawn');
+  await backToTop.press('Enter');
+  await backToTop.waitFor({ state: 'hidden' });
+  console.log('PASS large commit diffs');
+
+  // The status diff has the same limits, and a new file starts over.
+  await page.keyboard.press('s');
+  const statusRow = (name: string) => page.locator('[data-git-index]', { hasText: name });
+  const statusDiff = page.getByRole('group', { name: 'Diff', exact: true });
+  const statusNodes = () => statusDiff.evaluate((element) => element.querySelectorAll('*').length);
+  await statusRow('u-huge.txt').click();
+  await statusDiff.getByText('untracked 0', { exact: true }).waitFor();
+  await statusDiff.getByText('@@ -0,0 +1,30000 @@ new file', { exact: true }).waitFor();
+  await statusDiff.getByText('Diff truncated', { exact: false }).waitFor({ state: 'attached' });
+  assert((await statusNodes()) < 3000);
+  await statusDiff.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await statusDiff.getByText('untracked 19999', { exact: true }).waitFor();
+  assert.equal(await statusDiff.getByText('untracked 20000', { exact: true }).count(), 0, 'a file stops at its cap');
+  assert.equal(await statusDiff.getByText('untracked 10000', { exact: true }).count(), 0, 'skipped rows are not drawn');
+  await statusRow('z-after.txt').click();
+  await statusDiff.getByText('after 2', { exact: true }).waitFor();
+  assert.equal(await statusDiff.getByText('Diff truncated', { exact: false }).count(), 0);
+  assert((await statusNodes()) < 100);
+  await page.keyboard.press('o');
+  console.log('PASS large status diffs');
+
+  // The preview takes over the window; moving keeps it, a filter or Esc leaves.
   const list = page.locator('[aria-label="Git commit history"]');
   const dialog = page.getByRole('dialog', { name: 'Git', exact: true });
   await list.waitFor();

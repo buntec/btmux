@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@astryxdesign/core/Button';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { useFileStore } from '@/state/fileStore';
@@ -6,6 +6,8 @@ import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { filterGitLog } from '@/lib/gitGraph';
+import type { CommitFileDiff } from '@/protocol/file-messages';
+import { chunkDiffs, DiffRows } from './DiffRows';
 import { Placeholder } from './Placeholder';
 
 function formatDate(timestamp: number): string {
@@ -14,6 +16,98 @@ function formatDate(timestamp: number): string {
     timeStyle: 'short',
   }).format(new Date(timestamp * 1000));
 }
+
+function fileLabel(file: CommitFileDiff) {
+  return file.old_path ? `${file.old_path} → ${file.path}` : file.path;
+}
+
+const ChangedFiles = memo(function ChangedFiles({
+  files,
+  onJump,
+}: {
+  files: CommitFileDiff[];
+  onJump: (path: string) => void;
+}) {
+  return (
+    <List density="compact" aria-label="Changed files" className="gap-0">
+      {files.map((file) => (
+        <ListItem
+          key={`${file.old_path ?? ''}:${file.path}`}
+          className="py-0"
+          onClick={() => onJump(file.path)}
+          label={
+            <Text type="code" size="sm" maxLines={1}>
+              {fileLabel(file)}
+            </Text>
+          }
+          endContent={
+            file.is_binary ? (
+              <Text size="sm" color="secondary">
+                Binary
+              </Text>
+            ) : (
+              <HStack gap={2} vAlign="center" className="flex-none">
+                <Text size="sm" hasTabularNumbers className="text-green-vivid">
+                  +{file.additions}
+                </Text>
+                <Text size="sm" hasTabularNumbers className="text-red-vivid">
+                  −{file.deletions}
+                </Text>
+              </HStack>
+            )
+          }
+        />
+      ))}
+    </List>
+  );
+});
+
+const FilePatches = memo(function FilePatches({
+  files,
+  sections,
+}: {
+  files: CommitFileDiff[];
+  sections: Map<string, HTMLElement>;
+}) {
+  const chunks = useMemo(() => chunkDiffs(files.map((file) => file.hunks)), [files]);
+
+  return (
+    <VStack gap={5}>
+      {files.map((file, fileIndex) => (
+        <VStack
+          as="section"
+          key={`${file.old_path ?? ''}:${file.path}`}
+          ref={(section) => {
+            if (section) sections.set(file.path, section);
+            else sections.delete(file.path);
+          }}
+          gap={2}
+        >
+          <Text type="code" size="sm" weight="medium" maxLines={1}>
+            {fileLabel(file)}
+          </Text>
+
+          {file.is_binary ? (
+            <Text size="sm" color="secondary">
+              Binary file differs
+            </Text>
+          ) : file.hunks.length === 0 && !file.truncated ? (
+            <Text size="sm" color="secondary">
+              No textual changes
+            </Text>
+          ) : (
+            <DiffRows chunks={chunks[fileIndex]} />
+          )}
+          {file.truncated && (
+            <Text size="sm" color="secondary">
+              Diff truncated
+            </Text>
+          )}
+        </VStack>
+      ))}
+    </VStack>
+  );
+});
 
 export function GitCommitDiffPreview() {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -30,6 +124,14 @@ export function GitCommitDiffPreview() {
     setIsScrolled(false);
   }, [gitCommitDiff?.commit_id]);
 
+  const jumpToFile = useCallback((path: string) => {
+    const viewport = viewportRef.current;
+    const section = fileSections.current.get(path);
+    if (!viewport || !section) return;
+    viewport.scrollTop += section.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    viewport.parentElement?.closest<HTMLElement>('[tabindex="-1"]')?.focus({ preventScroll: true });
+  }, []);
+
   if (!commit) {
     return <Placeholder>Select a commit</Placeholder>;
   }
@@ -38,27 +140,7 @@ export function GitCommitDiffPreview() {
     return <Placeholder isLoading>Loading commit diff…</Placeholder>;
   }
 
-  const files = gitCommitDiff.files.map((file) => {
-    let additions = 0;
-    let deletions = 0;
-    for (const hunk of file.hunks) {
-      for (const line of hunk.lines) {
-        if (line.origin === '+') additions += 1;
-        if (line.origin === '-') deletions += 1;
-      }
-    }
-    return { file, additions, deletions };
-  });
-  const additions = files.reduce((sum, file) => sum + file.additions, 0);
-  const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
-
-  const jumpToFile = (path: string) => {
-    const viewport = viewportRef.current;
-    const section = fileSections.current.get(path);
-    if (!viewport || !section) return;
-    viewport.scrollTop += section.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
-    viewport.parentElement?.closest<HTMLElement>('[tabindex="-1"]')?.focus({ preventScroll: true });
-  };
+  const { files, total_files: totalFiles, additions, deletions } = gitCommitDiff;
 
   return (
     <VStack className="relative h-full min-h-0">
@@ -95,107 +177,25 @@ export function GitCommitDiffPreview() {
           </VStack>
 
           <VStack gap={0} role="region" aria-label="Commit change summary" className="border-b border-border pb-3">
-            {files.length > 0 && (
-              <List density="compact" aria-label="Changed files" className="gap-0">
-                {files.map(({ file, additions, deletions }) => (
-                  <ListItem
-                    key={`${file.old_path ?? ''}:${file.path}`}
-                    className="py-0"
-                    onClick={() => jumpToFile(file.path)}
-                    label={
-                      <Text type="code" size="sm" maxLines={1}>
-                        {file.old_path ? `${file.old_path} → ${file.path}` : file.path}
-                      </Text>
-                    }
-                    endContent={
-                      file.is_binary ? (
-                        <Text size="sm" color="secondary">
-                          Binary
-                        </Text>
-                      ) : (
-                        <HStack gap={2} vAlign="center" className="flex-none">
-                          <Text size="sm" hasTabularNumbers className="text-green-vivid">
-                            +{additions}
-                          </Text>
-                          <Text size="sm" hasTabularNumbers className="text-red-vivid">
-                            −{deletions}
-                          </Text>
-                        </HStack>
-                      )
-                    }
-                  />
-                ))}
-              </List>
-            )}
+            {files.length > 0 && <ChangedFiles files={files} onJump={jumpToFile} />}
             <Text size="sm" color="secondary" role="status">
-              {files.length} {files.length === 1 ? 'file' : 'files'} changed, {additions}{' '}
+              {totalFiles} {totalFiles === 1 ? 'file' : 'files'} changed, {additions}{' '}
               {additions === 1 ? 'insertion' : 'insertions'}(+), {deletions}{' '}
               {deletions === 1 ? 'deletion' : 'deletions'}
               (−)
             </Text>
+            {(files.length < totalFiles || files.some((file) => file.truncated)) && (
+              <Text size="sm" color="secondary">
+                Too large to show in full. For all of it, run{' '}
+                <Text type="code" size="sm">
+                  git show {commit.short_id}
+                </Text>
+              </Text>
+            )}
           </VStack>
 
           {!files.length && <Text color="secondary">No changes</Text>}
-          <VStack gap={5}>
-            {gitCommitDiff.files.map((file) => (
-              <VStack
-                as="section"
-                key={`${file.old_path ?? ''}:${file.path}`}
-                ref={(section) => {
-                  if (section) fileSections.current.set(file.path, section);
-                  else fileSections.current.delete(file.path);
-                }}
-                gap={2}
-              >
-                <Text type="code" size="sm" weight="medium" maxLines={1}>
-                  {file.old_path ? `${file.old_path} → ${file.path}` : file.path}
-                </Text>
-
-                {file.is_binary ? (
-                  <Text size="sm" color="secondary">
-                    Binary file differs
-                  </Text>
-                ) : file.hunks.length === 0 ? (
-                  <Text size="sm" color="secondary">
-                    No textual changes
-                  </Text>
-                ) : (
-                  <VStack gap={4}>
-                    {file.hunks.map((hunk, hunkIndex) => (
-                      <VStack key={hunkIndex} gap={1}>
-                        <Text type="inherit" className="text-purple-vivid [overflow-wrap:anywhere]">
-                          {hunk.header}
-                        </Text>
-                        <VStack gap={0}>
-                          {hunk.lines.map((line, lineIndex) => {
-                            const added = line.origin === '+';
-                            const removed = line.origin === '-';
-                            const bgClass = added ? 'bg-green-vivid/15' : removed ? 'bg-red-vivid/15' : '';
-                            const textClass = added ? 'text-green-vivid' : removed ? 'text-red-vivid' : '';
-
-                            return (
-                              <HStack key={lineIndex} gap={0} className={`${bgClass} ${textClass} px-2`}>
-                                <Text type="inherit" className="w-4 shrink-0 select-none text-secondary opacity-60">
-                                  {line.origin === ' ' ? ' ' : line.origin}
-                                </Text>
-                                <Text
-                                  type="inherit"
-                                  color="inherit"
-                                  className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]"
-                                >
-                                  {line.content}
-                                </Text>
-                              </HStack>
-                            );
-                          })}
-                        </VStack>
-                      </VStack>
-                    ))}
-                  </VStack>
-                )}
-              </VStack>
-            ))}
-          </VStack>
+          <FilePatches files={files} sections={fileSections.current} />
         </VStack>
       </ScrollableArea>
       {isScrolled && (

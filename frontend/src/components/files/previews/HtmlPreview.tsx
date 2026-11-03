@@ -1,17 +1,11 @@
 import { useLayoutEffect, useRef } from 'react';
+import { previewUrl } from '@/lib/previewUrl';
 import { useFileStore } from '@/state/fileStore';
 
 const HTML_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
 
 export function isHtmlFile(path: string | null): boolean {
   return HTML_EXTENSIONS.has(path?.split('.').pop()?.toLowerCase() ?? '');
-}
-
-// A path URL, so the page's relative links and assets resolve.
-function previewUrl(path: string): string {
-  const unixPath = path.startsWith('/') ? path : path.replace(/\\/g, '/');
-  const segments = unixPath.split('/').filter(Boolean).map(encodeURIComponent);
-  return `/api/preview/${segments.join('/')}`;
 }
 
 export function HtmlPreview() {
@@ -26,11 +20,14 @@ export function HtmlPreview() {
     frame?.closest<HTMLElement>('[tabindex="-1"]')?.focus();
   };
 
+  const onBlur = () =>
+    window.setTimeout(() => {
+      // Keys in a nested frame, which may be cross-origin, never reach the listener below.
+      const nested = frameRef.current?.contentDocument?.activeElement?.matches('iframe, frame');
+      if (!forwardingKeys.current || nested) returnFocus();
+    });
+
   useLayoutEffect(() => {
-    const onBlur = () =>
-      window.setTimeout(() => {
-        if (!forwardingKeys.current) returnFocus();
-      });
     window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('blur', onBlur);
@@ -53,6 +50,7 @@ export function HtmlPreview() {
       returnFocus();
       return;
     }
+    win?.addEventListener('blur', onBlur);
     win?.addEventListener(
       'keydown',
       (e) => {

@@ -31,6 +31,14 @@ writeFileSync(path.join(dir, 'b.html'), '<!doctype html><p id="second">Second</p
 writeFileSync(path.join(dir, 'style.css'), '#title { color: rgb(1, 2, 3); }');
 writeFileSync(path.join(dir, 'pixel.png'), pixel);
 writeFileSync(path.join(dir, 'z.txt'), 'plain\n');
+writeFileSync(path.join(dir, 'zz-child.html'), '<!doctype html><p id="child">Child</p><a id="onward" href="b.html">on</a>');
+writeFileSync(
+  path.join(dir, 'zz-nested.html'),
+  `<!doctype html>
+<p id="outer">Outer</p>
+<a id="ping" href="#next" ping="/api/server/shutdown">next</a>
+<iframe src="zz-child.html"></iframe>`,
+);
 const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 const response = await fetch(`${url}/api/sessions`, {
   method: 'POST',
@@ -90,6 +98,9 @@ try {
       assert.equal(direct.status(), 200);
       assert.equal(direct.headers()['content-type'], 'text/html; charset=utf-8');
       assert.match(direct.headers()['content-security-policy'], /sandbox allow-same-origin;.*script-src 'none'/);
+      // A UNC root survives the proxy; on Unix its extra slashes are harmless.
+      const rooted = await page.request.get(`${url}/api/preview/%2F%2F${encodeURI(dir.slice(1))}/a%20page.html`);
+      assert.equal(rooted.status(), 200);
 
       // Keys reach the file browser from inside the frame.
       await frame.locator('#title').click();
@@ -125,6 +136,40 @@ try {
       for (let i = 0; i < 4; i++) await page.keyboard.press('j');
       await page.locator('[data-preview-viewport]').getByText('plain').first().waitFor();
       assert.equal(await page.locator('[data-html-preview]').count(), 0);
+
+      for (let i = 0; i < 2; i++) await page.keyboard.press('j');
+      const child = frame.frameLocator('iframe');
+      const source = page.locator('[data-preview-viewport]').getByText('ping=').first();
+      await child.locator('#child').waitFor();
+
+      // A link's ping can't reach the API.
+      const delivered: string[] = [];
+      page.on('response', (response) => {
+        if (response.request().resourceType() === 'ping') delivered.push(response.url());
+      });
+      await frame.locator('#ping').click();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      assert.deepEqual(delivered, []);
+      assert((await fetch(`${url}/api/info`, { headers })).ok, 'a ping shut the server down');
+
+      // Nested frames can't keep keys, whichever frame had focus.
+      const clickChild = async () => {
+        await child.locator('#child').click();
+        await page.waitForFunction(() => document.activeElement?.tagName !== 'IFRAME');
+      };
+      await frame.locator('#outer').click();
+      await clickChild();
+      await page.keyboard.press('v');
+      await source.waitFor();
+      await page.keyboard.press('v');
+      await clickChild();
+      await page.keyboard.press('v');
+      await source.waitFor();
+      await page.keyboard.press('v');
+
+      // Their links still work.
+      await child.locator('#onward').click();
+      await child.locator('#second').waitFor();
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

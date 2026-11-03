@@ -906,6 +906,69 @@ mod pane_notification_tests {
     }
 
     #[tokio::test]
+    async fn is_utf8_reads_only_the_head() {
+        let dir = std::env::temp_dir().join(format!("btmux-charset-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let limit = CHARSET_SNIFF_BYTES as usize;
+        let split_char = [vec![b'a'; limit - 1], "ü".as_bytes().to_vec()].concat();
+        let late_latin1 = [vec![b'a'; limit], vec![0xfc]].concat();
+        let cases: [(&[u8], bool); 5] = [
+            (b"", true),
+            ("Grüße".as_bytes(), true),
+            (b"Gr\xfc\xdfe", false),
+            // A short file may not end inside a character.
+            (b"a\xc3", false),
+            (&split_char, true),
+        ];
+        let file = dir.join("a.html");
+        for (bytes, expected) in cases {
+            std::fs::write(&file, bytes).unwrap();
+            assert_eq!(is_utf8(file.to_str().unwrap()).await, expected);
+        }
+        std::fs::write(&file, late_latin1).unwrap();
+        assert!(is_utf8(file.to_str().unwrap()).await);
+        assert!(!is_utf8(dir.join("missing").to_str().unwrap()).await);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn preview_route_decodes_a_unc_root_and_keeps_ranges_and_policy() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let dir = std::env::temp_dir().join(format!("btmux-preview-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.html"), "<p>Grüße</p>").unwrap();
+        let app = Router::new().route("/api/preview/{*path}", get(serve_preview_file));
+        let path = dir.to_str().unwrap().trim_start_matches('/');
+
+        // On Unix the extra slashes are harmless, so this checks the decoding.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/preview/%2F%2F{path}/a.html"))
+                    .header(header::RANGE, "bytes=0-0")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/html; charset=utf-8"
+        );
+        let policy = response.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+        assert!(policy.contains("connect-src 'none'"));
+        let body = axum::body::to_bytes(response.into_body(), 16)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"<");
+    }
+
+    #[tokio::test]
     async fn agent_diagnostics_are_authenticated_and_keep_unknown_agents_present() {
         use axum::http::Request;
         use tower::ServiceExt;
@@ -1558,10 +1621,13 @@ struct RawFileQuery {
 // credentials when opened directly.
 const RAW_FILE_POLICY: &str = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
 // Keeps the origin so a page's own assets get the auth cookie, which is safe
-// only because nothing in it can run: no scripts, and no requests elsewhere.
+// only because nothing in it can run or send: no scripts or forms, no requests
+// elsewhere, and no <a ping>, which would POST to the API with that cookie.
 const PREVIEW_POLICY: &str = "sandbox allow-same-origin; default-src 'self' data:; \
-    style-src 'self' data: 'unsafe-inline'; script-src 'none'; object-src 'none'; \
+    connect-src 'none'; style-src 'self' data: 'unsafe-inline'; script-src 'none'; object-src 'none'; \
     frame-ancestors 'self'";
+
+const CHARSET_SNIFF_BYTES: u64 = 1024 * 1024;
 
 async fn serve_raw_file(
     Query(query): Query<RawFileQuery>,
@@ -1577,6 +1643,10 @@ async fn serve_preview_file(Path(path): Path<String>, request: axum::extract::Re
     } else {
         format!("/{path}")
     };
+    // A page's `..` links can climb past a Windows root.
+    if !std::path::Path::new(&path).is_absolute() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let mut response = serve_file(&path, PREVIEW_POLICY, request).await;
     // Undeclared, browsers assume a legacy encoding, and this header beats a
     // <meta charset>, so only claim UTF-8 for a file that is.
@@ -1584,17 +1654,36 @@ async fn serve_preview_file(Path(path): Path<String>, request: axum::extract::Re
         .headers()
         .get(header::CONTENT_TYPE)
         .is_some_and(|content_type| content_type == "text/html");
-    if is_html
-        && tokio::fs::read(&path)
-            .await
-            .is_ok_and(|bytes| std::str::from_utf8(&bytes).is_ok())
-    {
+    if is_html && is_utf8(&path).await {
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             "text/html; charset=utf-8".parse().unwrap(),
         );
     }
     response
+}
+
+/// Whether a file is UTF-8, judging a large one by its head, so that no request
+/// buffers it.
+async fn is_utf8(path: &str) -> bool {
+    use tokio::io::AsyncReadExt;
+    let Ok(file) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+    let mut head = Vec::new();
+    if file
+        .take(CHARSET_SNIFF_BYTES)
+        .read_to_end(&mut head)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    match std::str::from_utf8(&head) {
+        Ok(_) => true,
+        // The head may end inside a character.
+        Err(e) => e.error_len().is_none() && head.len() as u64 == CHARSET_SNIFF_BYTES,
+    }
 }
 
 /// Streams a file, with Range support, under a content security policy.

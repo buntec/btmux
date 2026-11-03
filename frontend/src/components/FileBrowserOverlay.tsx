@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
@@ -577,84 +577,70 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     }
   }, [pendingRename]);
 
-  // Auto-preview diff when git focused index changes
+  const gitPreviewItem = useMemo(() => {
+    if (!isGitMode || gitView !== 'status' || !gitStatus) return null;
+    const item = visibleGitItems(gitStatus, gitExpandedSections, isFilterActive, filterQuery)[gitFocusedIndex];
+    return item && item.kind !== 'section-header' && item.path ? item : null;
+  }, [isGitMode, gitView, gitStatus, gitExpandedSections, isFilterActive, filterQuery, gitFocusedIndex]);
+  const gitPreviewPath = gitPreviewItem?.path;
+  const gitPreviewStaged = gitPreviewItem?.section === 'staged';
+
+  // Auto-preview the focused item's diff. A new status may change it; a filter alone doesn't.
   useEffect(() => {
-    if (!isGitMode || gitView !== 'status' || !gitStatus) {
-      store.getState().setGitDiff(null);
-      return;
-    }
-    const items = visibleGitItems(gitStatus, gitExpandedSections, isFilterActive, filterQuery);
-    const item = items[gitFocusedIndex];
-    if (!item || item.kind === 'section-header' || !item.path) {
+    if (!gitPreviewPath) {
       store.getState().setGitDiff(null);
       return;
     }
     const gen = ++gitPreviewGenRef.current;
-    const staged = item.section === 'staged';
     fileSend('git_diff', {
-      path: item.path,
-      staged,
+      path: gitPreviewPath,
+      staged: gitPreviewStaged,
       cwd: currentPath,
       ignore_all_space: ignoreAllSpace,
       context_lines: diffContext,
     }).then(
       (resp) => {
         if (gitPreviewGenRef.current === gen) {
-          store.getState().setGitDiff(resp.payload as unknown as FileDiff);
+          const diff = resp.payload as unknown as FileDiff;
+          const shown = store.getState().gitDiff;
+          // An unchanged diff keeps its rows, which may be many.
+          if (shown?.path !== diff.path || JSON.stringify(shown) !== JSON.stringify(diff)) {
+            store.getState().setGitDiff(diff);
+          }
         }
       },
       () => {},
     );
-  }, [
-    isGitMode,
-    gitView,
-    gitFocusedIndex,
-    gitStatus,
-    gitExpandedSections,
-    isFilterActive,
-    filterQuery,
-    fileSend,
-    currentPath,
-    ignoreAllSpace,
-    diffContext,
-    store,
-  ]);
+  }, [gitPreviewPath, gitPreviewStaged, gitStatus, fileSend, currentPath, ignoreAllSpace, diffContext, store]);
 
+  const gitPreviewCommitId = useMemo(() => {
+    if (!isGitMode || gitView !== 'log' || !gitLog) return undefined;
+    return filterGitLog(gitLog.commits, isFilterActive ? filterQuery : '')[gitLogFocusedIndex]?.id;
+  }, [isGitMode, gitView, gitLog, isFilterActive, filterQuery, gitLogFocusedIndex]);
+
+  // gitLog: a history change clears the diff before reloading the log.
   useEffect(() => {
-    if (!isGitMode || gitView !== 'log' || !gitLog) {
-      store.getState().setGitCommitDiff(null);
-      return;
-    }
-
-    const commit = filterGitLog(gitLog.commits, isFilterActive ? filterQuery : '')[gitLogFocusedIndex];
-    if (!commit) {
+    if (!gitPreviewCommitId) {
       store.getState().setGitCommitDiff(null);
       return;
     }
 
     const gen = ++gitCommitPreviewGenRef.current;
     // Keep the shown diff while only the context changes.
-    if (store.getState().gitCommitDiff?.commit_id !== commit.id) store.getState().setGitCommitDiff(null);
-    fileSend('git_commit_diff', { commit_id: commit.id, cwd: currentPath, context_lines: diffContext }).then(
+    if (store.getState().gitCommitDiff?.commit_id !== gitPreviewCommitId) store.getState().setGitCommitDiff(null);
+    fileSend('git_commit_diff', { commit_id: gitPreviewCommitId, cwd: currentPath, context_lines: diffContext }).then(
       (resp) => {
         if (gitCommitPreviewGenRef.current === gen) {
-          store.getState().setGitCommitDiff(resp.payload as unknown as GitCommitDiffResult);
+          const diff = resp.payload as unknown as GitCommitDiffResult;
+          const shown = store.getState().gitCommitDiff;
+          if (shown?.commit_id !== diff.commit_id || JSON.stringify(shown) !== JSON.stringify(diff)) {
+            store.getState().setGitCommitDiff(diff);
+          }
         }
       },
       () => {},
     );
-  }, [
-    isGitMode,
-    gitView,
-    gitLog,
-    gitLogFocusedIndex,
-    isFilterActive,
-    filterQuery,
-    fileSend,
-    currentPath,
-    diffContext,
-    store,
-  ]);
+  }, [gitPreviewCommitId, gitLog, fileSend, currentPath, diffContext, store]);
 
   useEffect(() => {
     if (initialized.current) return;

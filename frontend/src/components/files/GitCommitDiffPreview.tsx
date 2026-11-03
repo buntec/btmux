@@ -21,19 +21,25 @@ function fileLabel(file: CommitFileDiff) {
   return file.old_path ? `${file.old_path} → ${file.path}` : file.path;
 }
 
-const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
-
-/** Holds `section` at the viewport's top as lazy rows above it draw and wrap, until the user may scroll. */
+/** Holds `section` at the viewport's top as lazy rows above it draw and wrap, until anything else scrolls. */
 function pinToTop(viewport: HTMLElement, content: HTMLElement, section: HTMLElement) {
+  let aligned = 0;
   const align = () => {
     viewport.scrollTop += section.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    aligned = viewport.scrollTop;
   };
   const observer = new ResizeObserver(align);
+  const onScroll = () => {
+    if (Math.abs(viewport.scrollTop - aligned) > 1) release();
+  };
   const release = () => {
     observer.disconnect();
-    USER_SCROLL_EVENTS.forEach((type) => window.removeEventListener(type, release, true));
+    viewport.removeEventListener('scroll', onScroll);
+    viewport.style.overflowAnchor = '';
   };
-  USER_SCROLL_EVENTS.forEach((type) => window.addEventListener(type, release, { capture: true, passive: true }));
+  // Scroll anchoring would look like someone else scrolling.
+  viewport.style.overflowAnchor = 'none';
+  viewport.addEventListener('scroll', onScroll, { passive: true });
   observer.observe(content);
   align();
   return release;
@@ -211,7 +217,10 @@ export function GitCommitDiffPreview() {
               <Text size="sm" color="secondary">
                 Too large to show in full. For all of it, run{' '}
                 <Text type="code" size="sm">
-                  git show {commit.short_id}
+                  {/* The preview diffs against the first parent; `git show` combines a merge's. */}
+                  {commit.parents.length > 1
+                    ? `git diff ${commit.short_id}^ ${commit.short_id}`
+                    : `git show ${commit.short_id}`}
                 </Text>
               </Text>
             )}

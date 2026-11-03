@@ -524,7 +524,7 @@ fn commit_diff_from(commit_id: String, diff: &git2::Diff<'_>) -> Result<GitCommi
     let mut budget = DiffBudget::new(MAX_COMMIT_DIFF_LINES);
 
     for delta_idx in 0..diff.deltas().len() {
-        let delta = diff.deltas().nth(delta_idx).unwrap();
+        let delta = diff.get_delta(delta_idx).unwrap();
         let patch = git2::Patch::from_diff(diff, delta_idx).ok().flatten();
         let (_, additions, deletions) = patch
             .as_ref()
@@ -591,14 +591,18 @@ impl DiffBudget {
 
     /// The line's capped text, or `None` once the budget is spent.
     fn take_line(&mut self, content: &[u8]) -> Option<String> {
-        let size = content.len().min(MAX_DIFF_LINE_BYTES);
-        if self.lines == 0 || self.file_lines == 0 || self.bytes < size {
+        if self.lines == 0 || self.file_lines == 0 {
+            return None;
+        }
+        // Charged as sent: invalid bytes grow to U+FFFD.
+        let text = capped_line_content(content);
+        if self.bytes < text.len() {
             return None;
         }
         self.lines -= 1;
         self.file_lines -= 1;
-        self.bytes -= size;
-        Some(capped_line_content(content))
+        self.bytes -= text.len();
+        Some(text)
     }
 }
 
@@ -896,7 +900,7 @@ fn git_diff_file_sync(
     let mut old_path: Option<String> = None;
 
     for patch_idx in 0..diff.deltas().len() {
-        let delta = diff.deltas().nth(patch_idx).unwrap();
+        let delta = diff.get_delta(patch_idx).unwrap();
         let new_path = delta
             .new_file()
             .path()
@@ -910,7 +914,6 @@ fn git_diff_file_sync(
         if staged && delta_path.as_deref() != Some(path) {
             continue;
         }
-        is_binary = delta.flags().is_binary();
         if let Some(p) = new_path {
             diff_path = p;
         }
@@ -919,7 +922,10 @@ fn git_diff_file_sync(
             (old != diff_path).then_some(old)
         });
 
-        let Ok(Some(patch)) = git2::Patch::from_diff(&diff, patch_idx) else {
+        let patch = git2::Patch::from_diff(&diff, patch_idx);
+        // Loading the patch detects binary content.
+        is_binary = delta.flags().is_binary();
+        let Ok(Some(patch)) = patch else {
             continue;
         };
         let (patch_hunks, patch_truncated) = patch_hunks(&patch, &mut budget)?;
@@ -1079,8 +1085,8 @@ mod tests {
     use super::{
         count_untracked_lines, git_commit_diff_sync, git_commit_sync,
         git_delete_untracked_file_sync, git_diff_file_sync, git_log_sync, git_status_sync,
-        git_unstage_file_sync, MAX_COMMIT_DIFF_FILES, MAX_COMMIT_DIFF_LINES, MAX_DIFF_FILE_LINES,
-        MAX_DIFF_LINE_BYTES,
+        git_unstage_file_sync, MAX_COMMIT_DIFF_FILES, MAX_COMMIT_DIFF_LINES, MAX_DIFF_BYTES,
+        MAX_DIFF_FILE_LINES, MAX_DIFF_LINE_BYTES,
     };
     use git2::{Repository, Signature};
     use std::fs;
@@ -1525,6 +1531,48 @@ mod tests {
         );
         assert!(diff.files[0].diff.truncated);
         assert!(!diff.files[1].diff.truncated);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tracked_binary_change_is_reported_as_binary() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        fs::write(root.join("image.bin"), [0u8, 1, 2]).unwrap();
+        commit_all(&root);
+        fs::write(root.join("image.bin"), [0u8, 3, 4]).unwrap();
+
+        let diff = git_diff_file_sync(&root, "image.bin", false, false, 3).unwrap();
+        assert!(diff.is_binary);
+        assert!(diff.hunks.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn byte_budget_counts_replacement_characters() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        // Half the budget in bytes, 1.5 times it once each byte becomes U+FFFD.
+        let mut line = vec![0xE9u8; 999];
+        line.push(b'\n');
+        fs::write(root.join("latin1.txt"), line.repeat(MAX_DIFF_BYTES / 2000)).unwrap();
+        let id = commit_all(&root);
+
+        let diff = git_commit_diff_sync(&root, &id, 3).unwrap();
+        let file = &diff.files[0].diff;
+        assert!(!file.is_binary);
+        assert!(file.truncated);
+        let sent: usize = file
+            .hunks
+            .iter()
+            .flat_map(|hunk| &hunk.lines)
+            .map(|line| line.content.len())
+            .sum();
+        assert!(sent <= MAX_DIFF_BYTES);
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -29,7 +29,14 @@ writeFileSync(path.join(repo, 'c-wrap.txt'), `${wrapLines}\n`);
 writeFileSync(path.join(repo, 'z-last.txt'), 'last\n');
 git('add', '.');
 git('commit', '-m', 'Wrap');
-for (let index = 0; index < 55; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
+git('switch', '-c', 'side');
+writeFileSync(path.join(repo, 'side.txt'), `${'y'.repeat(5000)}\n`);
+git('add', '.');
+git('commit', '-m', 'Side');
+git('switch', 'main');
+git('commit', '--allow-empty', '-m', 'Before merge');
+git('merge', '--no-ff', '-m', 'Merged', 'side');
+for (let index = 0; index < 52; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
 const readmeContext = 'ctx1\nctx2\nctx3\nctx4\nctx5\n';
 writeFileSync(path.join(repo, 'README'), `${readmeContext}one\n`);
 git('add', 'README');
@@ -42,6 +49,8 @@ git('commit', '-m', 'Changes');
 git('commit', '--allow-empty', '-m', 'Empty');
 const untracked = Array.from({ length: 30000 }, (_, index) => `untracked ${index}`);
 writeFileSync(path.join(repo, 'u-huge.txt'), `${untracked.join('\n')}\n`);
+const nextFile = Array.from({ length: 1000 }, (_, index) => `next ${index}`);
+writeFileSync(path.join(repo, 'u-next.txt'), `${nextFile.join('\n')}\n`);
 writeFileSync(path.join(repo, 'z-after.txt'), 'after 0\nafter 2\n');
 const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 const response = await fetch(`${url}/api/sessions`, {
@@ -59,6 +68,14 @@ const page = await context.newPage();
 try {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  const sentFrames: string[] = [];
+  page.on('websocket', (socket) => {
+    socket.on('framesent', ({ payload }) => {
+      if (typeof payload === 'string') sentFrames.push(payload);
+    });
+  });
+  const framesSent = (kind: string) => sentFrames.filter((frame) => frame.includes(kind)).length;
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   await page.goto(`${url}/s/${encodeURIComponent(session.name)}`);
   await page.getByLabel('Access token').fill(token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -240,9 +257,13 @@ try {
 
   // A jump holds while the wrapped chunks above it draw, until the user scrolls.
   await page.keyboard.press('/');
-  await page.keyboard.type('Wrap');
-  await page.keyboard.press('Enter');
+  await page.keyboard.type('Wr');
   await summary.getByRole('status').filter({ hasText: '4 files changed' }).waitFor();
+  const commitFetches = framesSent('git_commit_diff');
+  await page.keyboard.type('ap');
+  await pause(300);
+  assert.equal(framesSent('git_commit_diff'), commitFetches, 'a filter keeping the commit does not refetch it');
+  await page.keyboard.press('Enter');
   const jumpSettled = async (name: string) => {
     const section = preview.locator('section').filter({ has: page.getByText(name, { exact: true }) });
     const offset = () =>
@@ -269,6 +290,16 @@ try {
   assert((await preview.evaluate((element) => element.scrollTop)) !== pinnedScrollTop);
   await backToTop.click();
   await backToTop.waitFor({ state: 'hidden' });
+  // A scroll with no input event, as assistive tech makes, lets go too.
+  await changedFile('b-target.txt').getByText('b-target.txt', { exact: true }).click();
+  assert(Math.abs(await jumpSettled('b-target.txt')) < 1);
+  await preview.evaluate((element) => {
+    const undrawn = element.querySelector('section div[style*="height"]')!;
+    element.scrollTop += undrawn.getBoundingClientRect().top - element.getBoundingClientRect().top;
+  });
+  assert(Math.abs(await jumpSettled('b-target.txt')) > 100, 'any other scroll lets go of the target');
+  await backToTop.click();
+  await backToTop.waitFor({ state: 'hidden' });
   await changedFile('z-last.txt').getByText('z-last.txt', { exact: true }).click();
   const lastOffset = await jumpSettled('z-last.txt');
   assert(lastOffset >= -1 && lastOffset < viewportBox.height, 'a target that cannot reach the top stays visible');
@@ -277,6 +308,15 @@ try {
   await page.keyboard.press('/');
   await page.keyboard.press('Escape');
   console.log('PASS jumps past wrapped rows');
+
+  // A merge's preview diffs against its first parent, which `git show` wouldn't print.
+  await page.keyboard.press('/');
+  await page.keyboard.type('Merged');
+  await summary.getByRole('status').filter({ hasText: '1 file changed' }).waitFor();
+  await summary.getByText(/^git diff \w+\^ \w+$/).waitFor();
+  assert.equal(await summary.getByText('git show', { exact: false }).count(), 0);
+  await page.keyboard.press('Escape');
+  console.log('PASS full diff command for merges');
 
   // Exact totals, capped rows, drawn near the viewport.
   await page.keyboard.press('/');
@@ -318,6 +358,19 @@ try {
   await statusDiff.getByText('untracked 19999', { exact: true }).waitFor();
   assert.equal(await statusDiff.getByText('untracked 20000', { exact: true }).count(), 0, 'a file stops at its cap');
   assert.equal(await statusDiff.getByText('untracked 10000', { exact: true }).count(), 0, 'skipped rows are not drawn');
+  const statusFetches = framesSent('git_diff');
+  const keptDiff = await page.evaluate(async () => {
+    const { useFileStore } = await import('/src/state/fileStore.ts' as string);
+    const shown = useFileStore.getState().gitDiff;
+    useFileStore.getState().setGitStatus({ ...useFileStore.getState().gitStatus });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return useFileStore.getState().gitDiff === shown;
+  });
+  assert(framesSent('git_diff') > statusFetches, 'a new status refetches the diff');
+  assert(keptDiff, 'an unchanged diff keeps its rows');
+  await statusRow('u-next.txt').click();
+  await statusDiff.getByText('next 0', { exact: true }).waitFor();
+  assert.equal(await statusDiff.evaluate((element) => element.scrollTop), 0, 'a new file starts at the top');
   await statusRow('z-after.txt').click();
   await statusDiff.getByText('after 2', { exact: true }).waitFor();
   assert.equal(await statusDiff.getByText('Diff truncated', { exact: false }).count(), 0);

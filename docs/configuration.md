@@ -148,6 +148,17 @@ Text in its address bar that isn't a URL is searched with DuckDuckGo, or with
 search-url = "https://www.google.com/search?q=%s"
 ```
 
+It blocks known ad servers (by host name, so not ads a site serves itself, and
+the empty space they leave stays) and keeps video and audio from playing until
+you click or press a key. Either can be turned off; changing them restarts the
+browser and reopens your page:
+
+```toml
+[browser]
+block-ads = false
+block-autoplay = false
+```
+
 With `"vscode"`, `<prefix> + e` toggles VS Code over the active pane, opened
 in the pane's folder; pressing Esc twice quickly also hides it. The first time,
 btmux asks you to accept the VS Code Server license (once per profile).

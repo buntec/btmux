@@ -1,0 +1,88 @@
+# Ad servers the browser surface doesn't resolve (`[browser] block-ads`).
+# Each line also covers its subdomains.
+
+# Google
+2mdn.net
+adservice.google.com
+adtrafficquality.google
+doubleclick.net
+googleadservices.com
+googlesyndication.com
+googletagservices.com
+
+# Exchanges and supply-side platforms
+33across.com
+360yield.com
+3lift.com
+adform.net
+adition.com
+adnxs.com
+adsrvr.org
+advertising.com
+amazon-adsystem.com
+appnexus.com
+bidswitch.net
+casalemedia.com
+connectad.io
+contextweb.com
+criteo.com
+criteo.net
+gumgum.com
+indexww.com
+lijit.com
+media.net
+onetag-sys.com
+openx.net
+pubmatic.com
+rubiconproject.com
+sharethrough.com
+smaato.net
+smartadserver.com
+sovrn.com
+spotx.tv
+spotxchange.com
+stickyadstv.com
+triplelift.com
+yieldlab.net
+yieldmo.com
+
+# Native and content recommendation
+mgid.com
+nativo.com
+outbrain.com
+plista.com
+readpeak.com
+revcontent.com
+taboola.com
+zemanta.com
+
+# Video
+adnami.io
+adswizz.com
+aniview.com
+connatix.com
+primis.tech
+seedtag.com
+teads.tv
+undertone.com
+vidazoo.com
+
+# Ad delivery and verification
+adroll.com
+adsafeprotected.com
+ads-twitter.com
+ads.linkedin.com
+ads.yahoo.com
+brandmetrics.com
+bmtrcs.com
+doubleverify.com
+flashtalking.com
+mathtag.com
+moatads.com
+serving-sys.com
+tradedoubler.com
+
+# Regional
+adnz.co
+gbads.net
+ligatus.com

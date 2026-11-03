@@ -547,12 +547,26 @@ pub struct VscodeConfig {
 }
 
 /// `[browser]`: the browser surface.
-#[derive(Deserialize, Clone, Debug, PartialEq, Default)]
+#[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct BrowserConfig {
     /// Where the address bar sends text that isn't a URL; `%s` is the text.
     #[serde(deserialize_with = "search_url")]
     pub search_url: Option<String>,
+    /// Don't resolve known ad servers.
+    pub block_ads: bool,
+    /// Keep media from playing until the user clicks or presses a key.
+    pub block_autoplay: bool,
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            search_url: None,
+            block_ads: true,
+            block_autoplay: true,
+        }
+    }
 }
 
 fn search_url<'de, D: serde::Deserializer<'de>>(
@@ -1756,6 +1770,8 @@ pub fn generate_config_toml() -> String {
 # The browser surface (prefix + b).
 # [browser]
 # search-url = "https://duckduckgo.com/?q=%s"   # where the address bar sends text that isn't a URL
+# block-ads = true        # don't resolve known ad servers
+# block-autoplay = true   # keep media from playing until you click or press a key
 
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.
@@ -2718,6 +2734,15 @@ palette:
             .join("\n");
         let file: FileConfig = toml::from_str(&table).unwrap();
         assert!(file.browser.search_url.is_some());
+    }
+
+    #[test]
+    fn browser_blocking_defaults_on_and_can_be_disabled() {
+        let browser = FileConfig::default().browser;
+        assert!(browser.block_ads && browser.block_autoplay);
+        let file: FileConfig =
+            toml::from_str("[browser]\nblock-ads = false\nblock-autoplay = false\n").unwrap();
+        assert!(!file.browser.block_ads && !file.browser.block_autoplay);
     }
 
     #[test]

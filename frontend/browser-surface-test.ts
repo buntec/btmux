@@ -35,6 +35,88 @@ addEventListener('click', (e) => {
   report('clicked');
 });
 </script>`;
+const silence = (() => {
+  const samples = 16000;
+  const wav = Buffer.alloc(44 + samples, 128);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + samples, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24);
+  wav.writeUInt32LE(8000, 28);
+  wav.writeUInt16LE(1, 32);
+  wav.writeUInt16LE(8, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(samples, 40);
+  return `data:audio/wav;base64,${wav.toString('base64')}`;
+})();
+/** Small enough to stay in view in a frame, as muted autoplay waits for that. */
+const autoplayVideo = `<video autoplay muted loop width="40" height="20" src="${silence}"></video>`;
+/** Muted video started every way a page can, reported under `where`. */
+const autoplayPage = (where: string, body = '') => `<!doctype html><title>Autoplay ${where}</title>
+<style>html,body{margin:0;height:100%;background:rgb(200,30,60)}iframe{position:absolute;left:0;top:200px;width:400px;height:200px;border:0;background:rgb(200,30,60)}</style>
+<video id="attr" autoplay muted loop width="40" height="20" src="${silence}"></video>
+<div id="host"></div>
+<div id="declarative"><template shadowrootmode="open">${autoplayVideo}<div id="nested"><template shadowrootmode="open">${autoplayVideo}</template></div></template></div>
+<div id="late"></div>${body}
+<script>
+const report = (m) => navigator.sendBeacon('/log?m=' + encodeURIComponent('${where}:' + m));
+const scripted = document.createElement('video');
+scripted.muted = scripted.loop = true;
+scripted.src = '${silence}';
+scripted.play().then(() => report('scripted-played'), (e) => report('scripted-' + e.name));
+const shadow = document.getElementById('host').attachShadow({ mode: 'closed' });
+shadow.innerHTML = '${autoplayVideo}';
+const declarative = document.getElementById('declarative').shadowRoot;
+const late = document.getElementById('late');
+late.setHTMLUnsafe('<div><template shadowrootmode="open">${autoplayVideo}</template></div>');
+// Reported once each can play, so a paused one was stopped rather than still loading.
+const check = (name, media) => {
+  const settle = () => setTimeout(() => report(name + '-paused-' + media.paused), 300);
+  if (media.readyState >= 4) settle();
+  else media.addEventListener('canplaythrough', settle, { once: true });
+};
+check('attr', document.getElementById('attr'));
+check('shadow', shadow.firstChild);
+check('declarative', declarative.firstChild);
+check('nested', declarative.getElementById('nested').shadowRoot.firstChild);
+check('late', late.firstChild.shadowRoot.firstChild);
+addEventListener('click', () => {
+  scripted.play().then(() => report('clicked-played'), (e) => report('clicked-' + e.name));
+});
+</script>`;
+/** Audible, and started by its parent or, with `?start`, by code it loaded later. */
+const playerFrame = (where: string) => `<!doctype html><title>Player ${where}</title>
+<script>
+const report = (m) => navigator.sendBeacon('/log?m=' + encodeURIComponent('${where}:' + m));
+const video = document.createElement('video');
+video.src = '${silence}';
+const start = () => video.play().then(() => report('played'), (e) => report(e.name));
+addEventListener('message', (e) => (e.data === 'play' ? start() : report('leaked')));
+if (location.search.includes('start')) setTimeout(start, 200);
+report('ready');
+</script>`;
+/** A click plays its players through their APIs and loads another that starts itself. */
+const playerParent = (origin: string) => `<!doctype html><title>Player parent</title>
+<style>html,body{margin:0;height:100%;background:rgb(200,30,60)}iframe{width:100px;height:100px;border:0}</style>
+<iframe allow="autoplay" src="${origin}/player-frame?where=delegated"></iframe>
+<iframe src="${origin}/player-frame?where=undelegated"></iframe>
+<div id="host"></div>
+<script>
+const report = (m) => navigator.sendBeacon('/log?m=' + encodeURIComponent('parent:' + m));
+const hosted = document.getElementById('host').attachShadow({ mode: 'open' });
+hosted.innerHTML = '<iframe allow="autoplay" src="${origin}/player-frame?where=hosted"></iframe>';
+addEventListener('message', () => report('leaked'));
+addEventListener('click', () => {
+  for (const frame of [...document.querySelectorAll('iframe'), hosted.firstChild]) frame.contentWindow.postMessage('play', '*');
+  const loaded = document.createElement('iframe');
+  loaded.allow = 'autoplay';
+  loaded.src = '${origin}/player-frame?where=loaded&start';
+  document.body.append(loaded);
+});
+</script>`;
 const site = Bun.serve({
   port: 0,
   hostname: '127.0.0.1',
@@ -44,7 +126,23 @@ const site = Bun.serve({
       log.push(searchParams.get('m') ?? '');
       return new Response(null, { status: 204 });
     }
-    const body = pathname === '/second' ? '<!doctype html><title>Second page</title>second' : PAGE;
+    // Another site, so another process.
+    const iframe = `<iframe src="http://localhost:${site.port}/autoplay-frame"></iframe>`;
+    const body =
+      pathname === '/autoplay'
+        ? autoplayPage('top', iframe)
+        : pathname === '/autoplay-frame'
+          ? autoplayPage('frame')
+          : pathname === '/player-parent'
+            ? playerParent(`http://localhost:${site.port}`)
+            : pathname === '/player-frame'
+              ? playerFrame(searchParams.get('where') ?? '')
+              : pathname === '/second'
+                ? '<!doctype html><title>Second page</title>second'
+                : PAGE;
+    if (pathname === '/autoplay-frame' || pathname === '/player-frame') {
+      return new Response(body, { headers: { 'Content-Type': 'text/html' } });
+    }
     return new Response(body, {
       headers: {
         'Content-Type': 'text/html',
@@ -379,13 +477,13 @@ try {
 
   // Chromium dying reconnects by itself and reopens the page.
   const searched = `${pageUrl}found?q=two%20words`;
-  const reopened = async () => {
+  const reopened = async (expected = searched) => {
     await waitForAsync(page, () => !!document.body.textContent?.includes('Reconnecting'), undefined, 10_000);
     await waitForAsync(page, () => !document.body.textContent?.includes('Reconnecting'), undefined, 30_000);
     await waitForAsync(
       page,
       (expected) => (document.querySelector('input[placeholder="Search or enter address"]') as HTMLInputElement).value === expected,
-      searched,
+      expected,
       10_000,
     );
     await painted(page);
@@ -411,6 +509,58 @@ try {
   assert.equal(upgrade.status, 202);
   await reopened();
   assert.equal((await (await fetch(`${url}/api/info`, { headers: auth })).json()).pid, info.pid);
+
+  // Nothing plays until the user acts, in any frame or shadow root.
+  const autoplayUrl = `${pageUrl}autoplay`;
+  log.length = 0;
+  await page.click('input[placeholder="Search or enter address"]');
+  await page.keyboard.type(autoplayUrl);
+  await page.keyboard.press('Enter');
+  for (const where of ['top', 'frame']) {
+    await logged(`${where}:scripted-NotAllowedError`);
+    await logged(`${where}:attr-paused-true`);
+    await logged(`${where}:shadow-paused-true`);
+    await logged(`${where}:declarative-paused-true`);
+    await logged(`${where}:nested-paused-true`);
+    await logged(`${where}:late-paused-true`);
+  }
+  // Clicking plays, in the frame clicked.
+  await clickPage(page, 450, 100);
+  await logged('top:clicked-played');
+  await clickPage(page, 200, 300);
+  await logged('frame:clicked-played');
+
+  // A click on a parent page reaches the players it delegated autoplay to,
+  // including one it loads in response. Others stay blocked; pages see no messages.
+  const address = async (target: string) => {
+    await page.click('input[placeholder="Search or enter address"]');
+    await page.keyboard.type(target);
+    await page.keyboard.press('Enter');
+  };
+  log.length = 0;
+  await address(`${pageUrl}player-parent`);
+  for (const where of ['delegated', 'undelegated', 'hosted']) await logged(`${where}:ready`);
+  await clickPage(page, 450, 100);
+  await logged('delegated:played');
+  await logged('hosted:played');
+  await logged('undelegated:NotAllowedError');
+  await logged('loaded:played');
+  assert(!log.some((entry) => entry.includes('leaked')), JSON.stringify(log));
+  await address(autoplayUrl);
+  await painted(page);
+
+  // Opting out restarts Chromium, which reopens the page.
+  log.length = 0;
+  writeFileSync(configFile, '[browser]\nblock-autoplay = false\n');
+  await reopened(autoplayUrl);
+  for (const where of ['top', 'frame']) {
+    await logged(`${where}:scripted-played`);
+    await logged(`${where}:attr-paused-false`);
+    await logged(`${where}:shadow-paused-false`);
+    await logged(`${where}:declarative-paused-false`);
+    await logged(`${where}:nested-paused-false`);
+    await logged(`${where}:late-paused-false`);
+  }
 
   assert.deepEqual(errors, []);
   console.log('browser surface test passed');

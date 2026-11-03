@@ -22,6 +22,86 @@ client configurations and previously installed hook snippets also need this
 header. The token grants control of shells and access to files available to
 the btmux user.
 
+## Agent telemetry
+
+Agent view's **Usage** tab graphs tokens, completed requests, tool calls, and
+reported costs, for all panes or one selected pane. It keeps one hour of
+per-minute history in memory; restarting or upgrading the server clears it.
+Telemetry does not change agent lifecycle state or replace notification hooks.
+
+The OTLP/HTTP receiver runs on the existing authenticated server. Each new pane
+gets `BTMUX_OTEL_ENDPOINT`, a base URL that associates exports with that pane:
+
+```text
+$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/telemetry
+```
+
+It accepts `POST .../v1/logs` and `POST .../v1/metrics`, with
+`application/x-protobuf` or `application/json`, and optional gzip compression.
+Requests require `Authorization: Bearer $BTMUX_AUTH_TOKEN`, just like other
+APIs. `GET /api/telemetry` returns the current numeric summaries. Summaries are
+also pushed to control sockets and replayed when viewers reconnect.
+
+Only numeric usage, the agent name, and the model are retained. Prompts, tool
+arguments/results, and raw log records are discarded. Batches are limited to
+8 MiB after decompression, and stored pane, counter, and deduplication histories
+are bounded. Subscription quotas are not collected by this receiver.
+
+### Claude Code
+
+Start Claude Code with both metrics and logs enabled:
+
+```sh
+CLAUDE_CODE_ENABLE_TELEMETRY=1 \
+OTEL_METRICS_EXPORTER=otlp \
+OTEL_LOGS_EXPORTER=otlp \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_EXPORTER_OTLP_ENDPOINT="$BTMUX_OTEL_ENDPOINT" \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $BTMUX_AUTH_TOKEN" \
+OTEL_METRIC_EXPORT_INTERVAL=10000 \
+OTEL_LOGS_EXPORT_INTERVAL=5000 \
+claude
+```
+
+Tokens and costs come from `claude_code.token.usage` and
+`claude_code.cost.usage` metrics. Both cumulative and delta monotonic sums are
+supported. Request and tool activity comes from `api_request` and `tool_result`
+logs. Token counts in those logs are ignored so enabling both exports does not
+count usage twice. Cached input is included in input, and is also shown as a
+separate subset. Reported cost is the agent's estimate, not a subscription bill.
+When an existing counter started over an hour ago, its first export establishes
+a baseline; the graph counts its subsequent increases.
+
+### Codex CLI
+
+Configure the log exporter for this invocation:
+
+```sh
+codex \
+  -c "otel.exporter.otlp-http.endpoint=\"${BTMUX_OTEL_ENDPOINT}/v1/logs\"" \
+  -c 'otel.exporter.otlp-http.protocol="binary"' \
+  -c 'otel.exporter.otlp-http.headers.Authorization="Bearer ${BTMUX_AUTH_TOKEN}"'
+```
+
+Codex expands the header's environment reference. These flags leave the user's
+config file unchanged. Token counts and completed requests come from
+`response.completed` log events; tool calls come from `codex.tool_result`.
+Codex token metrics are ignored to avoid counting both log and metric exports.
+Cached tokens are part of input, and reasoning tokens are part of output.
+Costs remain unavailable unless a supported source reports them; btmux does
+not infer prices.
+
+For panes created before this feature was installed, set the base URL first:
+
+```sh
+export BTMUX_OTEL_ENDPOINT="$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/telemetry"
+```
+
+See the [Claude Code monitoring guide](https://code.claude.com/docs/en/monitoring-usage)
+and [Codex telemetry configuration](https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry)
+for exporter settings. This receiver supports OTLP/HTTP; select an HTTP exporter
+rather than OTLP/gRPC.
+
 ## tmux-style commands
 
 The `btmux` binary has a subset of tmux's commands, with the same names,

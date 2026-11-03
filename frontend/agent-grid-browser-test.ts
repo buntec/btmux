@@ -243,6 +243,21 @@ try {
   const reopened = await stopWatching(page);
   assert.equal(reopened.length, 1, `reopen moved tiles: ${JSON.stringify(reopened)}`);
 
+  const connectionsBeforeUsage = await page.evaluate(
+    () => ((window as any).__sockets as WebSocket[]).filter((socket) => socket.url.includes('mirror=1')).length,
+  );
+  await page.getByRole('tab', { name: 'Usage', exact: true }).click();
+  await page.getByText('No usage received yet').waitFor();
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).click();
+  await replaysShown(page, 4);
+  assert.equal(
+    await page.evaluate(
+      () => ((window as any).__sockets as WebSocket[]).filter((socket) => socket.url.includes('mirror=1')).length,
+    ),
+    connectionsBeforeUsage,
+    'switching to usage must preserve mirror sockets',
+  );
+
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);
   await baseline(page);

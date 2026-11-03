@@ -36,6 +36,7 @@ mod session;
 mod shell;
 mod system_info;
 mod tailscale;
+mod telemetry;
 mod tmux_cli;
 mod update_check;
 mod vscode;

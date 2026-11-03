@@ -28,6 +28,7 @@ pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
 
 pub struct SessionManager {
     pub sessions: Vec<Session>,
+    pub telemetry: crate::telemetry::TelemetryStore,
     shell: String,
     cli_shell: Option<String>,
     /// The config as last read from disk. Kept so a session-only override can be
@@ -102,6 +103,7 @@ impl SessionManager {
         crate::vscode::configure(&config);
         Self {
             sessions: Vec::new(),
+            telemetry: crate::telemetry::TelemetryStore::default(),
             shell,
             cli_shell,
             file_config,

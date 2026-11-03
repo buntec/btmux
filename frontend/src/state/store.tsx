@@ -4,7 +4,7 @@ import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
-import type { TailscaleStatus } from '../generated/protocol';
+import type { AgentTelemetry, TailscaleStatus } from '../generated/protocol';
 import { cacheThemes } from './startupTheme';
 
 export type FileBrowserMode = 'files' | 'git' | 'process';
@@ -31,6 +31,8 @@ interface AppStore {
   agentGridOpen: boolean;
   agentGridMounted: boolean;
   agentPanes: Set<string>;
+  agentTelemetry: Record<string, AgentTelemetry>;
+  updateAgentTelemetry: (panes: AgentTelemetry[], replace?: boolean, removed?: string[]) => void;
   // The server's `--tailscale` status; null without it.
   tailscale: TailscaleStatus | null;
   // display-panes (prefix + q): briefly overlays each pane's index on the active
@@ -159,6 +161,16 @@ export const useStore = create<AppStore>((set, get) => ({
   agentGridOpen: false,
   agentGridMounted: false,
   agentPanes: new Set(),
+  agentTelemetry: {},
+  updateAgentTelemetry: (panes, replace = false, removed = []) =>
+    set((state) => {
+      const agentTelemetry = {
+        ...(replace ? {} : state.agentTelemetry),
+        ...Object.fromEntries(panes.map((pane) => [pane.pane_id, pane])),
+      };
+      for (const id of removed) delete agentTelemetry[id];
+      return { agentTelemetry };
+    }),
   tailscale: null,
   paneNumbersVisible: false,
   switcherOpen: false,
@@ -184,7 +196,16 @@ export const useStore = create<AppStore>((set, get) => ({
   navigateFn: null,
   controlSendFn: null,
   setSessions: (sessions) => set({ sessions }),
-  setAllSessions: (allSessions) => set({ allSessions }),
+  setAllSessions: (allSessions) =>
+    set((state) => {
+      const panes = new Set(
+        allSessions.flatMap((session) => session.windows.flatMap((window) => window.panes.map((pane) => pane.id))),
+      );
+      return {
+        allSessions,
+        agentTelemetry: Object.fromEntries(Object.entries(state.agentTelemetry).filter(([id]) => panes.has(id))),
+      };
+    }),
   setConfig: (config) => {
     set({ config });
     cacheThemes(config.appearance, config.dark_theme, config.light_theme);

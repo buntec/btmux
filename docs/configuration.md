@@ -122,81 +122,18 @@ mode open: `"neovim"` (your Neovim in btmux's GUI over the pane), `"vscode"`
 (VS Code in the browser over the pane), or `"pane"` (the terminal: the pane's
 running Neovim, else `$EDITOR` in its shell). The default is `"neovim"` when
 Neovim 0.12 or newer is on the server's `PATH`, else `"pane"`. See
-[Neovim GUI](neovim.md).
+[Neovim GUI](neovim.md) and [VS Code](vscode.md).
 
 Whatever `editor` says, the status bar shows a button for each editor the
 server can run: Neovim 0.12+ and, outside Windows, the `[vscode] server`
 program, found on the server's `PATH` (a service's `PATH` may be shorter than
-your shell's). The configured editor comes first. The `editor-neovim` and
+your shell's) or, for VS Code on macOS, in `/Applications`. The configured editor comes first. The `editor-neovim` and
 `editor-vscode` actions, unbound by default, toggle one of them from the
 command palette or a `[keys]` binding, and `btmux open-editor --kind vscode`
 opens one from a pane.
 
-The `browser` action (`prefix + b`) toggles a browser over the active pane. It
-runs a headless Chrome or Chromium on the server, found on the server's `PATH`
-or in `/Applications`, so it shows any site, and `localhost` means the server.
-Its profile, with your logins, is kept apart from your everyday browser's. As
-with the editors, a quick double Esc hides it. It reopens your last page after
-a restart. To copy, select text and press Cmd+C (Ctrl+C elsewhere); a page's own
-copy buttons don't reach your clipboard yet.
-
-Text in its address bar that isn't a URL is searched with DuckDuckGo, or with
-`search-url`, where `%s` is the text:
-
-```toml
-[browser]
-search-url = "https://www.google.com/search?q=%s"
-```
-
-It blocks known ad servers (by host name, so not ads a site serves itself, and
-the empty space they leave stays) and keeps video and audio from playing until
-you click or press a key. Either can be turned off; changing them restarts the
-browser and reopens your page:
-
-```toml
-[browser]
-block-ads = false
-block-autoplay = false
-```
-
-With `"vscode"`, `<prefix> + e` toggles VS Code over the active pane, opened
-in the pane's folder; pressing Esc twice quickly also hides it. The first time,
-btmux asks you to accept the VS Code Server license (once per profile).
-Webviews such as the Markdown preview need internet access.
-
-```toml
-[vscode]
-server = "code"
-desktop = true
-# settings = "~/.config/Code/User/settings.json"
-# keybindings = "~/.config/Code/User/keybindings.json"
-# extensions = ["~/.vscode/extensions"]
-```
-
-`server` picks the server, read when it starts: `"code"` (default) runs
-`code serve-web` from an installed VS Code, which downloads the matching server
-on first use; `"openvscode-server"` uses `openvscode-server` from `PATH`.
-
-`desktop = true` shares desktop VS Code's user settings, keybindings, and
-extensions: `settings.json` and `keybindings.json` from
-`~/Library/Application Support/Code/User` (macOS) or
-`$XDG_CONFIG_HOME/Code/User` (Linux), and the extensions in
-`~/.vscode/extensions`. `settings`, `keybindings`, and `extensions` override
-these paths (and work without `desktop`), for example for VSCodium or
-Insiders; `extensions` lists extension folders or folders of them. Home
-Manager's `programs.vscode` writes the default locations, so
-`programs.btmux.settings.vscode.desktop = true` is all it takes.
-
-Shared settings and keybindings are read each time a VS Code window loads and
-replace the ones in btmux's VS Code, which keeps them in the browser, so
-changes made there last only until the next load: edit desktop VS Code's
-instead. Only its default profile is shared. Shared extensions are linked, not
-copied, when VS Code starts; restart btmux to pick up new ones. Extensions you
-install in btmux's VS Code stay, unless desktop VS Code has the same one.
-
-A bundled extension syncs btmux's color scheme and terminal font into VS Code,
-over shared settings too; turn off `btmux.syncTheme` or `btmux.syncFont` in VS
-Code's settings to keep your own.
+The `browser` action (`<prefix> + b`) toggles a browser over the active pane; see
+[Browser](browser.md).
 
 ## LaTeX overlay
 

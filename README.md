@@ -1,14 +1,14 @@
 # btmux
 
-A terminal emulator and tmux-style session manager. Runs as a stand-alone app, in the browser and on mobile.
+A terminal emulator and tmux-style session manager. Runs as a stand-alone app and in the browser (including on mobile).
 For macOS, Linux and Windows. Powered by [wterm](https://github.com/vercel-labs/wterm), [libghostty](https://github.com/ghostty-org/ghostty) and [Tauri](https://github.com/tauri-apps/tauri).
 
 ## Highlights
 
-- Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and preset layouts
-- Server-side sessions: (re)connect from any number of clients
-- Tailscale integration: serve over HTTPS on your tailnet with `--tailscale`; log in from a phone/tablet by scanning a QR code
-- Batteries included: file browser, Git GUI, process viewer, Neovim GUI, VS Code integration
+- Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, etc.
+- Server-side sessions: connect from any number of clients
+- Tailscale integration: serve over HTTPS on your tailnet; log in from a phone/tablet by scanning a QR code
+- Batteries included: file browser, Git GUI, process viewer, browser, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
 - LaTeX rendering overlay
 - Single self-contained binary (~20 MB)
@@ -139,7 +139,8 @@ browser and Git mode open files there:
   menu, messages, LSP signature help, and floating windows rendered as native
   UI. The default when Neovim 0.12 or newer is on `PATH`; see
   [Neovim GUI](docs/neovim.md).
-- `"vscode"`: VS Code in the browser, using btmux's color scheme and font.
+- `"vscode"`: VS Code in the browser, using btmux's color scheme and font; see
+  [VS Code](docs/vscode.md).
 - `"pane"`: `$EDITOR` run in the pane's shell. The default without Neovim 0.12.
 
 The status bar has a button for each editor the server can run, so the other
@@ -152,7 +153,10 @@ one stays a click away. See [Editor](docs/configuration.md#editor) for details.
 - [Configuration](docs/configuration.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, editors, and profiles
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization
 - [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux
+- [Comparison](docs/competitors.md): feature matrix of btmux versus similar projects
 - [Neovim GUI](docs/neovim.md): the Neovim GUI, its plugin, and config tips
+- [VS Code](docs/vscode.md): VS Code over a pane, its server, and sharing desktop settings and extensions
+- [Browser](docs/browser.md): a server-side Chrome or Chromium over a pane
 - [Automation and AI agents](docs/automation.md): tmux-style commands, agent skill, REST API, MCP, and agent notifications
 
 ## Development

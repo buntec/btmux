@@ -1377,6 +1377,12 @@ mod osc_tests {
     }
 
     #[test]
+    fn aborted_osc_dispatches_before_a_stripped_replacement() {
+        let result = vt_query::VtQueryInterceptor::new().feed(b"\x1b]7;/x\x1b[cvisible");
+        assert_eq!(cwd_of(&result.scrollback).as_deref(), Some("/x"));
+    }
+
+    #[test]
     fn marks_cwds_on_other_hosts_remote() {
         let local = local_hostname().unwrap();
         let short = local.split('.').next().unwrap();

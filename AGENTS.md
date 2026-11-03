@@ -110,7 +110,10 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 - **DA1/DA2 query interception** (`VtQueryInterceptor` in `pty/vt_query.rs`): the reader thread intercepts `ESC[c` / `ESC[>c`, injects canned responses back into the PTY input, **and strips the query bytes from the output stream**. The emulator _also_ answers DA (and DSR), but btmux is one PTY fanned out to many emulators — letting the emulator answer would hang detached panes (no emulator attached), duplicate the reply once per attached tab (the extra leaks to the shell and gets echoed, e.g. `^[[?62;22c`), and re-answer stale queries on scrollback replay. Stripping makes the backend the single responder, so its canned replies are what programs see, whatever the emulator would answer. Don't remove this without a replacement.
   Sequences over 1 MiB (`MAX_SEQUENCE_BYTES`, as in tmux) are dropped rather than
   streamed, in every parser state, since `vte`'s OSC buffer in the replay
-  checkpoint is unbounded. A handoff carries the full buffer, whose refeed resumes dropping.
+  checkpoint is unbounded. A handoff carries a full buffer that refeeds into the
+  same parser state and resumes dropping. A sequence aborted by ESC is forwarded
+  closed with ST, as its replacement may be stripped, and bytes inside a bare ESC
+  don't leave it, as in `vte`: either could leave the checkpoint in an OSC.
   Reads filtered to nothing add no journal event, and events hold no spare
   capacity (`exact_bytes`): the journal budget counts lengths, not allocations.
   The kitty keyboard query (`CSI ? u`) is answered the same way, from flag

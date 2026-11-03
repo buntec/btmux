@@ -7,6 +7,7 @@ import { CsvPreview } from './previews/CsvPreview';
 import { DiffPreview } from './previews/DiffPreview';
 import { MediaPreview } from './previews/MediaPreview';
 import { PdfPreview } from './previews/PdfPreview';
+import { HtmlPreview, isHtmlFile } from './previews/HtmlPreview';
 import { DirectoryPreview } from './previews/DirectoryPreview';
 import type { ServerFileMessage } from '@/protocol/file-messages';
 import { Placeholder } from './Placeholder';
@@ -122,6 +123,7 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
   const selectedDirectory = useFileStore((s) => s.selectedDirectory);
   const searchMode = useFileStore((s) => s.searchMode);
   const wrapLines = useFileStore((s) => s.wrapLines);
+  const htmlSource = useFileStore((s) => s.htmlSource);
 
   if (isGitMode) {
     if (gitDiff) return <DiffPreview />;
@@ -145,6 +147,11 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
 
   if (!selectedFile || !fileContent || fileContent.path !== selectedFile) {
     return <Placeholder>Select a file to preview</Placeholder>;
+  }
+
+  // Content search results show lines of the source.
+  if (isHtmlFile(selectedFile) && !htmlSource && searchMode !== 'content') {
+    return <HtmlPreview key={selectedFile} />;
   }
 
   const previewType = getPreviewType(selectedFile, fileContent.mime_type);

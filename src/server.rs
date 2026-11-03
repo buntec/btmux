@@ -127,6 +127,7 @@ pub fn create_app(state: AppState) -> Router {
                 .delete(api_pane_agent_status_clear),
         )
         .route("/api/file", get(serve_raw_file))
+        .route("/api/preview/{*path}", get(serve_preview_file))
         .route("/wallpaper", get(serve_wallpaper))
         .route(
             crate::vscode::BASE_PATH,
@@ -1553,11 +1554,52 @@ struct RawFileQuery {
     path: String,
 }
 
+// Local HTML/SVG must not acquire the terminal application's origin and
+// credentials when opened directly.
+const RAW_FILE_POLICY: &str = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
+// Keeps the origin so a page's own assets get the auth cookie, which is safe
+// only because nothing in it can run: no scripts, and no requests elsewhere.
+const PREVIEW_POLICY: &str = "sandbox allow-same-origin; default-src 'self' data:; \
+    style-src 'self' data: 'unsafe-inline'; script-src 'none'; object-src 'none'; \
+    frame-ancestors 'self'";
+
 async fn serve_raw_file(
     Query(query): Query<RawFileQuery>,
     request: axum::extract::Request,
 ) -> Response {
-    let Ok(canonical) = tokio::fs::canonicalize(&query.path).await else {
+    serve_file(&query.path, RAW_FILE_POLICY, request).await
+}
+
+/// An HTML page and its assets for the file browser's preview.
+async fn serve_preview_file(Path(path): Path<String>, request: axum::extract::Request) -> Response {
+    let path = if cfg!(windows) {
+        path
+    } else {
+        format!("/{path}")
+    };
+    let mut response = serve_file(&path, PREVIEW_POLICY, request).await;
+    // Undeclared, browsers assume a legacy encoding, and this header beats a
+    // <meta charset>, so only claim UTF-8 for a file that is.
+    let is_html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|content_type| content_type == "text/html");
+    if is_html
+        && tokio::fs::read(&path)
+            .await
+            .is_ok_and(|bytes| std::str::from_utf8(&bytes).is_ok())
+    {
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            "text/html; charset=utf-8".parse().unwrap(),
+        );
+    }
+    response
+}
+
+/// Streams a file, with Range support, under a content security policy.
+async fn serve_file(path: &str, policy: &'static str, request: axum::extract::Request) -> Response {
+    let Ok(canonical) = tokio::fs::canonicalize(path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let Ok(metadata) = tokio::fs::metadata(&canonical).await else {
@@ -1573,14 +1615,9 @@ async fn serve_raw_file(
         return StatusCode::NOT_FOUND.into_response();
     };
     let mut response = response.into_response();
-    // Local HTML/SVG must not acquire the terminal application's origin and
-    // credentials when opened directly. Media still streams, with Range support.
-    response.headers_mut().insert(
-        header::CONTENT_SECURITY_POLICY,
-        "sandbox; default-src 'none'; style-src 'unsafe-inline'"
-            .parse()
-            .unwrap(),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_SECURITY_POLICY, policy.parse().unwrap());
     response
         .headers_mut()
         .insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());

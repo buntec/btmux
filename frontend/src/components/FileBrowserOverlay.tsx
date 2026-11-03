@@ -24,7 +24,8 @@ import { FileSearch } from './files/FileSearch';
 import { KeyHint, type Hint } from './KeyHint';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '@/lib/touch';
-import { cn, getParent, joinPath, stepIndex } from '@/lib/utils';
+import { clsx } from 'clsx';
+import { getParent, joinPath, stepIndex } from '@/lib/utils';
 import { getAnimations, getSmoothScrollDuration, getTerminalFontSize } from '@/state/configDefaults';
 import { usePressHint } from '@/hooks/usePressHint';
 import { smoothScrollBy } from '@/lib/smoothScroll';
@@ -1512,7 +1513,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         type="code"
         size="sm"
         color={diffContext !== DEFAULT_DIFF_CONTEXT ? 'inherit' : 'disabled'}
-        className={cn(diffContext !== DEFAULT_DIFF_CONTEXT && 'text-cyan-vivid')}
+        className={clsx(diffContext !== DEFAULT_DIFF_CONTEXT && 'text-cyan-vivid')}
         style={{ fontVariantLigatures: 'none' }}
       >
         -U{diffContext}
@@ -1536,7 +1537,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                     type="code"
                     size="sm"
                     color={ignoreAllSpace ? 'inherit' : 'disabled'}
-                    className={cn(ignoreAllSpace && 'text-cyan-vivid')}
+                    className={clsx(ignoreAllSpace && 'text-cyan-vivid')}
                     style={{ fontVariantLigatures: 'none' }}
                   >
                     -w/--ignore-all-space
@@ -1588,7 +1589,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           <Breadcrumb onNavigate={navigate} singleLine={narrow} />
         </HStack>
         {fileConnectionState !== 'connected' && (
-          <Text size="sm" color="secondary" role="status" className={cn(animations && 'animate-pulse')}>
+          <Text size="sm" color="secondary" role="status" className={clsx(animations && 'animate-pulse')}>
             {CONNECTION_STATE_LABEL[fileConnectionState]}
           </Text>
         )}
@@ -1611,7 +1612,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
       <HStack className="min-h-0 min-w-0 flex-1 items-stretch overflow-hidden">
         <VStack
-          className={cn(
+          className={clsx(
             'min-h-0 min-w-0 overflow-hidden',
             narrow ? 'flex-1' : 'flex-none',
             narrow && previewShown && 'hidden',
@@ -1650,14 +1651,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             aria-orientation="vertical"
             aria-label="Resize sidebar"
             onPointerDown={onDividerPointerDown}
-            className={cn(
+            className={clsx(
               DIVIDER_TOUCH_TARGET,
               'w-1 flex-none cursor-col-resize bg-[linear-gradient(var(--color-border-emphasized),var(--color-border-emphasized))] bg-[length:1px_100%] bg-center bg-no-repeat hover:bg-accent-bg active:bg-accent-bg',
             )}
           />
         )}
         <VStack
-          className={cn(
+          className={clsx(
             'file-preview-scroll file-preview-content min-h-0 min-w-0 flex-1',
             narrow && !previewShown && 'hidden',
           )}

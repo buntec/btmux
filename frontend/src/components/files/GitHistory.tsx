@@ -5,7 +5,7 @@ import { HStack } from '@astryxdesign/core/Layout';
 import { Icon } from '@astryxdesign/core/Icon';
 import { Text } from '@astryxdesign/core/Text';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { filterGitLog, layoutGitGraph, type GitGraphTransition } from '@/lib/gitGraph';
 import { useFileStore } from '@/state/fileStore';
 import type { GitLogCommit, GitLogRef } from '@/protocol/file-messages';
@@ -202,7 +202,7 @@ export function GitHistory({ onPreview }: { onPreview?: () => void } = {}) {
                     useFileStore.getState().setGitLogFocusedIndex(rowIndex);
                     onPreview?.();
                   }}
-                  className={cn(
+                  className={clsx(
                     'flex cursor-pointer items-center gap-2 px-2',
                     selected ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   )}
@@ -213,20 +213,20 @@ export function GitHistory({ onPreview }: { onPreview?: () => void } = {}) {
                   <div className="min-w-0 flex-1 py-1">
                     <div className="flex min-w-0 items-center gap-1.5">
                       <GitCommitHorizontal
-                        className={cn(
+                        className={clsx(
                           'size-3.5 shrink-0',
                           selected ? 'text-on-accent/70' : commit.is_head ? 'text-yellow-vivid' : 'text-secondary',
                         )}
                       />
                       <span
-                        className={cn('min-w-0 flex-1 truncate text-base font-medium', !selected && 'text-primary')}
+                        className={clsx('min-w-0 flex-1 truncate text-base font-medium', !selected && 'text-primary')}
                       >
                         {commit.summary}
                       </span>
                       {commit.is_head && <Token size="sm" label="HEAD" />}
                     </div>
                     <div
-                      className={cn(
+                      className={clsx(
                         'mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm',
                         selected ? 'text-on-accent/70' : 'text-secondary',
                       )}

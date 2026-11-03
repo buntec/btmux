@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Plus, Pencil, Trash2, ArrowRight, FileQuestion, ChevronRight, ChevronDown } from 'lucide-react';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { useFileStore } from '@/state/fileStore';
 import type { GitStatusResult, FileStatus, LineStats } from '@/protocol/file-messages';
 import { Placeholder } from './Placeholder';
@@ -217,7 +217,7 @@ export function GitStatus({ onPreview }: { onPreview?: () => void } = {}) {
                       useFileStore.getState().setGitFocusedIndex(i);
                       useFileStore.getState().toggleGitSection(item.section);
                     }}
-                    className={cn(
+                    className={clsx(
                       'flex items-center gap-1.5 px-2 cursor-pointer select-none leading-tight',
                       i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'text-secondary hover:bg-overlay-hover',
                     )}
@@ -247,7 +247,7 @@ export function GitStatus({ onPreview }: { onPreview?: () => void } = {}) {
                     useFileStore.getState().setGitFocusedIndex(i);
                     onPreview?.();
                   }}
-                  className={cn(
+                  className={clsx(
                     'flex items-start gap-2 px-2 pl-5 cursor-pointer leading-tight',
                     i === gitFocusedIndex ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   )}
@@ -269,7 +269,7 @@ export function GitStatus({ onPreview }: { onPreview?: () => void } = {}) {
                     )}
                     <span>{filename}</span>
                     {item.oldPath && (
-                      <span className={cn('ml-2', i === gitFocusedIndex ? 'text-on-accent/70' : 'text-secondary')}>
+                      <span className={clsx('ml-2', i === gitFocusedIndex ? 'text-on-accent/70' : 'text-secondary')}>
                         ← {item.oldPath}
                       </span>
                     )}

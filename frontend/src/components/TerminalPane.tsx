@@ -14,7 +14,7 @@ import { LatexOverlay } from './LatexOverlay';
 import { clipboardImage, pasteImage } from '../lib/pasteImage';
 import { PaneSearch } from './PaneSearch';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
-import { cn } from '../lib/utils';
+import { clsx } from 'clsx';
 import { desktopTransparency } from '../lib/desktopTransparency';
 import { hasShaderWallpaper } from '../lib/wallpaperCatalog';
 import {
@@ -555,7 +555,7 @@ export function TerminalPane({
       {connection !== 'connected' && (
         <div
           role="status"
-          className={cn(
+          className={clsx(
             'absolute inset-0 flex items-center justify-center text-sm text-secondary',
             animations && 'animate-pulse',
           )}

@@ -1,10 +1,3 @@
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
 /** The root of an absolute path: `/`, or a Windows drive such as `C:/`. */
 export function pathRoot(path: string): string {
   return /^[A-Za-z]:\//.exec(path)?.[0] ?? '/';

@@ -13,7 +13,7 @@ import {
   type PortRow,
   type PortSortMode,
 } from '@/lib/portRows';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { Placeholder } from '../files/Placeholder';
 
 const COLUMNS: Array<{ label: string; mode: PortSortMode }> = [
@@ -81,7 +81,7 @@ export function PortTable({
                     aria-pressed={sortMode === mode}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => sortBy(mode)}
-                    className={cn('cursor-pointer text-left hover:text-primary', sortMode === mode && 'text-primary')}
+                    className={clsx('cursor-pointer text-left hover:text-primary', sortMode === mode && 'text-primary')}
                   >
                     {label}
                     {sortMode === mode && (isPortSortDescending(mode, sortReversed) ? ' ▼' : ' ▲')}
@@ -102,7 +102,7 @@ export function PortTable({
                     setFocusedPort(key, port.pid);
                     onDetails?.();
                   }}
-                  className={cn(
+                  className={clsx(
                     'cursor-pointer',
                     key === focusedPort ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
                   )}

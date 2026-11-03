@@ -3,7 +3,7 @@ import { HStack } from '@astryxdesign/core/Layout';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { Text } from '@astryxdesign/core/Text';
 import type { KeyModifiers } from '../lib/paneTerminal';
-import { cn } from '../lib/utils';
+import { clsx } from 'clsx';
 
 export interface Hint {
   keys: string[];
@@ -114,7 +114,7 @@ function PressableKey({
       type="button"
       tabIndex={-1}
       aria-label={typeof label === 'string' ? `${keys}: ${label}` : keys}
-      className={cn(
+      className={clsx(
         'flex flex-none cursor-pointer items-center gap-1 rounded-sm py-1 hover:bg-overlay-hover pointer-coarse:py-1.5',
         isBare && 'pointer-coarse:px-2',
       )}

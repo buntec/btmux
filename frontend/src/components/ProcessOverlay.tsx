@@ -11,7 +11,8 @@ import { useProcessStore } from '@/state/processStore';
 import { useStore } from '@/state/store';
 import { getAnimations, getTerminalFontSize } from '@/state/configDefaults';
 import { terminalTypeScale } from '@/lib/astryx-theme';
-import { cn, stepIndex } from '@/lib/utils';
+import { clsx } from 'clsx';
+import { stepIndex } from '@/lib/utils';
 import { usePressHint } from '@/hooks/usePressHint';
 import { NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '@/lib/touch';
 import { buildPortRows } from '@/lib/portRows';
@@ -350,7 +351,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
 
       <VStack ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <VStack
-          className={cn(
+          className={clsx(
             'min-h-0 min-w-0 overflow-hidden',
             narrow ? 'flex-1' : 'flex-none',
             narrow && detailsShown && 'hidden',
@@ -369,13 +370,13 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
             aria-orientation="horizontal"
             aria-label="Resize process list"
             onPointerDown={onDividerPointerDown}
-            className={cn(
+            className={clsx(
               DIVIDER_TOUCH_TARGET,
               'h-1 flex-none cursor-row-resize border-b border-border hover:bg-accent-bg active:bg-accent-bg',
             )}
           />
         )}
-        <VStack className={cn('min-h-0 min-w-0 flex-1', narrow && !detailsShown && 'hidden')}>
+        <VStack className={clsx('min-h-0 min-w-0 flex-1', narrow && !detailsShown && 'hidden')}>
           {narrow && (
             <HStack vAlign="center" className="flex-none border-b border-border px-1">
               <IconButton

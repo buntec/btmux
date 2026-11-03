@@ -6,7 +6,7 @@ import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/Segme
 import { Spinner } from '../Spinner';
 import { Placeholder } from './Placeholder';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { useFileStore } from '@/state/fileStore';
 import type { FileSearchResult, SearchResult, ServerFileMessage } from '@/protocol/file-messages';
 
@@ -199,7 +199,7 @@ function FileResultRow({
   return (
     <div
       data-index={index}
-      className={cn(
+      className={clsx(
         'flex items-start gap-2 px-2 leading-tight cursor-pointer select-none',
         focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
@@ -234,7 +234,7 @@ function ContentResultRow({
   return (
     <div
       data-index={index}
-      className={cn(
+      className={clsx(
         'flex flex-col px-2 py-0.5 cursor-pointer select-none',
         focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
       )}
@@ -251,7 +251,7 @@ function ContentResultRow({
         </span>
       </div>
       {result.text && (
-        <div className={cn('min-w-0 truncate pl-5 leading-tight', focused ? 'text-on-accent/70' : 'text-secondary')}>
+        <div className={clsx('min-w-0 truncate pl-5 leading-tight', focused ? 'text-on-accent/70' : 'text-secondary')}>
           {result.text}
         </div>
       )}

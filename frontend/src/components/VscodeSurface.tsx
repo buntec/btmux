@@ -5,8 +5,8 @@ import { Center } from '@astryxdesign/core/Center';
 import { Code } from '@astryxdesign/core/Code';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Link } from '@astryxdesign/core/Link';
-import { Spinner } from '@astryxdesign/core/Spinner';
 import { Text } from '@astryxdesign/core/Text';
+import { Spinner } from './Spinner';
 import type { VscodeStatus } from '../generated/protocol';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
@@ -234,7 +234,7 @@ export function VscodeSurface({
               </VStack>
             </Card>
           ) : (
-            <Spinner label="Starting VS Code…" />
+            <Spinner size="xl" label="Starting VS Code…" />
           )}
         </Center>
       )}

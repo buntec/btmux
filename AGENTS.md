@@ -211,6 +211,8 @@ Follow `frontend/AGENTS.md` and inspect component docs with `cd frontend && npx
 astryx component <Name>`. `BtmuxTheme.tsx` derives the Astryx theme from the
 resolved terminal palette and font family, including settings previews; semantic
 colors and contrast belong in `lib/astryx-theme.ts`.
+Loading indicators use `components/Spinner.tsx` (the app mark's wave), not
+Astryx's `Spinner`; Astryx `Button`/`IconButton` `isLoading` still draw its ring.
 
 Fonts: body text and headings use Geist Sans; the Astryx code role (and `Kbd`)
 uses the configured terminal font. Identifiers and code-like chrome go in

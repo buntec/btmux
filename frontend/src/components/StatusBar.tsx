@@ -4,7 +4,7 @@ import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Button } from '@astryxdesign/core/Button';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import { Spinner } from '@astryxdesign/core/Spinner';
+import { Spinner } from './Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
 import { Activity, FolderOpen, GitBranch, Globe } from 'lucide-react';

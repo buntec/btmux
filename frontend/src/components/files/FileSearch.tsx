@@ -3,7 +3,7 @@ import { Search, File, FileText } from 'lucide-react';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
-import { Spinner } from '@astryxdesign/core/Spinner';
+import { Spinner } from '../Spinner';
 import { Placeholder } from './Placeholder';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn } from '@/lib/utils';

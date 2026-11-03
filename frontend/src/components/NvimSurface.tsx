@@ -3,8 +3,8 @@ import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
 import { Center } from '@astryxdesign/core/Center';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
-import { Spinner } from '@astryxdesign/core/Spinner';
 import { Text } from '@astryxdesign/core/Text';
+import { Spinner } from './Spinner';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
@@ -655,7 +655,7 @@ export function NvimSurface({
       {status && (
         <Center className="btm-sans absolute inset-0 z-50 bg-body/90">
           {status.kind === 'connecting' ? (
-            <Spinner label="Starting Neovim…" />
+            <Spinner size="xl" label="Starting Neovim…" />
           ) : (
             <Card padding={4} elevation="high">
               <VStack gap={3} hAlign="start">

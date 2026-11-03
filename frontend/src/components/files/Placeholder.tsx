@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { VStack } from '@astryxdesign/core/Layout';
-import { Spinner } from '@astryxdesign/core/Spinner';
 import { Text } from '@astryxdesign/core/Text';
+import { Spinner } from '../Spinner';
 import { cn } from '@/lib/utils';
 
 /** Centered loading, empty, or error message for a file browser region. */

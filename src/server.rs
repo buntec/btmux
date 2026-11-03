@@ -1034,6 +1034,103 @@ mod pane_notification_tests {
     }
 
     #[tokio::test]
+    async fn mcp_host_check_is_the_auth_boundary() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let token = "a".repeat(64);
+        let auth = Arc::new(
+            crate::auth::Auth::new(
+                token.clone(),
+                "127.0.0.1",
+                8004,
+                &["http://192.168.252.2:8004".to_string()],
+            )
+            .unwrap(),
+        );
+        // As Tailscale does, once it reports its origin.
+        auth.allow("https://btmux.tailnet.ts.net").unwrap();
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager))).layer(
+            axum::middleware::from_fn_with_state(auth, crate::auth::protect),
+        );
+        for (host, status) in [
+            ("localhost:8004", StatusCode::OK),
+            ("192.168.252.2:8004", StatusCode::OK),
+            ("btmux.tailnet.ts.net", StatusCode::OK),
+            ("evil.example", StatusCode::FORBIDDEN),
+        ] {
+            let request = Request::post("/mcp")
+                .header(header::HOST, host)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::ACCEPT, "application/json, text/event-stream")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#,
+                ))
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), status, "{host}");
+        }
+    }
+
+    #[tokio::test]
+    async fn split_routes_reject_invalid_directions() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let state = Arc::new(tokio::sync::RwLock::new(manager));
+        let app = create_app(state.clone());
+        let split = |uri: &str, direction: &str| {
+            Request::post(uri)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"direction":"{direction}"}}"#)))
+                .unwrap()
+        };
+        let by_session = format!("/api/sessions/{session}/panes/{pane}/split");
+        let by_id = format!("/api/panes/{pane}/split");
+        let panes = || async {
+            state.read().await.snapshot_by_id(session).unwrap().windows[0]
+                .panes
+                .len()
+        };
+        for uri in [&by_session, &by_id] {
+            let before = panes().await;
+            for direction in ["invalid", "", "h", "v", "vertical"] {
+                let response = app.clone().oneshot(split(uri, direction)).await.unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::BAD_REQUEST,
+                    "{uri} {direction}"
+                );
+            }
+            assert_eq!(panes().await, before);
+            let response = app.clone().oneshot(split(uri, "right")).await.unwrap();
+            assert!(response.status().is_success());
+            assert_eq!(panes().await, before + 1);
+        }
+    }
+
+    #[tokio::test]
     async fn focus_pane_broadcasts_and_rejects_unknown_panes() {
         use axum::http::Request;
         use tower::ServiceExt;

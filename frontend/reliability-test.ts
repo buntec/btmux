@@ -101,6 +101,34 @@ try {
   assert.equal(await readTerminal(), before, 'reconnect must preserve output without duplication');
   console.log('PASS authentication, origin rejection, pane reconnect and replay');
 
+  // Text frames are control messages only; a bad one must not reach the shell.
+  const viewer = new (WebSocket as any)(`${url.replace(/^http/, 'ws')}/ws/pane/${pane}?cols=80&rows=24`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }) as WebSocket;
+  await new Promise((resolve, reject) => {
+    viewer.onopen = resolve;
+    viewer.onerror = reject;
+  });
+  for (const frame of ['{"type":"resize","cols":-1,"rows":24}', '{"type":"bad_frame"}', 'BAD_TEXT_FRAME']) {
+    viewer.send(frame);
+  }
+  viewer.send(new TextEncoder().encode("printf 'FRAMES_%s\\n' DONE\r"));
+  await waitForAsync(
+    page,
+    async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return !!useStore.getState().terminals.get(id)?.readLines().join('\n').includes('\nFRAMES_DONE\n');
+    },
+    pane,
+  );
+  const afterFrames = await readTerminal();
+  assert.equal(viewer.readyState, WebSocket.OPEN, 'invalid text frames must not close the socket');
+  for (const text of ['"cols"', 'bad_frame', 'BAD_TEXT_FRAME']) {
+    assert(!afterFrames.includes(text), `invalid text frame reached the shell: ${text}`);
+  }
+  viewer.close();
+  console.log('PASS invalid pane text frames never reach the shell');
+
   // An unrelated configuration change must keep the exact emulator instance.
   await page.evaluate(async (id) => {
     const { useStore } = await import('/src/state/store.tsx' as string);

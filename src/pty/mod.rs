@@ -639,13 +639,24 @@ impl OutputPipeline {
         #[cfg(unix)]
         self.poll_cwd();
         let mut sb = self.scrollback.lock().unwrap();
-        sb.push(Output::Data(Bytes::from(result.scrollback)));
+        if !result.scrollback.is_empty() {
+            sb.push(Output::Data(exact_bytes(result.scrollback)));
+        }
         sb.set_kitty(self.interceptor.kitty());
-        let _ = self
-            .output_tx
-            .send(Output::Data(Bytes::from(result.broadcast)));
+        if !result.broadcast.is_empty() {
+            let _ = self
+                .output_tx
+                .send(Output::Data(exact_bytes(result.broadcast)));
+        }
         sent
     }
+}
+
+/// `Bytes` keeps a `Vec`'s spare capacity, which the journal budget can't see:
+/// filtered reads would hold whole read buffers at a fraction of their cost.
+fn exact_bytes(mut data: Vec<u8>) -> Bytes {
+    data.shrink_to_fit();
+    Bytes::from(data)
 }
 
 /// Record an OSC 133 prompt or command mark.
@@ -999,6 +1010,26 @@ mod lifecycle_tests {
         .await
         .unwrap()
     }
+    #[tokio::test]
+    async fn filtered_reads_add_no_events() {
+        let pane = pane("/bin/sh");
+        let (response_tx, _responses) = mpsc::channel(8);
+        let mut output = pane.output_pipeline(vt_query::VtQueryInterceptor::new(), response_tx);
+        let (mut rx, _) = pane.subscribe_replay();
+        let revision = pane.screen_revision();
+
+        // Swallowed queries, then an unterminated title.
+        output.feed(&b"\x1b[?99n".repeat(600)).unwrap();
+        output.feed(b"\x1b]2;").unwrap();
+        output.feed(&[b'Z'; 4096]).unwrap();
+        assert_eq!(pane.screen_revision(), revision);
+        assert!(rx.try_recv().is_err());
+
+        output.feed(b"\x07text").unwrap();
+        assert_eq!(pane.screen_revision(), revision + 1);
+        assert!(matches!(rx.try_recv(), Ok(Output::Data(_))));
+    }
+
     #[tokio::test]
     async fn handoff_keeps_shell_replay_and_colors() {
         let mut old = pane("/bin/sh");

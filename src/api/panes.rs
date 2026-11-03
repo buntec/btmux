@@ -77,18 +77,25 @@ struct SplitPaneByIdRequest {
     select: Option<bool>,
 }
 
+/// 400 unless `direction` is one the split routes accept.
+fn check_split_direction(direction: &str) -> Result<(), (StatusCode, &'static str)> {
+    if ["left", "right", "up", "down"].contains(&direction) {
+        return Ok(());
+    }
+    Err((
+        StatusCode::BAD_REQUEST,
+        "direction must be left, right, up, or down",
+    ))
+}
+
 /// Splits a pane in any window, returning the new pane's ID.
 async fn api_split_pane_by_id(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
     Json(body): Json<SplitPaneByIdRequest>,
 ) -> Response {
-    if !["left", "right", "up", "down"].contains(&body.direction.as_str()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "direction must be left, right, up, or down",
-        )
-            .into_response();
+    if let Err(rejection) = check_split_direction(&body.direction) {
+        return rejection.into_response();
     }
     let mut mgr = state.write().await;
     let cwd = body.cwd.map(std::path::PathBuf::from);
@@ -159,6 +166,9 @@ async fn api_split_pane(
     Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<SplitPaneRequest>,
 ) -> Response {
+    if let Err(rejection) = check_split_direction(&body.direction) {
+        return rejection.into_response();
+    }
     let mut mgr = state.write().await;
     if let Err(status) = check_pane(&mgr, session_id, pane_id) {
         return status.into_response();

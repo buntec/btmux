@@ -197,19 +197,18 @@ async fn handle_socket(
                     }
                 }
                 Message::Text(text) => {
-                    if let Ok(control) = serde_json::from_str::<ControlMsg>(&text) {
-                        let mut mgr = state.write().await;
-                        if let Some(pane) = mgr.find_pane_mut(pane_id) {
-                            match control {
-                                ControlMsg::Resize { cols, rows } => {
-                                    pane.pty.resize_viewer(viewer_id, cols, rows)
-                                }
-                                ControlMsg::Claim => pane.pty.claim_viewer(viewer_id),
+                    // Input is binary, so other text never reaches the shell.
+                    let Ok(control) = serde_json::from_str::<ControlMsg>(&text) else {
+                        tracing::debug!(%pane_id, "ignored invalid pane control frame");
+                        continue;
+                    };
+                    let mut mgr = state.write().await;
+                    if let Some(pane) = mgr.find_pane_mut(pane_id) {
+                        match control {
+                            ControlMsg::Resize { cols, rows } => {
+                                pane.pty.resize_viewer(viewer_id, cols, rows)
                             }
-                        }
-                    } else {
-                        if input_tx.send_wait(text.as_bytes().to_vec()).await.is_err() {
-                            break;
+                            ControlMsg::Claim => pane.pty.claim_viewer(viewer_id),
                         }
                     }
                 }

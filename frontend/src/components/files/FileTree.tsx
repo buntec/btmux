@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Folder, File, ChevronRight } from 'lucide-react';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
-import { cn, joinPath } from '@/lib/utils';
+import { clsx } from 'clsx';
+import { joinPath } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
 import type { FileEntry, GitStatusResult, ServerFileMessage } from '@/protocol/file-messages';
 import { gitCounts } from '@/lib/gitStatus';
@@ -151,7 +152,7 @@ function FileRow({
   return (
     <div
       data-index={index}
-      className={cn(
+      className={clsx(
         'flex items-center gap-2 px-2 cursor-pointer leading-tight',
         focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
         isCut && 'opacity-40',
@@ -168,7 +169,7 @@ function FileRow({
     >
       {isSelected ? (
         <span
-          className={cn(
+          className={clsx(
             'size-3.5 shrink-0 flex items-center justify-center',
             focused ? 'text-on-accent' : 'text-blue-vivid',
           )}
@@ -177,19 +178,19 @@ function FileRow({
           ■
         </span>
       ) : entry.is_dir ? (
-        <Folder className={cn('size-3.5 shrink-0', focused ? 'text-on-accent' : 'text-blue-vivid')} />
+        <Folder className={clsx('size-3.5 shrink-0', focused ? 'text-on-accent' : 'text-blue-vivid')} />
       ) : (
-        <File className={cn('size-3.5 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')} />
+        <File className={clsx('size-3.5 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')} />
       )}
-      <span className={cn('flex-1 truncate', isCut && 'line-through decoration-secondary')} title={entry.name}>
+      <span className={clsx('flex-1 truncate', isCut && 'line-through decoration-secondary')} title={entry.name}>
         {entry.name}
       </span>
       {gitStatus && <GitStatusIndicators status={gitStatus} />}
       {entry.is_dir ? (
-        <ChevronRight className={cn('size-3 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')} />
+        <ChevronRight className={clsx('size-3 shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')} />
       ) : (
         <span
-          className={cn('shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')}
+          className={clsx('shrink-0', focused ? 'text-on-accent/70' : 'text-secondary')}
           style={{ fontSize: '0.85em' }}
         >
           {formatSize(entry.size)}

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { Placeholder } from '../files/Placeholder';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { formatBytes, formatCpu, formatElapsed, formatMemoryPercent } from '@/lib/processFormat';
 import {
   isProcessSortDescending,
@@ -38,7 +38,7 @@ function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortM
       aria-pressed={active}
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => sortBy(mode)}
-      className={cn('flex cursor-pointer items-center gap-1 text-left hover:text-primary', active && 'text-primary')}
+      className={clsx('flex cursor-pointer items-center gap-1 text-left hover:text-primary', active && 'text-primary')}
     >
       {label}
       {active && (
@@ -106,7 +106,7 @@ export function ProcessTree({
       >
         <div
           ref={headerRef}
-          className={cn(grid, 'sticky top-0 z-10 border-b border-border bg-surface px-2 py-1 text-secondary')}
+          className={clsx(grid, 'sticky top-0 z-10 border-b border-border bg-surface px-2 py-1 text-secondary')}
         >
           {columns.map((column) => (
             <SortHeader key={column.label} label={column.label} mode={column.mode} active={sortMode === column.mode} />
@@ -125,7 +125,7 @@ export function ProcessTree({
                 aria-level={treeMode ? depth + 1 : undefined}
                 aria-expanded={hasChildren ? !collapsed : undefined}
                 aria-selected={focused}
-                className={cn(
+                className={clsx(
                   grid,
                   'cursor-pointer items-center px-2 leading-tight pointer-coarse:py-1.5',
                   focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
@@ -145,7 +145,7 @@ export function ProcessTree({
                     {process.user ?? '—'}
                   </span>
                 )}
-                <span className={cn('font-mono', process.cpu >= 80 && !focused && 'text-red-vivid')}>
+                <span className={clsx('font-mono', process.cpu >= 80 && !focused && 'text-red-vivid')}>
                   {formatCpu(process.cpu)}
                 </span>
                 <span className="font-mono" title={`${formatMemoryPercent(process.memory, memTotal)} of system memory`}>
@@ -174,7 +174,7 @@ export function ProcessTree({
                         type="button"
                         tabIndex={-1}
                         aria-label={`${collapsed ? 'Unfold' : 'Fold'} ${process.name || process.pid}`}
-                        className={cn(
+                        className={clsx(
                           'inline-block w-4 shrink-0 cursor-pointer text-left pointer-coarse:w-6',
                           focused ? 'text-on-accent/70' : 'text-secondary hover:text-primary',
                         )}

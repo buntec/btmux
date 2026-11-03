@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
 import { Spinner } from '../Spinner';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 
 /** Centered loading, empty, or error message for a file browser region. */
 export function Placeholder({
@@ -23,7 +23,7 @@ export function Placeholder({
       className="min-h-0 flex-1 p-4 text-center"
     >
       {isLoading && <Spinner size="sm" aria-label="Loading" />}
-      <Text color={isError ? 'inherit' : 'secondary'} className={cn(isError && 'text-error')}>
+      <Text color={isError ? 'inherit' : 'secondary'} className={clsx(isError && 'text-error')}>
         {children}
       </Text>
     </VStack>

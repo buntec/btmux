@@ -7,7 +7,7 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { HStack } from '@astryxdesign/core/Layout';
 import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { useStore } from '../state/store';
 import { getAnimations } from '../state/configDefaults';
 import { AGENTS } from './AgentIcon';
@@ -66,7 +66,7 @@ export function PaneTitleBar({
     <HStack
       gap={2}
       vAlign="center"
-      className={cn(
+      className={clsx(
         'btm-mono flex-none overflow-hidden border-b px-2 py-1',
         isActive ? 'border-b-border-strong border-l-2 border-l-accent bg-accent-muted' : 'border-b-border bg-surface',
       )}

@@ -10,7 +10,7 @@ import { useProcessStore } from '@/state/processStore';
 import { formatBytes } from '@/lib/processFormat';
 import { isPortSortDescending, portKey, PORT_SORT_LABELS } from '@/lib/portRows';
 import { isProcessSortDescending, PROCESS_SORT_LABELS } from '@/lib/processTree';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '@/lib/connectionState';
 
 export function ProcessModeHeader({
@@ -72,7 +72,7 @@ export function ProcessModeHeader({
         </Text>
       )}
       {connectionState !== 'connected' && (
-        <Text size="sm" color="secondary" role="status" className={cn(animations && 'animate-pulse')}>
+        <Text size="sm" color="secondary" role="status" className={clsx(animations && 'animate-pulse')}>
           {CONNECTION_STATE_LABEL[connectionState]}
         </Text>
       )}

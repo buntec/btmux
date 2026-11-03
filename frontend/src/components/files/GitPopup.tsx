@@ -8,7 +8,7 @@ import { List, ListItem } from '@astryxdesign/core/List';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Spinner } from '../Spinner';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import { useStore } from '@/state/store';
 import { KeyCap, KeyHint, type Hint } from '../KeyHint';
 import { usePressHint } from '@/hooks/usePressHint';
@@ -1008,7 +1008,7 @@ function GitPopupDialog({
                                   type="code"
                                   size="sm"
                                   color={active ? 'inherit' : 'disabled'}
-                                  className={cn(active && 'text-cyan-vivid')}
+                                  className={clsx(active && 'text-cyan-vivid')}
                                 >
                                   {sw.flag}
                                 </Text>
@@ -1067,7 +1067,7 @@ function GitPopupDialog({
             <LayoutFooter hasDivider>
               <HStack gap={4} vAlign="center" wrap="wrap" className="gap-y-1">
                 {actions.map((action) => (
-                  <HStack key={action.key} className={cn('flex-none', action.isDisabled && 'opacity-50')}>
+                  <HStack key={action.key} className={clsx('flex-none', action.isDisabled && 'opacity-50')}>
                     <KeyHint
                       keys={[action.key === 'Enter' ? 'enter' : action.key]}
                       label={action.label.toLowerCase()}

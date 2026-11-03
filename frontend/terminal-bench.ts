@@ -240,8 +240,8 @@ for (let i = 0; i < 3; i++) {
 results.push({ name: 'fresh-tab-replay', runs: replay });
 
 // Four panes with scrollback: memory and DOM size.
-for (const direction of ['vertical', 'horizontal', 'horizontal']) {
-  await api(`/api/sessions/${session.id}/panes/${pane}/split`, { direction });
+for (let i = 0; i < 3; i++) {
+  await api(`/api/sessions/${session.id}/panes/${pane}/split`, { direction: 'down' });
 }
 await page.waitForTimeout(3000);
 const panes = (await api(`/api/sessions/${session.id}`)).windows[0].panes.map((p: { id: string }) => p.id);

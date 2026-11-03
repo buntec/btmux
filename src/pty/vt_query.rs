@@ -11,6 +11,12 @@ use super::kitty_keyboard::KittyKeyboard;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// Longest escape sequence kept (tmux's `input-buffer-size`). Longer ones are
+/// dropped, not streamed: vte's OSC buffer in the replay checkpoint is unbounded.
+const MAX_SEQUENCE_BYTES: usize = 1024 * 1024;
+/// Buffer capacity kept after a sequence ends.
+const RETAINED_BYTES: usize = 4096;
+
 /// What to do with a recognized sequence.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -78,6 +84,8 @@ pub struct VtQueryInterceptor {
     /// Whether the OSC being dispatched ended with ST rather than BEL.
     osc_st: bool,
     kitty: KittyKeyboard,
+    /// The current sequence hit `MAX_SEQUENCE_BYTES`: parse to its end, drop it.
+    oversized: bool,
 }
 
 impl VtQueryInterceptor {
@@ -97,6 +105,7 @@ impl VtQueryInterceptor {
             overrides: Overrides::default(),
             osc_st: false,
             kitty: KittyKeyboard::default(),
+            oversized: false,
         }
     }
 
@@ -106,9 +115,38 @@ impl VtQueryInterceptor {
         let pending = if self.state == State::Ground {
             Vec::new()
         } else {
-            self.raw_seq.clone()
+            self.pending()
         };
         (self.overrides.to_vec(), self.kitty, pending)
+    }
+
+    /// Bytes that refeed into the current state. An oversized sequence is never
+    /// forwarded, so only its state matters: a full buffer resumes dropping.
+    fn pending(&self) -> Vec<u8> {
+        if !self.oversized {
+            return self.raw_seq.clone();
+        }
+        let (head, filler, tail): (&[u8], u8, &[u8]) = match self.state {
+            State::EscapeIntermediate => (b"\x1b", b'(', b""),
+            State::CsiParam => (b"\x1b[", b'0', b""),
+            State::CsiIntermediate => (b"\x1b[", b' ', b""),
+            State::CsiIgnore => (b"\x1b[0?", b'0', b""),
+            State::OscString => (b"\x1b]", b'x', b""),
+            State::OscEscape => (b"\x1b]", b'x', b"\x1b"),
+            State::DcsParam => (b"\x1bP", b'0', b""),
+            State::DcsIntermediate => (b"\x1bP", b' ', b""),
+            State::DcsPassthrough => (b"\x1bPq", b'x', b""),
+            State::DcsEscape => (b"\x1bPq", b'x', b"\x1b"),
+            State::DcsIgnore => (b"\x1bP:", b'x', b""),
+            // Too short to be oversized.
+            State::Ground | State::Escape | State::CsiEntry | State::DcsEntry => {
+                return self.raw_seq.clone()
+            }
+        };
+        let mut pending = head.to_vec();
+        pending.resize(MAX_SEQUENCE_BYTES - tail.len(), filler);
+        pending.extend_from_slice(tail);
+        pending
     }
 
     pub fn restore(&mut self, colors: &[Option<super::colors::Rgb>], kitty: KittyKeyboard) {
@@ -156,7 +194,7 @@ impl VtQueryInterceptor {
                 State::Ground | State::OscString | State::DcsPassthrough
             )
         {
-            self.emit_raw(result);
+            self.emit_aborted(result);
             self.enter_ground();
             // Fall through to handle ESC in ground state below.
         }
@@ -177,6 +215,14 @@ impl VtQueryInterceptor {
             State::DcsPassthrough => self.dcs_passthrough(byte, result),
             State::DcsEscape => self.dcs_escape(byte, result),
             State::DcsIgnore => self.dcs_ignore(byte, result),
+        }
+
+        if self.raw_seq.len() >= MAX_SEQUENCE_BYTES {
+            self.oversized = true;
+            self.raw_seq.truncate(MAX_SEQUENCE_BYTES);
+            self.param_buf.clear();
+            self.interm_buf.clear();
+            self.payload_buf.clear();
         }
     }
 
@@ -234,10 +280,14 @@ impl VtQueryInterceptor {
                 self.emit_raw(result);
                 self.enter_ground();
             }
+            // Emulators stay in ESC here, running C0 controls and ignoring the
+            // rest. Returning to ground would let `]` open an OSC unseen.
             _ => {
-                // Unexpected byte after ESC — emit what we have and reset.
-                self.emit_raw(result);
-                self.enter_ground();
+                self.raw_seq.pop();
+                if byte < 0x20 {
+                    result.scrollback.push(byte);
+                    result.broadcast.push(byte);
+                }
             }
         }
     }
@@ -362,6 +412,9 @@ impl VtQueryInterceptor {
     // ─── CSI dispatch — the heart of query detection ───────────────────────────
 
     fn dispatch_csi(&mut self, final_byte: u8, result: &mut FilterResult) {
+        if self.oversized {
+            return;
+        }
         let action = self.classify_csi(final_byte);
         match action {
             Action::Pass => {
@@ -521,7 +574,7 @@ impl VtQueryInterceptor {
         } else {
             // ESC aborts the OSC and starts a new sequence.
             self.raw_seq.pop();
-            self.emit_raw(result);
+            self.emit_aborted(result);
             self.enter_ground();
             self.ground(0x1b, result);
             self.process_byte(byte, result);
@@ -529,6 +582,9 @@ impl VtQueryInterceptor {
     }
 
     fn dispatch_osc(&mut self, result: &mut FilterResult) {
+        if self.oversized {
+            return;
+        }
         // OSC payload format: "<code>;<data>"
         let payload = std::mem::take(&mut self.payload_buf);
         let (code_bytes, data) = match payload.iter().position(|&b| b == b';') {
@@ -741,6 +797,9 @@ impl VtQueryInterceptor {
     }
 
     fn dispatch_dcs(&mut self, result: &mut FilterResult) {
+        if self.oversized {
+            return;
+        }
         let action = self.classify_dcs();
         match action {
             Action::Pass => self.emit_raw(result),
@@ -778,16 +837,36 @@ impl VtQueryInterceptor {
 
     fn enter_ground(&mut self) {
         self.state = State::Ground;
-        self.param_buf.clear();
-        self.interm_buf.clear();
-        self.payload_buf.clear();
-        self.raw_seq.clear();
+        self.oversized = false;
+        for buf in [
+            &mut self.param_buf,
+            &mut self.interm_buf,
+            &mut self.payload_buf,
+            &mut self.raw_seq,
+        ] {
+            buf.clear();
+            buf.shrink_to(RETAINED_BYTES);
+        }
     }
 
     /// Emit the accumulated raw_seq bytes as passthrough (to both outputs).
     fn emit_raw(&self, result: &mut FilterResult) {
+        if self.oversized {
+            return;
+        }
         result.scrollback.extend_from_slice(&self.raw_seq);
         result.broadcast.extend_from_slice(&self.raw_seq);
+    }
+
+    /// Emit a sequence that ESC aborted, closed with ST: the next one may be
+    /// stripped, which would leave downstream parsers inside this one.
+    fn emit_aborted(&self, result: &mut FilterResult) {
+        if self.oversized {
+            return;
+        }
+        self.emit_raw(result);
+        result.scrollback.extend_from_slice(b"\x1b\\");
+        result.broadcast.extend_from_slice(b"\x1b\\");
     }
 }
 
@@ -1214,7 +1293,7 @@ mod tests {
     fn esc_aborts_osc() {
         let mut interceptor = VtQueryInterceptor::new();
         let result = interceptor.feed(b"\x1b]0;ti\x1b[1mx");
-        assert_eq!(result.broadcast, b"\x1b]0;ti\x1b[1mx");
+        assert_eq!(result.broadcast, b"\x1b]0;ti\x1b\\\x1b[1mx");
     }
 
     #[test]
@@ -1234,6 +1313,184 @@ mod tests {
         let result = interceptor.feed(b"\x1b[?1049;2031l");
         assert!(!reports.load(Ordering::Relaxed));
         assert_eq!(result.broadcast, b"\x1b[?1049;2031l");
+    }
+
+    fn oversized(introducer: &[u8]) -> Vec<u8> {
+        let mut input = introducer.to_vec();
+        input.resize(MAX_SEQUENCE_BYTES * 3, b'1');
+        input
+    }
+
+    #[test]
+    fn oversized_sequences_stay_bounded_and_are_dropped() {
+        // Each ends as its family does, and output after it is untouched. An
+        // ignored DCS ends at its ESC, leaving a harmless ST.
+        for (introducer, end, left) in [
+            (&b"\x1b]2;"[..], &b"\x07"[..], &b""[..]),
+            (b"\x1b]2;", b"\x1b\\", b""),
+            (b"\x1bP1;", b"p\x1b\\", b""),
+            (b"\x1bP1:", b"\x1b\\", b"\x1b\\"),
+            (b"\x1b[", b"m", b""),
+            (b"\x1b[?1?", b"m", b""),
+        ] {
+            let mut interceptor = VtQueryInterceptor::new();
+            let result = interceptor.feed(&oversized(introducer));
+            assert!(result.broadcast.is_empty());
+            assert!(interceptor.raw_seq.capacity() <= 2 * MAX_SEQUENCE_BYTES);
+            assert!(interceptor.param_buf.capacity() <= 2 * MAX_SEQUENCE_BYTES);
+            assert!(interceptor.payload_buf.capacity() <= 2 * MAX_SEQUENCE_BYTES);
+
+            let result = interceptor.feed(&[end, b"after\x1b[c"].concat());
+            let expected = [left, b"after"].concat();
+            assert_eq!(result.broadcast, expected);
+            assert_eq!(result.scrollback, expected);
+            assert_eq!(result.responses, vec![b"\x1b[?62;22c" as &[u8]]);
+            assert!(interceptor.raw_seq.capacity() <= RETAINED_BYTES);
+            assert!(interceptor.payload_buf.capacity() <= RETAINED_BYTES);
+        }
+    }
+
+    #[test]
+    fn oversized_escape_intermediates_are_bounded() {
+        let mut interceptor = VtQueryInterceptor::new();
+        let mut input = b"\x1b".to_vec();
+        input.resize(MAX_SEQUENCE_BYTES * 2, b'(');
+        assert!(interceptor.feed(&input).broadcast.is_empty());
+        assert_eq!(interceptor.feed(b"0after").broadcast, b"after");
+    }
+
+    #[test]
+    fn aborting_an_oversized_sequence_recovers() {
+        let mut interceptor = VtQueryInterceptor::new();
+        interceptor.feed(&oversized(b"\x1b]2;"));
+        assert_eq!(interceptor.feed(b"\x18ok").broadcast, b"\x18ok");
+
+        interceptor.feed(&oversized(b"\x1b]2;"));
+        assert_eq!(interceptor.feed(b"\x1b[1mok").broadcast, b"\x1b[1mok");
+    }
+
+    #[test]
+    fn longest_kept_sequence_passes_through() {
+        let mut input = b"\x1b]2;".to_vec();
+        input.resize(MAX_SEQUENCE_BYTES - 1, b'x');
+        input.push(0x07);
+        let result = VtQueryInterceptor::new().feed(&input);
+        assert_eq!(result.broadcast, input);
+    }
+
+    #[test]
+    fn oversized_sequences_stay_dropped_across_handoff() {
+        for (partial, more, end) in [
+            (&b""[..], &b"more"[..], &b"\x07"[..]),
+            (b"\x1b", b"", b"\\"),
+        ] {
+            let mut old = VtQueryInterceptor::new();
+            old.feed(&oversized(b"\x1b]2;"));
+            old.feed(partial);
+            let (_, _, pending) = old.export();
+            assert!(pending.len() <= MAX_SEQUENCE_BYTES);
+
+            let mut new = VtQueryInterceptor::new();
+            assert!(new.feed(&pending).broadcast.is_empty());
+            assert!(new.feed(more).broadcast.is_empty());
+            assert_eq!(new.feed(&[end, b"after"].concat()).broadcast, b"after");
+        }
+    }
+
+    #[test]
+    fn aborted_sequences_close_before_a_stripped_replacement() {
+        let mut too_long_osc = oversized(b"\x1b]2;");
+        too_long_osc.push(0x07);
+        let mut too_long_csi = oversized(b"\x1b[");
+        too_long_csi.push(b'm');
+        for aborted in [
+            &b"\x1b]2;old"[..],
+            b"\x1b]2;old\x1b",
+            b"\x1b",
+            b"\x1b(",
+            b"\x1b[",
+            b"\x1b[1",
+            b"\x1b[1$",
+            b"\x1b[1?",
+            b"\x1bP",
+            b"\x1bP1",
+            b"\x1bP$",
+            b"\x1bP:",
+        ] {
+            for replacement in [&too_long_osc[..], &too_long_csi, b"\x1b[c"] {
+                let input = [aborted, replacement, b"visible"].concat();
+                let result = VtQueryInterceptor::new().feed(&input);
+                for output in [result.scrollback, result.broadcast] {
+                    let mut checkpoint = vt100::Parser::default();
+                    checkpoint.process(&output);
+                    assert_eq!(checkpoint.screen().contents(), "visible", "{aborted:?}");
+                }
+            }
+        }
+    }
+
+    /// vte stays in ESC after these, so `]` would open an OSC unseen here.
+    #[test]
+    fn bytes_inside_esc_keep_the_interceptor_in_step() {
+        for (inside, forwarded) in [
+            (&b"\n"[..], &b"\n"[..]),
+            (b"\x07", b"\x07"),
+            (b"\x7f", b""),
+            (b"\xff", b""),
+        ] {
+            let mut interceptor = VtQueryInterceptor::new();
+            let result = interceptor.feed(&oversized(&[b"\x1b", inside, b"]2;"].concat()));
+            assert_eq!(result.broadcast, forwarded);
+            assert_eq!(interceptor.state, State::OscString);
+            assert_eq!(interceptor.feed(b"\x07after").broadcast, b"after");
+        }
+        let result = VtQueryInterceptor::new().feed(b"\x1b\n[1mx");
+        assert_eq!(result.broadcast, b"\n\x1b[1mx");
+    }
+
+    #[test]
+    fn oversized_handoff_restores_every_state() {
+        for (introducer, filler, tail, state) in [
+            (&b"\x1b"[..], b'(', &b""[..], State::EscapeIntermediate),
+            (b"\x1b[", b'1', b"", State::CsiParam),
+            (b"\x1b[", b'1', b" ", State::CsiIntermediate),
+            (b"\x1b[", b' ', b"", State::CsiIntermediate),
+            (b"\x1b[", b'1', b"?", State::CsiIgnore),
+            (b"\x1b]", b'x', b"", State::OscString),
+            (b"\x1b]", b'x', b"\x1b", State::OscEscape),
+            (b"\x1bP", b'1', b"", State::DcsParam),
+            (b"\x1bP", b'1', b"$", State::DcsIntermediate),
+            (b"\x1bP", b'$', b"", State::DcsIntermediate),
+            (b"\x1bP", b'1', b":", State::DcsIgnore),
+            (b"\x1bP:", b'x', b"", State::DcsIgnore),
+            (b"\x1bP", b'1', b"q", State::DcsPassthrough),
+            (b"\x1bP", b'1', b"q\x1b", State::DcsEscape),
+            (b"\x1bP", b'1', b"q\x1b1", State::DcsPassthrough),
+            (b"\x1bPq", b'x', b"\x1b", State::DcsEscape),
+            (b"\x1bPq", b'x', b"\x1b1", State::DcsPassthrough),
+        ] {
+            let mut input = introducer.to_vec();
+            input.resize(MAX_SEQUENCE_BYTES + 16, filler);
+            input.extend_from_slice(tail);
+            for suffix in [&b"\nPAYLOAD\x1b\\after\x1b[c"[..], b"1 $q\x07\x1b\\after"] {
+                let mut old = VtQueryInterceptor::new();
+                old.feed(&input);
+                assert_eq!(old.state, state);
+                let (_, _, pending) = old.export();
+                assert!(pending.len() <= MAX_SEQUENCE_BYTES);
+
+                let mut new = VtQueryInterceptor::new();
+                let refed = new.feed(&pending);
+                assert!(refed.broadcast.is_empty() && refed.scrollback.is_empty());
+                assert_eq!(new.state, state);
+                assert!(new.oversized);
+
+                let (expected, restored) = (old.feed(suffix), new.feed(suffix));
+                assert_eq!(restored.broadcast, expected.broadcast, "{state:?}");
+                assert_eq!(restored.scrollback, expected.scrollback, "{state:?}");
+                assert_eq!(restored.responses, expected.responses, "{state:?}");
+            }
+        }
     }
 
     #[test]

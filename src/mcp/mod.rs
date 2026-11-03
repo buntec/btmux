@@ -34,6 +34,8 @@ pub fn mcp_service(state: AppState) -> StreamableHttpService<BtmuxMcpServer, Loc
     StreamableHttpService::new(
         move || Ok(BtmuxMcpServer::new(state.clone())),
         Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
+        // `auth::protect` checks Host and Origin, including origins allowed at
+        // runtime; rmcp's default would admit only loopback.
+        StreamableHttpServerConfig::default().disable_allowed_hosts(),
     )
 }

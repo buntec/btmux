@@ -26,22 +26,34 @@ const connect = async (pane: string, query: string) => {
   return ws;
 };
 
-/** Resolves when the socket sees the size take effect; call before sending the resize. */
-const sizeApplied = (ws: WebSocket, cols: number, rows: number) =>
-  new Promise<void>((resolve, reject) => {
-    const finish = (settle: () => void) => {
-      clearTimeout(timer);
-      ws.removeEventListener('message', onMessage);
-      settle();
-    };
-    const onMessage = (event: MessageEvent) => {
-      if (typeof event.data !== 'string') return;
-      const frame = JSON.parse(event.data);
-      if (frame.type === 'size' && frame.cols === cols && frame.rows === rows) finish(resolve);
-    };
-    const timer = setTimeout(() => finish(() => reject(new Error(`resize to ${cols}x${rows} not applied`))), 15_000);
-    ws.addEventListener('message', onMessage);
+/** A viewer whose size has applied, if it is the pane's first: attaching sends a frame after that. */
+const attach = async (pane: string, cols: number, rows: number) => {
+  const ws = await connect(pane, `cols=${cols}&rows=${rows}`);
+  await new Promise((resolve) => ws.addEventListener('message', resolve, { once: true }));
+  return ws;
+};
+
+/**
+ * Prints a burst of output at a size, with no viewer attached: `seq` can outrun
+ * a socket, and the server drops a viewer that lags.
+ */
+const burst = async (pane: string, cols: number, rows: number, index: number) => {
+  (await attach(pane, cols, rows)).close();
+  // Computed, so the echoed command line doesn't match.
+  const input = await fetch(`${url}/api/panes/${pane}/input`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ text: `seq 1 20000; echo burst-$((${index}+1))`, keys: ['Enter'] }),
   });
+  assert(input.ok);
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const output = await (await fetch(`${url}/api/panes/${pane}/output`, { headers })).text();
+    if (output.includes(`burst-${index + 1}`)) return;
+    assert(Date.now() < deadline, `burst ${index} at ${cols}x${rows} did not finish`);
+    await Bun.sleep(50);
+  }
+};
 
 /**
  * A hook-reported agent in a new session, whose resize history ends at `cols`×`rows`.
@@ -58,20 +70,14 @@ const startAgent = async (
   const session = await created.json();
   const snapshot = await (await fetch(`${url}/api/sessions/${session.id}`, { headers })).json();
   const id = snapshot.windows[0].panes[0].id;
-  const ws = await connect(id, `cols=${cols}&rows=${rows}`);
   // Enough output that the replay spans frames.
-  for (const [c, r] of [
+  const sizes = [
     [cols - 30, rows - 8],
     [cols + 40, rows + 6],
     [cols - 50, rows - 4],
-  ]) {
-    ws.send(JSON.stringify({ type: 'resize', cols: c, rows: r }));
-    ws.send(encoder.encode('seq 1 20000\n'));
-    await Bun.sleep(300);
-  }
-  const applied = sizeApplied(ws, cols, rows);
-  ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-  await applied;
+  ];
+  for (const [i, [c, r]] of sizes.entries()) await burst(id, c, r, i);
+  const ws = await attach(id, cols, rows);
   // Hook-only agents end at a shell prompt.
   ws.send(encoder.encode('clear; sleep 99999\n'));
   await Bun.sleep(200);

@@ -208,6 +208,7 @@ const AUTOPLAY_SCRIPT: &str = r#"(() => {
 })()"#;
 
 /// See `ad_host_rules`.
+#[cfg(unix)]
 const AD_HOSTS: &str = include_str!("../extras/browser/ad-hosts.txt");
 
 /// CSS cursors a tab may show. A page's `url()` cursors would load in the
@@ -874,6 +875,7 @@ type Pipes = (
 
 /// `--host-resolver-rules` covers every frame and worker without attaching to
 /// them, but only by host, so it misses ads a site serves itself.
+#[cfg(unix)]
 fn ad_host_rules() -> String {
     AD_HOSTS
         .lines()
@@ -1597,6 +1599,7 @@ mod tests {
         assert_eq!(viewers.owner, Some(first));
     }
 
+    #[cfg(unix)]
     #[test]
     fn ad_hosts_cover_their_subdomains() {
         let rules = ad_host_rules();

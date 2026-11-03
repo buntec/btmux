@@ -942,10 +942,13 @@ mod pane_notification_tests {
         let path = dir.to_str().unwrap().trim_start_matches('/');
 
         // On Unix the extra slashes are harmless, so this checks the decoding.
+        // On Windows they would make the drive a server, and a real UNC root
+        // needs a share, so this serves the drive path.
+        let root = if cfg!(windows) { "" } else { "%2F%2F" };
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri(format!("/api/preview/%2F%2F{path}/a.html"))
+                    .uri(format!("/api/preview/{root}{path}/a.html"))
                     .header(header::RANGE, "bytes=0-0")
                     .body(Body::empty())
                     .unwrap(),

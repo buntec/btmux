@@ -27,10 +27,14 @@ import {
   gitMatches,
   repoColors,
   sessionRepos,
+  sessionWorktrees,
   windowWorktrees,
   worktreeLabel,
   type RepoColor,
 } from '../lib/gitIdentity';
+import { sumGitCounts, type GitCounts } from '../lib/gitStatus';
+import { useWorktreeStatuses } from '../hooks/useWorktreeStatuses';
+import { GitIndicators } from './GitIndicators';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -151,6 +155,12 @@ export function SessionSwitcher({ send }: Props) {
     () => repoColors(allSessions.flatMap((s) => sessionRepos(s).map((git) => git.repo_id))),
     [allSessions],
   );
+  const worktreeRoots = useMemo(
+    () => [...new Set(allSessions.flatMap((s) => sessionWorktrees(s).map((git) => git.worktree_root)))].sort(),
+    [allSessions],
+  );
+  const statuses = useWorktreeStatuses(worktreeRoots, open);
+  const worktreeCounts = (git: PaneGit) => statuses.get(git.worktree_root);
 
   // On open: reset the filter and select the active session's row (the tree
   // starts collapsed, so windows aren't shown).
@@ -469,7 +479,16 @@ export function SessionSwitcher({ send }: Props) {
                 <ListItem
                   key={`s-${row.sessionId}`}
                   ref={isSelected ? selectedRef : null}
-                  label={<RowLabel name={sess.name} gits={sessionRepos(sess)} kind="repo" max={2} colors={colors} />}
+                  label={
+                    <RowLabel
+                      name={sess.name}
+                      gits={sessionRepos(sess)}
+                      kind="repo"
+                      max={2}
+                      colors={colors}
+                      counts={(repo) => repoCounts(sess, repo, statuses)}
+                    />
+                  }
                   isSelected={isSelected}
                   startContent={
                     <HStack gap={2} vAlign="center">
@@ -498,7 +517,16 @@ export function SessionSwitcher({ send }: Props) {
               <ListItem
                 key={`w-${row.windowId}`}
                 ref={isSelected ? selectedRef : null}
-                label={<RowLabel name={win.name} gits={windowWorktrees(win)} kind="worktree" max={1} colors={colors} />}
+                label={
+                  <RowLabel
+                    name={win.name}
+                    gits={windowWorktrees(win)}
+                    kind="worktree"
+                    max={1}
+                    colors={colors}
+                    counts={worktreeCounts}
+                  />
+                }
                 isSelected={isSelected}
                 className="pl-8"
                 startContent={
@@ -537,7 +565,13 @@ export function SessionSwitcher({ send }: Props) {
         </Text>
         <Text color="secondary">preview</Text>
         {debouncedPreviewWindow && (
-          <GitTokens gits={windowWorktrees(debouncedPreviewWindow)} kind="worktree" max={3} colors={colors} />
+          <GitTokens
+            gits={windowWorktrees(debouncedPreviewWindow)}
+            kind="worktree"
+            max={3}
+            colors={colors}
+            counts={worktreeCounts}
+          />
         )}
       </HStack>
       {debouncedPreviewWindow ? (
@@ -637,32 +671,47 @@ function RowLabel({ name, ...tokens }: { name: string } & ComponentProps<typeof 
   );
 }
 
+/** The union of a repo's worktrees in a session. */
+function repoCounts(sess: SessionState, repo: PaneGit, statuses: ReadonlyMap<string, GitCounts>): GitCounts {
+  return sumGitCounts(
+    sessionWorktrees(sess)
+      .filter((git) => git.repo_id === repo.repo_id)
+      .flatMap((git) => statuses.get(git.worktree_root) ?? []),
+  );
+}
+
 /** Repo or worktree tokens, colored by repo; at most `max`, then a count. */
 function GitTokens({
   gits,
   kind,
   max,
   colors,
+  counts,
 }: {
   gits: PaneGit[];
   kind: 'repo' | 'worktree';
   max: number;
   colors: Map<string, RepoColor>;
+  counts: (git: PaneGit) => GitCounts | undefined;
 }) {
   if (gits.length === 0) return null;
   const shown = gits.slice(0, max);
   return (
     <HStack gap={1} vAlign="center" className="min-w-0">
-      {shown.map((git) => (
-        <Token
-          key={kind === 'repo' ? git.repo_id : `${git.repo_id}\0${git.worktree_root}`}
-          size="sm"
-          color={colors.get(git.repo_id)}
-          icon={<Icon icon={kind === 'repo' ? FolderGit2 : GitBranch} size="sm" />}
-          label={kind === 'repo' ? git.repo_name : worktreeLabel(git)}
-          description={kind === 'repo' ? `Repo ${git.repo_id}` : `${git.repo_name} worktree ${git.worktree_root}`}
-        />
-      ))}
+      {shown.map((git) => {
+        const status = counts(git);
+        return (
+          <Token
+            key={kind === 'repo' ? git.repo_id : `${git.repo_id}\0${git.worktree_root}`}
+            size="sm"
+            color={colors.get(git.repo_id)}
+            icon={<Icon icon={kind === 'repo' ? FolderGit2 : GitBranch} size="sm" />}
+            label={kind === 'repo' ? git.repo_name : worktreeLabel(git)}
+            description={kind === 'repo' ? `Repo ${git.repo_id}` : `${git.repo_name} worktree ${git.worktree_root}`}
+            endContent={status && <GitIndicators counts={status} plain />}
+          />
+        );
+      })}
       {gits.length > shown.length && <Token size="sm" className="shrink-0" label={`+${gits.length - shown.length}`} />}
     </HStack>
   );

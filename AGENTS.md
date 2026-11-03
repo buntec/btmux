@@ -138,7 +138,10 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   `meta_tx`. Not persisted. Windows and sessions
   have no identity of their own: `lib/gitIdentity.ts` derives it from their
   panes for the session switcher's repo/branch tokens (colored per repo) and
-  its filter. `worktree.rs` creates a worktree (`worktree-path`, default
+  its filter. While open, the switcher polls `git_status` on `/ws/files` for
+  each worktree (`useWorktreeStatuses`) and shows the file browser's status
+  symbols on its tokens; a repo token sums that session's worktrees of the repo.
+  `worktree.rs` creates a worktree (`worktree-path`, default
   `../<repo>-<branch>`) with a window and removes one, closing its panes, for
   the control socket (`prefix + W`/`X`), REST, MCP, and `btmux
   new-worktree`/`remove-worktree`; it runs the `git` CLI off the lock.

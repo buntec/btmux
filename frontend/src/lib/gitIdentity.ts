@@ -39,7 +39,15 @@ function hash(s: string): number {
 export function windowWorktrees(win: GitWindow): PaneGit[] {
   const active = win.panes[win.active_pane];
   const panes = active ? [active, ...win.panes.filter((p) => p !== active)] : win.panes;
-  return distinct(panes, (git) => `${git.repo_id}\0${git.worktree_root}`);
+  return distinct(panes, worktreeKey);
+}
+
+/** The distinct worktrees of a session's panes, in window order. */
+export function sessionWorktrees(sess: { windows: GitWindow[] }): PaneGit[] {
+  return distinct(
+    sess.windows.flatMap((win) => win.panes),
+    worktreeKey,
+  );
 }
 
 /** The distinct repos of a session's panes, in window order. */
@@ -58,6 +66,10 @@ export function worktreeLabel(git: PaneGit): string {
 /** Whether a lowercase filter query matches a repo, branch, or worktree folder. */
 export function gitMatches(git: PaneGit, query: string): boolean {
   return [git.repo_name, git.branch ?? '', basename(git.worktree_root)].some((s) => s.toLowerCase().includes(query));
+}
+
+function worktreeKey(git: PaneGit): string {
+  return `${git.repo_id}\0${git.worktree_root}`;
 }
 
 function distinct(panes: GitPane[], key: (git: PaneGit) => string): PaneGit[] {

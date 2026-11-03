@@ -45,6 +45,7 @@ import type {
   SearchResult,
 } from '@/protocol/file-messages';
 import type { ClientMessage } from '@/protocol/messages';
+import { isHtmlFile } from './files/previews/HtmlPreview';
 
 const MEDIA_EXTENSIONS = new Set([
   'pdf',
@@ -66,7 +67,10 @@ const MEDIA_EXTENSIONS = new Set([
 const DEFAULT_SIDEBAR_RATIO = 1 / 3;
 
 function scrollFilePreview(direction: 1 | -1) {
-  const viewport = document.querySelector<HTMLElement>('.file-preview-scroll [data-preview-viewport]');
+  const viewport =
+    document.querySelector<HTMLElement>('.file-preview-scroll [data-preview-viewport]') ??
+    (document.querySelector<HTMLIFrameElement>('.file-preview-scroll [data-html-preview]')?.contentDocument
+      ?.scrollingElement as HTMLElement | null | undefined);
   if (viewport) {
     const duration = getSmoothScrollDuration(useStore.getState().config);
     smoothScrollBy(viewport, direction * (viewport.clientHeight / 2), duration);
@@ -107,6 +111,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const showDotFiles = useFileStore((s) => s.showDotFiles);
   const showIgnored = useFileStore((s) => s.showIgnored);
   const wrapLines = useFileStore((s) => s.wrapLines);
+  const htmlSource = useFileStore((s) => s.htmlSource);
+  const selectedFile = useFileStore((s) => s.selectedFile);
   const isGitMode = useFileStore((s) => s.isGitMode);
   const gitView = useFileStore((s) => s.gitView);
   const treeDepth = useFileStore((s) => s.treeDepth);
@@ -1356,6 +1362,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           e.preventDefault();
           store.getState().setWrapLines(!store.getState().wrapLines);
           break;
+        case 'v':
+          e.preventDefault();
+          if (isHtmlFile(store.getState().selectedFile)) store.getState().setHtmlSource(!store.getState().htmlSource);
+          break;
         case 'g':
           e.preventDefault();
           store.getState().setFocusedIndex(0);
@@ -1552,6 +1562,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             { keys: ['ctrl+n', 'ctrl+p'], label: focusedEntryIsDir ? `depth (${treeDepth})` : 'navigate' },
             ...BROWSE_HINTS.slice(0, -1),
             { keys: ['w'], label: wrapLines ? 'wrap: on' : 'wrap: off' },
+            ...(isHtmlFile(selectedFile)
+              ? [{ keys: ['v'], label: htmlSource ? 'html: source' : 'html: rendered' }]
+              : []),
             ...BROWSE_HINTS.slice(-1),
           ];
   // Popup keys only work once status confirms a repository.

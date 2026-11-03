@@ -31,6 +31,7 @@ interface FileStore {
   showDotFiles: boolean;
   showIgnored: boolean;
   wrapLines: boolean;
+  htmlSource: boolean;
   previewFullscreen: boolean;
 
   // Multi-select
@@ -73,6 +74,7 @@ interface FileStore {
   setShowDotFiles: (show: boolean) => void;
   setShowIgnored: (show: boolean) => void;
   setWrapLines: (wrap: boolean) => void;
+  setHtmlSource: (source: boolean) => void;
   setPreviewFullscreen: (fullscreen: boolean) => void;
   toggleSelectedPath: (path: string) => void;
   clearSelection: () => void;
@@ -106,6 +108,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   showDotFiles: false,
   showIgnored: false,
   wrapLines: false,
+  htmlSource: false,
   previewFullscreen: false,
   selectedPaths: new Set(),
   yankRegister: null,
@@ -142,6 +145,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   setShowDotFiles: (show) => set({ showDotFiles: show }),
   setShowIgnored: (show) => set({ showIgnored: show }),
   setWrapLines: (wrap) => set({ wrapLines: wrap }),
+  setHtmlSource: (source) => set({ htmlSource: source }),
   setPreviewFullscreen: (fullscreen) => set({ previewFullscreen: fullscreen }),
   toggleSelectedPath: (path) => {
     const s = new Set(get().selectedPaths);

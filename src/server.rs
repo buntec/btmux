@@ -127,6 +127,7 @@ pub fn create_app(state: AppState) -> Router {
                 .delete(api_pane_agent_status_clear),
         )
         .route("/api/file", get(serve_raw_file))
+        .route("/api/preview/{*path}", get(serve_preview_file))
         .route("/wallpaper", get(serve_wallpaper))
         .route(
             crate::vscode::BASE_PATH,
@@ -905,6 +906,69 @@ mod pane_notification_tests {
     }
 
     #[tokio::test]
+    async fn is_utf8_reads_only_the_head() {
+        let dir = std::env::temp_dir().join(format!("btmux-charset-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let limit = CHARSET_SNIFF_BYTES as usize;
+        let split_char = [vec![b'a'; limit - 1], "ü".as_bytes().to_vec()].concat();
+        let late_latin1 = [vec![b'a'; limit], vec![0xfc]].concat();
+        let cases: [(&[u8], bool); 5] = [
+            (b"", true),
+            ("Grüße".as_bytes(), true),
+            (b"Gr\xfc\xdfe", false),
+            // A short file may not end inside a character.
+            (b"a\xc3", false),
+            (&split_char, true),
+        ];
+        let file = dir.join("a.html");
+        for (bytes, expected) in cases {
+            std::fs::write(&file, bytes).unwrap();
+            assert_eq!(is_utf8(file.to_str().unwrap()).await, expected);
+        }
+        std::fs::write(&file, late_latin1).unwrap();
+        assert!(is_utf8(file.to_str().unwrap()).await);
+        assert!(!is_utf8(dir.join("missing").to_str().unwrap()).await);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn preview_route_decodes_a_unc_root_and_keeps_ranges_and_policy() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let dir = std::env::temp_dir().join(format!("btmux-preview-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.html"), "<p>Grüße</p>").unwrap();
+        let app = Router::new().route("/api/preview/{*path}", get(serve_preview_file));
+        let path = dir.to_str().unwrap().trim_start_matches('/');
+
+        // On Unix the extra slashes are harmless, so this checks the decoding.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/preview/%2F%2F{path}/a.html"))
+                    .header(header::RANGE, "bytes=0-0")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/html; charset=utf-8"
+        );
+        let policy = response.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+        assert!(policy.contains("connect-src 'none'"));
+        let body = axum::body::to_bytes(response.into_body(), 16)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"<");
+    }
+
+    #[tokio::test]
     async fn agent_diagnostics_are_authenticated_and_keep_unknown_agents_present() {
         use axum::http::Request;
         use tower::ServiceExt;
@@ -1553,11 +1617,78 @@ struct RawFileQuery {
     path: String,
 }
 
+// Local HTML/SVG must not acquire the terminal application's origin and
+// credentials when opened directly.
+const RAW_FILE_POLICY: &str = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
+// Keeps the origin so a page's own assets get the auth cookie, which is safe
+// only because nothing in it can run or send: no scripts or forms, no requests
+// elsewhere, and no <a ping>, which would POST to the API with that cookie.
+const PREVIEW_POLICY: &str = "sandbox allow-same-origin; default-src 'self' data:; \
+    connect-src 'none'; style-src 'self' data: 'unsafe-inline'; script-src 'none'; object-src 'none'; \
+    frame-ancestors 'self'";
+
+const CHARSET_SNIFF_BYTES: u64 = 1024 * 1024;
+
 async fn serve_raw_file(
     Query(query): Query<RawFileQuery>,
     request: axum::extract::Request,
 ) -> Response {
-    let Ok(canonical) = tokio::fs::canonicalize(&query.path).await else {
+    serve_file(&query.path, RAW_FILE_POLICY, request).await
+}
+
+/// An HTML page and its assets for the file browser's preview.
+async fn serve_preview_file(Path(path): Path<String>, request: axum::extract::Request) -> Response {
+    let path = if cfg!(windows) {
+        path
+    } else {
+        format!("/{path}")
+    };
+    // A page's `..` links can climb past a Windows root.
+    if !std::path::Path::new(&path).is_absolute() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let mut response = serve_file(&path, PREVIEW_POLICY, request).await;
+    // Undeclared, browsers assume a legacy encoding, and this header beats a
+    // <meta charset>, so only claim UTF-8 for a file that is.
+    let is_html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|content_type| content_type == "text/html");
+    if is_html && is_utf8(&path).await {
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            "text/html; charset=utf-8".parse().unwrap(),
+        );
+    }
+    response
+}
+
+/// Whether a file is UTF-8, judging a large one by its head, so that no request
+/// buffers it.
+async fn is_utf8(path: &str) -> bool {
+    use tokio::io::AsyncReadExt;
+    let Ok(file) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+    let mut head = Vec::new();
+    if file
+        .take(CHARSET_SNIFF_BYTES)
+        .read_to_end(&mut head)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    match std::str::from_utf8(&head) {
+        Ok(_) => true,
+        // The head may end inside a character.
+        Err(e) => e.error_len().is_none() && head.len() as u64 == CHARSET_SNIFF_BYTES,
+    }
+}
+
+/// Streams a file, with Range support, under a content security policy.
+async fn serve_file(path: &str, policy: &'static str, request: axum::extract::Request) -> Response {
+    let Ok(canonical) = tokio::fs::canonicalize(path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let Ok(metadata) = tokio::fs::metadata(&canonical).await else {
@@ -1573,14 +1704,9 @@ async fn serve_raw_file(
         return StatusCode::NOT_FOUND.into_response();
     };
     let mut response = response.into_response();
-    // Local HTML/SVG must not acquire the terminal application's origin and
-    // credentials when opened directly. Media still streams, with Range support.
-    response.headers_mut().insert(
-        header::CONTENT_SECURITY_POLICY,
-        "sandbox; default-src 'none'; style-src 'unsafe-inline'"
-            .parse()
-            .unwrap(),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_SECURITY_POLICY, policy.parse().unwrap());
     response
         .headers_mut()
         .insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());

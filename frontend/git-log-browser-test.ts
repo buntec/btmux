@@ -22,7 +22,14 @@ writeFileSync(path.join(repo, 'a-huge.txt'), `${hugeLines.join('\n')}\n`);
 writeFileSync(path.join(repo, 'z-after.txt'), 'after 0\nafter 1\n');
 git('add', '.');
 git('commit', '-m', 'Huge');
-for (let index = 0; index < 56; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
+const wrapLines = Array.from({ length: 1000 }, (_, index) => `ROW ${index} ${'x'.repeat(250)}`).join('\n');
+writeFileSync(path.join(repo, 'a-wrap.txt'), `${wrapLines}\n`);
+writeFileSync(path.join(repo, 'b-target.txt'), 'target\n');
+writeFileSync(path.join(repo, 'c-wrap.txt'), `${wrapLines}\n`);
+writeFileSync(path.join(repo, 'z-last.txt'), 'last\n');
+git('add', '.');
+git('commit', '-m', 'Wrap');
+for (let index = 0; index < 55; index++) git('commit', '--allow-empty', '-m', `Earlier ${index}`);
 const readmeContext = 'ctx1\nctx2\nctx3\nctx4\nctx5\n';
 writeFileSync(path.join(repo, 'README'), `${readmeContext}one\n`);
 git('add', 'README');
@@ -231,11 +238,54 @@ try {
 
   await page.keyboard.press('Escape');
 
+  // A jump holds while the wrapped chunks above it draw, until the user scrolls.
+  await page.keyboard.press('/');
+  await page.keyboard.type('Wrap');
+  await page.keyboard.press('Enter');
+  await summary.getByRole('status').filter({ hasText: '4 files changed' }).waitFor();
+  const jumpSettled = async (name: string) => {
+    const section = preview.locator('section').filter({ has: page.getByText(name, { exact: true }) });
+    const offset = () =>
+      section.evaluate(
+        (element) =>
+          element.getBoundingClientRect().top - element.closest('[data-preview-viewport]')!.getBoundingClientRect().top,
+      );
+    let last = await offset();
+    for (let stable = 0; stable < 3;) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const next = await offset();
+      stable = next === last ? stable + 1 : 0;
+      last = next;
+    }
+    return last;
+  };
+  await changedFile('b-target.txt').getByText('b-target.txt', { exact: true }).click();
+  assert(Math.abs(await jumpSettled('b-target.txt')) < 1, 'the target stays at the top');
+  const pinnedScrollTop = await preview.evaluate((element) => element.scrollTop);
+  const viewportBox = (await preview.boundingBox())!;
+  await page.mouse.move(viewportBox.x + viewportBox.width / 2, viewportBox.y + viewportBox.height / 2);
+  await page.mouse.wheel(0, -600);
+  assert((await jumpSettled('b-target.txt')) > 100, 'scrolling lets go of the target');
+  assert((await preview.evaluate((element) => element.scrollTop)) !== pinnedScrollTop);
+  await backToTop.click();
+  await backToTop.waitFor({ state: 'hidden' });
+  await changedFile('z-last.txt').getByText('z-last.txt', { exact: true }).click();
+  const lastOffset = await jumpSettled('z-last.txt');
+  assert(lastOffset >= -1 && lastOffset < viewportBox.height, 'a target that cannot reach the top stays visible');
+  await backToTop.click();
+  await backToTop.waitFor({ state: 'hidden' });
+  await page.keyboard.press('/');
+  await page.keyboard.press('Escape');
+  console.log('PASS jumps past wrapped rows');
+
   // Exact totals, capped rows, drawn near the viewport.
   await page.keyboard.press('/');
   await page.keyboard.type('Huge');
   await page.keyboard.press('Enter');
-  await summary.getByRole('status').filter({ hasText: '2 files changed, 30002 insertions(+), 0 deletions(−)' }).waitFor();
+  await summary
+    .getByRole('status')
+    .filter({ hasText: '2 files changed, 30002 insertions(+), 0 deletions(−)' })
+    .waitFor();
   assert(await changedFile('a-huge.txt').getByText('+30000', { exact: true }).isVisible());
   assert(await summary.getByText('git show', { exact: false }).isVisible());
   assert.equal(await preview.getByText('Diff truncated', { exact: true }).count(), 1);

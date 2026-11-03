@@ -21,6 +21,24 @@ function fileLabel(file: CommitFileDiff) {
   return file.old_path ? `${file.old_path} → ${file.path}` : file.path;
 }
 
+const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+
+/** Holds `section` at the viewport's top as lazy rows above it draw and wrap, until the user may scroll. */
+function pinToTop(viewport: HTMLElement, content: HTMLElement, section: HTMLElement) {
+  const align = () => {
+    viewport.scrollTop += section.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+  };
+  const observer = new ResizeObserver(align);
+  const release = () => {
+    observer.disconnect();
+    USER_SCROLL_EVENTS.forEach((type) => window.removeEventListener(type, release, true));
+  };
+  USER_SCROLL_EVENTS.forEach((type) => window.addEventListener(type, release, { capture: true, passive: true }));
+  observer.observe(content);
+  align();
+  return release;
+}
+
 const ChangedFiles = memo(function ChangedFiles({
   files,
   onJump,
@@ -111,6 +129,8 @@ const FilePatches = memo(function FilePatches({
 
 export function GitCommitDiffPreview() {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const releasePin = useRef<(() => void) | null>(null);
   const fileSections = useRef(new Map<string, HTMLElement>());
   const [isScrolled, setIsScrolled] = useState(false);
   const gitLog = useFileStore((s) => s.gitLog);
@@ -122,13 +142,16 @@ export function GitCommitDiffPreview() {
 
   useEffect(() => {
     setIsScrolled(false);
+    return () => releasePin.current?.();
   }, [gitCommitDiff?.commit_id]);
 
   const jumpToFile = useCallback((path: string) => {
     const viewport = viewportRef.current;
+    const content = contentRef.current;
     const section = fileSections.current.get(path);
-    if (!viewport || !section) return;
-    viewport.scrollTop += section.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    if (!viewport || !content || !section) return;
+    releasePin.current?.();
+    releasePin.current = pinToTop(viewport, content, section);
     viewport.parentElement?.closest<HTMLElement>('[tabindex="-1"]')?.focus({ preventScroll: true });
   }, []);
 
@@ -152,7 +175,7 @@ export function GitCommitDiffPreview() {
         className="min-h-0 flex-1 overflow-auto"
         onScroll={(event) => setIsScrolled(event.currentTarget.scrollTop > 0)}
       >
-        <VStack padding={3} gap={3} className="leading-5">
+        <VStack ref={contentRef} padding={3} gap={3} className="leading-5">
           <VStack gap={1} className="border-b border-border pb-3">
             <Text type="large" weight="medium">
               {commit.summary}

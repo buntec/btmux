@@ -617,12 +617,13 @@ fn capped_line_content(content: &[u8]) -> String {
     text
 }
 
-/// The patch's hunks within the budget, and whether any line didn't fit.
+/// The patch's hunks within the budget, and whether any line was cut or didn't fit.
 fn patch_hunks(
     patch: &git2::Patch<'_>,
     budget: &mut DiffBudget,
 ) -> Result<(Vec<DiffHunk>, bool), String> {
     let mut hunks = Vec::new();
+    let mut shortened = false;
     for hunk_idx in 0..patch.num_hunks() {
         let (hunk, _num_lines) = patch
             .hunk(hunk_idx)
@@ -631,16 +632,17 @@ fn patch_hunks(
             .num_lines_in_hunk(hunk_idx)
             .map_err(|e| format!("Failed to get diff line count: {}", e))?;
         let mut lines = Vec::with_capacity(num_lines.min(budget.file_lines));
-        let mut truncated = false;
+        let mut spent = false;
 
         for line_idx in 0..num_lines {
             let line = patch
                 .line_in_hunk(hunk_idx, line_idx)
                 .map_err(|e| format!("Failed to get diff line: {}", e))?;
             let Some(content) = budget.take_line(line.content()) else {
-                truncated = true;
+                spent = true;
                 break;
             };
+            shortened |= line.content().len() > MAX_DIFF_LINE_BYTES;
             lines.push(DiffLine {
                 origin: line.origin(),
                 content,
@@ -655,11 +657,11 @@ fn patch_hunks(
                 lines,
             });
         }
-        if truncated {
+        if spent {
             return Ok((hunks, true));
         }
     }
-    Ok((hunks, false))
+    Ok((hunks, shortened))
 }
 
 fn diff_line_stats(
@@ -832,7 +834,8 @@ fn diff_untracked_file(abs_path: &Path, path: &str) -> Result<FileDiff, String> 
     Ok(FileDiff {
         path: path.to_string(),
         old_path: None,
-        truncated: lines.len() < num_lines,
+        truncated: lines.len() < num_lines
+            || content.lines().any(|line| line.len() > MAX_DIFF_LINE_BYTES),
         hunks: vec![DiffHunk {
             header: format!("@@ -0,0 +1,{} @@ new file", num_lines),
             old_start: 0,
@@ -1520,6 +1523,49 @@ mod tests {
             *content,
             format!("{}…", "x".repeat(MAX_DIFF_LINE_BYTES - 1))
         );
+        assert!(diff.files[0].diff.truncated);
+        assert!(!diff.files[1].diff.truncated);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shortened_lines_mark_diffs_truncated_and_keep_later_rows() {
+        let root = std::env::temp_dir().join(format!("btmux-git-cap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Repository::init(&root).unwrap();
+        let long = |tail: &str| format!("{}{tail}\nnext\n", "x".repeat(MAX_DIFF_LINE_BYTES));
+        // Git counts the newline.
+        let fits = format!("{}\n", "x".repeat(MAX_DIFF_LINE_BYTES - 1));
+        let has_next = |diff: &super::FileDiff| {
+            diff.hunks
+                .iter()
+                .flat_map(|hunk| &hunk.lines)
+                .any(|line| line.content == "next\n")
+        };
+
+        fs::write(root.join("fits.txt"), &fits).unwrap();
+        fs::write(root.join("tracked.txt"), long("OLD")).unwrap();
+        let id = commit_all(&root);
+        let commit = git_commit_diff_sync(&root, &id, 3).unwrap();
+        let (fits_file, tracked_file) = (&commit.files[0].diff, &commit.files[1].diff);
+        assert!(!fits_file.truncated);
+        assert!(tracked_file.truncated && has_next(tracked_file));
+
+        fs::write(root.join("fits.txt"), format!("{fits}{fits}")).unwrap();
+        fs::write(root.join("tracked.txt"), long("NEW")).unwrap();
+        fs::write(root.join("untracked.txt"), long("NEW")).unwrap();
+        fs::write(root.join("untracked-fits.txt"), &fits).unwrap();
+        for (path, truncated) in [
+            ("fits.txt", false),
+            ("tracked.txt", true),
+            ("untracked.txt", true),
+            ("untracked-fits.txt", false),
+        ] {
+            let diff = git_diff_file_sync(&root, path, false, false, 3).unwrap();
+            assert_eq!(diff.truncated, truncated, "{path}");
+            assert_eq!(has_next(&diff), truncated, "{path}");
+        }
 
         fs::remove_dir_all(root).unwrap();
     }

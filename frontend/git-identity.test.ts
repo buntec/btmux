@@ -70,4 +70,9 @@ test('status indicators and their union', () => {
   expect(gitIndicators(union).map((i) => i.label)).toContain('4 changed');
   expect(sameGitCounts(a, { ...a })).toBe(true);
   expect(sameGitCounts(a, b)).toBe(false);
+  expect(sameGitCounts(a, { ...a, stale: true })).toBe(false);
+  expect(sumGitCounts([a, { ...b, stale: true }]).stale).toBe(true);
+  expect(sumGitCounts([a, b]).stale).toBeUndefined();
+  // A clean worktree out of date must not read as clean.
+  expect(gitIndicators({ ...clean, stale: true }).map((i) => i.label)).toEqual(['out of date']);
 });

@@ -141,6 +141,8 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
   its filter. While open, the switcher polls `git_status` on `/ws/files` for
   each worktree (`useWorktreeStatuses`) and shows the file browser's status
   symbols on its tokens; a repo token sums that session's worktrees of the repo.
+  Polling pauses in a hidden tab; a scan that fails or takes over 30 s marks its
+  token out of date until a reply.
   `worktree.rs` creates a worktree (`worktree-path`, default
   `../<repo>-<branch>`) with a window and removes one, closing its panes, for
   the control socket (`prefix + W`/`X`), REST, MCP, and `btmux

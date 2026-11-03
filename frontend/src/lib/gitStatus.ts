@@ -7,6 +7,8 @@ export interface GitCounts {
   staged: number;
   changed: number;
   untracked: number;
+  /** The last scan failed or hasn't replied, so these may be old. */
+  stale?: boolean;
 }
 
 export function gitCounts(status: GitStatusResult): GitCounts {
@@ -27,6 +29,7 @@ export function sumGitCounts(counts: GitCounts[]): GitCounts {
     sum.staged += c.staged;
     sum.changed += c.changed;
     sum.untracked += c.untracked;
+    if (c.stale) sum.stale = true;
   }
   return sum;
 }
@@ -37,7 +40,8 @@ export function sameGitCounts(a: GitCounts, b: GitCounts): boolean {
     a.behind === b.behind &&
     a.staged === b.staged &&
     a.changed === b.changed &&
-    a.untracked === b.untracked
+    a.untracked === b.untracked &&
+    !a.stale === !b.stale
   );
 }
 
@@ -63,6 +67,9 @@ export function gitIndicators(counts: GitCounts): GitIndicator[] {
   }
   if (counts.untracked > 0) {
     indicators.push({ symbol: '?', label: `${counts.untracked} untracked`, className: 'text-secondary' });
+  }
+  if (counts.stale) {
+    indicators.push({ symbol: '…', label: 'out of date', className: 'text-secondary' });
   }
   return indicators;
 }

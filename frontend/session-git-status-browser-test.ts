@@ -100,20 +100,40 @@ try {
   // frames after close(), so this page doesn't assert on page errors.
   const held: (() => void)[] = [];
   let holding = true;
+  let outage = false;
+  let connections = 0;
+  let sent = 0;
+  let answered = 0;
+  let closeSocket = () => {};
   const scans: string[] = [];
   const routed = await context.newPage();
+  await routed.clock.install();
   await routed.routeWebSocket(/\/ws\/files$/, (socket) => {
+    if (outage) {
+      socket.close();
+      return;
+    }
+    const connection = ++connections;
+    closeSocket = () => void socket.close();
     const server = socket.connectToServer();
     socket.onMessage((message) => {
       const { type, payload } = JSON.parse(String(message));
-      if (type === 'git_status') scans.push(payload.root);
+      if (type === 'git_status') {
+        scans.push(payload.root);
+        sent += 1;
+      }
       server.send(message);
     });
     server.onMessage((message) => {
-      if (holding) held.push(() => socket.send(message));
+      answered += 1;
+      if (holding) held.push(() => connection === connections && socket.send(message));
       else socket.send(message);
     });
   });
+  const release = () => {
+    holding = false;
+    for (const reply of held.splice(0)) reply();
+  };
   const until = async (condition: () => boolean) => {
     const deadline = Date.now() + 10_000;
     while (!condition()) {
@@ -137,7 +157,7 @@ try {
   assert.deepEqual([...scans].sort(), [repo, feat].sort());
   console.log('PASS reopening the picker joins pending scans');
 
-  // A changed root list scans only the new root.
+  // With the others pending, a changed root list adds only the new root.
   git('worktree', 'add', '-q', '-b', 'other', other);
   const otherWindow = await fetch(`${url}/api/sessions/${session.id}/windows`, {
     method: 'POST',
@@ -151,13 +171,75 @@ try {
   console.log('PASS a new root joins pending scans');
 
   // Replies from before the reopening still arrive.
-  holding = false;
-  for (const reply of held) reply();
+  release();
   await routed
     .getByRole('dialog', { name: 'Sessions', exact: true })
     .getByLabel('1 ahead, 1 changed, 1 untracked', { exact: true })
     .waitFor();
   console.log('PASS pending scans report after reopening');
+
+  const routedDialog = routed.getByRole('dialog', { name: 'Sessions', exact: true });
+  const fresh = routedDialog.getByLabel('1 ahead, 1 changed, 1 untracked', { exact: true });
+  const stale = routedDialog.getByLabel('1 ahead, 1 changed, 1 untracked, out of date', { exact: true });
+  const elapse = async (time: string) => {
+    await routed.clock.fastForward(time);
+    await routed.waitForTimeout(150);
+  };
+  const setHidden = (hidden: boolean) =>
+    routed.evaluate((hidden) => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, hidden);
+
+  // A hidden tab doesn't poll, and scans again once visible.
+  await setHidden(true);
+  await routed.waitForTimeout(150);
+  scans.length = 0;
+  await elapse('00:30');
+  assert.deepEqual(scans, []);
+  await setHidden(false);
+  await until(() => scans.length === 3);
+  console.log('PASS a hidden tab stops polling');
+
+  // Unanswered scans show as out of date and aren't repeated.
+  await fresh.waitFor();
+  await elapse('00:06');
+  await until(() => answered === sent);
+  holding = true;
+  scans.length = 0;
+  await elapse('00:06');
+  await until(() => scans.length === 3);
+  await fresh.waitFor();
+  await elapse('00:31');
+  await stale.waitFor();
+  await elapse('00:06');
+  assert.equal(scans.length, 3);
+  console.log('PASS overdue scans mark tokens and are not repeated');
+
+  // A silent socket is replaced, and the scans recover on the new one.
+  const before = connections;
+  scans.length = 0;
+  await elapse('00:30');
+  await until(() => connections === before + 1);
+  await elapse('00:06');
+  await until(() => scans.length === 3);
+  release();
+  await fresh.waitFor();
+  console.log('PASS a silent socket reconnects');
+
+  // Scans that failed during an outage aren't sent after it.
+  outage = true;
+  closeSocket();
+  for (let i = 0; i < 4; i++) await elapse('00:06');
+  await stale.waitFor();
+  scans.length = 0;
+  outage = false;
+  await elapse('00:03');
+  await elapse('00:06');
+  await until(() => scans.length >= 3);
+  assert.deepEqual([...scans].sort(), [repo, feat, other].sort());
+  await fresh.waitFor();
+  console.log('PASS an outage queues nothing');
 } catch (error) {
   await context.pages()[0]?.screenshot({ path: path.join(tmpdir(), 'btmux-session-git-failure.png') });
   throw error;

@@ -3,13 +3,14 @@ import { expect, test } from 'bun:test';
 import { ScanPool } from './src/lib/scanPool';
 
 /** A pool whose scans stay pending until settled by key. */
-function heldPool(limit: number) {
+function heldPool(limit: number, timeoutMs = 60_000) {
   const started: string[] = [];
+  const missed: string[] = [];
   const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
   const pool = new ScanPool((key) => {
     started.push(key);
     return new Promise<void>((resolve, reject) => pending.set(key, { resolve, reject }));
-  }, limit);
+  }, (key) => missed.push(key), limit, timeoutMs);
   const settle = async (keys: Iterable<string>) => {
     for (const key of [...keys]) {
       pending.get(key)!.resolve();
@@ -17,7 +18,7 @@ function heldPool(limit: number) {
     }
     await tick();
   };
-  return { pool, started, pending, settle };
+  return { pool, started, missed, pending, settle };
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve));
@@ -88,15 +89,17 @@ test('a stopped round starts nothing more', async () => {
 });
 
 test('a failed scan frees its slot and finishes the round', async () => {
-  const { pool, started, pending, settle } = heldPool(1);
+  const { pool, started, missed, pending, settle } = heldPool(1);
   let done = false;
   void pool.run(['a', 'b'], never).then(() => (done = true));
   pending.get('a')!.reject(new Error('closed'));
   pending.delete('a');
   await tick();
   expect(started).toEqual(['a', 'b']);
+  expect(missed).toEqual(['a']);
   await settle(['b']);
   expect(done).toBe(true);
+  expect(missed).toEqual(['a']);
 });
 
 test('a later round scans a finished key again', async () => {
@@ -106,4 +109,43 @@ test('a later round scans a finished key again', async () => {
   void pool.run(['a'], never);
   expect(started).toEqual(['a', 'a']);
   await settle(['a']);
+});
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('an overdue scan frees its slot and its round', async () => {
+  const { pool, started, missed, settle } = heldPool(1, 10);
+  let done = false;
+  void pool.run(['slow', 'b'], never).then(() => (done = true));
+  expect(started).toEqual(['slow']);
+  await sleep(30);
+  expect(missed[0]).toBe('slow');
+  expect(started).toEqual(['slow', 'b']);
+  await settle(['b']);
+  expect(done).toBe(true);
+});
+
+test('an overdue scan is not repeated until it settles', async () => {
+  const { pool, started, settle } = heldPool(8, 10);
+  void pool.run(['slow'], never);
+  await sleep(30);
+
+  let done = false;
+  void pool.run(['slow', 'b'], never).then(() => (done = true));
+  expect(started).toEqual(['slow', 'b']);
+  await settle(['b']);
+  expect(done).toBe(true);
+
+  await settle(['slow']);
+  void pool.run(['slow'], never);
+  expect(started).toEqual(['slow', 'b', 'slow']);
+  await settle(['slow']);
+});
+
+test('a scan settling in time is not missed', async () => {
+  const { pool, missed, settle } = heldPool(8, 10);
+  void pool.run(['a'], never);
+  await settle(['a']);
+  await sleep(30);
+  expect(missed).toEqual([]);
 });

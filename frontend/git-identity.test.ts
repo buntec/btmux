@@ -4,9 +4,11 @@ import {
   gitMatches,
   repoColors,
   sessionRepos,
+  sessionWorktrees,
   windowWorktrees,
   worktreeLabel,
 } from './src/lib/gitIdentity';
+import { gitIndicators, sameGitCounts, sumGitCounts } from './src/lib/gitStatus';
 import type { PaneGit } from './src/state/types';
 
 const main: PaneGit = {
@@ -50,4 +52,27 @@ test('labels and filter matches', () => {
   expect(gitMatches(feat, 'fea')).toBe(true);
   expect(gitMatches(feat, 'proj-f')).toBe(true);
   expect(gitMatches(main, 'feat')).toBe(false);
+});
+
+test('session worktrees are distinct across windows', () => {
+  const sess = { windows: [win([main, null]), win([feat, main]), win([other])] };
+  expect(sessionWorktrees(sess)).toEqual([main, feat, other]);
+});
+
+test('status indicators and their union', () => {
+  const clean = { ahead: 0, behind: 0, staged: 0, changed: 0, untracked: 0 };
+  expect(gitIndicators(clean)).toEqual([]);
+  const a = { ...clean, ahead: 2, changed: 1 };
+  const b = { ...clean, behind: 1, changed: 3, untracked: 1 };
+  expect(gitIndicators(a).map((i) => i.symbol)).toEqual(['↑', '~']);
+  const union = sumGitCounts([a, b]);
+  expect(gitIndicators(union).map((i) => i.symbol)).toEqual(['↑', '↓', '~', '?']);
+  expect(gitIndicators(union).map((i) => i.label)).toContain('4 changed');
+  expect(sameGitCounts(a, { ...a })).toBe(true);
+  expect(sameGitCounts(a, b)).toBe(false);
+  expect(sameGitCounts(a, { ...a, stale: true })).toBe(false);
+  expect(sumGitCounts([a, { ...b, stale: true }]).stale).toBe(true);
+  expect(sumGitCounts([a, b]).stale).toBeUndefined();
+  // A clean worktree out of date must not read as clean.
+  expect(gitIndicators({ ...clean, stale: true }).map((i) => i.label)).toEqual(['out of date']);
 });

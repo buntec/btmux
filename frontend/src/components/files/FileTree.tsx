@@ -4,6 +4,8 @@ import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { cn, joinPath } from '@/lib/utils';
 import { useFileStore } from '@/state/fileStore';
 import type { FileEntry, GitStatusResult, ServerFileMessage } from '@/protocol/file-messages';
+import { gitCounts } from '@/lib/gitStatus';
+import { GitIndicators } from '../GitIndicators';
 import { Placeholder } from './Placeholder';
 
 function formatSize(bytes: number): string {
@@ -198,43 +200,11 @@ function FileRow({
 }
 
 function GitStatusIndicators({ status }: { status: GitStatusResult }) {
-  const indicators: { symbol: string; label: string; className: string }[] = [];
-  const branch = status.is_repo_root ? status.head.branch : null;
-
-  if (status.is_repo_root && status.head.ahead > 0) {
-    indicators.push({ symbol: '↑', label: `${status.head.ahead} ahead`, className: 'text-green-vivid' });
+  // A folder inside a repo has its files' status, not its branch's.
+  const counts = gitCounts(status);
+  if (!status.is_repo_root) {
+    counts.ahead = 0;
+    counts.behind = 0;
   }
-  if (status.is_repo_root && status.head.behind > 0) {
-    indicators.push({ symbol: '↓', label: `${status.head.behind} behind`, className: 'text-yellow-vivid' });
-  }
-  if (status.staged.length > 0) {
-    indicators.push({ symbol: '+', label: `${status.staged.length} staged`, className: 'text-green-vivid' });
-  }
-  if (status.unstaged.length > 0) {
-    indicators.push({ symbol: '~', label: `${status.unstaged.length} changed`, className: 'text-yellow-vivid' });
-  }
-  if (status.untracked.length > 0) {
-    indicators.push({ symbol: '?', label: `${status.untracked.length} untracked`, className: 'text-secondary' });
-  }
-
-  if (!branch && indicators.length === 0) return null;
-  const labels = [branch ? `branch ${branch}` : null, ...indicators.map((indicator) => indicator.label)].filter(
-    (label): label is string => label !== null,
-  );
-
-  return (
-    <span
-      className="inline-flex shrink-0 items-center gap-0.5"
-      style={{ fontSize: '0.85em' }}
-      title={labels.join(', ')}
-      aria-label={labels.join(', ')}
-    >
-      {branch && <span className="min-w-0 max-w-48 truncate text-secondary">⎇ {branch}</span>}
-      {indicators.map((indicator) => (
-        <span key={indicator.symbol} className={indicator.className}>
-          {indicator.symbol}
-        </span>
-      ))}
-    </span>
-  );
+  return <GitIndicators counts={counts} branch={status.is_repo_root ? status.head.branch : null} size="sm" />;
 }

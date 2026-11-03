@@ -10,13 +10,22 @@ type PendingRequest = {
 
 const RECONNECT_MS = 2000;
 
-export function useFileSocket() {
+/** `stallMs`: reconnect after this long with requests pending and nothing received. */
+export function useFileSocket({ stallMs }: { stallMs?: number } = {}) {
   const socketRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef<Map<string, PendingRequest>>(new Map());
   const queueRef = useRef<string[]>([]);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abandonRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
   const [state, setState] = useState<ConnectionState>('connecting');
+
+  const watchStall = useCallback(() => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+    stallTimerRef.current =
+      stallMs && pendingRef.current.size > 0 ? setTimeout(() => abandonRef.current?.(), stallMs) : null;
+  }, [stallMs]);
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return;
@@ -48,26 +57,39 @@ export function useFileSocket() {
             }
           }
         }
+        watchStall();
       } catch {}
     };
 
-    ws.onclose = () => {
+    const onDown = () => {
       socketRef.current = null;
       for (const [, pending] of pendingRef.current) {
         pending.reject(new Error('WebSocket closed'));
       }
       pendingRef.current.clear();
+      // Callers saw these fail, so they must not run after a reconnect.
+      queueRef.current = [];
+      watchStall();
       if (!mountedRef.current) return;
       setState('reconnecting');
       reconnectTimerRef.current = setTimeout(connect, RECONNECT_MS);
     };
-  }, []);
+    ws.onclose = onDown;
+
+    // close() may not report back on a dead connection.
+    abandonRef.current = () => {
+      ws.onopen = ws.onmessage = ws.onclose = null;
+      ws.close();
+      onDown();
+    };
+  }, [watchStall]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
       socketRef.current?.close();
     };
   }, []);
@@ -80,6 +102,7 @@ export function useFileSocket() {
 
       return new Promise((resolve, reject) => {
         pendingRef.current.set(id, { resolve, reject });
+        if (!stallTimerRef.current) watchStall();
         const ws = socketRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(msg);
@@ -88,7 +111,7 @@ export function useFileSocket() {
         }
       });
     },
-    [connect],
+    [connect, watchStall],
   );
 
   return { send, state };

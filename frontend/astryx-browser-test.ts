@@ -59,6 +59,11 @@ try {
     'rgb(39, 53, 73)',
   );
   assert.equal(await loadingPage.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(39, 53, 73)');
+  const waveStart = await loadingPage.locator('svg[role="status"] path').first().getAttribute('d');
+  await loadingPage.waitForFunction(
+    (start) => document.querySelector('svg[role="status"] path')?.getAttribute('d') !== start,
+    waveStart,
+  );
   await loadingPage.reload();
   await loadingPage.getByText('Connecting to btmux', { exact: true }).waitFor();
   assert.equal(
@@ -391,12 +396,7 @@ try {
     await viewer.getByText('4', { exact: true }).waitFor();
     for (const label of ['Unknown owner', 'Process unavailable']) {
       // Click its protocol cell: the feedback toasts stack over the right side.
-      await viewer
-        .locator('tr', { hasText: label })
-        .first()
-        .locator('td')
-        .nth(1)
-        .click();
+      await viewer.locator('tr', { hasText: label }).first().locator('td').nth(1).click();
       for (const key of ['x', 'X']) {
         const toasts = unavailablePage.locator('.astryx-toast', {
           hasText: 'Cannot signal this socket: process information is unavailable',

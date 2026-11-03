@@ -5,9 +5,9 @@ import { Card } from '@astryxdesign/core/Card';
 import { Center } from '@astryxdesign/core/Center';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
-import { Spinner } from '@astryxdesign/core/Spinner';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
+import { Spinner } from './Spinner';
 import type { BrowserClientMessage, BrowserServerMessage } from '../generated/protocol';
 import {
   addressToUrl,
@@ -588,7 +588,7 @@ export function BrowserSurface({
         ) : (
           (!painted || reconnecting) && (
             <Center className="pointer-events-none absolute inset-0 bg-body/90">
-              <Spinner label={reconnecting ? 'Reconnecting…' : 'Starting the browser…'} />
+              <Spinner size="xl" label={reconnecting ? 'Reconnecting…' : 'Starting the browser…'} />
             </Center>
           )
         )}

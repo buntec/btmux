@@ -1,5 +1,5 @@
-import { Spinner } from '@astryxdesign/core/Spinner';
 import { Layout, LayoutContent, LayoutFooter, VStack } from '@astryxdesign/core/Layout';
+import { Spinner } from './components/Spinner';
 import { WorkspaceShell } from './components/WorkspaceShell';
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
@@ -340,7 +340,7 @@ export function App() {
   if (allSessions.length === 0 || !config) {
     return (
       <VStack hAlign="center" vAlign="center" className="h-full bg-body">
-        <Spinner label="Connecting to btmux" />
+        <Spinner size="xl" label="Connecting to btmux" />
       </VStack>
     );
   }

@@ -27,7 +27,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {

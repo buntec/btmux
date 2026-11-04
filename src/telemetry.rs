@@ -29,6 +29,7 @@ const MAX_PANES: usize = 128;
 // Larger than a batch, so a retried batch is still recognized.
 const MAX_SEEN: usize = 2 * MAX_RECORDS;
 const MAX_CLOSED: usize = 1024;
+const MAX_MODELS: usize = 32;
 const HISTORY_SECONDS: u64 = 24 * 3600;
 const MAX_VALUE: f64 = 1e15;
 
@@ -99,7 +100,8 @@ pub struct TelemetryStore {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PaneTelemetry {
     agent: String,
-    model: Option<String>,
+    /// Tokens per model of the current agent.
+    models: BTreeMap<String, f64>,
     updated_at: u64,
     buckets: BTreeMap<u64, AgentUsage>,
     #[serde(skip)]
@@ -229,11 +231,19 @@ impl PaneTelemetry {
         Some(AgentTelemetry {
             pane_id,
             agent: self.agent.clone(),
-            model: self.model.clone(),
+            model: self.main_model(),
             updated_at: self.updated_at as f64,
             totals,
             buckets,
         })
+    }
+
+    /// The most used, since agents run helpers on other models (Codex titles threads).
+    fn main_model(&self) -> Option<String> {
+        self.models
+            .iter()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(model, _)| model.clone())
     }
 
     fn ingest(&mut self, mut sample: Sample, now: u64) -> bool {
@@ -263,9 +273,16 @@ impl PaneTelemetry {
         } else if !self.remember(sample.identity) {
             return false;
         }
-        self.agent = sample.agent.to_string();
-        if sample.model.is_some() {
-            self.model = sample.model;
+        if self.agent != sample.agent {
+            self.agent = sample.agent.to_string();
+            self.models.clear();
+        }
+        if let Some(model) = sample.model {
+            if self.models.len() < MAX_MODELS || self.models.contains_key(&model) {
+                let tokens = sample.usage.input_tokens + sample.usage.output_tokens;
+                let total = self.models.entry(model).or_default();
+                *total = (*total + tokens).min(MAX_VALUE);
+            }
         }
         self.updated_at = now;
         let minute = seconds / 60 * 60;
@@ -735,6 +752,85 @@ mod tests {
         assert_eq!(total.input_tokens, 110.0);
         assert_eq!(total.cached_tokens, 80.0);
         assert_eq!(total.cache_write_tokens, 10.0);
+    }
+
+    fn model_completion(end: u64, model: &str, input: u64) -> ExportLogsServiceRequest {
+        log(
+            end,
+            "codex.sse_event",
+            vec![
+                kv("event.kind", json!({"stringValue": "response.completed"})),
+                kv("model", json!({"stringValue": model})),
+                kv("input_token_count", json!({"intValue": input.to_string()})),
+            ],
+        )
+    }
+
+    #[test]
+    fn the_main_model_is_the_most_used_not_the_latest() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        let model = |store: &TelemetryStore| store.snapshots(NOW)[0].model.clone();
+        for (end, name, input) in [(NOW - 3, "main", 20_000), (NOW - 2, "helper", 6_000)] {
+            store.ingest(
+                pane,
+                parse_logs(model_completion(end, name, input)).unwrap(),
+                NOW,
+            );
+        }
+        assert_eq!(model(&store).as_deref(), Some("main"));
+        // Events without tokens name a model but don't outweigh usage.
+        let tool = log(
+            NOW - 1,
+            "codex.tool_result",
+            vec![kv("model", json!({"stringValue": "helper"}))],
+        );
+        store.ingest(pane, parse_logs(tool).unwrap(), NOW);
+        assert_eq!(model(&store).as_deref(), Some("main"));
+        // Moving to another model shows it once it is used more.
+        store.ingest(
+            pane,
+            parse_logs(model_completion(NOW, "helper", 15_000)).unwrap(),
+            NOW,
+        );
+        assert_eq!(model(&store).as_deref(), Some("helper"));
+    }
+
+    #[test]
+    fn another_agent_in_the_pane_starts_a_new_model_count() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        store.ingest(
+            pane,
+            parse_metrics(metric(1e6, NOW - 1, NOW - 2, 1, "input")).unwrap(),
+            NOW,
+        );
+        assert_eq!(
+            store.snapshots(NOW)[0].model.as_deref(),
+            Some("claude-test")
+        );
+        store.ingest(
+            pane,
+            parse_logs(model_completion(NOW, "codex-test", 10)).unwrap(),
+            NOW,
+        );
+        let snapshot = &store.snapshots(NOW)[0];
+        assert_eq!(snapshot.agent, "codex");
+        assert_eq!(snapshot.model.as_deref(), Some("codex-test"));
+    }
+
+    #[test]
+    fn models_per_pane_are_bounded() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        for i in 0..MAX_MODELS as u64 + 8 {
+            store.ingest(
+                pane,
+                parse_logs(model_completion(NOW - i, &format!("model-{i}"), 10)).unwrap(),
+                NOW,
+            );
+        }
+        assert_eq!(store.panes[&pane].models.len(), MAX_MODELS);
     }
 
     #[test]

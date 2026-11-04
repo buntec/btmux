@@ -359,6 +359,31 @@ try {
   const slow = await stopWatching(page);
   assert.equal(slow.length, 2, `slow agent beside a stuck one: ${JSON.stringify(slow)}`);
 
+  // An agent that starts while the view is closed appears on reopening, at its own size.
+  await setOpen(page, false);
+  await page.waitForTimeout(200);
+  agents.push(await startAgent('agent-closed', 130, 35));
+  // Past the size deadline, which must not expire while closed.
+  await page.waitForTimeout(2500);
+  await setOpen(page, true);
+  await replaysShown(page, 8);
+  await waitForAsync(
+    page,
+    () => getComputedStyle(document.querySelector('[data-agent-tiles]')!).opacity === '1',
+  );
+  const tileWidthPerColumn = (name: string, cols: number) =>
+    page.evaluate(
+      ([name, cols]) => {
+        const tile = [...document.querySelector('[data-agent-tiles]')!.children].find((tile) =>
+          tile.textContent!.includes(name as string),
+        ) as HTMLElement;
+        return tile.offsetWidth / (cols as number);
+      },
+      [name, cols] as const,
+    );
+  const ratio = (await tileWidthPerColumn('agent-closed', 130)) / (await tileWidthPerColumn('agent-a', 200));
+  assert(ratio > 0.9 && ratio < 1.1, `closed-start agent's size: ${ratio}`);
+
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();

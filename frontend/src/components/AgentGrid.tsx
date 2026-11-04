@@ -417,7 +417,8 @@ export function AgentGrid({ send }: Props) {
                                 className="relative min-h-0 flex-1 overflow-hidden"
                                 style={{ background: terminalBg }}
                               >
-                                {!naturals[entry.paneId] && (
+                                {/* Only while shown: a hidden mirror can't report its size, and closing clears expiries. */}
+                                {open && view === 'panes' && !naturals[entry.paneId] && (
                                   <SizeDeadline paneId={entry.paneId} onExpire={sizeTimedOut} />
                                 )}
                                 {mirrorsReady && (

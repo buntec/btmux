@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentTelemetry } from './src/generated/protocol';
-import { emptyUsage, mergeTelemetry, USAGE_HISTORY_SECONDS, usageTimeline, usageTotal } from './src/lib/agentUsage';
+import { cumulativeUsage, emptyUsage, mergeTelemetry, USAGE_HISTORY_SECONDS, usageTimeline, usageTotal } from './src/lib/agentUsage';
 
 const pane = (
   timestamp: number,
@@ -87,6 +87,23 @@ describe('agent usage timelines', () => {
     const later = 6000 + USAGE_HISTORY_SECONDS + 60;
     const merged = mergeTelemetry(old, pane(later, 20, 0, 0, null));
     expect(merged.buckets.map((bucket) => bucket.timestamp)).toEqual([later]);
+  });
+
+  test('running totals never fall and end at the range total', () => {
+    const minute = 6000;
+    const buckets = usageTimeline(
+      [pane(minute - 120, 50, 0, 5, null), pane(minute - 60, 0, 0, 0, 0.5), pane(minute, 10, 0, 1, 0.25)],
+      minute + 30,
+      15,
+    );
+    const running = cumulativeUsage(buckets);
+    for (let i = 1; i < running.length; i++) {
+      expect(running[i].usage.input_tokens).toBeGreaterThanOrEqual(running[i - 1].usage.input_tokens);
+      expect(running[i].usage.cost_usd ?? 0).toBeGreaterThanOrEqual(running[i - 1].usage.cost_usd ?? 0);
+    }
+    expect(running[running.length - 1].usage).toEqual(usageTotal(buckets));
+    // The per-step values are left alone.
+    expect(buckets[buckets.length - 1].usage.input_tokens).toBe(10);
   });
 
   test('distinguishes a reported zero cost from unavailable cost', () => {

@@ -123,7 +123,18 @@ try {
   assert.equal(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');
   await page.getByRole('radio', { name: '24 hours', exact: true }).click();
   assert.equal(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');
-  await page.getByRole('img', { name: 'Tokens, per 5 minutes' }).waitFor();
+  await page.getByRole('img', { name: 'Tokens, running total' }).waitFor();
+  // Higher values are lower on the chart.
+  const rising = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-agent-chart] polyline')].map((line) => {
+      const ys = line.getAttribute('points')!.split(' ').map((point) => Number(point.split(',')[1]));
+      return { neverFalls: ys.every((y, i) => i === 0 || y <= ys[i - 1]), rises: ys[ys.length - 1] < ys[0] };
+    }),
+  );
+  assert.equal(rising.length, 6);
+  assert(rising.every((line) => line.neverFalls), `charts must never fall: ${JSON.stringify(rising)}`);
+  // Input, output, cached, requests, and cost; these logs report no tool calls.
+  assert.equal(rising.filter((line) => line.rises).length, 5, JSON.stringify(rising));
   if (process.env.BTMUX_TEST_SCREENSHOT)
     await page.screenshot({ path: process.env.BTMUX_TEST_SCREENSHOT, fullPage: true });
   const other = await context.newPage();
@@ -174,7 +185,7 @@ try {
   assert.equal(await other.locator('[data-usage-total="Tokens"]').textContent(), afterUpdate);
   assert.equal(await other.getByRole('button', { name: /usage-claude \/ / }).count(), 0);
   await other.setViewportSize({ width: 390, height: 844 });
-  await other.getByRole('img', { name: 'Tokens, per 5 minutes' }).waitFor();
+  await other.getByRole('img', { name: 'Tokens, running total' }).waitFor();
   assert(await other.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await other.keyboard.press('Escape');
   await other.getByRole('dialog').waitFor({ state: 'hidden' });

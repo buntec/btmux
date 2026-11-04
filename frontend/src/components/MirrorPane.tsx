@@ -75,9 +75,15 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
         scaler.style.transform = `scale(${Math.min(cell.clientWidth / naturalW, cell.clientHeight / naturalH)})`;
       };
       // Not from the emulator's grid, which walks the replay's old sizes.
+      let lastSize: { cols: number; rows: number } | null = null;
       const reportNaturalSize = (cols: number, rows: number) => {
+        lastSize = { cols, rows };
         const size = term.measureCell();
         if (size) onNaturalSizeRef.current?.(cols * size.width, rows * size.height);
+      };
+      // wterm measures cells only once shown, so a mirror that attached while hidden reports then.
+      const reportLastSize = () => {
+        if (lastSize) reportNaturalSize(lastSize.cols, lastSize.rows);
       };
       // Keep painting stopped until the replay's `ready` marker.
       term.setPaused(true);
@@ -100,6 +106,7 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
         revealRafRef.current = requestAnimationFrame(() =>
           requestAnimationFrame(() => {
             if (disposed || !visibleRef.current) return;
+            reportLastSize();
             term.scrollToBottom();
             setInitialReplayRendered(true);
           }),
@@ -143,7 +150,10 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
       };
       connect();
 
-      const observer = new ResizeObserver(() => refit());
+      const observer = new ResizeObserver(() => {
+        refit();
+        reportLastSize();
+      });
       if (cellRef.current) observer.observe(cellRef.current);
 
       return () => {

@@ -8,7 +8,14 @@ import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/Segme
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from '@astryxdesign/core/Table';
 import { Text } from '@astryxdesign/core/Text';
 import type { AgentTelemetry, UsageBucket } from '../generated/protocol';
-import { formatCost, formatTokens, USAGE_HISTORY_SECONDS, usageTimeline, usageTotal } from '../lib/agentUsage';
+import {
+  cumulativeUsage,
+  formatCost,
+  formatTokens,
+  USAGE_HISTORY_SECONDS,
+  usageTimeline,
+  usageTotal,
+} from '../lib/agentUsage';
 import { useStore } from '../state/store';
 
 const INPUT = 'var(--color-data-categorical-blue)';
@@ -18,10 +25,10 @@ const timeLabel = (seconds: number) =>
   new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 const RANGES = [
-  { value: '15', label: '15 min', step: 1, unit: 'minute' },
-  { value: '60', label: '1 hour', step: 1, unit: 'minute' },
-  { value: '480', label: '8 hours', step: 5, unit: '5 minutes' },
-  { value: '1440', label: '24 hours', step: 5, unit: '5 minutes' },
+  { value: '15', label: '15 min', step: 1 },
+  { value: '60', label: '1 hour', step: 1 },
+  { value: '480', label: '8 hours', step: 5 },
+  { value: '1440', label: '24 hours', step: 5 },
 ];
 
 interface Series {
@@ -34,13 +41,11 @@ function UsageChart({
   title,
   buckets,
   series,
-  unit,
   money = false,
 }: {
   title: string;
   buckets: UsageBucket[];
   series: Series[];
-  unit: string;
   money?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
@@ -60,7 +65,7 @@ function UsageChart({
       <svg
         viewBox="0 0 720 210"
         role="img"
-        aria-label={`${title}, per ${unit}`}
+        aria-label={`${title}, running total`}
         tabIndex={0}
         className="w-full text-secondary"
         onKeyDown={(event) => {
@@ -82,11 +87,8 @@ function UsageChart({
       >
         <title>{title}</title>
         <desc>
-          Values per {unit}.{' '}
-          {series
-            .map((s) => `${s.label}: ${format(buckets.reduce((sum, bucket) => sum + s.value(bucket), 0))}`)
-            .join('. ')}
-          .
+          Running totals over the selected range.{' '}
+          {series.map((s) => `${s.label}: ${format(s.value(buckets[buckets.length - 1]))}`).join('. ')}.
         </desc>
         {[0, 0.5, 1].map((fraction) => (
           <g key={fraction}>
@@ -178,6 +180,7 @@ export function AgentUsageView() {
   const selectedPane = open.find((pane) => pane.pane_id === selected);
   const buckets = timeline(selectedPane ? [selectedPane] : panes);
   const total = usageTotal(buckets);
+  const running = cumulativeUsage(buckets);
   const closedUsage = usageTotal(timeline(closed));
   if (panes.length === 0)
     return (
@@ -195,7 +198,7 @@ export function AgentUsageView() {
         <VStack gap={1} className="min-w-0 flex-1">
           <Heading level={2}>{selectedPane ? labels.get(selectedPane.pane_id) : 'All agents'}</Heading>
           <Text color="secondary">
-            Collected usage · per {range.unit} · {panes.length} {panes.length === 1 ? 'pane' : 'panes'}
+            Running total over {range.label} · {panes.length} {panes.length === 1 ? 'pane' : 'panes'}
           </Text>
         </VStack>
         {selectedPane && <Button label="All agents" variant="ghost" onClick={() => setSelected(null)} />}
@@ -223,8 +226,7 @@ export function AgentUsageView() {
       <Grid columns={{ minWidth: 320, max: 2 }} gap={6}>
         <UsageChart
           title="Tokens"
-          buckets={buckets}
-          unit={range.unit}
+          buckets={running}
           series={[
             { label: 'Input', color: INPUT, value: (b) => b.usage.input_tokens },
             { label: 'Output', color: OUTPUT, value: (b) => b.usage.output_tokens },
@@ -233,8 +235,7 @@ export function AgentUsageView() {
         />
         <UsageChart
           title="Activity"
-          buckets={buckets}
-          unit={range.unit}
+          buckets={running}
           series={[
             { label: 'Requests', color: INPUT, value: (b) => b.usage.requests },
             { label: 'Tool calls', color: OUTPUT, value: (b) => b.usage.tool_calls },
@@ -243,8 +244,7 @@ export function AgentUsageView() {
         {total.cost_usd !== null && (
           <UsageChart
             title="Reported cost"
-            buckets={buckets}
-            unit={range.unit}
+            buckets={running}
             money
             series={[{ label: 'USD', color: CACHE, value: (b) => b.usage.cost_usd ?? 0 }]}
           />

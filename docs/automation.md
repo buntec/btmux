@@ -24,8 +24,9 @@ the btmux user.
 
 ## Agent telemetry
 
-Agent view's **Usage** tab graphs tokens, completed requests, tool calls, and
-reported costs, for all panes or one selected pane. It keeps 24 hours of
+Agent view's **Usage** tab graphs running totals of tokens, completed requests,
+tool calls, and reported costs over the selected range, for all panes or one
+selected pane. Each pane shows the model it used most. It keeps 24 hours of
 per-minute history in memory, including panes that have since closed. `btmux
 upgrade` keeps it; restarting the server clears it. The 8- and 24-hour ranges
 group usage into 5-minute points.

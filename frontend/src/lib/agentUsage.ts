@@ -42,6 +42,15 @@ export function usageTimeline(panes: AgentTelemetry[], now: number, minutes: num
   return buckets;
 }
 
+/** Running totals: each bucket holds everything up to and including it. */
+export function cumulativeUsage(buckets: UsageBucket[]): UsageBucket[] {
+  let total = emptyUsage();
+  return buckets.map((bucket) => {
+    total = addUsage({ ...total }, bucket.usage);
+    return { timestamp: bucket.timestamp, usage: total };
+  });
+}
+
 /** Pushes hold only changed minutes, each with its whole value, so applying one twice is harmless. */
 export function mergeTelemetry(current: AgentTelemetry | undefined, update: AgentTelemetry): AgentTelemetry {
   const buckets = new Map((current?.buckets ?? []).map((bucket) => [bucket.timestamp, bucket]));

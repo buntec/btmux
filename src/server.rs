@@ -393,14 +393,15 @@ impl PaneNotifyRequest {
         &self,
         event: &str,
         body: Option<&str>,
-        process: Option<AgentProcess>,
+        lineage: Vec<AgentProcess>,
     ) -> Option<AgentReport> {
         Some(AgentReport {
             event: infer_agent_event(event, self.notification_type.as_deref())?,
             session_id: clean_status_field(self.session_id.clone(), 128),
             turn_id: clean_status_field(self.turn_id.clone().or(self.prompt_id.clone()), 128),
             tool: self.tool(),
-            process,
+            process: lineage.first().copied(),
+            ancestors: lineage.into_iter().skip(1).collect(),
             agent: clean_status_field(self.agent.clone(), 48),
             source: clean_status_field(
                 self.source
@@ -503,13 +504,15 @@ async fn api_pane_notify(
     let event = body.resolve_event();
     let level = body.level.unwrap_or_else(|| infer_level(&event));
     let (title, notif_body) = body.resolve_title_body(&event);
-    let process = (!matches!(
+    let lineage = if matches!(
         event.as_str(),
         "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" | "AfterTool" | "SessionEnd"
-    ))
-    .then(|| hook_process(&headers))
-    .flatten();
-    let report = body.agent_report(&event, notif_body.as_deref(), process);
+    ) {
+        Vec::new()
+    } else {
+        hook_lineage(&headers)
+    };
+    let report = body.agent_report(&event, notif_body.as_deref(), lineage);
     let mut mgr = state.write().await;
     if mgr.find_pane(pane_id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
@@ -593,28 +596,40 @@ async fn api_notify(State(state): State<AppState>, Json(body): Json<NotifyReques
     StatusCode::NO_CONTENT.into_response()
 }
 
-fn hook_process(headers: &HeaderMap) -> Option<AgentProcess> {
+/// The process that ran a hook, then its ancestors.
+fn hook_lineage(headers: &HeaderMap) -> Vec<AgentProcess> {
     let pid = headers
-        .get("x-btmux-agent-pid")?
-        .to_str()
-        .ok()?
-        .parse::<u32>()
-        .ok()?;
-    if pid <= 1 {
-        return None;
+        .get("x-btmux-agent-pid")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid > 1);
+    pid.map_or_else(Vec::new, process_lineage)
+}
+
+fn process_lineage(pid: u32) -> Vec<AgentProcess> {
+    let Ok(mut system) = System::new() else {
+        return Vec::new();
+    };
+    let mut lineage = Vec::new();
+    let mut current = pid;
+    for _ in 0..64 {
+        let id = Pid::from_u32(current);
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[id]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let process = system.process(id);
+        lineage.push(AgentProcess {
+            pid: current,
+            start_time: process.map_or(0, |process| process.start_time()),
+        });
+        match process.and_then(|process| process.parent()) {
+            Some(parent) if parent.as_u32() > 1 => current = parent.as_u32(),
+            _ => break,
+        }
     }
-    let mut system = System::new().ok()?;
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
-        true,
-        ProcessRefreshKind::nothing(),
-    );
-    Some(AgentProcess {
-        pid,
-        start_time: system
-            .process(Pid::from_u32(pid))
-            .map_or(0, |process| process.start_time()),
-    })
+    lineage
 }
 
 #[derive(Deserialize)]
@@ -1251,6 +1266,23 @@ mod pane_notification_tests {
         tokio::time::timeout(std::time::Duration::from_secs(1), shutdown_requested())
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn hook_lineage_walks_up_from_the_reporter() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-btmux-agent-pid", child.id().to_string().parse().unwrap());
+        let lineage = hook_lineage(&headers);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(lineage[0].pid, child.id());
+        assert!(lineage[1..]
+            .iter()
+            .any(|process| process.pid == std::process::id()));
     }
 
     #[tokio::test]

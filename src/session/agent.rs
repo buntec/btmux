@@ -229,6 +229,8 @@ pub struct AgentReport {
     /// The tool call a permission or completion belongs to.
     pub tool: Option<ToolCall>,
     pub process: Option<AgentProcess>,
+    /// The reporting process's ancestors.
+    pub ancestors: Vec<AgentProcess>,
     pub agent: Option<String>,
     pub source: Option<String>,
     pub message: Option<String>,
@@ -631,6 +633,15 @@ impl AgentLifecycle {
         if different_session && !starts_session {
             return None;
         }
+        // An agent's child inherits its pane but is a different agent.
+        if different_session
+            && self
+                .process
+                .or(self.observed)
+                .is_some_and(|current| report.ancestors.contains(&current))
+        {
+            return None;
+        }
         if different_session
             && self
                 .process
@@ -994,6 +1005,76 @@ mod tests {
         );
         assert_eq!(agent.status.state, AgentState::Working);
         assert_eq!(agent.process(), Some(wrapper));
+    }
+
+    #[test]
+    fn a_nested_agents_hooks_leave_its_parent_alone() {
+        let now = Instant::now();
+        let parent = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        let child = AgentProcess {
+            pid: 12,
+            start_time: 7,
+        };
+        let mut agent = claude(now);
+        let mut start = report(AgentEvent::SessionStart, "parent", None);
+        start.process = Some(parent);
+        agent.apply(start, 0, now);
+        agent.apply(report(AgentEvent::TurnStart, "parent", Some("t")), 0, now);
+
+        for event in [AgentEvent::SessionStart, AgentEvent::TurnStart] {
+            let mut nested = report(event, "child", Some("c"));
+            nested.process = Some(child);
+            nested.ancestors = vec![parent];
+            assert_eq!(agent.apply(nested, 1, now), None);
+        }
+        assert_eq!(agent.status.state, AgentState::Working);
+        assert!(!agent.matches_session(Some("child")));
+        assert_eq!(
+            agent.apply(
+                report(AgentEvent::TurnFinished, "parent", Some("t")),
+                1,
+                now
+            ),
+            Some(true)
+        );
+
+        // `/clear` starts a new session in the same process.
+        let mut clear = report(AgentEvent::SessionStart, "cleared", None);
+        clear.process = Some(parent);
+        clear.ancestors = vec![AgentProcess {
+            pid: 1,
+            start_time: 0,
+        }];
+        assert_eq!(agent.apply(clear, 2, now), Some(true));
+        assert!(agent.matches_session(Some("cleared")));
+    }
+
+    #[test]
+    fn a_wrapped_agent_can_start_a_new_session() {
+        let now = Instant::now();
+        let wrapper = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        let wrapped = AgentProcess {
+            pid: 11,
+            start_time: 6,
+        };
+        let mut agent = claude(now);
+        let mut start = report(AgentEvent::SessionStart, "s", None);
+        start.process = Some(wrapped);
+        start.ancestors = vec![wrapper];
+        agent.apply(start, 0, now);
+        agent.observe_process(wrapper, "claude", 1, now, |_| true);
+
+        let mut clear = report(AgentEvent::SessionStart, "cleared", None);
+        clear.process = Some(wrapped);
+        clear.ancestors = vec![wrapper];
+        assert_eq!(agent.apply(clear, 1, now), Some(false));
+        assert!(agent.matches_session(Some("cleared")));
     }
 
     #[test]
@@ -1389,6 +1470,7 @@ mod tests {
             turn_id: turn.map(str::to_string),
             tool: None,
             process: None,
+            ancestors: Vec::new(),
             agent: None,
             source: Some("hook".to_string()),
             message: None,

@@ -1983,10 +1983,50 @@ mod agent_tests {
             turn_id: None,
             tool: None,
             process: None,
+            ancestors: Vec::new(),
             agent: Some("codex".to_string()),
             source: Some("hook".to_string()),
             message: None,
         }
+    }
+
+    #[tokio::test]
+    async fn a_nested_agent_ending_keeps_its_parent_listed() {
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        mgr.create_session(None).await;
+        let pane_id = mgr.sessions[0].windows[0].panes[0].id;
+        let parent = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        let now = Instant::now();
+        mgr.update_detected_agents(&[(pane_id, parent, "claude".to_string())], |_| true);
+        let mut start = report(AgentEvent::SessionStart, "parent");
+        start.process = Some(parent);
+        mgr.apply_agent_report(pane_id, start, now);
+
+        let mut nested = report(AgentEvent::SessionStart, "child");
+        nested.process = Some(AgentProcess {
+            pid: 12,
+            start_time: 7,
+        });
+        nested.ancestors = vec![parent];
+        assert_eq!(mgr.apply_agent_report(pane_id, nested, now), None);
+        assert_eq!(
+            mgr.apply_agent_report(pane_id, report(AgentEvent::SessionEnd, "child"), now),
+            None
+        );
+        mgr.update_detected_agents(&[(pane_id, parent, "claude".to_string())], |_| true);
+        assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
     }
 
     #[tokio::test]

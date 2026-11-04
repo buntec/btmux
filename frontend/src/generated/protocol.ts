@@ -471,6 +471,15 @@ address: string, };
 export type TailscaleStatus = { "state": "starting" } | { "state": "serving", url: string, } | { "state": "error", message: string, };
 
 // prettier-ignore
+export type PickItem = { label: string, description: string | null, };
+
+// prettier-ignore
+export type PickRequest = { prompt: string | null, items: Array<PickItem>, };
+
+// prettier-ignore
+export type PickSummary = { id: string, pane_id: string, };
+
+// prettier-ignore
 export type WallpaperCheck = { error: string | null,
 /**
  * What browsers load for a valid value, e.g. to preview it.
@@ -485,7 +494,7 @@ export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?:
 pane_switch_border?: string, pane_switch_border_speed?: number, };
 
 // prettier-ignore
-export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_pane", pane_id: string, } | { "type": "reset_agent", pane_id: string, } | { "type": "focus_client" } | { "type": "system_color_mode", mode: ColorMode, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
+export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_pane", pane_id: string, } | { "type": "reset_agent", pane_id: string, } | { "type": "focus_client" } | { "type": "system_color_mode", mode: ColorMode, } | { "type": "pick_shown", id: string, } | { "type": "pick_answer", id: string, index: number | null, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
 export type ServerMessage = { "type": "agent_telemetry", panes: Array<AgentTelemetry>, removed_panes: Array<string>, replace: boolean, } | { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: NotificationLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null,
@@ -496,7 +505,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */
-os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, } | { "type": "tailscale", status: TailscaleStatus, };
+os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "picks", picks: Array<PickSummary>, };
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

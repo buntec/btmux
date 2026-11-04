@@ -27,6 +27,7 @@ mod mcp;
 mod pane_git;
 mod paste_image;
 mod persistence;
+mod pick;
 mod process;
 #[cfg(test)]
 mod protocol;
@@ -117,6 +118,9 @@ async fn main() {
         }
         Some(config::SubCommand::Codex { args }) => {
             std::process::exit(agent_launch::run(agent_launch::Agent::Codex, args))
+        }
+        Some(config::SubCommand::Pick { prompt }) => {
+            std::process::exit(pick::run(prompt.as_deref()).await)
         }
         Some(config::SubCommand::Agents) => {
             std::process::exit(agent_cli::agents(args.profile.as_deref()).await)

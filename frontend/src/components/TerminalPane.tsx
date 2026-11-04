@@ -12,6 +12,7 @@ import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
 import { LatexOverlay } from './LatexOverlay';
 import { clipboardImage, pasteImage } from '../lib/pasteImage';
+import { PanePicker } from './PanePicker';
 import { PaneSearch } from './PaneSearch';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
 import { clsx } from 'clsx';
@@ -376,6 +377,7 @@ export function TerminalPane({
   latexPokeRef.current = latexPoke;
   const latexOpen = useStore((s) => s.latexPanes.has(paneId));
   const searchOpen = useStore((s) => s.searchPaneId === paneId);
+  const pickId = useStore((s) => s.picks.find((pick) => pick.pane_id === paneId)?.id ?? null);
   const toggleLatex = () => useStore.getState().toggleLatex(paneId);
   const highlightLatex = (match: PaneLatexMatch | null) => {
     if (!term) return;
@@ -446,12 +448,14 @@ export function TerminalPane({
   const prevFileBrowser = useRef(fileBrowserOpen);
   const prevNvimOpen = useRef(nvimOpen);
   const prevSearchOpen = useRef(searchOpen);
+  const prevPickId = useRef(pickId);
   const prevInitialReplayRendered = useRef(false);
   useEffect(() => {
     const wasActive = prevIsActive.current;
     const hadOverlay = prevOverlay.current;
     const hadFileBrowser = prevFileBrowser.current;
     const hadNvimOpen = prevNvimOpen.current;
+    const pickChanged = prevPickId.current !== pickId;
     const hadSearchOpen = prevSearchOpen.current;
     const hadRenderedInitialReplay = prevInitialReplayRendered.current;
     prevIsActive.current = isActive;
@@ -459,6 +463,7 @@ export function TerminalPane({
     prevFileBrowser.current = fileBrowserOpen;
     prevNvimOpen.current = nvimOpen;
     prevSearchOpen.current = searchOpen;
+    prevPickId.current = pickId;
     prevInitialReplayRendered.current = initialReplayRendered;
 
     const keyboardOwnedElsewhere =
@@ -483,7 +488,7 @@ export function TerminalPane({
       (!fileBrowserOpen && hadFileBrowser) ||
       (!nvimOpen && hadNvimOpen) ||
       (!searchOpen && hadSearchOpen);
-    if (becameActive || replayFinished || overlayClosed) {
+    if (becameActive || replayFinished || overlayClosed || pickChanged) {
       termRef.current?.focus();
     }
   }, [
@@ -496,6 +501,7 @@ export function TerminalPane({
     fileBrowserOpen,
     nvimOpen,
     searchOpen,
+    pickId,
     initialReplayRendered,
   ]);
 
@@ -637,6 +643,9 @@ export function TerminalPane({
             visibility: initialReplayRendered ? 'visible' : 'hidden',
           }}
         />
+        {pickId && term && initialReplayRendered && (
+          <PanePicker key={pickId} id={pickId} term={term} shown={rendering} send={send} />
+        )}
         {searchOpen && term && (
           <PaneSearch
             term={term}

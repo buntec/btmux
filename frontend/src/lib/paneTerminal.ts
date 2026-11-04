@@ -163,6 +163,7 @@ export class PaneTerminal {
   private hoveredLink: string | null = null;
   private touch: { x: number; y: number } | null = null;
   private touchTarget: EventTarget | null = null;
+  private focusTarget: HTMLElement | null = null;
 
   private constructor(wterm: WTerm, element: HTMLElement, core: GhosttyCore, inputDisabled: boolean) {
     this.wterm = wterm;
@@ -445,6 +446,12 @@ export class PaneTerminal {
    * Cmd editing chords arrive only with `macos-edit-keys` (useKeybindings swallows them otherwise).
    */
   private onKeyDown = (event: KeyboardEvent) => {
+    // A click focused the terminal. The key's text follows focus to the target.
+    if (this.focusTarget) {
+      event.stopPropagation();
+      this.focusTarget.focus();
+      return;
+    }
     if (!IS_MAC || event.isComposing) return;
     if (event.ctrlKey && !event.metaKey && !event.altKey && event.key === 'v') {
       // wterm leaves Ctrl+V to the browser as paste, which macOS doesn't do;
@@ -523,12 +530,26 @@ export class PaneTerminal {
   }
 
   focus() {
-    this.wterm.focus();
+    if (this.focusTarget) this.focusTarget.focus();
+    else this.wterm.focus();
   }
 
   blur() {
     const active = document.activeElement;
-    if (active instanceof HTMLElement && this.element.contains(active)) active.blur();
+    if (active instanceof HTMLElement && (this.element.contains(active) || active === this.focusTarget)) active.blur();
+  }
+
+  /** While set, this element takes the pane's focus and keys, as the pane's `btmux pick` menu does. */
+  setFocusTarget(target: HTMLElement | null) {
+    this.focusTarget = target;
+  }
+
+  /** Where the cursor is in the viewport: wterm keeps its input there (`trackInputPosition`). */
+  cursorRect(): DOMRect {
+    const input = this.element.querySelector('textarea');
+    const cell = this.measureCell();
+    const { left, top } = (input ?? this.element).getBoundingClientRect();
+    return new DOMRect(left, top, cell?.width ?? 0, cell?.height ?? 0);
   }
 
   setPaused(paused: boolean) {

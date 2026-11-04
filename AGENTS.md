@@ -95,6 +95,22 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 
 `telemetry.rs` receives OTLP/HTTP at `/api/panes/{id}/telemetry/v1/{logs,metrics}` (JSON or protobuf, optional gzip), behind `auth.rs`, and keeps per-minute numeric usage per agent and model (agents run helpers on other models; `model` is `None` for usage reported without one, like Claude's tool calls) for 24 hours in `SessionManager`. Raw log content is discarded. Closed panes keep their usage, so totals don't shrink, and the last 1024 closed can still take an agent's last export, even its first. The store is in the handoff file, so upgrades keep it; restarts clear it. Tabs get all of it as `ServerMessage::AgentTelemetry` with `replace` on connect or lag, then only changed minutes, whole values they merge by timestamp (`mergeTelemetry`), since resending a day of history on every export is too much traffic. `GET /api/telemetry` returns it too; `AgentUsageView.tsx` graphs running totals per model in agent view's Usage tab, in 5-minute points at the 8- and 24-hour ranges. Models keep a color by first use (`modelSlots`), so filtering never repaints one; past the five slots they fold into "Other" in charts, never in the By model table. `chartColor` in `lib/astryx-theme.ts` sets those colors' lightness and chroma from the terminal palette's hues, in an order and at shades checked for colorblind separation. Claude tokens and cost come from metrics, and its requests and tool calls from logs, so nothing counts twice; Codex uses only logs. Metrics must be delta, which `btmux claude` requests; cumulative points are ignored with a warning, since they would need per-series state. Delta points and log records are deduplicated individually through `seen`, so late retries count once. `agent_launch.rs` implements `btmux claude`/`codex`, which set exporter settings for one invocation from the pane's `BTMUX_OTEL_ENDPOINT` and exec the agent, with Codex's credential in `OTEL_EXPORTER_OTLP_LOGS_HEADERS` because it doesn't expand `${VAR}` in a `-c` header (on Windows, they spawn it, looking for `.exe`, `.cmd`, and `.bat` on `PATH`).
 
+### Menus from the shell
+
+`pick.rs` implements `btmux pick`: stdin's lines become a menu over the pane and
+the choice goes to stdout. `POST /api/panes/{id}/pick` stays open until the user
+answers; dropping it (the CLI died) closes the pick. `ServerMessage::Picks` lists
+open picks by id on every change and on connect, and tabs showing the pane fetch
+the items (`GET /api/picks/{id}`), so long lists aren't broadcast. A tab reports
+`pick_shown`; with no report in 3 s the request fails with 409, which the CLI turns
+into exit status 2 for callers to fall back on. After that it waits through reloads
+and window switches, with no timeout. The first `pick_answer` wins. `PanePicker.tsx`
+anchors at `PaneTerminal.cursorRect()` and keeps its unfiltered size, so filtering
+never moves the input. While it is open, `PaneTerminal.setFocusTarget` sends the
+pane's focus and keys to its filter, so the focus rules in `TerminalPane` still
+apply. Shells have no UI protocol like Neovim's `ext_popupmenu`, so completion menus
+replace the shell's own: see the fish function in `docs/automation.md`.
+
 ### Plan limits
 
 `agent_limits.rs` serves `GET /api/agent-limits`: the session, weekly, and per-model subscription limits above agent view's Usage tab (`AgentLimitsPanel.tsx`). It starts each CLI and asks without a prompt, so the CLI does its own auth and btmux never reads a credential: Claude's undocumented `get_usage` control request (`claude -p --safe-mode`; `--safe-mode` skips hooks, MCP, and plugins, while `--bare` skips OAuth too) and Codex's experimental `account/rateLimits/read` (`codex app-server`). Only an open Usage tab in a visible browser tab polls (`useAgentLimits`), each read is shared for 50 s, and a failed one keeps the last limits for 10 minutes, with their age shown. API keys and no login mean no limits, so that agent isn't shown; so does a CLI too old or changed to answer. Claude's `limits[]` rows are shown in the server's order and severity, so a new meter needs no change; Codex's windows are named by duration, since the weekly one can be `primary` or `secondary`.

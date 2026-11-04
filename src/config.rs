@@ -370,6 +370,14 @@ pub enum SubCommand {
         #[arg(long, value_enum, default_value_t = NotificationLevel::Info)]
         level: NotificationLevel,
     },
+    /// Show a menu over this pane and print the chosen item. Items are stdin's
+    /// lines; a tab starts a description, which is shown but not printed.
+    /// Exits 1 with no items, 2 if no tab shows the pane, and 130 if canceled.
+    Pick {
+        /// Placeholder for the menu's filter.
+        #[arg(long)]
+        prompt: Option<String>,
+    },
     /// Print the panes running a coding agent, with their states, as JSON.
     /// Inside a btmux pane this targets that pane's server; otherwise the
     /// `--profile` server.

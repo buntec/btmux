@@ -96,6 +96,12 @@ pub fn create_app(state: AppState) -> Router {
                 .layer(DefaultBodyLimit::max(crate::paste_image::MAX_BYTES)),
         )
         .route(
+            "/api/panes/{pane_id}/widget",
+            axum::routing::post(crate::widget::api_widget)
+                .layer(DefaultBodyLimit::max(crate::widget::MAX_BYTES)),
+        )
+        .route("/api/widgets/{id}", get(crate::widget::api_widget_request))
+        .route(
             "/api/panes/{pane_id}/open-file-browser",
             axum::routing::post(api_open_file_browser),
         )

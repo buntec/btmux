@@ -15,7 +15,7 @@ mod editor;
 mod file_git;
 mod file_git_ops;
 mod file_search;
-mod fish_theme;
+mod fish_integration;
 mod fs_ops;
 mod git;
 #[cfg(unix)]
@@ -43,6 +43,7 @@ mod tmux_cli;
 mod update_check;
 mod vscode;
 mod wallpaper;
+mod widget;
 mod worktree;
 mod ws;
 
@@ -117,6 +118,16 @@ async fn main() {
         }
         Some(config::SubCommand::Codex { args }) => {
             std::process::exit(agent_launch::run(agent_launch::Agent::Codex, args))
+        }
+        Some(config::SubCommand::Pick { prompt }) => {
+            std::process::exit(widget::pick(prompt.as_deref()).await)
+        }
+        Some(config::SubCommand::Confirm {
+            message,
+            default_yes,
+        }) => std::process::exit(widget::confirm(message, *default_yes).await),
+        Some(config::SubCommand::Input { prompt, default }) => {
+            std::process::exit(widget::input(prompt.as_deref(), default.as_deref()).await)
         }
         Some(config::SubCommand::Agents) => {
             std::process::exit(agent_cli::agents(args.profile.as_deref()).await)
@@ -231,12 +242,12 @@ async fn main() {
     }
 
     if let Some(config::SubCommand::GenerateFishTheme) = args.command {
-        print!("{}", fish_theme::theme());
+        print!("{}", fish_integration::theme());
         return;
     }
 
-    if let Some(config::SubCommand::InstallFishTheme) = args.command {
-        match fish_theme::install() {
+    if let Some(config::SubCommand::InstallFishIntegration) = args.command {
+        match fish_integration::install() {
             Ok(paths) => {
                 for path in paths {
                     println!("Installed {}", path.display());

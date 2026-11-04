@@ -162,6 +162,8 @@ export function useControlSocket() {
           useStore.getState().setVscodeOpen(true, msg.pane_id);
         } else if (msg.type === 'tailscale') {
           useStore.getState().setTailscale(msg.status);
+        } else if (msg.type === 'widgets') {
+          useStore.getState().setWidgets(msg.widgets);
         }
       };
 

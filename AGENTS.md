@@ -31,7 +31,7 @@ remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
 reconnect/replay, config updates, correlated command errors, and multiple viewers,
 followed by upgrade, Astryx interaction, theme, Git, and mobile (WebKit) checks
-(`just test-nvim-browser` covers the Neovim surface; `just test-shader-browser`,
+(`just test-nvim-browser` covers the Neovim surface, `just test-fish-browser` the fish integration; `just test-shader-browser`,
 run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
@@ -94,6 +94,26 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 ### Agent telemetry
 
 `telemetry.rs` receives OTLP/HTTP at `/api/panes/{id}/telemetry/v1/{logs,metrics}` (JSON or protobuf, optional gzip), behind `auth.rs`, and keeps per-minute numeric usage per agent and model (agents run helpers on other models; `model` is `None` for usage reported without one, like Claude's tool calls) for 24 hours in `SessionManager`. Raw log content is discarded. Closed panes keep their usage, so totals don't shrink, and the last 1024 closed can still take an agent's last export, even its first. The store is in the handoff file, so upgrades keep it; restarts clear it. Tabs get all of it as `ServerMessage::AgentTelemetry` with `replace` on connect or lag, then only changed minutes, whole values they merge by timestamp (`mergeTelemetry`), since resending a day of history on every export is too much traffic. `GET /api/telemetry` returns it too; `AgentUsageView.tsx` graphs running totals per model in agent view's Usage tab, in 5-minute points at the 8- and 24-hour ranges. Models keep a color by first use (`modelSlots`), so filtering never repaints one; past the five slots they fold into "Other" in charts, never in the By model table. `chartColor` in `lib/astryx-theme.ts` sets those colors' lightness and chroma from the terminal palette's hues, in an order and at shades checked for colorblind separation. Claude tokens and cost come from metrics, and its requests and tool calls from logs, so nothing counts twice; Codex uses only logs. Metrics must be delta, which `btmux claude` requests; cumulative points are ignored with a warning, since they would need per-series state. Delta points and log records are deduplicated individually through `seen`, so late retries count once. `agent_launch.rs` implements `btmux claude`/`codex`, which set exporter settings for one invocation from the pane's `BTMUX_OTEL_ENDPOINT` and exec the agent, with Codex's credential in `OTEL_EXPORTER_OTLP_LOGS_HEADERS` because it doesn't expand `${VAR}` in a `-c` header (on Windows, they spawn it, looking for `.exe`, `.cmd`, and `.bat` on `PATH`).
+
+### Widgets from the shell
+
+`widget.rs` implements `btmux pick` (stdin's lines become a menu; the choice goes to
+stdout), `confirm`, and `input`, whose text goes to stdout. `POST
+/api/panes/{id}/widget` stays open until the user answers; dropping it (the CLI
+died) closes the widget. `ServerMessage::Widgets` lists open widgets by id and kind
+on every change and on connect, and tabs showing the pane fetch the request (`GET
+/api/widgets/{id}`), so long lists aren't broadcast. A tab reports `widget_shown`;
+with no report in 3 s the request fails with 409, which the CLI turns into exit
+status 2 for callers to fall back on. After that it waits through reloads and window
+switches, with no timeout. The first `widget_answer` of the right kind wins.
+`usePaneWidget` anchors the card at `PaneTerminal.cursorRect()` and keeps its first
+size, so filtering never moves the input. While it is open,
+`PaneTerminal.setFocusTarget` sends the pane's focus and keys to the widget, so the
+focus rules in `TerminalPane` still apply. Shells have no UI protocol like Neovim's
+`ext_popupmenu`, so completion menus replace the shell's own: `extras/fish/btmux.fish` binds Tab to one when
+`btmux_pick_completion` is 1, leaving fish to complete when its menu is open, with
+at most one candidate, or when the pick fails. It checks at the first prompt, as
+conf.d runs before config.fish, so it binds nothing when off.
 
 ### Plan limits
 

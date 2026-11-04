@@ -4,7 +4,7 @@ import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
-import type { AgentTelemetry, TailscaleStatus } from '../generated/protocol';
+import type { AgentTelemetry, TailscaleStatus, WidgetSummary } from '../generated/protocol';
 import { mergeTelemetry } from '../lib/agentUsage';
 import { cacheThemes } from './startupTheme';
 
@@ -32,6 +32,8 @@ interface AppStore {
   agentGridOpen: boolean;
   agentGridMounted: boolean;
   agentPanes: Set<string>;
+  /** Open `btmux pick`, `confirm`, and `input` widgets. */
+  widgets: WidgetSummary[];
   agentTelemetry: Record<string, AgentTelemetry>;
   updateAgentTelemetry: (panes: AgentTelemetry[], replace?: boolean, removed?: string[]) => void;
   // The server's `--tailscale` status; null without it.
@@ -98,6 +100,7 @@ interface AppStore {
   setAgentGridOpen: (open: boolean) => void;
   markAgentGridMounted: () => void;
   setAgentPanes: (paneIds: string[]) => void;
+  setWidgets: (widgets: WidgetSummary[]) => void;
   setTailscale: (status: TailscaleStatus | null) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
@@ -162,6 +165,7 @@ export const useStore = create<AppStore>((set, get) => ({
   agentGridOpen: false,
   agentGridMounted: false,
   agentPanes: new Set(),
+  widgets: [],
   agentTelemetry: {},
   updateAgentTelemetry: (panes, replace = false, removed = []) =>
     set((state) => {
@@ -227,6 +231,7 @@ export const useStore = create<AppStore>((set, get) => ({
     set((state) => ({ agentGridOpen: open, agentGridMounted: state.agentGridMounted || open })),
   markAgentGridMounted: () => set((s) => (s.agentGridMounted ? s : { agentGridMounted: true })),
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
+  setWidgets: (widgets) => set({ widgets }),
   setTailscale: (tailscale) => set({ tailscale }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),

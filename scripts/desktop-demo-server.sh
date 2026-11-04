@@ -94,7 +94,7 @@ setup() {
             "$agent" "$script_dir/desktop-demo-agent.sh" "$agent" >"$run_dir/bin/$agent"
         chmod +x "$run_dir/bin/$agent"
     done
-    XDG_CONFIG_HOME="$config_home" "$server_bin" install-fish-theme >/dev/null
+    XDG_CONFIG_HOME="$config_home" "$server_bin" install-fish-integration >/dev/null
     echo "$mode" >"$run_dir/mode"
     # A prompt without user and host names.
     cat >"$config_home/fish/config.fish" <<'EOF'

@@ -370,6 +370,33 @@ pub enum SubCommand {
         #[arg(long, value_enum, default_value_t = NotificationLevel::Info)]
         level: NotificationLevel,
     },
+    /// Show a menu over this pane and print the chosen item. Items are stdin's
+    /// lines; a tab starts a description, which is shown but not printed.
+    /// Exits 1 with no items, 2 if no tab shows the pane, and 130 if canceled.
+    Pick {
+        /// Placeholder for the menu's filter.
+        #[arg(long)]
+        prompt: Option<String>,
+    },
+    /// Ask a yes/no question over this pane. Exits 0 for yes, 1 for no, 2 if
+    /// no tab shows the pane, and 130 if canceled.
+    Confirm {
+        /// The question.
+        message: String,
+        /// Make Enter answer yes rather than no.
+        #[arg(long)]
+        default_yes: bool,
+    },
+    /// Ask for a line of text over this pane and print it. Exits 2 if no tab
+    /// shows the pane and 130 if canceled.
+    Input {
+        /// Label above the text field.
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Text the field starts with.
+        #[arg(long)]
+        default: Option<String>,
+    },
     /// Print the panes running a coding agent, with their states, as JSON.
     /// Inside a btmux pane this targets that pane's server; otherwise the
     /// `--profile` server.
@@ -424,8 +451,9 @@ pub enum SubCommand {
     InstallGeminiCliHooks,
     /// Print a fish theme that follows the btmux color scheme.
     GenerateFishTheme,
-    /// Install the btmux fish theme and a conf.d snippet that selects it in btmux panes.
-    InstallFishTheme,
+    /// Install the btmux fish theme and a conf.d snippet for btmux panes, which
+    /// selects it and can make Tab complete through `btmux pick`.
+    InstallFishIntegration,
     /// Install btmux as a per-user background service so it starts at login and
     /// restarts on crash. The current `--host`/`--port`/`--profile`/`--shell`/
     /// `--public-url` and the installing shell's PATH are baked into the

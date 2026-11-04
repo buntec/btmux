@@ -87,6 +87,13 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
+    // Sent when empty too, to close widgets a previous server had open.
+    messages.push(
+        serde_json::to_string(&ServerMessage::Widgets {
+            widgets: mgr.widgets.summaries(),
+        })
+        .unwrap(),
+    );
     messages
 }
 
@@ -161,6 +168,14 @@ async fn handle_socket(socket: WebSocket, state: AppState, color_mode: Option<Co
                 }
                 Ok(ClientMessage::SystemColorMode { mode }) => {
                     set_system_color_mode(&mut *state.write().await, mode);
+                    Ok(())
+                }
+                Ok(ClientMessage::WidgetShown { id }) => {
+                    state.read().await.widgets.shown(id);
+                    Ok(())
+                }
+                Ok(ClientMessage::WidgetAnswer { id, answer }) => {
+                    state.read().await.widgets.answer(id, answer);
                     Ok(())
                 }
                 Ok(cmd) => handle_command(cmd, &state).await,
@@ -397,7 +412,9 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::NvimOpen { .. }
         | ClientMessage::VscodeOpen { .. }
         | ClientMessage::FocusClient
-        | ClientMessage::SystemColorMode { .. } => unreachable!(),
+        | ClientMessage::SystemColorMode { .. }
+        | ClientMessage::WidgetShown { .. }
+        | ClientMessage::WidgetAnswer { .. } => unreachable!(),
     }
 
     broadcast_state(&mgr);
@@ -879,6 +896,15 @@ pub(crate) enum ClientMessage {
     SystemColorMode {
         mode: ColorMode,
     },
+    /// This tab is showing the widget, so its command should wait for the user.
+    WidgetShown {
+        id: Uuid,
+    },
+    /// The answer, or `None` to cancel.
+    WidgetAnswer {
+        id: Uuid,
+        answer: Option<crate::widget::WidgetAnswer>,
+    },
     CyclePane {
         session_id: Uuid,
         delta: i32,
@@ -1027,6 +1053,10 @@ pub enum ServerMessage {
     Tailscale {
         status: crate::tailscale::TailscaleStatus,
     },
+    /// All open pane widgets; sent on connect and on change.
+    Widgets {
+        widgets: Vec<crate::widget::WidgetSummary>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -1159,9 +1189,13 @@ mod tests {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
         ));
         let state = std::sync::Arc::new(tokio::sync::RwLock::new(mgr));
-        let [config, snapshot] = &resynchronize(&mut events, &state).await[..] else {
-            panic!("expected config and state");
+        let [config, snapshot, widgets] = &resynchronize(&mut events, &state).await[..] else {
+            panic!("expected config, state, and widgets");
         };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(widgets).unwrap()["type"],
+            "widgets"
+        );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&config).unwrap()["type"],
             "config"

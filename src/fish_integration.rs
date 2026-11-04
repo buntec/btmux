@@ -6,7 +6,7 @@ pub fn theme() -> &'static str {
     include_str!("../extras/fish/btmux.theme")
 }
 
-/// conf.d snippet that selects the theme inside btmux panes only.
+/// conf.d snippet for btmux panes only: the theme, and Tab through `btmux pick`.
 fn conf_snippet() -> &'static str {
     include_str!("../extras/fish/btmux.fish")
 }

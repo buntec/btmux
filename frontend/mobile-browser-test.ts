@@ -549,6 +549,111 @@ try {
   await drawer.getByRole('button', { name: 'Close navigation' }).tap();
   await page.locator('dialog.btm-side-nav').waitFor({ state: 'hidden' });
 
+  // `btmux pick` fits the screen and takes taps and the key bar's keys.
+  const pickPane = await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    return state.getActivePaneId(state.allSessions[0].id) as string;
+  });
+  const picker = page.locator('[data-pane-widget]');
+  const pick = async () => {
+    const list = `for i in 1 2 3 4; do printf 'choice-%s\\tA description much too long to fit on the screen of a phone\\n' "$i"; done`;
+    await api(`/api/panes/${pickPane}/input`, {
+      method: 'POST',
+      body: JSON.stringify({ text: `clear; ${list} | "$BTMUX_BIN" pick; echo "rc=$?"`, keys: ['Enter'] }),
+    });
+    await page.waitForSelector('[data-pane-widget]:not(.opacity-0)');
+  };
+  const pickFilter = picker.locator('input');
+  const pickOutput = async (expected: RegExp) => {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const text = await (await api(`/api/panes/${pickPane}/capture`)).text();
+      if (expected.test(text)) return;
+      assert(Date.now() < deadline, `never saw ${expected} in:\n${text}`);
+      await page.waitForTimeout(50);
+    }
+  };
+  const selectedChoice = () => picker.locator('[aria-current="true"]').innerText();
+
+  await pick();
+  const box = (await picker.boundingBox())!;
+  const screenWidth = await page.evaluate(() => innerWidth);
+  assert(box.x >= 0 && box.x + box.width <= screenWidth, `menu fits: ${box.x}+${box.width} of ${screenWidth}`);
+  assert(await pickFilter.evaluate((input) => input === document.activeElement), 'the filter has focus');
+  for (const label of ['choice-1', 'choice-4']) {
+    const row = picker.getByText(label, { exact: true });
+    assert(await row.evaluate((el) => el.scrollWidth <= el.clientWidth), `${label} is not truncated`);
+  }
+
+  // The key bar moves the selection and keeps focus in the filter.
+  await keys('Tab').tap();
+  assert((await selectedChoice()).includes('choice-2'));
+  await keys('Up').tap();
+  assert((await selectedChoice()).includes('choice-1'));
+  await keys('Ctrl').tap();
+  await page.keyboard.type('n');
+  assert((await selectedChoice()).includes('choice-2'), 'armed Ctrl reaches the menu');
+  assert.equal(await pickFilter.inputValue(), '', 'armed Ctrl does not type');
+  assert.equal(await keys('Ctrl').getAttribute('aria-pressed'), 'false', 'Ctrl applies once');
+  assert(await pickFilter.evaluate((input) => input === document.activeElement), 'the filter keeps focus');
+
+  // Esc on the key bar cancels.
+  await keys('Esc').tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=130/);
+
+  // A tap chooses, and returns focus to the terminal.
+  await pick();
+  await picker.getByText('choice-3', { exact: true }).tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/^choice-3$/m);
+  await pickOutput(/rc=0/);
+  assert(
+    await page.evaluate(() => document.activeElement?.closest('[data-pane-terminal]') !== null),
+    'the terminal has focus again',
+  );
+
+  // Tapping the terminal doesn't take typing from the menu.
+  await pick();
+  await page.getByLabel('Terminal').first().tap({ force: true });
+  await page.keyboard.type('choice-4');
+  await waitForAsync(page, () => document.querySelector('[data-pane-widget] input')?.getAttribute('value') === 'choice-4');
+  assert((await picker.innerText()).includes('1/4'));
+  await keys('Esc').tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=130/);
+
+  // `btmux confirm` and `input` fit too, and take taps and the key bar's keys.
+  const ask = async (command: string) => {
+    await api(`/api/panes/${pickPane}/input`, {
+      method: 'POST',
+      body: JSON.stringify({ text: `clear; "$BTMUX_BIN" ${command}; echo "rc=$?"`, keys: ['Enter'] }),
+    });
+    await page.waitForSelector('[data-pane-widget]:not(.opacity-0)');
+  };
+  const fits = async () => {
+    const box = (await picker.boundingBox())!;
+    assert(box.x >= 0 && box.x + box.width <= page.viewportSize()!.width, `it fits: ${JSON.stringify(box)}`);
+  };
+  await ask(`confirm 'Sure?'`);
+  await fits();
+  await picker.getByRole('button', { name: 'Yes' }).tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=0/);
+  await ask(`confirm 'Sure?'`);
+  await keys('Left').tap();
+  await waitForAsync(page, () => document.activeElement?.textContent === 'Yes');
+  await keys('Esc').tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=130/);
+  await ask(`input --default typed`);
+  await fits();
+  assert.equal(await picker.locator('input').inputValue(), 'typed');
+  await keys('Esc').tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=130/);
+
   // Installable: the manifest loads with the session cookie.
   const manifest = await page.evaluate(async () =>
     (await fetch('/manifest.webmanifest', { credentials: 'include' })).json(),
@@ -557,7 +662,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pairing, and manifest',
+    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pane widgets, pairing, and manifest',
   );
 } finally {
   await browser.close();

@@ -162,6 +162,7 @@ export class PaneTerminal {
   private linkModifierHeld = false;
   private hoveredLink: string | null = null;
   private touch: { x: number; y: number } | null = null;
+  private touchTarget: EventTarget | null = null;
 
   private constructor(wterm: WTerm, element: HTMLElement, core: GhosttyCore, inputDisabled: boolean) {
     this.wterm = wterm;
@@ -184,8 +185,6 @@ export class PaneTerminal {
     element.addEventListener('scroll', this.onLinkModifier, { passive: true });
     element.addEventListener('touchstart', this.onTouchStart, { passive: true });
     element.addEventListener('touchmove', this.onTouchMove, { passive: false });
-    element.addEventListener('touchend', this.onTouchEnd, { passive: true });
-    element.addEventListener('touchcancel', this.onTouchEnd, { passive: true });
     document.addEventListener('keydown', this.onLinkModifier, true);
     document.addEventListener('keyup', this.onLinkModifier, true);
   }
@@ -310,8 +309,21 @@ export class PaneTerminal {
   };
 
   private onTouchStart = (event: TouchEvent) => {
+    this.onTouchEnd();
     const touch = event.touches.length === 1 ? event.touches[0] : null;
-    this.touch = touch && { x: touch.clientX, y: touch.clientY };
+    if (!touch || !event.target) return;
+    this.touch = { x: touch.clientX, y: touch.clientY };
+    // A touch's events go to the node it started on, and stop reaching the
+    // element when a redraw detaches that node. The element keeps its own
+    // touchmove listener, as iOS may ignore preventDefault on one added now.
+    this.touchTarget = event.target;
+    this.touchTarget.addEventListener('touchmove', this.onDetachedTouchMove as EventListener, { passive: false });
+    this.touchTarget.addEventListener('touchend', this.onTouchEnd, { passive: true });
+    this.touchTarget.addEventListener('touchcancel', this.onTouchEnd, { passive: true });
+  };
+
+  private onDetachedTouchMove = (event: TouchEvent) => {
+    if (!(event.target as Node).isConnected) this.onTouchMove(event);
   };
 
   /** Swipes scroll applications as the wheel does; scrollback scrolls natively. */
@@ -337,6 +349,10 @@ export class PaneTerminal {
 
   private onTouchEnd = () => {
     this.touch = null;
+    this.touchTarget?.removeEventListener('touchmove', this.onDetachedTouchMove as EventListener);
+    this.touchTarget?.removeEventListener('touchend', this.onTouchEnd);
+    this.touchTarget?.removeEventListener('touchcancel', this.onTouchEnd);
+    this.touchTarget = null;
   };
 
   /** Plain-text URL at a viewport point; wterm handles OSC 8 links itself. */
@@ -699,8 +715,7 @@ export class PaneTerminal {
     this.element.removeEventListener('scroll', this.onLinkModifier);
     this.element.removeEventListener('touchstart', this.onTouchStart);
     this.element.removeEventListener('touchmove', this.onTouchMove);
-    this.element.removeEventListener('touchend', this.onTouchEnd);
-    this.element.removeEventListener('touchcancel', this.onTouchEnd);
+    this.onTouchEnd();
     document.removeEventListener('keydown', this.onLinkModifier, true);
     document.removeEventListener('keyup', this.onLinkModifier, true);
     this.dataListeners.clear();

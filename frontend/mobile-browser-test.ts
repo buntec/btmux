@@ -172,24 +172,32 @@ try {
   await write(page, '\x1b[<u');
   assert.equal(await takeInput(page), '\x1b[27u');
 
-  // Swipes scroll full-screen applications like the wheel.
-  await write(page, '\x1b[?1049h');
-  await page.evaluate(() => {
+  // Swipes scroll full-screen applications like the wheel, even after a redraw
+  // detaches the touched node, which then alone receives the touch's events.
+  await write(page, '\x1b[?1049h\x1b[31mred\x1b[m');
+  await page.locator('[data-pane-terminal] .term-row span', { hasText: 'red' }).waitFor();
+  const lines = await page.evaluate(() => {
+    const term = (window as unknown as { term: { measureCell(): { height: number } } }).term;
     const element = document.querySelector('[data-pane-terminal]')!;
+    const target = [...element.querySelectorAll('.term-row span')].find((span) => span.textContent === 'red')!;
     const rect = element.getBoundingClientRect();
     // WebKit only constructs Touch on iOS; the handlers read clientX/Y.
     const send = (type: string, y: number) => {
       const event = new Event(type, { bubbles: true, cancelable: true });
       const touches = type === 'touchend' ? [] : [{ identifier: 1, clientX: rect.left + 50, clientY: y }];
       Object.defineProperty(event, 'touches', { value: touches });
-      element.dispatchEvent(event);
+      target.dispatchEvent(event);
     };
     send('touchstart', rect.top + 300);
-    for (let y = rect.top + 290; y >= rect.top + 200; y -= 10) send('touchmove', y);
+    for (let y = rect.top + 290; y >= rect.top + 200; y -= 10) {
+      send('touchmove', y);
+      if (y === rect.top + 280) target.remove();
+    }
     send('touchend', rect.top + 200);
+    return Math.trunc(100 / term.measureCell().height);
   });
-  const scrolled = await takeInput(page);
-  assert.match(scrolled, /^(\x1b\[B)+$/);
+  assert(lines > 0);
+  assert.equal(await takeInput(page), '\x1b[B'.repeat(lines));
   await write(page, '\x1b[?1049l');
 
   // The prefix button arms btmux's prefix for the next typed key.

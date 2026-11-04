@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@astryxdesign/core/Button';
+import { Code } from '@astryxdesign/core/Code';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Grid } from '@astryxdesign/core/Grid';
 import { Heading } from '@astryxdesign/core/Heading';
@@ -246,7 +247,12 @@ export function AgentUsageView() {
       <VStack hAlign="center" vAlign="center" className="h-full">
         <EmptyState
           title="No usage received yet"
-          description="Run btmux claude or btmux codex in a pane to see tokens, costs, and tool activity here."
+          actions={
+            <Text color="secondary">
+              Run <Code>btmux claude</Code> or <Code>btmux codex</Code> in a pane to see tokens, costs, and tool
+              activity here.
+            </Text>
+          }
         />
         <Text color="secondary">Usage history covers the last 24 hours and clears when the server restarts.</Text>
       </VStack>
@@ -349,7 +355,7 @@ export function AgentUsageView() {
           </TableBody>
         </Table>
         <Text type="supporting" color="secondary">
-          Unattributed is usage reported without a model, such as Claude's tool calls.
+          Unattributed is usage reported without a model, such as Claude Code's tool calls.
         </Text>
       </VStack>
       <VStack gap={3}>

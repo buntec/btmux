@@ -350,7 +350,7 @@ export function AgentGrid({ send }: Props) {
                   <EmptyState
                     icon={<Icon icon={Bot} size="lg" color="secondary" />}
                     title="No agents detected"
-                    description="Start Claude, Codex, Gemini, Antigravity, or OpenCode in a pane."
+                    description="Start Claude Code, Codex, Gemini, Antigravity, or OpenCode in a pane."
                   />
                 </VStack>
               ) : (

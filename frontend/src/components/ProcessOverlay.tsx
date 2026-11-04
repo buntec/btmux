@@ -154,7 +154,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
         e.stopPropagation();
         if (store.filterActive) store.setFilterActive(false);
         else if (pendingKill) setPendingKill(null);
-        else if (narrow && detailsShown) setDetailsShown(false);
+        else if (narrow && detailsShown && store.panel === 'list') setDetailsShown(false);
         else onClose();
         return;
       }
@@ -303,6 +303,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
         case '/':
           e.preventDefault();
           store.setPanel('list');
+          setDetailsShown(false);
           store.setFilterActive(true);
           break;
         case 'h':

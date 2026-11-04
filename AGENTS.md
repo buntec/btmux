@@ -273,14 +273,18 @@ session switcher window switches to it.
 ### Process viewer
 
 `prefix + t` opens it (`ProcessOverlay.tsx`) over `/ws/processes`, which sends a
-snapshot of all processes and sockets each second while open. It is split in two
+snapshot of all processes each second while open, with sockets in every third,
+since on Linux reading them walks every process's open fds. It is split in two
 (`Tab` switches; one at a time below 768px): the process or port list, and
 per-pane usage. The server assigns each process a `pane_id`, from its nearest
 ancestor that is a pane's shell, else the shell leading its session
-(`pane_owner`), so a daemon that calls `setsid` and reparents counts for no pane,
-nor do the built-in editors and browser. `lib/paneUsage.ts` groups by session,
-window, and pane, summing CPU (100% is one core), resident memory (shared pages
-count once per process), disk rates, and listening sockets, listed under panes.
+(`AncestorPanes`), so a daemon that calls `setsid` and reparents counts for no pane,
+nor do the built-in editors and browser. Threads aren't listed. On Windows, Git
+Bash and WSL programs aren't the shell's descendants, so those panes are marked
+as not counted. `lib/paneUsage.ts` groups by session, window, and pane, summing
+CPU (100% is one core), resident memory (shared pages count once per process),
+disk rates, and listening sockets, listed under panes. That is TCP in `LISTEN`
+and UDP below the ephemeral range, as nothing tells a UDP server from a client.
 Sessions start folded.
 
 ### Frontend lifetime and routing

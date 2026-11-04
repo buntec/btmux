@@ -258,6 +258,20 @@ impl SessionManager {
             .collect()
     }
 
+    /// Each started pane's shell, and whether its programs are that shell's
+    /// OS descendants. Unlike `pane_shells`, this probes nothing.
+    pub fn shell_pids(&self) -> Vec<(Uuid, u32, bool)> {
+        self.sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+            .filter_map(|pane| {
+                let pid = pane.pty.shell_pid()?;
+                Some((pane.id, pid, pane.pty.programs_are_descendants()))
+            })
+            .collect()
+    }
+
     pub fn update_detected_agents(
         &mut self,
         detected: &[(Uuid, AgentProcess, String)],

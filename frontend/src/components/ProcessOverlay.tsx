@@ -54,6 +54,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const usageFoldToggles = useProcessStore((s) => s.usageFoldToggles);
   const sessions = useStore((s) => s.allSessions);
   const ports = useProcessStore((s) => s.snapshot?.ports);
+  const uncountedPanes = useProcessStore((s) => s.snapshot?.uncounted_panes);
   const portSortMode = useProcessStore((s) => s.portSortMode);
   const portSortReversed = useProcessStore((s) => s.portSortReversed);
   const processes = useProcessStore((s) => s.processes);
@@ -97,12 +98,15 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     [processes, collapsedPids, sortMode, sortReversed, treeMode, filterActive, filterQuery],
   );
   const portRows = useMemo(
-    () => buildPortRows(ports ?? [], processes, portSortMode, filterActive ? filterQuery : '', portSortReversed),
-    [ports, processes, portSortMode, portSortReversed, filterActive, filterQuery],
+    () =>
+      viewMode === 'ports'
+        ? buildPortRows(ports ?? [], processes, portSortMode, filterActive ? filterQuery : '', portSortReversed)
+        : [],
+    [viewMode, ports, processes, portSortMode, portSortReversed, filterActive, filterQuery],
   );
   const usageRows = useMemo(
-    () => buildUsageRows(sessions, processes, ports ?? [], usageFoldToggles),
-    [sessions, processes, ports, usageFoldToggles],
+    () => buildUsageRows(sessions, processes, ports ?? [], usageFoldToggles, uncountedPanes),
+    [sessions, processes, ports, usageFoldToggles, uncountedPanes],
   );
   const navigationRows = useMemo(
     () =>

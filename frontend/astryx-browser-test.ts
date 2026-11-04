@@ -332,7 +332,7 @@ try {
   }, pane);
   {
     const viewer = page.getByRole('dialog', { name: 'Processes', exact: true });
-    const usage = viewer.getByRole('tree', { name: 'Pane usage', exact: true });
+    const usage = viewer.getByRole('treegrid', { name: 'Pane usage', exact: true });
     const portRow = usage.getByText(`TCP 127.0.0.1:${usagePort}`);
     // Sessions start folded.
     const unfoldSession = usage.getByRole('button', { name: `Unfold ${session.name}`, exact: true });
@@ -377,7 +377,7 @@ try {
     await portRow.waitFor({ state: 'detached' });
     await page.keyboard.press('h');
     assert.equal(await selectedKind(), 'window');
-    const rowCount = () => usage.getByRole('treeitem').count();
+    const rowCount = () => usage.locator('[data-usage-kind]').count();
     const unfolded = await rowCount();
     await page.keyboard.press('Enter');
     await page.waitForFunction(
@@ -392,6 +392,37 @@ try {
     assert.equal(await selectedKind(), 'pane');
     await page.keyboard.press('l');
     await portRow.waitFor();
+    // Every column has room for its value.
+    const clipped = await usage.locator('[data-usage-kind="session"] td').evaluateAll((cells) =>
+      cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent),
+    );
+    assert.deepEqual(clipped, []);
+    // Snapshots leave the scroll position alone; moving focus reveals the row.
+    const countReveals = () =>
+      page.evaluate(() => (window as unknown as { usageReveals: number }).usageReveals);
+    await page.evaluate(() => {
+      const state = window as unknown as { usageReveals: number };
+      state.usageReveals = 0;
+      const scrollIntoView = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function (options) {
+        if (this.hasAttribute('data-usage-kind')) state.usageReveals++;
+        scrollIntoView.call(this, options);
+      };
+    });
+    for (let snapshots = 0; snapshots < 2; snapshots++) {
+      page.evaluate(async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        (window as unknown as { seenProcesses: unknown }).seenProcesses = useProcessStore.getState().processes;
+      });
+      await waitForAsync(page, async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        return useProcessStore.getState().processes !== (window as unknown as { seenProcesses: unknown }).seenProcesses;
+      });
+    }
+    assert.equal(await countReveals(), 0, 'snapshots must not scroll the usage list');
+    await page.keyboard.press('j');
+    await page.waitForFunction(() => (window as unknown as { usageReveals: number }).usageReveals > 0);
+    await page.keyboard.press('k');
     // List actions don't apply here.
     await page.keyboard.press('x');
     assert.equal(await viewer.getByRole('button', { name: 'y: confirm', exact: true }).count(), 0);
@@ -452,6 +483,23 @@ try {
     }, pane);
     const viewer = unavailablePage.getByRole('dialog', { name: 'Processes', exact: true });
     await viewer.getByText('No processes', { exact: true }).waitFor();
+    // A failed sample is reported, rather than reading as no ports; the next
+    // snapshot, which omits ports, keeps both.
+    await unavailablePage.evaluate(async () => {
+      const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+      const { setSnapshot, snapshot } = useProcessStore.getState();
+      (window as unknown as { goodSnapshot: unknown }).goodSnapshot = snapshot;
+      setSnapshot({ ...snapshot!, ports: null, ports_error: 'Could not read network ports: test' });
+      const { ports: _ports, ports_error: _error, ...withoutPorts } = useProcessStore.getState().snapshot!;
+      setSnapshot(withoutPorts);
+    });
+    const portsError = viewer.getByRole('alert').filter({ hasText: 'Could not read network ports: test' });
+    await portsError.waitFor();
+    await unavailablePage.evaluate(async () => {
+      const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+      useProcessStore.getState().setSnapshot((window as unknown as { goodSnapshot: never }).goodSnapshot);
+    });
+    await portsError.waitFor({ state: 'detached' });
     await unavailablePage.keyboard.press('p');
     await viewer.locator('tr[data-port-focused]').first().waitFor();
     assert.equal(await viewer.locator('tr[data-port-focused]').count(), 4);

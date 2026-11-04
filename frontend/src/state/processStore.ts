@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ProcessInfo, ProcessSnapshot } from '../protocol/process-messages';
+import type { ProcessInfo, ProcessSnapshot, ProcessSnapshotMessage } from '../protocol/process-messages';
 import { portKey, PORT_SORT_MODES, type PortSortMode } from '../lib/portRows';
 import { nextProcessSortMode, type ProcessSortMode } from '../lib/processTree';
 
@@ -35,7 +35,7 @@ interface ProcessStore {
   treeMode: boolean;
   filterQuery: string;
   filterActive: boolean;
-  setSnapshot: (snapshot: ProcessSnapshot) => void;
+  setSnapshot: (message: ProcessSnapshotMessage) => void;
   setFocusedPid: (pid: number | null) => void;
   toggleFollowFocus: () => void;
   toggleCollapsed: (pid: number) => void;
@@ -78,8 +78,14 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   filterQuery: '',
   filterActive: false,
   // Tables repair focus in displayed row order.
-  setSnapshot: (snapshot) =>
+  setSnapshot: (message) =>
     set((state) => {
+      const sampled = message.ports !== undefined || message.ports_error !== undefined;
+      const snapshot: ProcessSnapshot = {
+        ...message,
+        ports: (sampled ? message.ports : state.snapshot?.ports) ?? null,
+        ports_error: (sampled ? message.ports_error : state.snapshot?.ports_error) ?? null,
+      };
       const pids = new Set(snapshot.processes.map((process) => process.pid));
       const collapsedPids = new Set([...state.collapsedPids].filter((pid) => pids.has(pid)));
       const portKeys = snapshot.ports ? new Set(snapshot.ports.map(portKey)) : null;

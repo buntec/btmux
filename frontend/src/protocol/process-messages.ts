@@ -24,11 +24,17 @@ export interface ProcessSnapshot {
   processes: ProcessInfo[];
   ports: PortInfo[] | null;
   ports_error: string | null;
+  /** Panes whose programs can't be attributed to them. */
+  uncounted_panes: string[];
   cpu_count: number;
   mem_used: number;
   mem_total: number;
   load_average: [number, number, number];
 }
+
+/** Sockets are sampled every few snapshots; the others omit them. */
+export type ProcessSnapshotMessage = Omit<ProcessSnapshot, 'ports' | 'ports_error'> &
+  Partial<Pick<ProcessSnapshot, 'ports' | 'ports_error'>>;
 
 export interface ProcessKillResult {
   type: 'kill_result';
@@ -42,7 +48,7 @@ export interface ProcessErrorMessage {
   message: string;
 }
 
-export type ProcessServerMessage = ProcessSnapshot | ProcessKillResult | ProcessErrorMessage;
+export type ProcessServerMessage = ProcessSnapshotMessage | ProcessKillResult | ProcessErrorMessage;
 
 export type ProcessSignal = 'term' | 'kill';
 

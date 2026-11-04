@@ -1,3 +1,4 @@
+import { resolveFocusedRow } from './utils';
 import type { ProcessInfo } from '../protocol/process-messages';
 import { hasStartTime } from './processFormat';
 
@@ -198,7 +199,7 @@ export function resolveFocusedPid(
   previousIndex: number,
   keepPosition: boolean,
 ): number | null {
-  if (rows.length === 0) return null;
-  if (!keepPosition && focusedPid !== null && rows.some((row) => row.process.pid === focusedPid)) return focusedPid;
-  return rows[Math.max(0, Math.min(previousIndex, rows.length - 1))].process.pid;
+  return (
+    resolveFocusedRow(rows, (row) => row.process.pid === focusedPid, previousIndex, keepPosition)?.process.pid ?? null
+  );
 }

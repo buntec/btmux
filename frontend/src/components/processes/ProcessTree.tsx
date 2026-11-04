@@ -18,16 +18,19 @@ const LAYOUTS = [
     minWidth: 880,
     grid: 'grid gap-x-2 grid-cols-[3.5rem_5rem_4.5rem_4.5rem_5rem_5rem_5.5rem_minmax(0,1fr)]',
     labels: new Set(['PID', 'USER', 'CPU%', 'MEM%', 'RES', 'VIRT', 'ELAPSED']),
+    compact: false,
   },
   {
     minWidth: 520,
     grid: 'grid gap-x-2 grid-cols-[3.5rem_5rem_4.5rem_5rem_5.5rem_minmax(0,1fr)]',
     labels: new Set(['PID', 'USER', 'CPU%', 'RES', 'ELAPSED']),
+    compact: false,
   },
   {
     minWidth: 0,
     grid: 'grid gap-x-2 grid-cols-[3.5rem_3.5rem_3.5rem_minmax(0,1fr)]',
     labels: new Set(['PID', 'CPU%', 'MEM%']),
+    compact: true,
   },
 ];
 
@@ -86,8 +89,7 @@ export function ProcessTree({
     observer.observe(root);
     return () => observer.disconnect();
   }, []);
-  const { grid, labels } = LAYOUTS.find((layout) => width >= layout.minWidth) ?? LAYOUTS[LAYOUTS.length - 1];
-  const compact = labels.size === 3;
+  const { grid, labels, compact } = LAYOUTS.find((layout) => width >= layout.minWidth) ?? LAYOUTS[LAYOUTS.length - 1];
   const columns = SORT_COLUMNS.filter((column) => labels.has(column.label));
   const processes = useProcessStore((s) => s.processes);
   const focusedPid = useProcessStore((s) => s.focusedPid);
@@ -212,6 +214,7 @@ export function ProcessTree({
                           focused ? 'text-on-accent/70' : 'text-secondary hover:text-primary',
                         )}
                         onMouseDown={(e) => e.preventDefault()}
+                        onDoubleClick={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
                           setFocusedPid(process.pid);

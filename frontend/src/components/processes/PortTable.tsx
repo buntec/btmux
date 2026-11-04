@@ -122,6 +122,7 @@ export function PortTable({
                         size="sm"
                         aria-expanded={expandedPorts.has(key)}
                         onMouseDown={(event) => event.preventDefault()}
+                        onDoubleClick={(event) => event.stopPropagation()}
                         onClick={(event) => {
                           event.stopPropagation();
                           setFocusedPort(key, port.pid);

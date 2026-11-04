@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { buildUsageRows, resolveFocusedUsage, usageParentIndex } from './src/lib/paneUsage';
+import { buildUsageRows, usageParentIndex } from './src/lib/paneUsage';
+import { resolveFocusedRow } from './src/lib/utils';
 import type { PortInfo, ProcessInfo } from './src/protocol/process-messages';
 import type { SessionState } from './src/state/types';
 
@@ -96,6 +97,8 @@ test('lists listeners under their pane, once per address', () => {
     socket(1, 5173),
     socket(1, 4000),
     socket(1, 53, 'BOUND', 'UDP'),
+    // A client's ephemeral UDP socket isn't a listener.
+    socket(1, 53124, 'BOUND', 'UDP'),
     // Established connections and unowned or outside sockets aren't listed.
     socket(1, 5173, 'ESTABLISHED'),
     socket(null, 9000),
@@ -119,11 +122,23 @@ test('formats IPv6 listeners with brackets', () => {
 
 test('focus survives by key, then by position', () => {
   const rows = buildUsageRows(sessions, processes, [], open());
-  expect(resolveFocusedUsage(rows, 'pane:p2', 0)).toBe('pane:p2');
-  expect(resolveFocusedUsage(rows, 'gone', 2)).toBe(rows[2].key);
-  expect(resolveFocusedUsage(rows, 'gone', 99)).toBe(rows.at(-1)!.key);
-  expect(resolveFocusedUsage(rows, null, 0)).toBe(rows[0].key);
-  expect(resolveFocusedUsage([], 'pane:p2', 0)).toBeNull();
+  const focus = (list: typeof rows, key: string | null, index: number) =>
+    resolveFocusedRow(list, (row) => row.key === key, index)?.key ?? null;
+  expect(focus(rows, 'pane:p2', 0)).toBe('pane:p2');
+  expect(focus(rows, 'gone', 2)).toBe(rows[2].key);
+  expect(focus(rows, 'gone', 99)).toBe(rows.at(-1)!.key);
+  expect(focus(rows, null, 0)).toBe(rows[0].key);
+  expect(focus([], 'pane:p2', 0)).toBeNull();
+});
+
+test('marks panes whose programs can\'t be counted, and what contains them', () => {
+  const rows = buildUsageRows(sessions, processes, [], open(), ['p2']);
+  const row = (key: string) => rows.find((item) => item.key === key)!;
+  expect(row('pane:p2').detail).toBe('not counted');
+  expect(row('pane:p2').title).toContain('/p2\n');
+  expect(row('window:w1').detail).toBe('partial');
+  expect(row('session:s1').detail).toBe('partial');
+  for (const key of ['pane:p1', 'window:w2', 'session:s2']) expect(row(key).detail).toBeUndefined();
 });
 
 test('finds the parent row', () => {

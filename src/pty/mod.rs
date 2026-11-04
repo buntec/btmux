@@ -377,6 +377,16 @@ impl PtyHandle {
         self.dialect
     }
 
+    /// Git Bash starts programs from short-lived forks, and WSL's are Linux
+    /// processes, so neither descends from the Windows shell process.
+    pub fn programs_are_descendants(&self) -> bool {
+        !cfg!(windows)
+            || !matches!(
+                self.dialect,
+                crate::shell::Dialect::Posix | crate::shell::Dialect::Wsl
+            )
+    }
+
     /// Tell a program that enabled mode 2031 that the theme changed.
     pub fn report_color_scheme(&self, palette: &colors::Palette) {
         if self.is_spawned() && self.color_reports.load(Ordering::Relaxed) {

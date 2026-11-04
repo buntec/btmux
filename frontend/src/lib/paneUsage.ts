@@ -19,7 +19,7 @@ export interface UsageRow {
   title?: string;
   /** Port rows have none. */
   usage: Usage | null;
-  /** A port's owning processes. */
+  /** A port's owning processes, or why usage is incomplete. */
   detail?: string;
   hasChildren: boolean;
 }
@@ -30,6 +30,11 @@ interface PanePort {
   port: number;
   names: Set<string>;
 }
+
+/** The lowest default client port: Linux's; macOS and Windows start higher. */
+const EPHEMERAL_PORTS_START = 32768;
+
+const UNCOUNTED = "Git Bash and WSL programs aren't the shell's Windows children, so they aren't counted";
 
 const emptyUsage = (): Usage => ({ cpu: 0, memory: 0, diskRead: 0, diskWrite: 0, processes: 0, ports: 0 });
 
@@ -52,6 +57,8 @@ function panePorts(ports: PortInfo[], processes: ProcessInfo[]): Map<string, Pan
   const groups = new Map<string, Map<string, PanePort>>();
   for (const socket of ports) {
     if (socket.protocol === 'TCP' && socket.state !== 'LISTEN') continue;
+    // Client sockets (DNS, QUIC) are bound too, and come and go.
+    if (socket.protocol === 'UDP' && socket.local_port >= EPHEMERAL_PORTS_START) continue;
     const process = socket.pid === null ? undefined : byPid.get(socket.pid);
     if (!process?.pane_id) continue;
     const pane = groups.get(process.pane_id) ?? new Map<string, PanePort>();
@@ -87,7 +94,13 @@ export function buildUsageRows(
   processes: ProcessInfo[],
   ports: PortInfo[],
   toggles: Set<string>,
+  uncountedPanes: string[] = [],
 ): UsageRow[] {
+  const uncounted = new Set(uncountedPanes);
+  const markPartial = (row: UsageRow) => {
+    row.detail = 'partial';
+    row.title = UNCOUNTED;
+  };
   const byPane = new Map<string, Usage>();
   for (const process of processes) {
     if (!process.pane_id) continue;
@@ -120,16 +133,19 @@ export function buildUsageRows(
     for (const window of session.windows) {
       const windowUsage = emptyUsage();
       const windowKey = `window:${window.id}`;
-      const windowRows: UsageRow[] = [
-        {
-          key: windowKey,
-          kind: 'window',
-          depth: 1,
-          label: window.name,
-          usage: windowUsage,
-          hasChildren: window.panes.length > 0,
-        },
-      ];
+      const windowRow: UsageRow = {
+        key: windowKey,
+        kind: 'window',
+        depth: 1,
+        label: window.name,
+        usage: windowUsage,
+        hasChildren: window.panes.length > 0,
+      };
+      if (window.panes.some((pane) => uncounted.has(pane.id))) {
+        markPartial(windowRow);
+        markPartial(sessionRow);
+      }
+      const windowRows = [windowRow];
       window.panes.forEach((pane, index) => {
         const sockets = socketsByPane.get(pane.id) ?? [];
         const usage = { ...(byPane.get(pane.id) ?? emptyUsage()), ports: sockets.length };
@@ -140,7 +156,8 @@ export function buildUsageRows(
           kind: 'pane',
           depth: 2,
           label: pane.title || `pane ${index + 1}`,
-          title: pane.cwd ?? undefined,
+          title: uncounted.has(pane.id) ? [pane.cwd, UNCOUNTED].filter(Boolean).join('\n') : (pane.cwd ?? undefined),
+          detail: uncounted.has(pane.id) ? 'not counted' : undefined,
           usage,
           hasChildren: sockets.length > 0,
         });
@@ -163,13 +180,6 @@ export function buildUsageRows(
     }
   }
   return rows;
-}
-
-/** The focused row's key, or the row now at its position if it's gone. */
-export function resolveFocusedUsage(rows: UsageRow[], focused: string | null, previousIndex: number): string | null {
-  if (rows.length === 0) return null;
-  if (focused !== null && rows.some((row) => row.key === focused)) return focused;
-  return rows[Math.max(0, Math.min(previousIndex, rows.length - 1))].key;
 }
 
 /** The nearest row above `index` that is one level up. */

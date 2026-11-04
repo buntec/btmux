@@ -243,6 +243,56 @@ try {
   const reopened = await stopWatching(page);
   assert.equal(reopened.length, 1, `reopen moved tiles: ${JSON.stringify(reopened)}`);
 
+  const connectionsBeforeUsage = await page.evaluate(
+    () => ((window as any).__sockets as WebSocket[]).filter((socket) => socket.url.includes('mirror=1')).length,
+  );
+  await page.getByRole('tab', { name: 'Usage', exact: true }).click();
+  await page.getByText('No usage received yet').waitFor();
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).click();
+  await replaysShown(page, 4);
+  assert.equal(
+    await page.evaluate(
+      () => ((window as any).__sockets as WebSocket[]).filter((socket) => socket.url.includes('mirror=1')).length,
+    ),
+    connectionsBeforeUsage,
+    'switching to usage must preserve mirror sockets',
+  );
+
+  // The grid's keys work after switching tabs with the mouse or the keyboard.
+  const selectedTile = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll<HTMLInputElement>('[data-agent-tiles] input')].findIndex((tile) => tile.checked),
+    );
+  const pressAndExpect = async (key: string, expected: number) => {
+    await page.keyboard.press(key);
+    await waitForAsync(
+      page,
+      (expected) =>
+        [...document.querySelectorAll<HTMLInputElement>('[data-agent-tiles] input')].findIndex(
+          (tile) => tile.checked,
+        ) === expected,
+      expected,
+    );
+  };
+  // The grid opens on the active pane, whose tile depends on session order.
+  await pressAndExpect('1', 0);
+  await pressAndExpect('2', 1);
+  await pressAndExpect('l', 2);
+  await pressAndExpect('h', 1);
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).focus();
+  await pressAndExpect('1', 0);
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await selectedTile(), 0, 'arrow keys on a focused tab belong to the tabs');
+  await page.keyboard.press('Enter');
+  await page.getByText('No usage received yet').waitFor();
+  await page.keyboard.press('2');
+  assert.equal(await selectedTile(), 0, 'grid keys must not move the hidden selection');
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await replaysShown(page, 4);
+  await pressAndExpect('2', 1);
+  await pressAndExpect('1', 0);
+
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);
   await baseline(page);
@@ -308,6 +358,31 @@ try {
   await page.waitForTimeout(1000);
   const slow = await stopWatching(page);
   assert.equal(slow.length, 2, `slow agent beside a stuck one: ${JSON.stringify(slow)}`);
+
+  // An agent that starts while the view is closed appears on reopening, at its own size.
+  await setOpen(page, false);
+  await page.waitForTimeout(200);
+  agents.push(await startAgent('agent-closed', 130, 35));
+  // Past the size deadline, which must not expire while closed.
+  await page.waitForTimeout(2500);
+  await setOpen(page, true);
+  await replaysShown(page, 8);
+  await waitForAsync(
+    page,
+    () => getComputedStyle(document.querySelector('[data-agent-tiles]')!).opacity === '1',
+  );
+  const tileWidthPerColumn = (name: string, cols: number) =>
+    page.evaluate(
+      ([name, cols]) => {
+        const tile = [...document.querySelector('[data-agent-tiles]')!.children].find((tile) =>
+          tile.textContent!.includes(name as string),
+        ) as HTMLElement;
+        return tile.offsetWidth / (cols as number);
+      },
+      [name, cols] as const,
+    );
+  const ratio = (await tileWidthPerColumn('agent-closed', 130)) / (await tileWidthPerColumn('agent-a', 200));
+  assert(ratio > 0.9 && ratio < 1.1, `closed-start agent's size: ${ratio}`);
 
   assert.deepEqual(errors, []);
 } finally {

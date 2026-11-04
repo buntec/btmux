@@ -94,6 +94,7 @@ export function useControlSocket() {
         const msg: ServerMessage = JSON.parse(ev.data);
         if (msg.type === 'client') {
           clientId = msg.id;
+          useStore.getState().updateAgentTelemetry([], true);
           // Sent again after it on connect, if the server has it.
           useStore.getState().setTailscale(null);
           reportFocus();
@@ -102,6 +103,8 @@ export function useControlSocket() {
           setAllSessions(msg.all_sessions);
           setAgentPanes(msg.agent_panes);
           setControlConnectionState('connected');
+        } else if (msg.type === 'agent_telemetry') {
+          useStore.getState().updateAgentTelemetry(msg.panes, msg.replace, msg.removed_panes);
         } else if (msg.type === 'command_result') {
           if (msg.error) showToast(msg.error, 'error');
         } else if (msg.type === 'config') {

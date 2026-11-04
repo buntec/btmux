@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
-import { Layout, LayoutContent, LayoutFooter, HStack, VStack } from '@astryxdesign/core/Layout';
+import { Layout, LayoutContent, LayoutFooter, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout';
+import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { SelectableCard } from '@astryxdesign/core/SelectableCard';
 import { Text } from '@astryxdesign/core/Text';
 import { Kbd } from '@astryxdesign/core/Kbd';
@@ -17,10 +18,14 @@ import { MirrorPane } from './MirrorPane';
 import { KeyHint } from './KeyHint';
 import { usePressHint } from '../hooks/usePressHint';
 import { chromePalette } from '../lib/chrome-colors';
+import { AgentUsageView } from './AgentUsageView';
 
 interface Props {
   send: (msg: ClientMessage) => void;
 }
+
+/** Keys a focused tab handles itself; the rest still reach the grid. */
+const TAB_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', ' ']);
 
 interface AgentPaneEntry {
   sessionId: string;
@@ -133,6 +138,7 @@ function SizeDeadline({ paneId, onExpire }: { paneId: string; onExpire: (paneId:
 
 /** Full-screen live mirrors of panes with detected or reported agents. */
 export function AgentGrid({ send }: Props) {
+  const [view, setView] = useState('panes');
   const open = useStore((s) => s.agentGridOpen);
   const mounted = useStore((s) => s.agentGridMounted);
   const setOpen = useStore((s) => s.setAgentGridOpen);
@@ -186,7 +192,9 @@ export function AgentGrid({ send }: Props) {
     observerRef.current?.disconnect();
     observerRef.current = null;
     if (!el) return;
-    const measure = () => setArea({ w: el.clientWidth, h: el.clientHeight });
+    const measure = () => {
+      if (el.clientWidth > 0 && el.clientHeight > 0) setArea({ w: el.clientWidth, h: el.clientHeight });
+    };
     measure();
     observerRef.current = new ResizeObserver(measure);
     observerRef.current.observe(el);
@@ -246,6 +254,7 @@ export function AgentGrid({ send }: Props) {
       cancel();
       return;
     }
+    if (view !== 'panes' || (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]'))) return;
     if (n === 0) return;
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -303,111 +312,142 @@ export function AgentGrid({ send }: Props) {
     >
       <Layout
         header={
-          <DialogHeader
-            title="Agents"
-            onOpenChange={(value) => {
-              if (!value) cancel();
-            }}
-          />
+          <>
+            <DialogHeader
+              title="Agents"
+              onOpenChange={(value) => {
+                if (!value) cancel();
+              }}
+            />
+            <LayoutHeader paddingBlockEnd={0}>
+              <TabList
+                value={view}
+                onChange={(value) => {
+                  setView(value);
+                  // A tab keeping focus would take the grid's keys.
+                  dialogRef.current?.focus();
+                }}
+                role="tablist"
+                hasDivider
+                isFullBleed
+              >
+                <Tab value="panes" label="Live panes" panelId="agents-panes" />
+                <Tab value="usage" label="Usage" panelId="agents-usage" />
+              </TabList>
+            </LayoutHeader>
+          </>
         }
         content={
           <LayoutContent padding={4}>
-            {entries.length === 0 ? (
-              <VStack hAlign="center" vAlign="center" className="h-full">
-                <EmptyState
-                  icon={<Icon icon={Bot} size="lg" color="secondary" />}
-                  title="No agents detected"
-                  description="Start Claude, Codex, Gemini, Antigravity, or OpenCode in a pane."
-                />
-              </VStack>
-            ) : (
-              <div
-                ref={areaRef}
-                data-agent-tiles
-                className="flex h-full min-h-0 flex-wrap content-center items-center justify-center overflow-auto"
-                style={{ gap: GAP, opacity: tilesShown || allSized ? 1 : 0 }}
-              >
-                {packed &&
-                  entries.map((entry, i) => {
-                    const paneLabel = entry.paneTitle || `pane ${entry.paneIndex + 1}`;
-                    const size = packed.sizes[i];
-                    return (
-                      <div
-                        key={entry.paneId}
-                        // An unsized tile keeps its mirror mounted, which reports the size.
-                        style={
-                          size
-                            ? { width: size.w + CHROME_W, height: size.h + CHROME_H }
-                            : {
-                                position: 'absolute',
-                                width: FALLBACK_SIZE.w,
-                                height: FALLBACK_SIZE.h,
-                                opacity: 0,
-                                pointerEvents: 'none',
-                              }
-                        }
-                      >
-                        <SelectableCard
-                          label={`${entry.sessionName} › ${entry.windowName} › ${paneLabel}`}
-                          isSelected={i === clampedIdx}
-                          onChange={() => select(entry)}
-                          padding={2}
-                          height="100%"
+            <VStack
+              id="agents-panes"
+              role="tabpanel"
+              aria-label="Live panes"
+              className={view === 'panes' ? 'h-full min-h-0' : 'hidden'}
+            >
+              {entries.length === 0 ? (
+                <VStack hAlign="center" vAlign="center" className="h-full">
+                  <EmptyState
+                    icon={<Icon icon={Bot} size="lg" color="secondary" />}
+                    title="No agents detected"
+                    description="Start Claude Code, Codex, Gemini, Antigravity, or OpenCode in a pane."
+                  />
+                </VStack>
+              ) : (
+                <div
+                  ref={areaRef}
+                  data-agent-tiles
+                  className="flex h-full min-h-0 flex-wrap content-center items-center justify-center overflow-auto"
+                  style={{ gap: GAP, opacity: tilesShown || allSized ? 1 : 0 }}
+                >
+                  {packed &&
+                    entries.map((entry, i) => {
+                      const paneLabel = entry.paneTitle || `pane ${entry.paneIndex + 1}`;
+                      const size = packed.sizes[i];
+                      return (
+                        <div
+                          key={entry.paneId}
+                          // An unsized tile keeps its mirror mounted, which reports the size.
+                          style={
+                            size
+                              ? { width: size.w + CHROME_W, height: size.h + CHROME_H }
+                              : {
+                                  position: 'absolute',
+                                  width: FALLBACK_SIZE.w,
+                                  height: FALLBACK_SIZE.h,
+                                  opacity: 0,
+                                  pointerEvents: 'none',
+                                }
+                          }
                         >
-                          <VStack gap={2} className="h-full min-h-0">
-                            <HStack gap={2} vAlign="center" className="min-w-0">
-                              {i < 9 && <Kbd keys={String(i + 1)} />}
-                              <Text maxLines={1} className="min-w-0 flex-1">
-                                <Text color="secondary" className="btm-mono">
-                                  {entry.sessionName}
-                                </Text>{' '}
-                                <Text className="btm-mono">{entry.windowName}</Text>{' '}
-                                <Text color="secondary">{paneLabel}</Text>
-                              </Text>
-                              <HStack gap={1} vAlign="center" className="shrink-0">
-                                <AgentStatusBadge status={entry.agentStatus} />
-                                <IconButton
-                                  label="Reset agent state"
-                                  icon={<RotateCcw />}
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    reset(entry);
-                                  }}
-                                />
+                          <SelectableCard
+                            label={`${entry.sessionName} › ${entry.windowName} › ${paneLabel}`}
+                            isSelected={i === clampedIdx}
+                            onChange={() => select(entry)}
+                            padding={2}
+                            height="100%"
+                          >
+                            <VStack gap={2} className="h-full min-h-0">
+                              <HStack gap={2} vAlign="center" className="min-w-0">
+                                {i < 9 && <Kbd keys={String(i + 1)} />}
+                                <Text maxLines={1} className="min-w-0 flex-1">
+                                  <Text color="secondary" className="btm-mono">
+                                    {entry.sessionName}
+                                  </Text>{' '}
+                                  <Text className="btm-mono">{entry.windowName}</Text>{' '}
+                                  <Text color="secondary">{paneLabel}</Text>
+                                </Text>
+                                <HStack gap={1} vAlign="center" className="shrink-0">
+                                  <AgentStatusBadge status={entry.agentStatus} />
+                                  <IconButton
+                                    label="Reset agent state"
+                                    icon={<RotateCcw />}
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      reset(entry);
+                                    }}
+                                  />
+                                </HStack>
                               </HStack>
-                            </HStack>
-                            <VStack
-                              data-agent-mirror
-                              className="relative min-h-0 flex-1 overflow-hidden"
-                              style={{ background: terminalBg }}
-                            >
-                              {!naturals[entry.paneId] && (
-                                <SizeDeadline paneId={entry.paneId} onExpire={sizeTimedOut} />
-                              )}
-                              {mirrorsReady && (
-                                <MirrorPane
-                                  paneId={entry.paneId}
-                                  visible={open}
-                                  onNaturalSize={(w, h) => reportSize(entry.paneId, w, h)}
-                                />
-                              )}
+                              <VStack
+                                data-agent-mirror
+                                className="relative min-h-0 flex-1 overflow-hidden"
+                                style={{ background: terminalBg }}
+                              >
+                                {/* Only while shown: a hidden mirror can't report its size, and closing clears expiries. */}
+                                {open && view === 'panes' && !naturals[entry.paneId] && (
+                                  <SizeDeadline paneId={entry.paneId} onExpire={sizeTimedOut} />
+                                )}
+                                {mirrorsReady && (
+                                  <MirrorPane
+                                    paneId={entry.paneId}
+                                    visible={open && view === 'panes'}
+                                    onNaturalSize={(w, h) => reportSize(entry.paneId, w, h)}
+                                  />
+                                )}
+                              </VStack>
                             </VStack>
-                          </VStack>
-                        </SelectableCard>
-                      </div>
-                    );
-                  })}
-              </div>
+                          </SelectableCard>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </VStack>
+            {view === 'usage' && open && (
+              <VStack id="agents-usage" role="tabpanel" aria-label="Usage" className="h-full">
+                <AgentUsageView />
+              </VStack>
             )}
           </LayoutContent>
         }
         footer={
           <LayoutFooter hasDivider>
             <HStack gap={4} wrap="wrap">
-              {(entries.length ? HINTS : CLOSE_HINTS).map(([keys, label]) => (
+              {(view === 'panes' && entries.length ? HINTS : CLOSE_HINTS).map(([keys, label]) => (
                 <KeyHint key={label} keys={keys} label={label} onPress={pressHint} />
               ))}
             </HStack>

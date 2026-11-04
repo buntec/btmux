@@ -30,6 +30,61 @@ export function readableColor(color: string, background: string, minimum = 4.5):
   return target;
 }
 
+const toLinear = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+const fromLinear = (v: number) => (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055);
+
+function toOklch(color: string): [number, number, number] {
+  const [r, g, b] = (color.replace('#', '').match(/.{2}/g) ?? []).map((c) => toLinear(parseInt(c, 16) / 255));
+  const [l, m, s] = [
+    0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b,
+    0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b,
+    0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b,
+  ].map(Math.cbrt);
+  const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  const b2 = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  return [L, Math.hypot(a, b2), Math.atan2(b2, a)];
+}
+
+function fromOklch(L: number, C: number, h: number): number[] {
+  const [a, b] = [C * Math.cos(h), C * Math.sin(h)];
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+}
+
+/**
+ * A theme hue as a chart mark, at `shade` (0 to 1) of the lightness range for
+ * this background. Terminal palettes are often pastel and close in lightness,
+ * which colorblind readers can't tell apart.
+ */
+export function chartColor(color: string, background: string, shade: number): string {
+  const dark = contrastRatio('#ffffff', background) > contrastRatio('#000000', background);
+  const [low, high] = dark ? [0.5, 0.665] : [0.45, 0.62];
+  const target = low + shade * (high - low);
+  const [, C, h] = toOklch(color);
+  // Reduce chroma only as far as the hue needs to stay in sRGB.
+  let chroma = Math.max(C, 0.14);
+  let rgb = fromOklch(target, chroma, h);
+  while (rgb.some((v) => v < 0 || v > 1) && chroma > 0.102) {
+    chroma -= 0.002;
+    rgb = fromOklch(target, chroma, h);
+  }
+  const hex = rgb
+    .map((v) =>
+      Math.round(fromLinear(Math.min(1, Math.max(0, v))) * 255)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('');
+  return readableColor(`#${hex}`, background, 3);
+}
+
 export function terminalColorMode(palette: Theme): 'light' | 'dark' {
   return luminance(palette.background) > luminance(palette.foreground) ? 'light' : 'dark';
 }
@@ -66,6 +121,12 @@ export function createBtmuxTheme(palette: Theme, fontFamily: string, animations:
     '--color-icon-accent': readableColor(palette.blue, popover),
     '--color-border': mix(background, foreground, 0.2),
     '--color-border-emphasized': readableColor(palette.brightBlack, surface, 3),
+    // Validated with the dataviz palette checks on the bundled schemes; keep this order and these shades.
+    '--color-data-categorical-blue': chartColor(palette.blue, background, 0),
+    '--color-data-categorical-green': chartColor(palette.green, background, 1),
+    '--color-data-categorical-purple': chartColor(palette.magenta, background, 0.25),
+    '--color-data-categorical-cyan': chartColor(palette.cyan, background, 0.75),
+    '--color-data-categorical-orange': chartColor(palette.yellow, background, 0.5),
     '--color-neutral': withAlpha(foreground, 0.12),
     '--color-overlay': withAlpha(background, 0.7),
     '--color-overlay-hover': withAlpha(foreground, 0.06),

@@ -344,6 +344,15 @@ impl PtyHandle {
             "BTMUX_API_URL",
             format!("http://{}:{}", crate::config::DEFAULT_HOST, self.port),
         );
+        cmd.env(
+            "BTMUX_OTEL_ENDPOINT",
+            format!(
+                "http://{}:{}/api/panes/{}/telemetry",
+                crate::config::DEFAULT_HOST,
+                self.port,
+                self.pane_id
+            ),
+        );
         if std::env::var_os("LANG").is_none() {
             cmd.env("LANG", "en_US.UTF-8");
         }

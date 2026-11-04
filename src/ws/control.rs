@@ -73,6 +73,17 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
         })
         .unwrap(),
     ];
+    let panes = crate::telemetry::snapshots(mgr);
+    if !panes.is_empty() {
+        messages.push(
+            serde_json::to_string(&ServerMessage::AgentTelemetry {
+                panes,
+                removed_panes: Vec::new(),
+                replace: true,
+            })
+            .unwrap(),
+        );
+    }
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
@@ -953,6 +964,11 @@ pub(crate) enum ClientMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum ServerMessage {
+    AgentTelemetry {
+        panes: Vec<crate::telemetry::AgentTelemetry>,
+        removed_panes: Vec<Uuid>,
+        replace: bool,
+    },
     CommandResult {
         request_id: Option<String>,
         error: Option<String>,

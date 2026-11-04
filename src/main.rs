@@ -1,5 +1,6 @@
 mod agent_cli;
 mod agent_hooks;
+mod agent_launch;
 mod api;
 mod api_client;
 mod auth;
@@ -36,6 +37,7 @@ mod session;
 mod shell;
 mod system_info;
 mod tailscale;
+mod telemetry;
 mod tmux_cli;
 mod update_check;
 mod vscode;
@@ -109,6 +111,12 @@ async fn main() {
     }
 
     match args.command.as_ref() {
+        Some(config::SubCommand::Claude { args }) => {
+            std::process::exit(agent_launch::run(agent_launch::Agent::Claude, args))
+        }
+        Some(config::SubCommand::Codex { args }) => {
+            std::process::exit(agent_launch::run(agent_launch::Agent::Codex, args))
+        }
         Some(config::SubCommand::Agents) => {
             std::process::exit(agent_cli::agents(args.profile.as_deref()).await)
         }

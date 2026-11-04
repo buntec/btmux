@@ -611,7 +611,10 @@ fn parse_logs(request: ExportLogsServiceRequest) -> Result<Vec<Sample>, StatusCo
                 };
                 let model = text_attr(attrs, "model").map(|s| s.chars().take(100).collect());
                 record.attributes.sort_by(|a, b| a.key.cmp(&b.key));
-                record.observed_time_unix_nano = 0;
+                // Retries may re-observe a record, but this may be its only timestamp.
+                if record.time_unix_nano != 0 {
+                    record.observed_time_unix_nano = 0;
+                }
                 let identity = hash_bytes(
                     &[
                         resource_id.to_le_bytes().as_slice(),
@@ -950,6 +953,29 @@ mod tests {
         assert_eq!(total.reasoning_tokens, 30.0);
         assert_eq!(total.requests, 1.0);
         assert_eq!(total.cost_usd, None);
+    }
+
+    #[test]
+    fn observation_time_identifies_only_records_without_a_source_time() {
+        let observed = |source: u64, observed: u64| {
+            let mut request = log(source, "codex.tool_result", vec![]);
+            let record = &mut request.resource_logs[0].scope_logs[0].log_records[0];
+            record.observed_time_unix_nano = observed * 1_000_000_000;
+            parse_logs(request).unwrap()
+        };
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        assert!(store.ingest(pane, observed(0, NOW - 60), NOW));
+        assert!(store.ingest(pane, observed(0, NOW), NOW));
+        assert!(!store.ingest(pane, observed(0, NOW), NOW));
+        let snapshot = &store.snapshots(NOW)[0];
+        assert_eq!(snapshot.totals.tool_calls, 2.0);
+        assert_eq!(snapshot.models[0].buckets.len(), 2);
+
+        let mut store = TelemetryStore::default();
+        assert!(store.ingest(pane, observed(NOW, NOW), NOW));
+        assert!(!store.ingest(pane, observed(NOW, NOW + 1), NOW + 1));
+        assert_eq!(store.snapshots(NOW + 1)[0].totals.tool_calls, 1.0);
     }
 
     #[test]

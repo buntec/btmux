@@ -76,11 +76,17 @@ export const MODEL_COLORS = ['blue', 'green', 'purple', 'cyan', 'orange'];
  * have none: charts show those as neutral "Other" and "Unattributed" lines.
  */
 export function modelSlots(panes: AgentTelemetry[]): Map<string, number> {
-  const first = (group: ModelGroup) =>
-    Math.min(...group.series.flatMap((series) => series.buckets.map((bucket) => bucket.timestamp)));
+  const firstUse = (group: ModelGroup) => {
+    let first = Infinity;
+    for (const series of group.series) {
+      for (const bucket of series.buckets) first = Math.min(first, bucket.timestamp);
+    }
+    return first;
+  };
   const named = groupByModel(panes)
     .filter((group) => group.model !== null)
-    .sort((a, b) => first(a) - first(b) || a.key.localeCompare(b.key));
+    .map((group) => ({ key: group.key, first: firstUse(group) }))
+    .sort((a, b) => a.first - b.first || a.key.localeCompare(b.key));
   return new Map(named.slice(0, MODEL_COLORS.length).map((group, slot) => [group.key, slot]));
 }
 

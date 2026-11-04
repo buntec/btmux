@@ -83,6 +83,27 @@ const prepare = async (page: Page) => {
 try {
   const page = await context.newPage();
   await prepare(page);
+  // Chromium limits spread arguments; a full day across the pane limit must fit.
+  const slots = await page.evaluate(async () => {
+    const { emptyUsage, modelSlots } = await import('/src/lib/agentUsage.ts' as string);
+    const telemetry = (model: string, timestamps: number[]) => ({
+      models: [
+        {
+          agent: 'codex',
+          model,
+          totals: emptyUsage(),
+          buckets: timestamps.map((timestamp) => ({ timestamp, usage: emptyUsage() })),
+        },
+      ],
+    });
+    const day = Array.from({ length: 1440 }, (_, i) => 6000 + i * 60);
+    const panes = [...Array.from({ length: 128 }, () => telemetry('a', day)), telemetry('b', [5940])];
+    return [...modelSlots(panes)];
+  });
+  assert.deepEqual(slots, [
+    ['codex\0b', 0],
+    ['codex\0a', 1],
+  ]);
   await page.getByText('No usage received yet').waitFor();
   await post(`/api/panes/${codex}/telemetry/v1/logs`, { resourceLogs: [{ scopeLogs: [{ logRecords: logs }] }] });
   await post(`/api/panes/${claude}/telemetry/v1/metrics`, { resourceMetrics: [{ scopeMetrics: [{ metrics }] }] });

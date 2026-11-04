@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { clsx } from 'clsx';
 import { formatBytes, formatCpu } from '@/lib/processFormat';
-import { resolveFocusedUsage, type UsageRow } from '@/lib/paneUsage';
+import { isUsageFolded, resolveFocusedUsage, type UsageRow } from '@/lib/paneUsage';
 import { useProcessStore } from '@/state/processStore';
 import { Placeholder } from '../files/Placeholder';
 
@@ -28,9 +28,9 @@ function rowTitle(row: UsageRow): string | undefined {
 export function PaneUsageTable({ rows }: { rows: UsageRow[] }) {
   const focused = useProcessStore((s) => s.focusedUsage);
   const panelActive = useProcessStore((s) => s.panel === 'usage');
-  const collapsed = useProcessStore((s) => s.collapsedUsage);
+  const foldToggles = useProcessStore((s) => s.usageFoldToggles);
   const setFocused = useProcessStore((s) => s.setFocusedUsage);
-  const toggleCollapsed = useProcessStore((s) => s.toggleUsageCollapsed);
+  const toggleFold = useProcessStore((s) => s.toggleUsageFold);
   const listRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const focusIndexRef = useRef(0);
@@ -64,7 +64,7 @@ export function PaneUsageTable({ rows }: { rows: UsageRow[] }) {
       </div>
       <div ref={listRef} role="tree" aria-label="Pane usage">
         {rows.map((row) => {
-          const isCollapsed = collapsed.has(row.key);
+          const isCollapsed = isUsageFolded(row.key, foldToggles);
           const selected = row.key === focused;
           const highlighted = selected && panelActive;
           const { usage } = row;
@@ -86,7 +86,7 @@ export function PaneUsageTable({ rows }: { rows: UsageRow[] }) {
                 row.kind !== 'pane' && row.kind !== 'port' && 'font-medium',
               )}
               onClick={() => setFocused(row.key)}
-              onDoubleClick={() => row.hasChildren && toggleCollapsed(row.key)}
+              onDoubleClick={() => row.hasChildren && toggleFold(row.key)}
             >
               {/* Long titles truncate rather than widen the scrolled content. */}
               <span
@@ -106,7 +106,7 @@ export function PaneUsageTable({ rows }: { rows: UsageRow[] }) {
                     onClick={(e) => {
                       e.stopPropagation();
                       setFocused(row.key);
-                      toggleCollapsed(row.key);
+                      toggleFold(row.key);
                     }}
                   >
                     {isCollapsed ? '▸' : '▾'}

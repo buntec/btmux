@@ -15,7 +15,7 @@ import { clsx } from 'clsx';
 import { stepIndex } from '@/lib/utils';
 import { usePressHint } from '@/hooks/usePressHint';
 import { NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '@/lib/touch';
-import { buildUsageRows, usageParentIndex, type UsageRow } from '@/lib/paneUsage';
+import { buildUsageRows, isUsageFolded, usageParentIndex, type UsageRow } from '@/lib/paneUsage';
 import { buildPortRows } from '@/lib/portRows';
 import { buildProcessRows } from '@/lib/processTree';
 import { KeyHint, type Hint } from './KeyHint';
@@ -51,7 +51,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const animations = getAnimations(config);
   const viewMode = useProcessStore((s) => s.viewMode);
   const panel = useProcessStore((s) => s.panel);
-  const collapsedUsage = useProcessStore((s) => s.collapsedUsage);
+  const usageFoldToggles = useProcessStore((s) => s.usageFoldToggles);
   const sessions = useStore((s) => s.allSessions);
   const ports = useProcessStore((s) => s.snapshot?.ports);
   const portSortMode = useProcessStore((s) => s.portSortMode);
@@ -101,8 +101,8 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     [ports, processes, portSortMode, portSortReversed, filterActive, filterQuery],
   );
   const usageRows = useMemo(
-    () => buildUsageRows(sessions, processes, ports ?? [], collapsedUsage),
-    [sessions, processes, ports, collapsedUsage],
+    () => buildUsageRows(sessions, processes, ports ?? [], usageFoldToggles),
+    [sessions, processes, ports, usageFoldToggles],
   );
   const navigationRows = useMemo(
     () =>
@@ -193,8 +193,11 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
       const setExpanded = (expanded?: boolean) => {
         if (!row) return;
         if ('kind' in row) {
-          if (row.hasChildren && (expanded === undefined || store.collapsedUsage.has(row.key) === expanded))
-            store.toggleUsageCollapsed(row.key);
+          if (
+            row.hasChildren &&
+            (expanded === undefined || isUsageFolded(row.key, store.usageFoldToggles) === expanded)
+          )
+            store.toggleUsageFold(row.key);
           // Folding a leaf or folded row moves to its parent.
           else if (expanded === false) focusRow(usageParentIndex(rows as UsageRow[], currentIndex));
         } else if ('port' in row) {

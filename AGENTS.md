@@ -281,6 +281,7 @@ ancestor that is a pane's shell, else the shell leading its session
 nor do the built-in editors and browser. `lib/paneUsage.ts` groups by session,
 window, and pane, summing CPU (100% is one core), resident memory (shared pages
 count once per process), disk rates, and listening sockets, listed under panes.
+Sessions start folded.
 
 ### Frontend lifetime and routing
 

@@ -76,12 +76,17 @@ function panePorts(ports: PortInfo[], processes: ProcessInfo[]): Map<string, Pan
   );
 }
 
+/** Sessions start folded; `toggles` holds rows folded differently from that. */
+export function isUsageFolded(key: string, toggles: Set<string>): boolean {
+  return key.startsWith('session:') !== toggles.has(key);
+}
+
 /** Session, window, and pane rows with summed usage, omitting folded children. */
 export function buildUsageRows(
   sessions: SessionState[],
   processes: ProcessInfo[],
   ports: PortInfo[],
-  collapsed: Set<string>,
+  toggles: Set<string>,
 ): UsageRow[] {
   const byPane = new Map<string, Usage>();
   for (const process of processes) {
@@ -139,7 +144,7 @@ export function buildUsageRows(
           usage,
           hasChildren: sockets.length > 0,
         });
-        if (collapsed.has(paneKey)) return;
+        if (isUsageFolded(paneKey, toggles)) return;
         for (const socket of sockets) {
           windowRows.push({
             key: `port:${pane.id}:${portLabel(socket)}`,
@@ -153,8 +158,8 @@ export function buildUsageRows(
         }
       });
       addUsage(sessionUsage, windowUsage);
-      if (collapsed.has(sessionKey)) continue;
-      rows.push(...(collapsed.has(windowKey) ? windowRows.slice(0, 1) : windowRows));
+      if (isUsageFolded(sessionKey, toggles)) continue;
+      rows.push(...(isUsageFolded(windowKey, toggles) ? windowRows.slice(0, 1) : windowRows));
     }
   }
   return rows;

@@ -334,7 +334,14 @@ try {
     const viewer = page.getByRole('dialog', { name: 'Processes', exact: true });
     const usage = viewer.getByRole('tree', { name: 'Pane usage', exact: true });
     const portRow = usage.getByText(`TCP 127.0.0.1:${usagePort}`);
+    // Sessions start folded.
+    const unfoldSession = usage.getByRole('button', { name: `Unfold ${session.name}`, exact: true });
+    await unfoldSession.waitFor();
+    assert.equal(await usage.locator('[data-usage-kind="pane"]').count(), 0);
+    await unfoldSession.click();
     await portRow.waitFor();
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'tab: panes', exact: true }).waitFor();
     const dialog = (await viewer.boundingBox())!;
     const divider = (await viewer.getByRole('separator', { name: 'Resize pane usage' }).boundingBox())!;
     const list = (await viewer.getByRole('list', { name: 'Processes', exact: true }).boundingBox())!;
@@ -364,7 +371,7 @@ try {
     assert.equal(await selectedKind(), 'pane');
     await page.keyboard.press('h');
     await portRow.waitFor({ state: 'detached' });
-    await viewer.getByRole('button', { name: /^Unfold / }).click();
+    await usage.locator('[aria-selected="true"]').getByRole('button', { name: /^Unfold / }).click();
     await portRow.waitFor();
     await page.keyboard.press('h');
     await portRow.waitFor({ state: 'detached' });

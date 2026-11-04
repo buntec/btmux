@@ -9,9 +9,10 @@ interface ProcessStore {
   setPanel: (panel: 'list' | 'usage') => void;
   togglePanel: () => void;
   focusedUsage: string | null;
-  collapsedUsage: Set<string>;
+  /** Rows folded differently from their default; see `isUsageFolded`. */
+  usageFoldToggles: Set<string>;
   setFocusedUsage: (key: string | null) => void;
-  toggleUsageCollapsed: (key: string) => void;
+  toggleUsageFold: (key: string) => void;
   snapshot: ProcessSnapshot | null;
   processes: ProcessInfo[];
   focusedPid: number | null;
@@ -53,13 +54,13 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   setPanel: (panel) => set(panel === 'usage' ? { panel, filterActive: false, filterQuery: '' } : { panel }),
   togglePanel: () => get().setPanel(get().panel === 'list' ? 'usage' : 'list'),
   focusedUsage: null,
-  collapsedUsage: new Set(),
+  usageFoldToggles: new Set(),
   setFocusedUsage: (focusedUsage) => set({ focusedUsage }),
-  toggleUsageCollapsed: (key) =>
+  toggleUsageFold: (key) =>
     set((state) => {
-      const collapsedUsage = new Set(state.collapsedUsage);
-      if (!collapsedUsage.delete(key)) collapsedUsage.add(key);
-      return { collapsedUsage };
+      const usageFoldToggles = new Set(state.usageFoldToggles);
+      if (!usageFoldToggles.delete(key)) usageFoldToggles.add(key);
+      return { usageFoldToggles };
     }),
   snapshot: null,
   processes: [],
@@ -129,7 +130,7 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
     set({
       panel: 'list',
       focusedUsage: null,
-      collapsedUsage: new Set(),
+      usageFoldToggles: new Set(),
       snapshot: null,
       processes: [],
       focusedPid: null,

@@ -5,6 +5,7 @@
 //! only tabs showing the limits ask.
 
 use std::ffi::OsString;
+use std::io::ErrorKind;
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -225,11 +226,15 @@ async fn exchange(
             input.push_str(&request.to_string());
             input.push('\n');
         }
-        stdin
-            .write_all(input.as_bytes())
-            .await
-            .map_err(|error| error.to_string())?;
-        stdin.flush().await.map_err(|error| error.to_string())?;
+        let written = async {
+            stdin.write_all(input.as_bytes()).await?;
+            stdin.flush().await
+        };
+        // A program that closed its stdin may still reply; EOF reports one that didn't.
+        match written.await {
+            Err(error) if error.kind() != ErrorKind::BrokenPipe => return Err(error.to_string()),
+            _ => {}
+        }
         let mut lines = BufReader::new(stdout).lines();
         while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
             let Ok(message) = serde_json::from_str(&line) else {
@@ -603,6 +608,26 @@ mod tests {
                 .unwrap_err();
             assert!(hung.contains("timed out"), "{hung}");
             assert!(started.elapsed() < Duration::from_secs(5));
+        }
+
+        // More than a pipe holds, so the write always outlives the program.
+        async fn run_unread(script: &str) -> Result<Value, String> {
+            super::super::exchange(
+                "sh".into(),
+                &["-c", script],
+                &[json!("x".repeat(1 << 20))],
+                Duration::from_secs(10),
+                |message| (message["reply"] == true).then_some(message),
+            )
+            .await
+        }
+
+        #[tokio::test]
+        async fn reads_the_output_of_a_program_that_ignores_its_input() {
+            let reply = run_unread(r#"echo '{"reply":true}'"#).await.unwrap();
+            assert_eq!(reply["reply"], true);
+            let exited = run_unread("exit 0").await.unwrap_err();
+            assert!(exited.contains("without a reply"), "{exited}");
         }
 
         #[tokio::test]

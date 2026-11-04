@@ -1,6 +1,6 @@
 [package]
 name = "btmux-desktop"
-version = "0.0.185"
+version = "0.0.186"
 description = "Desktop client for btmux"
 authors = ["btmux contributors"]
 license = ""

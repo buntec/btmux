@@ -15,7 +15,7 @@ mod editor;
 mod file_git;
 mod file_git_ops;
 mod file_search;
-mod fish_theme;
+mod fish_integration;
 mod fs_ops;
 mod git;
 #[cfg(unix)]
@@ -235,12 +235,12 @@ async fn main() {
     }
 
     if let Some(config::SubCommand::GenerateFishTheme) = args.command {
-        print!("{}", fish_theme::theme());
+        print!("{}", fish_integration::theme());
         return;
     }
 
-    if let Some(config::SubCommand::InstallFishTheme) = args.command {
-        match fish_theme::install() {
+    if let Some(config::SubCommand::InstallFishIntegration) = args.command {
+        match fish_integration::install() {
             Ok(paths) => {
                 for path in paths {
                     println!("Installed {}", path.display());

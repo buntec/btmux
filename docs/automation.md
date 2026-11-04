@@ -606,28 +606,8 @@ several tabs on the pane, each shows it and the first answer counts.
 | 2           | It failed: outside btmux, or no tab showed the pane within 3 s |
 | 130         | Canceled                                                       |
 
-Status 2 lets a key binding fall back to the terminal. This fish function
-replaces Tab's completion menu:
-
-```fish
-function __btmux_complete
-    set -l candidates (complete -C (commandline -cp))
-    test (count $candidates) -gt 0; or return
-    set -l choice (string join \n -- $candidates | btmux pick 2>/dev/null)
-    switch $status
-        case 0
-            commandline -rt -- (string replace -a ' ' '\\ ' -- $choice)
-        case 2
-            commandline -f complete
-    end
-    commandline -f repaint
-end
-bind tab __btmux_complete
-```
-
-`complete -C` doesn't say how fish would quote a candidate or whether to add a
-space after it, so this escapes spaces only and never adds one. Other special
-characters in a candidate, such as parentheses, need editing by hand.
+Status 2 lets a key binding fall back to the terminal, as the
+[fish integration](configuration.md#fish-integration)'s Tab completion does.
 
 It wraps `POST /api/panes/<pane-id>/pick`, which takes `items` (each a `label`
 and an optional `description`) and an optional `prompt`, up to 16 MiB, and

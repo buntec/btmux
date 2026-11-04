@@ -292,7 +292,7 @@ unsaved Neovim buffers), activation only warns; run `btmux upgrade` later. If yo
 starting it. Override `package` to use a different build or package source, or
 set it to `null` (with the service disabled) to only write the configuration.
 When `programs.fish.enable` is set, the module also installs the btmux fish
-theme (see [Configuration](configuration.md#fish-theme)); set
+integration (see [Configuration](configuration.md#fish-integration)); set
 `enableFishIntegration = false` to skip it.
 The module installs bash, fish, and zsh completions when the selected package
 supports `btmux completions`. The bundled fallback package currently uses an

@@ -261,6 +261,10 @@ test-browser:
 test-shader-browser:
     cd frontend && bunx playwright install chromium && bun browser-test-stack.ts shader-wallpaper-lifecycle-browser-test.ts shader-wallpaper-browser-test.ts
 
+# Fish integration regressions against a fresh, isolated stack (requires fish).
+test-fish-browser:
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts fish-browser-test.ts
+
 # Built-in Neovim regressions against a fresh, isolated stack (requires Neovim 0.12+).
 test-nvim-browser:
     cd frontend && bunx playwright install chromium && bun browser-test-stack.ts nvim-browser-test.ts

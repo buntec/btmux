@@ -121,10 +121,31 @@ try {
   await waitForOutput('rc=130');
   await run(`seq 200; ${LIST} | "$BTMUX_BIN" pick; echo "rc=$?"`);
   await page.waitForSelector(`${PICKER}:not(.opacity-0)`);
-  cursor = await cursorTop();
-  card = (await page.locator(PICKER).boundingBox())!;
-  assert(card.y + card.height <= cursor.top + 1, `above the cursor: ${card.y + card.height} vs ${cursor.top}`);
+  for (const deadline = Date.now() + 10_000; ; await page.waitForTimeout(50)) {
+    cursor = await cursorTop();
+    card = (await page.locator(PICKER).boundingBox())!;
+    const gap = cursor.top - (card.y + card.height);
+    if (gap >= -1 && gap < 40) break;
+    assert(Date.now() < deadline, `above the cursor: ${card.y + card.height} vs ${cursor.top}`);
+  }
 
+  await page.keyboard.press('Escape');
+  await closed();
+  await waitForOutput('rc=130');
+
+  // Output arriving while it's open moves it with the cursor: the menu and the
+  // pane's output come over different sockets, so either can arrive first.
+  await run(`clear; (sleep 1; seq 200) & ${LIST} | "$BTMUX_BIN" pick; echo "rc=$?"`);
+  await page.waitForSelector(`${PICKER}:not(.opacity-0)`);
+  const movedAbove = async () => {
+    const box = (await page.locator(PICKER).boundingBox())!;
+    const gap = (await cursorTop()).top - (box.y + box.height);
+    return gap >= -1 && gap < 40;
+  };
+  assert(!(await movedAbove()), 'it starts below the cursor');
+  for (const deadline = Date.now() + 10_000; !(await movedAbove()); await page.waitForTimeout(50)) {
+    assert(Date.now() < deadline, 'it should follow the cursor');
+  }
   await page.keyboard.press('Escape');
   await closed();
   await waitForOutput('rc=130');

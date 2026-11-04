@@ -121,9 +121,13 @@ export function dispatchKey(input: Element, key: string, modifiers: KeyModifiers
  * composing. It keeps the offset from its last focus, so after `clear` it
  * holds the scroll height and wterm scrolls the rows out of view.
  */
-function trackInputPosition(wterm: WTerm) {
+function trackInputPosition(wterm: WTerm, onRender: () => void) {
   const input = (wterm as unknown as { input: WTermInput | null }).input;
-  if (input) input.syncInputPosition = () => input.positionTextarea();
+  if (!input) return;
+  input.syncInputPosition = () => {
+    input.positionTextarea();
+    onRender();
+  };
 }
 
 /** Row height from the font's ascent and descent, as ghostty-web measured it. */
@@ -164,6 +168,7 @@ export class PaneTerminal {
   private touch: { x: number; y: number } | null = null;
   private touchTarget: EventTarget | null = null;
   private focusTarget: HTMLElement | null = null;
+  private renderListeners = new Set<() => void>();
 
   private constructor(wterm: WTerm, element: HTMLElement, core: GhosttyCore, inputDisabled: boolean) {
     this.wterm = wterm;
@@ -234,7 +239,7 @@ export class PaneTerminal {
       element.remove();
       throw e;
     }
-    trackInputPosition(wterm);
+    trackInputPosition(wterm, () => term.renderListeners.forEach((fn) => fn()));
     // init() locks the element's height; btmux sizes it.
     element.style.height = '';
     // Stay focusable while the pane hides its replay.
@@ -542,6 +547,14 @@ export class PaneTerminal {
   /** While set, this element takes the pane's focus and keys, as the pane's `btmux pick` menu does. */
   setFocusTarget(target: HTMLElement | null) {
     this.focusTarget = target;
+  }
+
+  /** Runs after every render, with `cursorRect` current. */
+  onRender(fn: () => void) {
+    this.renderListeners.add(fn);
+    return () => {
+      this.renderListeners.delete(fn);
+    };
   }
 
   /** Where the cursor is in the viewport: wterm keeps its input there (`trackInputPosition`). */

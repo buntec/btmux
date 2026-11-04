@@ -132,8 +132,9 @@ in
 
     enableFishIntegration = lib.hm.shell.mkFishIntegrationOption { inherit config; } // {
       description = ''
-        Whether to install the btmux fish theme and select it in btmux panes,
-        as `btmux install-fish-theme` does. Requires `programs.fish.enable`.
+        Whether to install the btmux fish theme and conf.d snippet for btmux
+        panes, as `btmux install-fish-integration` does. Requires
+        `programs.fish.enable`.
       '';
     };
 

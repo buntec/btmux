@@ -432,8 +432,9 @@ pub enum SubCommand {
     InstallGeminiCliHooks,
     /// Print a fish theme that follows the btmux color scheme.
     GenerateFishTheme,
-    /// Install the btmux fish theme and a conf.d snippet that selects it in btmux panes.
-    InstallFishTheme,
+    /// Install the btmux fish theme and a conf.d snippet for btmux panes, which
+    /// selects it and can make Tab complete through `btmux pick`.
+    InstallFishIntegration,
     /// Install btmux as a per-user background service so it starts at login and
     /// restarts on crash. The current `--host`/`--port`/`--profile`/`--shell`/
     /// `--public-url` and the installing shell's PATH are baked into the

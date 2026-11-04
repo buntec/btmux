@@ -31,7 +31,7 @@ remain required compilation/lint checks. `just test-browser` runs
 `frontend/reliability-test.ts`, which exercises authentication, origin rejection,
 reconnect/replay, config updates, correlated command errors, and multiple viewers,
 followed by upgrade, Astryx interaction, theme, Git, and mobile (WebKit) checks
-(`just test-nvim-browser` covers the Neovim surface; `just test-shader-browser`,
+(`just test-nvim-browser` covers the Neovim surface, `just test-fish-browser` the fish integration; `just test-shader-browser`,
 run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
@@ -109,7 +109,10 @@ anchors at `PaneTerminal.cursorRect()` and keeps its unfiltered size, so filteri
 never moves the input. While it is open, `PaneTerminal.setFocusTarget` sends the
 pane's focus and keys to its filter, so the focus rules in `TerminalPane` still
 apply. Shells have no UI protocol like Neovim's `ext_popupmenu`, so completion menus
-replace the shell's own: see the fish function in `docs/automation.md`.
+replace the shell's own: `extras/fish/btmux.fish` binds Tab to one when
+`btmux_pick_completion` is 1, leaving fish to complete when its menu is open, with
+at most one candidate, or when the pick fails. It checks at the first prompt, as
+conf.d runs before config.fish, so it binds nothing when off.
 
 ### Plan limits
 

@@ -95,7 +95,12 @@ export function PanePicker({ id, term, shown, send }: Props) {
     place();
     const observer = new ResizeObserver(place);
     observer.observe(surface);
-    return () => observer.disconnect();
+    // Output can arrive after the menu: they come over different sockets.
+    const offRender = term.onRender(place);
+    return () => {
+      observer.disconnect();
+      offRender();
+    };
   }, [term, size, shown]);
 
   useLayoutEffect(() => {

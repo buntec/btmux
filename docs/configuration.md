@@ -88,10 +88,10 @@ enabled mode 2031 whenever the theme changes, including when `appearance`
 switches between dark and light. Fish uses this to set
 `fish_terminal_color_theme` and switch light/dark theme variants.
 
-### Fish theme
+### Fish integration
 
 ```sh
-btmux install-fish-theme   # or: btmux generate-fish-theme > btmux.theme
+btmux install-fish-integration   # the theme alone: btmux generate-fish-theme > btmux.theme
 ```
 
 This writes `~/.config/fish/themes/btmux.theme` and `conf.d/btmux.fish` (respecting
@@ -99,6 +99,23 @@ This writes `~/.config/fish/themes/btmux.theme` and `conf.d/btmux.fish` (respect
 it tracks the btmux scheme, including live changes. The snippet selects it only
 inside btmux panes and overrides universal `fish_color_*` variables there. The
 Home Manager module installs both files when `programs.fish.enable` is set.
+
+To make Tab open a [`btmux pick` menu](automation.md#menus-from-the-shell) instead
+of fish's own, add this to `config.fish` (with Home Manager,
+`programs.fish.interactiveShellInit`):
+
+```fish
+set -g btmux_pick_completion 1
+```
+
+It replaces any Tab binding of your own in btmux panes. fish still completes when
+there is at most one candidate, and when no tab can show the menu.
+
+`complete -C` doesn't say how fish would quote a candidate or whether to add a
+space after it, so a choice from the menu has its spaces escaped and gets no
+trailing space. Other special characters, such as parentheses, need editing by
+hand. Candidates are computed before the menu opens, so slow completions delay it
+as they delay fish's own.
 
 ## tmux behaviors
 

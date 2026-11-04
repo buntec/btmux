@@ -43,10 +43,33 @@ describe('agent usage timelines', () => {
     const now = 600_030;
     const minute = Math.floor(now / 60) * 60;
     const buckets = usageTimeline([pane(minute, 10, 0, 0, null), pane(minute - 60, 5, 0, 0, null)], now, 1440, 5);
-    expect(buckets).toHaveLength(288);
     expect(usageTotal(buckets).input_tokens).toBe(15);
     expect(buckets.every((bucket) => bucket.timestamp % 300 === 0)).toBe(true);
     expect(buckets[buckets.length - 1].timestamp).toBeLessThanOrEqual(now);
+  });
+
+  test('grouping keeps exactly the selected minutes at every offset into the current group', () => {
+    for (const minutes of [480, 1440]) {
+      for (let offset = 0; offset < 5; offset++) {
+        const now = 600_030 + offset * 60;
+        const lastMinute = Math.floor(now / 60) * 60;
+        const firstMinute = lastMinute - (minutes - 1) * 60;
+        const panes = [
+          pane(firstMinute - 60, 1000, 0, 0, null),
+          ...[0, 1, 2, 3, 4].map((i) => pane(firstMinute + i * 60, 1, 0, 0, null)),
+          pane(lastMinute, 10, 0, 0, null),
+          pane(lastMinute + 60, 1000, 0, 0, null),
+        ];
+        const fine = usageTimeline(panes, now, minutes, 1);
+        const grouped = usageTimeline(panes, now, minutes, 5);
+        expect(fine).toHaveLength(minutes);
+        expect(usageTotal(fine).input_tokens).toBe(15);
+        expect(usageTotal(grouped).input_tokens).toBe(15);
+        // Only a range ending on a group's last minute fits in minutes / 5 groups.
+        expect(grouped).toHaveLength(minutes / 5 + (offset === 4 ? 0 : 1));
+        expect(grouped[grouped.length - 1].timestamp).toBe(Math.floor(lastMinute / 300) * 300);
+      }
+    }
   });
 
   test('merges changed minutes, replacing values and keeping the rest', () => {

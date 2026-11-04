@@ -27,14 +27,16 @@ export function addUsage(total: AgentUsage, usage: AgentUsage): AgentUsage {
 /** Missing minutes are zero; cache and reasoning counts remain subsets. */
 export function usageTimeline(panes: AgentTelemetry[], now: number, minutes: number, stepMinutes = 1): UsageBucket[] {
   const step = stepMinutes * 60;
-  const length = Math.floor(minutes / stepMinutes);
-  const end = Math.floor(now / step) * step;
-  const start = end - (length - 1) * step;
+  const lastMinute = Math.floor(now / 60) * 60;
+  const firstMinute = lastMinute - (minutes - 1) * 60;
+  // Groups at either end may be partial, so the range can span one more than minutes / stepMinutes.
+  const start = Math.floor(firstMinute / step) * step;
+  const length = Math.floor((lastMinute - start) / step) + 1;
   const buckets = Array.from({ length }, (_, i) => ({ timestamp: start + i * step, usage: emptyUsage() }));
   for (const pane of panes) {
     for (const bucket of pane.buckets) {
-      const index = Math.floor((bucket.timestamp - start) / step);
-      if (index >= 0 && index < buckets.length) addUsage(buckets[index].usage, bucket.usage);
+      if (bucket.timestamp < firstMinute || bucket.timestamp > lastMinute) continue;
+      addUsage(buckets[Math.floor((bucket.timestamp - start) / step)].usage, bucket.usage);
     }
   }
   return buckets;

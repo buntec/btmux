@@ -26,7 +26,9 @@ the btmux user.
 
 Agent view's **Usage** tab graphs running totals of tokens, completed requests,
 tool calls, and reported costs over the selected range, for all panes or one
-selected pane. Each pane shows the model it used most. It keeps 24 hours of
+selected pane, broken down by model. That includes helper models an agent picks
+itself. Usage reported without a model, such as Claude's tool calls, is listed as
+Unattributed. It keeps 24 hours of
 per-minute history in memory, including panes that have since closed. `btmux
 upgrade` keeps it; restarting the server clears it. The 8- and 24-hour ranges
 group usage into 5-minute points.
@@ -76,7 +78,7 @@ APIs. `GET /api/telemetry` returns the current numeric summaries, including
 closed panes. Control sockets get the full history when they connect, then only
 the minutes that change.
 
-Only numeric usage, the agent name, and the model are retained. Prompts, tool
+Only numeric usage, the agent name, and the model names are retained. Prompts, tool
 arguments/results, and raw log records are discarded. Batches are limited to
 8 MiB after decompression, and stored pane and deduplication histories
 are bounded. Subscription quotas are not collected by this receiver.

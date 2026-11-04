@@ -19,6 +19,7 @@ fn generated_protocol_is_current() {
         AgentStatus::decl(&config),
         crate::telemetry::AgentUsage::decl(&config),
         crate::telemetry::UsageBucket::decl(&config),
+        crate::telemetry::ModelTelemetry::decl(&config),
         crate::telemetry::AgentTelemetry::decl(&config),
         NotificationLevel::decl(&config),
         PaneAlert::decl(&config),

@@ -97,7 +97,14 @@ try {
                 sum: {
                   isMonotonic: true,
                   aggregationTemporality: 1,
-                  dataPoints: [{ startTimeUnixNano: nanos(now - 1200), timeUnixNano: nanos(now), asDouble: 0.25 }],
+                  dataPoints: [
+                    {
+                      startTimeUnixNano: nanos(now - 1200),
+                      timeUnixNano: nanos(now),
+                      asDouble: 0.25,
+                      attributes: [attr('model', 'claude-test')],
+                    },
+                  ],
                 },
               },
             ],
@@ -107,7 +114,7 @@ try {
     ],
   });
   await page.getByRole('table', { name: 'Agent usage by pane' }).waitFor();
-  await waitForAsync(page, () => document.querySelectorAll('[data-agent-chart]').length === 3);
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-chart]').length === 4);
   assert.equal(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');
   assert.match((await page.locator('[data-usage-total="Reported cost"]').textContent()) ?? '', /0\.25/);
   // Re-exporting the same batch leaves totals unchanged.
@@ -126,15 +133,44 @@ try {
   await page.getByRole('img', { name: 'Tokens, running total' }).waitFor();
   // Higher values are lower on the chart.
   const rising = await page.evaluate(() =>
-    [...document.querySelectorAll('[data-agent-chart] polyline')].map((line) => {
+    [...document.querySelectorAll<SVGPolylineElement>('[data-agent-chart] polyline')].map((line) => {
       const ys = line.getAttribute('points')!.split(' ').map((point) => Number(point.split(',')[1]));
-      return { neverFalls: ys.every((y, i) => i === 0 || y <= ys[i - 1]), rises: ys[ys.length - 1] < ys[0] };
+      return {
+        line: line.dataset.line,
+        neverFalls: ys.every((y, i) => i === 0 || y <= ys[i - 1]),
+        rises: ys[ys.length - 1] < ys[0],
+      };
     }),
   );
-  assert.equal(rising.length, 6);
-  assert(rising.every((line) => line.neverFalls), `charts must never fall: ${JSON.stringify(rising)}`);
-  // Input, output, cached, requests, and cost; these logs report no tool calls.
-  assert.equal(rising.filter((line) => line.rises).length, 5, JSON.stringify(rising));
+  assert(rising.every((line) => line.neverFalls && line.rises), `charts must only rise: ${JSON.stringify(rising)}`);
+  const linesOf = (chart: string, target = page) =>
+    target
+      .locator(`[data-agent-chart="${chart}"] polyline`)
+      .evaluateAll((lines) => lines.map((line) => (line as SVGPolylineElement).dataset.line));
+  // Each model gets a line, with a total beside them.
+  assert.deepEqual(await linesOf('Tokens'), ['Total', 'codex-test', 'claude-test']);
+  assert.deepEqual(await linesOf('Completed requests'), ['codex-test']);
+  assert.deepEqual(await linesOf('Tool calls'), []);
+  assert.deepEqual(await linesOf('Reported cost'), ['claude-test']);
+  // The token type changes only the tokens chart.
+  await page.getByRole('radio', { name: 'Cached', exact: true }).click();
+  const cachedEnd = await page.getByRole('img', { name: 'Tokens, running total' }).locator('desc').textContent();
+  assert.match(cachedEnd ?? '', /codex-test: 10K/);
+  await page.getByRole('radio', { name: 'Total', exact: true }).click();
+  // Every model is listed, most tokens first, with its share.
+  const rows = await page.getByRole('table', { name: 'Agent usage by model' }).locator('tbody tr').allInnerTexts();
+  assert.equal(rows.length, 2);
+  assert.match(rows[0], /codex-test[\s\S]*59\.4%/);
+  assert.match(rows[1], /claude-test[\s\S]*40\.6%/);
+  // Filtering to a pane keeps a model's color.
+  const stroke = (name: string) =>
+    page.locator(`[data-agent-chart="Tokens"] polyline[data-line="${name}"]`).getAttribute('stroke');
+  const codexColor = await stroke('codex-test');
+  await page.getByRole('button', { name: /usage-codex \/ / }).click();
+  await page.getByRole('heading', { level: 2, name: /usage-codex/ }).waitFor();
+  assert.deepEqual(await linesOf('Tokens'), ['codex-test']);
+  assert.equal(await stroke('codex-test'), codexColor);
+  await page.getByRole('button', { name: 'All agents', exact: true }).click();
   if (process.env.BTMUX_TEST_SCREENSHOT)
     await page.screenshot({ path: process.env.BTMUX_TEST_SCREENSHOT, fullPage: true });
   const other = await context.newPage();
@@ -173,7 +209,7 @@ try {
   await waitForAsync(other, () => (window as any).__updates.length > 0);
   const update = await other.evaluate(() => (window as any).__updates[0]);
   assert.equal(update.replace, false);
-  assert.equal(update.panes[0].buckets.length, 1);
+  assert.equal(update.panes[0].models[0].buckets.length, 1);
   await waitForAsync(other, () => document.querySelector('[data-usage-total="Tokens"]')?.textContent !== '73.9K');
   const afterUpdate = await other.locator('[data-usage-total="Tokens"]').textContent();
   assert.equal(afterUpdate, '75.2K');

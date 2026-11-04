@@ -28,11 +28,26 @@ export type UsageBucket = {
 timestamp: number, usage: AgentUsage, };
 
 // prettier-ignore
-export type AgentTelemetry = { pane_id: string, agent: string, model: string | null, updated_at: number,
+export type ModelTelemetry = { agent: string,
+/**
+ * `None` is usage reported without a model, such as Claude's tool calls.
+ */
+model: string | null,
 /**
  * Over all retained history, even when `buckets` holds only changed minutes.
  */
 totals: AgentUsage, buckets: Array<UsageBucket>, };
+
+// prettier-ignore
+export type AgentTelemetry = { pane_id: string, updated_at: number,
+/**
+ * Over all retained history and models.
+ */
+totals: AgentUsage,
+/**
+ * Most tokens first; an update holds only models with changed minutes.
+ */
+models: Array<ModelTelemetry>, };
 
 // prettier-ignore
 export type NotificationLevel = "info" | "attention" | "success" | "error";

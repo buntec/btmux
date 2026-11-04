@@ -76,14 +76,24 @@ pub struct UsageBucket {
 
 #[derive(Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-pub struct AgentTelemetry {
-    pub pane_id: Uuid,
+pub struct ModelTelemetry {
     pub agent: String,
+    /// `None` is usage reported without a model, such as Claude's tool calls.
     pub model: Option<String>,
-    pub updated_at: f64,
     /// Over all retained history, even when `buckets` holds only changed minutes.
     pub totals: AgentUsage,
     pub buckets: Vec<UsageBucket>,
+}
+
+#[derive(Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct AgentTelemetry {
+    pub pane_id: Uuid,
+    pub updated_at: f64,
+    /// Over all retained history and models.
+    pub totals: AgentUsage,
+    /// Most tokens first; an update holds only models with changed minutes.
+    pub models: Vec<ModelTelemetry>,
 }
 
 /// Keeps closed panes, so a day's totals don't shrink when a pane closes.
@@ -99,11 +109,8 @@ pub struct TelemetryStore {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PaneTelemetry {
-    agent: String,
-    /// Tokens per model of the current agent.
-    models: BTreeMap<String, f64>,
+    series: Vec<ModelSeries>,
     updated_at: u64,
-    buckets: BTreeMap<u64, AgentUsage>,
     #[serde(skip)]
     seen: HashSet<u64>,
     #[cfg_attr(test, ts(as = "Vec<u64>"))]
@@ -111,6 +118,14 @@ pub struct PaneTelemetry {
     /// Minutes changed since the last push.
     #[serde(skip)]
     dirty: BTreeSet<u64>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ModelSeries {
+    agent: String,
+    model: Option<String>,
+    buckets: BTreeMap<u64, AgentUsage>,
 }
 
 struct Sample {
@@ -176,8 +191,12 @@ impl TelemetryStore {
         if pane.updated_at == 0 {
             return false;
         }
-        pane.buckets
-            .retain(|minute, _| *minute + 60 > now.saturating_sub(HISTORY_SECONDS));
+        for series in &mut pane.series {
+            series
+                .buckets
+                .retain(|minute, _| *minute + 60 > now.saturating_sub(HISTORY_SECONDS));
+        }
+        pane.series.retain(|series| !series.buckets.is_empty());
         if self.panes.len() >= MAX_PANES {
             if let Some(oldest) = self
                 .panes
@@ -210,40 +229,67 @@ impl PaneTelemetry {
         now: u64,
         include: impl Fn(u64) -> bool,
     ) -> Option<AgentTelemetry> {
-        let retained = self
-            .buckets
-            .iter()
-            .filter(|(minute, _)| **minute + 60 > now.saturating_sub(HISTORY_SECONDS));
         let mut totals = AgentUsage::default();
-        for (_, usage) in retained.clone() {
-            totals.add(usage);
+        let mut models = Vec::new();
+        for series in &self.series {
+            let retained = series
+                .buckets
+                .iter()
+                .filter(|(minute, _)| **minute + 60 > now.saturating_sub(HISTORY_SECONDS));
+            let mut series_totals = AgentUsage::default();
+            for (_, usage) in retained.clone() {
+                series_totals.add(usage);
+            }
+            totals.add(&series_totals);
+            let buckets: Vec<_> = retained
+                .filter(|(minute, _)| include(**minute))
+                .map(|(minute, usage)| UsageBucket {
+                    timestamp: *minute as f64,
+                    usage: usage.clone(),
+                })
+                .collect();
+            if !buckets.is_empty() {
+                models.push(ModelTelemetry {
+                    agent: series.agent.clone(),
+                    model: series.model.clone(),
+                    totals: series_totals,
+                    buckets,
+                });
+            }
         }
-        let buckets: Vec<_> = retained
-            .filter(|(minute, _)| include(**minute))
-            .map(|(minute, usage)| UsageBucket {
-                timestamp: *minute as f64,
-                usage: usage.clone(),
-            })
-            .collect();
-        if buckets.is_empty() {
+        if models.is_empty() {
             return None;
         }
+        let tokens =
+            |model: &ModelTelemetry| model.totals.input_tokens + model.totals.output_tokens;
+        models.sort_by(|a, b| tokens(b).total_cmp(&tokens(a)));
         Some(AgentTelemetry {
             pane_id,
-            agent: self.agent.clone(),
-            model: self.main_model(),
             updated_at: self.updated_at as f64,
             totals,
-            buckets,
+            models,
         })
     }
 
-    /// The most used, since agents run helpers on other models (Codex titles threads).
-    fn main_model(&self) -> Option<String> {
-        self.models
-            .iter()
-            .max_by(|a, b| a.1.total_cmp(b.1))
-            .map(|(model, _)| model.clone())
+    /// Past `MAX_MODELS`, usage still counts, without its model.
+    fn series_mut(&mut self, agent: &str, model: Option<String>) -> &mut ModelSeries {
+        let known = |series: &ModelSeries, model: &Option<String>| {
+            series.agent == agent && series.model == *model
+        };
+        let fits = self.series.len() < MAX_MODELS || self.series.iter().any(|s| known(s, &model));
+        let model = model.filter(|_| fits);
+        let index = match self.series.iter().position(|s| known(s, &model)) {
+            Some(index) => index,
+            None => {
+                self.series.push(ModelSeries {
+                    agent: agent.to_string(),
+                    model,
+                    buckets: BTreeMap::new(),
+                });
+                self.series.len() - 1
+            }
+        };
+        &mut self.series[index]
     }
 
     fn ingest(&mut self, mut sample: Sample, now: u64) -> bool {
@@ -273,20 +319,13 @@ impl PaneTelemetry {
         } else if !self.remember(sample.identity) {
             return false;
         }
-        if self.agent != sample.agent {
-            self.agent = sample.agent.to_string();
-            self.models.clear();
-        }
-        if let Some(model) = sample.model {
-            if self.models.len() < MAX_MODELS || self.models.contains_key(&model) {
-                let tokens = sample.usage.input_tokens + sample.usage.output_tokens;
-                let total = self.models.entry(model).or_default();
-                *total = (*total + tokens).min(MAX_VALUE);
-            }
-        }
         self.updated_at = now;
         let minute = seconds / 60 * 60;
-        self.buckets.entry(minute).or_default().add(&sample.usage);
+        self.series_mut(sample.agent, sample.model)
+            .buckets
+            .entry(minute)
+            .or_default()
+            .add(&sample.usage);
         self.dirty.insert(minute);
         true
     }
@@ -767,70 +806,130 @@ mod tests {
     }
 
     #[test]
-    fn the_main_model_is_the_most_used_not_the_latest() {
+    fn usage_is_kept_per_model_with_the_most_used_first() {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
-        let model = |store: &TelemetryStore| store.snapshots(NOW)[0].model.clone();
-        for (end, name, input) in [(NOW - 3, "main", 20_000), (NOW - 2, "helper", 6_000)] {
+        for (end, name, input) in [(NOW - 3, "helper", 6_000), (NOW - 2, "main", 20_000)] {
             store.ingest(
                 pane,
                 parse_logs(model_completion(end, name, input)).unwrap(),
                 NOW,
             );
         }
-        assert_eq!(model(&store).as_deref(), Some("main"));
-        // Events without tokens name a model but don't outweigh usage.
-        let tool = log(
-            NOW - 1,
-            "codex.tool_result",
-            vec![kv("model", json!({"stringValue": "helper"}))],
+        let snapshot = &store.snapshots(NOW)[0];
+        assert_eq!(snapshot.totals.input_tokens, 26_000.0);
+        let models: Vec<_> = snapshot
+            .models
+            .iter()
+            .map(|model| (model.model.as_deref(), model.totals.input_tokens))
+            .collect();
+        assert_eq!(
+            models,
+            [(Some("main"), 20_000.0), (Some("helper"), 6_000.0)]
         );
-        store.ingest(pane, parse_logs(tool).unwrap(), NOW);
-        assert_eq!(model(&store).as_deref(), Some("main"));
-        // Moving to another model shows it once it is used more.
-        store.ingest(
-            pane,
-            parse_logs(model_completion(NOW, "helper", 15_000)).unwrap(),
-            NOW,
-        );
-        assert_eq!(model(&store).as_deref(), Some("helper"));
     }
 
     #[test]
-    fn another_agent_in_the_pane_starts_a_new_model_count() {
+    fn usage_without_a_model_stays_separate_and_counted() {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
         store.ingest(
             pane,
-            parse_metrics(metric(1e6, NOW - 1, NOW - 2, 1, "input")).unwrap(),
+            parse_logs(model_completion(NOW - 1, "main", 10)).unwrap(),
             NOW,
         );
-        assert_eq!(
-            store.snapshots(NOW)[0].model.as_deref(),
-            Some("claude-test")
+        let tool = log(NOW, "claude_code.tool_result", vec![]);
+        store.ingest(pane, parse_logs(tool).unwrap(), NOW);
+        let snapshot = &store.snapshots(NOW)[0];
+        assert_eq!(snapshot.totals.tool_calls, 1.0);
+        let unattributed = snapshot.models.iter().find(|m| m.model.is_none()).unwrap();
+        assert_eq!(unattributed.agent, "claude");
+        assert_eq!(unattributed.totals.tool_calls, 1.0);
+    }
+
+    #[test]
+    fn each_agent_in_a_pane_keeps_its_own_models() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        store.ingest(
+            pane,
+            parse_metrics(metric(100.0, NOW - 1, NOW - 2, 1, "input")).unwrap(),
+            NOW,
         );
         store.ingest(
             pane,
             parse_logs(model_completion(NOW, "codex-test", 10)).unwrap(),
             NOW,
         );
-        let snapshot = &store.snapshots(NOW)[0];
-        assert_eq!(snapshot.agent, "codex");
-        assert_eq!(snapshot.model.as_deref(), Some("codex-test"));
+        let models: Vec<_> = store.snapshots(NOW)[0]
+            .models
+            .iter()
+            .map(|m| (m.agent.clone(), m.model.clone().unwrap()))
+            .collect();
+        assert_eq!(
+            models,
+            [
+                ("claude".to_string(), "claude-test".to_string()),
+                ("codex".to_string(), "codex-test".to_string())
+            ]
+        );
     }
 
     #[test]
-    fn models_per_pane_are_bounded() {
+    fn models_per_pane_are_bounded_without_losing_usage() {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
-        for i in 0..MAX_MODELS as u64 + 8 {
+        let count = MAX_MODELS as u64 + 8;
+        for i in 0..count {
             store.ingest(
                 pane,
                 parse_logs(model_completion(NOW - i, &format!("model-{i}"), 10)).unwrap(),
                 NOW,
             );
         }
-        assert_eq!(store.panes[&pane].models.len(), MAX_MODELS);
+        // Known models still count past the limit.
+        store.ingest(
+            pane,
+            parse_logs(model_completion(NOW + 1, "model-0", 10)).unwrap(),
+            NOW + 1,
+        );
+        let snapshot = &store.snapshots(NOW + 1)[0];
+        assert_eq!(store.panes[&pane].series.len(), MAX_MODELS + 1);
+        assert_eq!(snapshot.totals.input_tokens, (count as f64 + 1.0) * 10.0);
+        let first = snapshot
+            .models
+            .iter()
+            .find(|m| m.model.as_deref() == Some("model-0"))
+            .unwrap();
+        assert_eq!(first.totals.input_tokens, 20.0);
+        let overflow = snapshot.models.iter().find(|m| m.model.is_none()).unwrap();
+        assert_eq!(overflow.totals.input_tokens, 80.0);
+    }
+
+    #[test]
+    fn an_update_holds_only_models_with_changed_minutes() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        store.ingest(
+            pane,
+            parse_logs(model_completion(NOW, "first", 10)).unwrap(),
+            NOW,
+        );
+        store.panes.get_mut(&pane).unwrap().take_update(pane, NOW);
+        store.ingest(
+            pane,
+            parse_logs(model_completion(NOW + 60, "second", 5)).unwrap(),
+            NOW + 60,
+        );
+        let update = store
+            .panes
+            .get_mut(&pane)
+            .unwrap()
+            .take_update(pane, NOW + 60)
+            .unwrap();
+        assert_eq!(update.models.len(), 1);
+        assert_eq!(update.models[0].model.as_deref(), Some("second"));
+        assert_eq!(update.totals.input_tokens, 15.0);
     }
 
     #[test]
@@ -1016,15 +1115,15 @@ mod tests {
         store.ingest(pane, parse_logs(completion(NOW + 120)).unwrap(), NOW + 120);
         let tracked = store.panes.get_mut(&pane).unwrap();
         let update = tracked.take_update(pane, NOW + 120).unwrap();
-        assert_eq!(update.buckets.len(), 2);
+        assert_eq!(update.models[0].buckets.len(), 2);
         assert!(tracked.take_update(pane, NOW + 120).is_none());
         store.ingest(pane, parse_logs(completion(NOW + 121)).unwrap(), NOW + 121);
         let tracked = store.panes.get_mut(&pane).unwrap();
         let update = tracked.take_update(pane, NOW + 121).unwrap();
-        assert_eq!(update.buckets.len(), 1);
-        assert_eq!(update.buckets[0].usage.requests, 2.0);
+        assert_eq!(update.models[0].buckets.len(), 1);
+        assert_eq!(update.models[0].buckets[0].usage.requests, 2.0);
         assert_eq!(update.totals.requests, 3.0);
-        assert_eq!(store.snapshots(NOW + 121)[0].buckets.len(), 2);
+        assert_eq!(store.snapshots(NOW + 121)[0].models[0].buckets.len(), 2);
     }
 
     #[cfg(unix)]

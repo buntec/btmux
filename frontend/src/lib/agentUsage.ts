@@ -1,4 +1,4 @@
-import type { AgentTelemetry, AgentUsage, UsageBucket } from '../generated/protocol';
+import type { AgentTelemetry, AgentUsage, ModelTelemetry, UsageBucket } from '../generated/protocol';
 
 /** Mirrors `HISTORY_SECONDS` in `telemetry.rs`. */
 export const USAGE_HISTORY_SECONDS = 24 * 3600;
@@ -24,8 +24,10 @@ export function addUsage(total: AgentUsage, usage: AgentUsage): AgentUsage {
   return total;
 }
 
-/** Missing minutes are zero; cache and reasoning counts remain subsets. */
-export function usageTimeline(panes: AgentTelemetry[], now: number, minutes: number, stepMinutes = 1): UsageBucket[] {
+type Series = { buckets: UsageBucket[] };
+
+/** Sums `series` per step. Missing minutes are zero; cache and reasoning counts remain subsets. */
+export function usageTimeline(series: Series[], now: number, minutes: number, stepMinutes = 1): UsageBucket[] {
   const step = stepMinutes * 60;
   const lastMinute = Math.floor(now / 60) * 60;
   const firstMinute = lastMinute - (minutes - 1) * 60;
@@ -33,13 +35,53 @@ export function usageTimeline(panes: AgentTelemetry[], now: number, minutes: num
   const start = Math.floor(firstMinute / step) * step;
   const length = Math.floor((lastMinute - start) / step) + 1;
   const buckets = Array.from({ length }, (_, i) => ({ timestamp: start + i * step, usage: emptyUsage() }));
-  for (const pane of panes) {
-    for (const bucket of pane.buckets) {
+  for (const { buckets: source } of series) {
+    for (const bucket of source) {
       if (bucket.timestamp < firstMinute || bucket.timestamp > lastMinute) continue;
       addUsage(buckets[Math.floor((bucket.timestamp - start) / step)].usage, bucket.usage);
     }
   }
   return buckets;
+}
+
+export const modelKey = (model: { agent: string; model: string | null }) => `${model.agent}\0${model.model ?? ''}`;
+
+export interface ModelGroup {
+  key: string;
+  agent: string;
+  model: string | null;
+  series: ModelTelemetry[];
+}
+
+/** Each agent's model across `panes`. */
+export function groupByModel(panes: AgentTelemetry[]): ModelGroup[] {
+  const groups = new Map<string, ModelGroup>();
+  for (const pane of panes) {
+    for (const series of pane.models) {
+      const key = modelKey(series);
+      const group = groups.get(key) ?? { key, agent: series.agent, model: series.model, series: [] };
+      group.series.push(series);
+      groups.set(key, group);
+    }
+  }
+  return [...groups.values()];
+}
+
+/** Chart colors, as `--color-data-categorical-*` names, in their validated order. */
+export const MODEL_COLORS = ['blue', 'green', 'purple', 'cyan', 'orange'];
+
+/**
+ * Each model's color slot, in order of first use, so filtering or a new leader
+ * doesn't repaint a model. Models past the last slot and usage without a model
+ * have none: charts show those as neutral "Other" and "Unattributed" lines.
+ */
+export function modelSlots(panes: AgentTelemetry[]): Map<string, number> {
+  const first = (group: ModelGroup) =>
+    Math.min(...group.series.flatMap((series) => series.buckets.map((bucket) => bucket.timestamp)));
+  const named = groupByModel(panes)
+    .filter((group) => group.model !== null)
+    .sort((a, b) => first(a) - first(b) || a.key.localeCompare(b.key));
+  return new Map(named.slice(0, MODEL_COLORS.length).map((group, slot) => [group.key, slot]));
 }
 
 /** Running totals: each bucket holds everything up to and including it. */
@@ -51,16 +93,43 @@ export function cumulativeUsage(buckets: UsageBucket[]): UsageBucket[] {
   });
 }
 
-/** Pushes hold only changed minutes, each with its whole value, so applying one twice is harmless. */
+/**
+ * Pushes hold only changed minutes, each with its whole value, and only the
+ * models they changed, so applying one twice is harmless.
+ */
 export function mergeTelemetry(current: AgentTelemetry | undefined, update: AgentTelemetry): AgentTelemetry {
-  const buckets = new Map((current?.buckets ?? []).map((bucket) => [bucket.timestamp, bucket]));
-  for (const bucket of update.buckets) buckets.set(bucket.timestamp, bucket);
+  const models = new Map((current?.models ?? []).map((model) => [modelKey(model), model]));
+  for (const model of update.models) {
+    const buckets = new Map((models.get(modelKey(model))?.buckets ?? []).map((bucket) => [bucket.timestamp, bucket]));
+    for (const bucket of model.buckets) buckets.set(bucket.timestamp, bucket);
+    models.set(modelKey(model), { ...model, buckets: [...buckets.values()] });
+  }
   return {
     ...update,
-    buckets: [...buckets.values()]
-      .filter((bucket) => bucket.timestamp + 60 > update.updated_at - USAGE_HISTORY_SECONDS)
-      .sort((a, b) => a.timestamp - b.timestamp),
+    models: [...models.values()]
+      .map((model) => ({
+        ...model,
+        buckets: model.buckets
+          .filter((bucket) => bucket.timestamp + 60 > update.updated_at - USAGE_HISTORY_SECONDS)
+          .sort((a, b) => a.timestamp - b.timestamp),
+      }))
+      .filter((model) => model.buckets.length > 0),
   };
+}
+
+/** Per agent, its named models with the most tokens first. */
+export function paneModelNames(pane: AgentTelemetry): { agent: string; models: string[] }[] {
+  const tokens = (model: ModelTelemetry) => {
+    const total = usageTotal(model.buckets);
+    return total.input_tokens + total.output_tokens;
+  };
+  const agents = new Map<string, string[]>();
+  for (const model of [...pane.models].sort((a, b) => tokens(b) - tokens(a))) {
+    const names = agents.get(model.agent) ?? [];
+    if (model.model !== null) names.push(model.model);
+    agents.set(model.agent, names);
+  }
+  return [...agents].map(([agent, models]) => ({ agent, models }));
 }
 
 export const usageTotal = (buckets: UsageBucket[]) =>

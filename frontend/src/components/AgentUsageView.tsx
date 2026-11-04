@@ -7,22 +7,29 @@ import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from '@astryxdesign/core/Table';
 import { Text } from '@astryxdesign/core/Text';
-import type { AgentTelemetry, UsageBucket } from '../generated/protocol';
+import type { AgentTelemetry, AgentUsage, UsageBucket } from '../generated/protocol';
 import {
   cumulativeUsage,
   formatCost,
   formatTokens,
+  groupByModel,
+  MODEL_COLORS,
+  modelSlots,
+  paneModelNames,
   USAGE_HISTORY_SECONDS,
   usageTimeline,
   usageTotal,
 } from '../lib/agentUsage';
 import { useStore } from '../state/store';
 
-const INPUT = 'var(--color-data-categorical-blue)';
-const OUTPUT = 'var(--color-data-categorical-green)';
-const CACHE = 'var(--color-data-categorical-purple)';
+const TOTAL = 'var(--color-text-primary)';
+const NEUTRAL = 'var(--color-text-secondary)';
+const OTHER_DASH = '6 4';
+const UNATTRIBUTED_DASH = '1 4';
+const modelColor = (slot: number) => `var(--color-data-categorical-${MODEL_COLORS[slot]})`;
 const timeLabel = (seconds: number) =>
   new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const share = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 1 });
 
 const RANGES = [
   { value: '15', label: '15 min', step: 1 },
@@ -31,34 +38,52 @@ const RANGES = [
   { value: '1440', label: '24 hours', step: 5 },
 ];
 
-interface Series {
+const tokensOf = (usage: AgentUsage) => usage.input_tokens + usage.output_tokens;
+
+const TOKEN_TYPES: { value: string; label: string; metric: (usage: AgentUsage) => number }[] = [
+  { value: 'total', label: 'Total', metric: tokensOf },
+  { value: 'input', label: 'Input', metric: (usage) => usage.input_tokens },
+  { value: 'output', label: 'Output', metric: (usage) => usage.output_tokens },
+  { value: 'cached', label: 'Cached', metric: (usage) => usage.cached_tokens },
+];
+
+interface Line {
   label: string;
   color: string;
-  value: (bucket: UsageBucket) => number;
+  dash?: string;
+  values: number[];
+}
+
+function LineKey({ color, dash }: { color: string; dash?: string }) {
+  return (
+    <svg width="14" height="12" aria-hidden="true" className="shrink-0">
+      <line x1="1" x2="13" y1="6" y2="6" stroke={color} strokeWidth={2} strokeDasharray={dash} strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function UsageChart({
   title,
-  buckets,
-  series,
+  timestamps,
+  lines,
   money = false,
 }: {
   title: string;
-  buckets: UsageBucket[];
-  series: Series[];
+  timestamps: number[];
+  lines: Line[];
   money?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const max = Math.max(money ? 0.001 : 1, ...series.flatMap((s) => buckets.map(s.value)));
+  const last = timestamps.length - 1;
+  const max = Math.max(money ? 0.001 : 1, ...lines.map((line) => line.values[last]));
   const left = 54,
     right = 696,
     top = 14,
     bottom = 176;
-  const x = (i: number) => left + (i / Math.max(1, buckets.length - 1)) * (right - left);
+  const x = (i: number) => left + (i / Math.max(1, last)) * (right - left);
   const y = (value: number) => bottom - (value / max) * (bottom - top);
   const format = (value: number) => (money ? formatCost(value) : formatTokens(value));
-  const index = hover === null ? buckets.length - 1 : Math.min(hover, buckets.length - 1);
-  const active = buckets[index];
+  const index = hover === null ? last : Math.min(hover, last);
   return (
     <VStack gap={3} className="min-w-0" data-agent-chart={title}>
       <Heading level={3}>{title}</Heading>
@@ -71,24 +96,19 @@ function UsageChart({
         onKeyDown={(event) => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
-          setHover(Math.max(0, Math.min(buckets.length - 1, index + (event.key === 'ArrowLeft' ? -1 : 1))));
+          setHover(Math.max(0, Math.min(last, index + (event.key === 'ArrowLeft' ? -1 : 1))));
         }}
         onPointerMove={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           const position = ((event.clientX - rect.left) / rect.width) * 720;
-          setHover(
-            Math.max(
-              0,
-              Math.min(buckets.length - 1, Math.round(((position - left) / (right - left)) * (buckets.length - 1))),
-            ),
-          );
+          setHover(Math.max(0, Math.min(last, Math.round(((position - left) / (right - left)) * last))));
         }}
         onPointerLeave={() => setHover(null)}
       >
         <title>{title}</title>
         <desc>
           Running totals over the selected range.{' '}
-          {series.map((s) => `${s.label}: ${format(s.value(buckets[buckets.length - 1]))}`).join('. ')}.
+          {lines.map((line) => `${line.label}: ${format(line.values[last])}`).join('. ')}.
         </desc>
         {[0, 0.5, 1].map((fraction) => (
           <g key={fraction}>
@@ -98,43 +118,45 @@ function UsageChart({
             </text>
           </g>
         ))}
-        {series.map((s) => (
+        {lines.map((line) => (
           <polyline
-            key={s.label}
-            points={buckets.map((bucket, i) => `${x(i)},${y(s.value(bucket))}`).join(' ')}
+            key={line.label}
+            data-line={line.label}
+            points={line.values.map((value, i) => `${x(i)},${y(value)}`).join(' ')}
             fill="none"
-            stroke={s.color}
+            stroke={line.color}
             strokeWidth={2}
+            strokeDasharray={line.dash}
             strokeLinejoin="round"
+            strokeLinecap="round"
           />
         ))}
         {hover !== null && (
-          <line
-            x1={x(index)}
-            x2={x(index)}
-            y1={top}
-            y2={bottom}
-            stroke="var(--color-text-secondary)"
-            strokeDasharray="3 3"
-          />
+          <line x1={x(index)} x2={x(index)} y1={top} y2={bottom} stroke="var(--color-text-secondary)" />
         )}
-        {[0, Math.floor((buckets.length - 1) / 2), buckets.length - 1].map((i) => (
+        {[0, Math.floor(last / 2), last].map((i) => (
           <text key={i} x={x(i)} y={200} textAnchor="middle" fill="currentColor" fontSize={11}>
-            {timeLabel(buckets[i].timestamp)}
+            {timeLabel(timestamps[i])}
           </text>
         ))}
       </svg>
       <HStack gap={3} wrap="wrap" vAlign="center">
         <Text type="supporting" color="secondary">
-          {timeLabel(active.timestamp)}
+          {timeLabel(timestamps[index])}
         </Text>
-        {series.map((s) => (
-          <HStack key={s.label} gap={1} vAlign="center">
-            <svg width="12" height="12" aria-hidden="true">
-              <circle cx="6" cy="6" r="4" fill={s.color} />
-            </svg>
+        {lines.length === 0 && (
+          <Text type="supporting" color="secondary">
+            None in this range
+          </Text>
+        )}
+        {lines.map((line) => (
+          <HStack key={line.label} gap={1} vAlign="center" className="min-w-0">
+            <LineKey color={line.color} dash={line.dash} />
             <Text type="supporting" className="btm-mono">
-              {s.label}: {format(s.value(active))}
+              {format(line.values[index])}
+            </Text>
+            <Text type="supporting" color="secondary" className="btm-mono">
+              {line.label}
             </Text>
           </HStack>
         ))}
@@ -149,6 +171,7 @@ export function AgentUsageView() {
   const [now, setNow] = useState(() => Date.now() / 1000);
   const [minutes, setMinutes] = useState('480');
   const [selected, setSelected] = useState<string | null>(null);
+  const [tokenType, setTokenType] = useState('total');
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now() / 1000), 5000);
     return () => clearInterval(timer);
@@ -169,19 +192,55 @@ export function AgentUsageView() {
   const panes = useMemo(
     () =>
       Object.values(telemetry).filter((pane) =>
-        pane.buckets.some((bucket) => bucket.timestamp + 60 > now - USAGE_HISTORY_SECONDS),
+        pane.models.some((model) =>
+          model.buckets.some((bucket) => bucket.timestamp + 60 > now - USAGE_HISTORY_SECONDS),
+        ),
       ),
     [telemetry, now],
   );
   const open = panes.filter((pane) => labels.has(pane.pane_id));
   const closed = panes.filter((pane) => !labels.has(pane.pane_id));
   const range = RANGES.find((item) => item.value === minutes) ?? RANGES[0];
-  const timeline = (items: AgentTelemetry[]) => usageTimeline(items, now, Number(range.value), range.step);
   const selectedPane = open.find((pane) => pane.pane_id === selected);
-  const buckets = timeline(selectedPane ? [selectedPane] : panes);
-  const total = usageTotal(buckets);
-  const running = cumulativeUsage(buckets);
-  const closedUsage = usageTotal(timeline(closed));
+  const timeline = (series: { buckets: UsageBucket[] }[]) =>
+    usageTimeline(series, now, Number(range.value), range.step);
+  const panesUsage = (items: AgentTelemetry[]) => usageTotal(timeline(items.flatMap((pane) => pane.models)));
+  const shown = selectedPane ? [selectedPane] : panes;
+  const total = panesUsage(shown);
+  const closedUsage = panesUsage(closed);
+  // From all usage, so filtering or changing the range doesn't repaint a model.
+  const slots = modelSlots(Object.values(telemetry));
+  const models = groupByModel(shown)
+    .map((group) => {
+      const running = cumulativeUsage(timeline(group.series));
+      return { ...group, running, usage: running[running.length - 1].usage };
+    })
+    .filter(({ usage }) => tokensOf(usage) + usage.requests + usage.tool_calls + (usage.cost_usd ?? 0) > 0)
+    .sort((a, b) => tokensOf(b.usage) - tokensOf(a.usage));
+  const timestamps = timeline([]).map((bucket) => bucket.timestamp);
+  const linesFor = (metric: (usage: AgentUsage) => number): Line[] => {
+    const lines: Line[] = [];
+    const sum = (into: number[] | null, values: number[]) =>
+      into ? into.map((value, i) => value + values[i]) : values;
+    let other: number[] | null = null;
+    let unattributed: number[] | null = null;
+    for (const model of models) {
+      const values = model.running.map((bucket) => metric(bucket.usage));
+      if (values[values.length - 1] === 0) continue;
+      const slot = slots.get(model.key);
+      if (model.model === null) unattributed = sum(unattributed, values);
+      else if (slot === undefined) other = sum(other, values);
+      else lines.push({ label: model.model, color: modelColor(slot), values });
+    }
+    if (other) lines.push({ label: 'Other', color: NEUTRAL, dash: OTHER_DASH, values: other });
+    if (unattributed)
+      lines.push({ label: 'Unattributed', color: NEUTRAL, dash: UNATTRIBUTED_DASH, values: unattributed });
+    if (lines.length < 2) return lines;
+    const all = lines.reduce<number[] | null>((into, line) => sum(into, line.values), null);
+    // Drawn first, so a model holding most of the usage stays visible above it.
+    return [{ label: 'Total', color: TOTAL, values: all ?? [] }, ...lines];
+  };
+  const tokenMetric = TOKEN_TYPES.find((type) => type.value === tokenType) ?? TOKEN_TYPES[0];
   if (panes.length === 0)
     return (
       <VStack hAlign="center" vAlign="center" className="h-full">
@@ -202,6 +261,11 @@ export function AgentUsageView() {
           </Text>
         </VStack>
         {selectedPane && <Button label="All agents" variant="ghost" onClick={() => setSelected(null)} />}
+        <SegmentedControl label="Token type" value={tokenType} onChange={setTokenType} size="sm">
+          {TOKEN_TYPES.map((item) => (
+            <SegmentedControlItem key={item.value} value={item.value} label={item.label} />
+          ))}
+        </SegmentedControl>
         <SegmentedControl label="Usage time range" value={minutes} onChange={setMinutes} size="sm">
           {RANGES.map((item) => (
             <SegmentedControlItem key={item.value} value={item.value} label={item.label} />
@@ -224,29 +288,15 @@ export function AgentUsageView() {
         ))}
       </Grid>
       <Grid columns={{ minWidth: 320, max: 2 }} gap={6}>
-        <UsageChart
-          title="Tokens"
-          buckets={running}
-          series={[
-            { label: 'Input', color: INPUT, value: (b) => b.usage.input_tokens },
-            { label: 'Output', color: OUTPUT, value: (b) => b.usage.output_tokens },
-            { label: 'Cached', color: CACHE, value: (b) => b.usage.cached_tokens },
-          ]}
-        />
-        <UsageChart
-          title="Activity"
-          buckets={running}
-          series={[
-            { label: 'Requests', color: INPUT, value: (b) => b.usage.requests },
-            { label: 'Tool calls', color: OUTPUT, value: (b) => b.usage.tool_calls },
-          ]}
-        />
+        <UsageChart title="Tokens" timestamps={timestamps} lines={linesFor(tokenMetric.metric)} />
+        <UsageChart title="Completed requests" timestamps={timestamps} lines={linesFor((usage) => usage.requests)} />
+        <UsageChart title="Tool calls" timestamps={timestamps} lines={linesFor((usage) => usage.tool_calls)} />
         {total.cost_usd !== null && (
           <UsageChart
             title="Reported cost"
-            buckets={running}
+            timestamps={timestamps}
             money
-            series={[{ label: 'USD', color: CACHE, value: (b) => b.usage.cost_usd ?? 0 }]}
+            lines={linesFor((usage) => usage.cost_usd ?? 0)}
           />
         )}
       </Grid>
@@ -254,6 +304,54 @@ export function AgentUsageView() {
         Input includes cached tokens. Reasoning is included in output. Costs appear only when an agent reports them;
         mixed totals may be partial.
       </Text>
+      <VStack gap={3}>
+        <Heading level={3}>By model</Heading>
+        <Table density="compact" aria-label="Agent usage by model">
+          <TableHeader>
+            <TableRow>
+              {['Model', 'Tokens', 'Share', 'Cached input', 'Requests', 'Tool calls', 'Reported cost'].map((label) => (
+                <TableHeaderCell key={label}>{label}</TableHeaderCell>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {models.map((model) => {
+              const slot = slots.get(model.key);
+              const tokens = tokensOf(model.usage);
+              const allTokens = tokensOf(total);
+              return (
+                <TableRow key={model.key} data-usage-model={model.model ?? 'unattributed'}>
+                  <TableCell>
+                    <HStack gap={2} vAlign="center">
+                      <LineKey
+                        color={slot === undefined ? NEUTRAL : modelColor(slot)}
+                        dash={model.model === null ? UNATTRIBUTED_DASH : slot === undefined ? OTHER_DASH : undefined}
+                      />
+                      <VStack gap={1} className="min-w-0">
+                        <Text className={model.model === null ? undefined : 'btm-mono'}>
+                          {model.model ?? 'Unattributed'}
+                        </Text>
+                        <Text type="supporting" color="secondary">
+                          {model.agent}
+                        </Text>
+                      </VStack>
+                    </HStack>
+                  </TableCell>
+                  <TableCell>{formatTokens(tokens)}</TableCell>
+                  <TableCell>{tokens > 0 ? share.format(tokens / allTokens) : '–'}</TableCell>
+                  <TableCell>{formatTokens(model.usage.cached_tokens)}</TableCell>
+                  <TableCell>{formatTokens(model.usage.requests)}</TableCell>
+                  <TableCell>{formatTokens(model.usage.tool_calls)}</TableCell>
+                  <TableCell>{formatCost(model.usage.cost_usd)}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        <Text type="supporting" color="secondary">
+          Unattributed is usage reported without a model, such as Claude's tool calls.
+        </Text>
+      </VStack>
       <VStack gap={3}>
         <Heading level={3}>By pane</Heading>
         <Table density="compact" aria-label="Agent usage by pane">
@@ -266,20 +364,22 @@ export function AgentUsageView() {
           </TableHeader>
           <TableBody>
             {open.map((pane) => {
-              const usage = usageTotal(timeline([pane]));
+              const usage = panesUsage([pane]);
               return (
                 <TableRow key={pane.pane_id}>
                   <TableCell>
                     <VStack gap={1}>
                       <Button
-                        label={labels.get(pane.pane_id) ?? pane.agent}
+                        label={labels.get(pane.pane_id) ?? pane.pane_id}
                         variant="ghost"
                         onClick={() => setSelected(pane.pane_id)}
                       />
-                      <Text type="supporting" color="secondary">
-                        {pane.agent}
-                        {pane.model ? ` · ${pane.model}` : ''}
-                      </Text>
+                      {paneModelNames(pane).map(({ agent, models: names }) => (
+                        <Text key={agent} type="supporting" color="secondary" className="btm-mono">
+                          {agent}
+                          {names.length > 0 ? ` · ${names.join(', ')}` : ''}
+                        </Text>
+                      ))}
                     </VStack>
                   </TableCell>
                   <TableCell>{formatTokens(usage.input_tokens + usage.output_tokens)}</TableCell>

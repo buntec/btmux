@@ -27,7 +27,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -567,6 +567,7 @@ mod tests {
             Layout::decl(&config),
             TelemetryStore::decl(&config),
             crate::telemetry::PaneTelemetry::decl(&config),
+            crate::telemetry::ModelSeries::decl(&config),
             crate::telemetry::AgentUsage::decl(&config),
         ]
         .join("\n");

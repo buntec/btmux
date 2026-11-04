@@ -29,9 +29,10 @@ const ARROWS = [
   { key: 'ArrowRight', label: 'Right', icon: ArrowRight },
 ];
 
-// Inputs the key bar types into: pane terminals, the built-in Neovim, and the browser.
+// Inputs the key bar types into: pane terminals, the built-in Neovim, the browser, and `btmux pick`.
 const takesKeys = (target: EventTarget | null) =>
-  target instanceof Element && target.closest('[data-pane-terminal], [data-nvim-input], [data-browser-input]') !== null;
+  target instanceof Element &&
+  target.closest('[data-pane-terminal], [data-nvim-input], [data-browser-input], [data-pane-picker]') !== null;
 
 /** Keys phone keyboards lack. Ctrl and Alt apply to the next key, from here or the keyboard. */
 export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {

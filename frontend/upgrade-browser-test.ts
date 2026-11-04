@@ -156,6 +156,27 @@ try {
   await api(`/api/panes/${pane}/input`, { text: "printf '\\nAFTER_%s\\n' $$\r" });
   assert.equal(await waitForText(/\nAFTER_(\d+)\n/), shell, 'the same shell must survive the upgrade');
 
+  // A menu open across an upgrade closes, and its command fails instead of hanging.
+  const picker = page.locator('[data-pane-picker]');
+  const pick = (tag: string) =>
+    api(`/api/panes/${pane}/input`, {
+      text: `printf 'one\\ntwo\\n' | "$BTMUX_BIN" pick; printf '\\n${tag}_%s\\n' "$?"\r`,
+    });
+  await pick('INTERRUPTED');
+  await picker.waitFor();
+  const shownInfo = await api('/api/info');
+  await api('/api/server/upgrade', { executable: shownInfo.executable });
+  await until(async () => (await api('/api/info')).instance !== shownInfo.instance, 'server did not come back');
+  assert.equal(await waitForText(/\nINTERRUPTED_(\d+)\n/), '2', 'the command must exit 2');
+  await picker.waitFor({ state: 'detached' });
+
+  // The next one works.
+  await pick('PICKED');
+  await picker.waitFor();
+  await picker.getByText('two').click();
+  await picker.waitFor({ state: 'detached' });
+  assert.equal(await waitForText(/\nPICKED_(\d+)\n/), '0', 'a menu must work after an upgrade');
+
   // The control socket reconnects and follows structural changes again.
   await api(`/api/sessions/${session.id}/windows`, {});
   await waitForAsync(

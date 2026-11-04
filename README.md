@@ -66,29 +66,9 @@ curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.s
 # or: brew install buntec/btmux/btmux
 ```
 
-**Browser / CLI** on Windows: download `btmux-x86_64-pc-windows-msvc.exe` or
-`btmux-aarch64-pc-windows-msvc.exe` from
-[Releases](https://github.com/buntec/btmux/releases/latest), rename it to
-`btmux.exe`, and put it in a directory on your `PATH`. For example, in PowerShell:
+**Browser / CLI** on Windows: [download the release binary](docs/installation.md#windows) and put it on your `PATH`.
 
-```powershell
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
-$dir = "$env:LOCALAPPDATA\Programs\btmux"
-New-Item -ItemType Directory -Force $dir | Out-Null
-Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
-[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
-```
-
-On Windows:
-
-- Panes run `powershell.exe` by default. Set `shell` in `config.toml` to use
-  `pwsh`, `cmd.exe`, Git Bash, or a WSL distribution (`wsl.exe -d Ubuntu`).
-- The config file is `%APPDATA%\btmux\config.toml`, and the access token is in
-  `%LOCALAPPDATA%\btmux\state.token` (`Get-Content "$env:LOCALAPPDATA\btmux\state.token"`).
-- `btmux install` (background service) and `btmux upgrade` (in-place upgrade)
-  aren't supported. To update, quit btmux, replace `btmux.exe`, and start it again.
-
-Homebrew, Windows, background services, and Home Manager are covered in [Installation](docs/installation.md).
+Homebrew, background services, and Home Manager are covered in [Installation](docs/installation.md).
 
 ## Quick start
 

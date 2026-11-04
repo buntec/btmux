@@ -14,8 +14,11 @@ It downloads the latest release binary to `~/.local/bin`. Set
 
 ## Windows
 
-Windows support (x64 and ARM64) is experimental. Download the release binary
-and put it on your `PATH`, for example in PowerShell:
+Windows support (x64 and ARM64) is experimental. Download
+`btmux-x86_64-pc-windows-msvc.exe` or `btmux-aarch64-pc-windows-msvc.exe` from
+[Releases](https://github.com/buntec/btmux/releases/latest), rename it to
+`btmux.exe`, and put it in a directory on your `PATH`. For example, in
+PowerShell:
 
 ```powershell
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
@@ -35,6 +38,9 @@ Panes run `powershell.exe` by default. Set `shell` in
 `'C:\Program Files\Git\bin\bash.exe'` (Git Bash), or `wsl.exe -d Ubuntu`.
 Under bash, btmux tracks the pane's directory with `PROMPT_COMMAND` and `PS0`;
 if your bashrc replaces them, emit OSC 7 and OSC 133 A/C marks yourself.
+
+The access token is in `%LOCALAPPDATA%\btmux\state.token`
+(`Get-Content "$env:LOCALAPPDATA\btmux\state.token"`).
 
 There is no background service or in-place upgrade on Windows. To update, quit
 btmux (and the desktop app), replace `btmux.exe` or run the new desktop

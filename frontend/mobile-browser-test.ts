@@ -413,6 +413,12 @@ try {
   // Keys of a multi-key hint are padded to a usable size.
   const keyBox = (await page.getByRole('button', { name: 'j: navigate', exact: true }).boundingBox())!;
   assert(keyBox.width >= 32 && keyBox.height >= 32, `small hint key: ${JSON.stringify(keyBox)}`);
+  // Pane usage takes the screen in place of the list.
+  await page.getByRole('button', { name: 'tab: panes', exact: true }).tap();
+  await page.getByRole('tree', { name: 'Pane usage', exact: true }).waitFor();
+  assert(!(await processRow.isVisible()));
+  await page.getByRole('button', { name: 'tab: processes', exact: true }).tap();
+  await processRow.waitFor();
   await page.getByRole('button', { name: 'V: tree', exact: true }).tap();
   await page.getByRole('tree', { name: 'Processes', exact: true }).waitFor();
   // At the PID: WebKit moves taps near the fold button onto it.

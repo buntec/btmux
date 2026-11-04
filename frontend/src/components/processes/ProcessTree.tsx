@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { Placeholder } from '../files/Placeholder';
 import { clsx } from 'clsx';
@@ -12,10 +12,24 @@ import {
 } from '@/lib/processTree';
 import { useProcessStore } from '@/state/processStore';
 
-const GRID_COLUMNS = 'grid gap-x-2 grid-cols-[3.5rem_5rem_4.5rem_4.5rem_5rem_5rem_5.5rem_minmax(0,1fr)]';
-// Phones show PID, CPU%, MEM%, and the command.
-const COMPACT_GRID_COLUMNS = 'grid gap-x-2 grid-cols-[3.5rem_3.5rem_3.5rem_minmax(0,1fr)]';
-const COMPACT_LABELS = new Set(['PID', 'CPU%', 'MEM%']);
+// Columns by list width, in pixels; the command takes the rest.
+const LAYOUTS = [
+  {
+    minWidth: 880,
+    grid: 'grid gap-x-2 grid-cols-[3.5rem_5rem_4.5rem_4.5rem_5rem_5rem_5.5rem_minmax(0,1fr)]',
+    labels: new Set(['PID', 'USER', 'CPU%', 'MEM%', 'RES', 'VIRT', 'ELAPSED']),
+  },
+  {
+    minWidth: 520,
+    grid: 'grid gap-x-2 grid-cols-[3.5rem_5rem_4.5rem_5rem_5.5rem_minmax(0,1fr)]',
+    labels: new Set(['PID', 'USER', 'CPU%', 'RES', 'ELAPSED']),
+  },
+  {
+    minWidth: 0,
+    grid: 'grid gap-x-2 grid-cols-[3.5rem_3.5rem_3.5rem_minmax(0,1fr)]',
+    labels: new Set(['PID', 'CPU%', 'MEM%']),
+  },
+];
 
 const SORT_COLUMNS: Array<{ label: string; mode: ProcessSortMode }> = [
   { label: 'PID', mode: 'pid' },
@@ -55,19 +69,30 @@ function SortHeader({ label, mode, active }: { label: string; mode: ProcessSortM
 
 export function ProcessTree({
   rows,
-  compact = false,
   onDetails,
 }: {
   rows: ProcessTreeRow[];
-  compact?: boolean;
   /** Called when a row is tapped, to show its details. */
   onDetails?: () => void;
 }) {
-  const grid = compact ? COMPACT_GRID_COLUMNS : GRID_COLUMNS;
-  const columns = compact ? SORT_COLUMNS.filter((column) => COMPACT_LABELS.has(column.label)) : SORT_COLUMNS;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(Infinity);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const measure = () => setWidth(root.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+  const { grid, labels } = LAYOUTS.find((layout) => width >= layout.minWidth) ?? LAYOUTS[LAYOUTS.length - 1];
+  const compact = labels.size === 3;
+  const columns = SORT_COLUMNS.filter((column) => labels.has(column.label));
   const processes = useProcessStore((s) => s.processes);
   const focusedPid = useProcessStore((s) => s.focusedPid);
   const followFocus = useProcessStore((s) => s.followFocus);
+  const panelActive = useProcessStore((s) => s.panel === 'list');
   const collapsedPids = useProcessStore((s) => s.collapsedPids);
   const sortMode = useProcessStore((s) => s.sortMode);
   const treeMode = useProcessStore((s) => s.treeMode);
@@ -97,7 +122,7 @@ export function ProcessTree({
   }, [focusedPid, followFocus, processes, rows, setFocusedPid]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <ScrollableArea
         label="Process list"
         // Wide screens scroll to long commands; phones truncate them.
@@ -116,7 +141,8 @@ export function ProcessTree({
         <div ref={listRef} role={treeMode ? 'tree' : 'list'} aria-label="Processes">
           {rows.map(({ process, depth, hasChildren, match }) => {
             const collapsed = collapsedPids.has(process.pid);
-            const focused = process.pid === focusedPid;
+            const selected = process.pid === focusedPid;
+            const focused = selected && panelActive;
             return (
               <div
                 key={process.pid}
@@ -124,11 +150,11 @@ export function ProcessTree({
                 role={treeMode ? 'treeitem' : 'listitem'}
                 aria-level={treeMode ? depth + 1 : undefined}
                 aria-expanded={hasChildren ? !collapsed : undefined}
-                aria-selected={focused}
+                aria-selected={selected}
                 className={clsx(
                   grid,
                   'cursor-pointer items-center px-2 leading-tight pointer-coarse:py-1.5',
-                  focused ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
+                  focused ? 'bg-accent-bg text-on-accent' : selected ? 'bg-overlay-hover' : 'hover:bg-overlay-hover',
                   !match && !focused && 'text-secondary',
                 )}
                 onClick={() => {
@@ -140,7 +166,7 @@ export function ProcessTree({
                 <span className="truncate font-mono" title={String(process.pid)}>
                   {process.pid}
                 </span>
-                {!compact && (
+                {labels.has('USER') && (
                   <span className="truncate" title={process.user ?? '—'}>
                     {process.user ?? '—'}
                   </span>
@@ -148,21 +174,28 @@ export function ProcessTree({
                 <span className={clsx('font-mono', process.cpu >= 80 && !focused && 'text-red-vivid')}>
                   {formatCpu(process.cpu)}
                 </span>
-                <span className="font-mono" title={`${formatMemoryPercent(process.memory, memTotal)} of system memory`}>
-                  {formatMemoryPercent(process.memory, memTotal)}
-                </span>
-                {!compact && (
-                  <>
-                    <span className="font-mono" title={`${process.memory} bytes`}>
-                      {formatBytes(process.memory)}
-                    </span>
-                    <span className="font-mono" title={`${process.virtual_memory} bytes`}>
-                      {formatBytes(process.virtual_memory)}
-                    </span>
-                    <span className="truncate font-mono" title={formatElapsed(process)}>
-                      {formatElapsed(process)}
-                    </span>
-                  </>
+                {labels.has('MEM%') && (
+                  <span
+                    className="font-mono"
+                    title={`${formatMemoryPercent(process.memory, memTotal)} of system memory`}
+                  >
+                    {formatMemoryPercent(process.memory, memTotal)}
+                  </span>
+                )}
+                {labels.has('RES') && (
+                  <span className="font-mono" title={`${process.memory} bytes`}>
+                    {formatBytes(process.memory)}
+                  </span>
+                )}
+                {labels.has('VIRT') && (
+                  <span className="font-mono" title={`${process.virtual_memory} bytes`}>
+                    {formatBytes(process.virtual_memory)}
+                  </span>
+                )}
+                {labels.has('ELAPSED') && (
+                  <span className="truncate font-mono" title={formatElapsed(process)}>
+                    {formatElapsed(process)}
+                  </span>
                 )}
                 <span
                   className="flex min-w-0 items-center"

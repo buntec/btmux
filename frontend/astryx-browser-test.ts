@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createConnection, createServer, type Socket } from 'node:net';
+import { createConnection, createServer, type AddressInfo, type Socket } from 'node:net';
 import { createSocket } from 'node:dgram';
 import { FALLBACK_DARK_THEME } from './src/state/startupTheme';
 
@@ -80,16 +80,12 @@ try {
   await context.addInitScript(() => {
     const Original = window.WebSocket;
     (window as any).processTestSockets = [];
-    (window as any).processTestCommands = [];
     window.WebSocket = class extends Original {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols);
         if (this.url.endsWith('/ws/processes')) (window as any).processTestSockets.push(this);
       }
       send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
-        if (this.url.endsWith('/ws/processes') && typeof data === 'string') {
-          (window as any).processTestCommands.push(JSON.parse(data));
-        }
         if (this.url.includes('/ws/pane/') && typeof data !== 'string') {
           (window as any).paneTestInput = ((window as any).paneTestInput ?? '') + new TextDecoder().decode(data as any);
         }
@@ -215,7 +211,7 @@ try {
     await details.waitFor({ state: 'detached' });
     await page.keyboard.press('Enter');
     await details.waitFor();
-    await page.keyboard.press('Tab');
+    await page.keyboard.press('h');
     await details.waitFor({ state: 'detached' });
     await page.keyboard.press('/');
     await page.keyboard.type(String(tcpPort));
@@ -255,10 +251,6 @@ try {
     await page.keyboard.press('Escape');
     await page.keyboard.press('p');
     await viewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
-    await waitForAsync(page, async () => {
-      const { useProcessStore } = await import('/src/state/processStore.ts' as string);
-      return useProcessStore.getState().snapshot?.ports === null;
-    });
     await page.keyboard.press('p');
     await viewer.locator('tr[data-port-focused]').first().waitFor();
 
@@ -279,10 +271,6 @@ try {
       }, pane);
       const otherViewer = otherPage.getByRole('dialog', { name: 'Processes', exact: true });
       await otherViewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
-      await waitForAsync(otherPage, async () => {
-        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
-        return useProcessStore.getState().snapshot?.ports === null;
-      });
       await page.evaluate(() => {
         const sockets = (window as any).processTestSockets;
         sockets.at(-1).close();
@@ -292,19 +280,10 @@ try {
         const sockets = (window as any).processTestSockets;
         return sockets.length >= 2 && sockets.at(-1).readyState === 1 && useProcessStore.getState().snapshot?.ports;
       });
-      assert.deepEqual(
-        await page.evaluate(() => (window as any).processTestCommands.at(-1)),
-        { type: 'set_ports', enabled: true },
-        'reconnect restores ports subscription',
-      );
       await otherPage.keyboard.press('p');
       await otherViewer.locator('tr[data-port-focused]').first().waitFor();
       await otherPage.keyboard.press('p');
       await otherViewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
-      await waitForAsync(otherPage, async () => {
-        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
-        return useProcessStore.getState().snapshot?.ports === null;
-      });
       const sample = await page.evaluate(async () => {
         const { useProcessStore } = await import('/src/state/processStore.ts' as string);
         return useProcessStore.getState().snapshot;
@@ -318,7 +297,7 @@ try {
         },
         sample,
       );
-      console.log('PASS process socket reconnect restores ports and viewers toggle independently');
+      console.log('PASS process socket reconnect resumes ports and viewers toggle independently');
     } finally {
       await otherPage.close();
     }
@@ -331,13 +310,116 @@ try {
     udpSocket.close();
   }
 
+  // A listener started in the pane appears under it in the usage half.
+  const freePort = createServer();
+  await new Promise<void>((resolve) => freePort.listen(0, '127.0.0.1', resolve));
+  const usagePort = (freePort.address() as AddressInfo).port;
+  await new Promise((resolve) => freePort.close(resolve));
+  const paneInput = async (text: string) => {
+    const sent = await fetch(`${url}/api/panes/${pane}/input`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ text }),
+    });
+    assert(sent.ok, `pane input: ${sent.status}`);
+  };
+  await paneInput(
+    `${process.execPath} -e "require('net').createServer().listen(${usagePort},'127.0.0.1');setTimeout(process.exit,60000)" & USAGE_PID=$!\n`,
+  );
+  await page.evaluate(async (pane) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    useStore.getState().setFileBrowserOpen(true, null, pane, 'process');
+  }, pane);
+  {
+    const viewer = page.getByRole('dialog', { name: 'Processes', exact: true });
+    const usage = viewer.getByRole('tree', { name: 'Pane usage', exact: true });
+    const portRow = usage.getByText(`TCP 127.0.0.1:${usagePort}`);
+    await portRow.waitFor();
+    const dialog = (await viewer.boundingBox())!;
+    const divider = (await viewer.getByRole('separator', { name: 'Resize pane usage' }).boundingBox())!;
+    const list = (await viewer.getByRole('list', { name: 'Processes', exact: true }).boundingBox())!;
+    const tree = (await usage.boundingBox())!;
+    assert(list.x < divider.x && divider.x + divider.width <= tree.x, 'the list is left of pane usage');
+    const middle = dialog.x + dialog.width / 2;
+    assert(Math.abs(divider.x - middle) < 16, `not split in half: ${divider.x} of ${dialog.width}`);
+    await waitForAsync(
+      page,
+      async (pane) => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        const panes = useProcessStore.getState().processes.filter((process) => process.pane_id === pane);
+        return panes.length >= 2 && panes.every((process) => process.disk_read >= 0 && process.disk_write >= 0);
+      },
+      pane,
+    );
+    const selectedKind = () => usage.locator('[aria-selected="true"]').getAttribute('data-usage-kind');
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'tab: processes', exact: true }).waitFor();
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'tab: panes', exact: true }).waitFor();
+    // A click takes the keys; folding walks up from a leaf.
+    await portRow.click();
+    await viewer.getByRole('button', { name: 'tab: processes', exact: true }).waitFor();
+    assert.equal(await selectedKind(), 'port');
+    await page.keyboard.press('h');
+    assert.equal(await selectedKind(), 'pane');
+    await page.keyboard.press('h');
+    await portRow.waitFor({ state: 'detached' });
+    await viewer.getByRole('button', { name: /^Unfold / }).click();
+    await portRow.waitFor();
+    await page.keyboard.press('h');
+    await portRow.waitFor({ state: 'detached' });
+    await page.keyboard.press('h');
+    assert.equal(await selectedKind(), 'window');
+    const rowCount = () => usage.getByRole('treeitem').count();
+    const unfolded = await rowCount();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(
+      (unfolded) => document.querySelectorAll('[data-usage-kind]').length < unfolded,
+      unfolded,
+    );
+    await page.keyboard.press('h');
+    assert.equal(await selectedKind(), 'session');
+    await page.keyboard.press('j');
+    await page.keyboard.press('l');
+    await page.keyboard.press('j');
+    assert.equal(await selectedKind(), 'pane');
+    await page.keyboard.press('l');
+    await portRow.waitFor();
+    // List actions don't apply here.
+    await page.keyboard.press('x');
+    assert.equal(await viewer.getByRole('button', { name: 'y: confirm', exact: true }).count(), 0);
+    await page.keyboard.press('/');
+    await viewer.getByRole('button', { name: 'tab: panes', exact: true }).waitFor({ state: 'detached' });
+    await page.keyboard.press('Escape');
+    await viewer.getByRole('button', { name: 'tab: panes', exact: true }).waitFor();
+    await usage.getByText(`TCP 127.0.0.1:${usagePort}`).click();
+    await viewer.getByRole('button', { name: 'tab: processes', exact: true }).waitFor();
+    await page.keyboard.press('q');
+    await viewer.waitFor({ state: 'detached' });
+    await paneInput('kill $USAGE_PID\n');
+    console.log('PASS pane usage split, ports under panes, folding, and panel keys');
+  }
+
   const unavailablePage = await context.newPage();
   const unavailableCommands: Array<{ type: string }> = [];
   await unavailablePage.routeWebSocket(/\/ws\/processes$/, (socket) => {
+    const port = {
+      pid: null,
+      protocol: 'TCP',
+      local_address: '127.0.0.1',
+      local_port: 62222,
+      remote_address: null,
+      state: 'LISTEN',
+    };
     const snapshot = {
       type: 'snapshot',
       processes: [],
-      ports: null,
+      ports: [
+        port,
+        { ...port, local_address: '::1' },
+        { ...port, protocol: 'UDP', state: 'BOUND' },
+        { ...port, pid: 99 },
+      ],
       ports_error: null,
       cpu_count: 1,
       mem_used: 0,
@@ -345,33 +427,7 @@ try {
       load_average: [0, 0, 0],
     };
     socket.send(JSON.stringify(snapshot));
-    socket.onMessage((message) => {
-      const command = JSON.parse(String(message));
-      unavailableCommands.push(command);
-      if (command.type === 'set_ports') {
-        const port = {
-          pid: null,
-          protocol: 'TCP',
-          local_address: '127.0.0.1',
-          local_port: 62222,
-          remote_address: null,
-          state: 'LISTEN',
-        };
-        socket.send(
-          JSON.stringify({
-            ...snapshot,
-            ports: command.enabled
-              ? [
-                  port,
-                  { ...port, local_address: '::1' },
-                  { ...port, protocol: 'UDP', state: 'BOUND' },
-                  { ...port, pid: 99 },
-                ]
-              : null,
-          }),
-        );
-      }
-    });
+    socket.onMessage((message) => unavailableCommands.push(JSON.parse(String(message))));
   });
   try {
     await unavailablePage.goto(`${url}/s/${encodeURIComponent(session.name)}`);

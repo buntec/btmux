@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConnectionState } from '../lib/connectionState';
-import type {
-  ProcessKillRequest,
-  ProcessPortsRequest,
-  ProcessServerMessage,
-  ProcessSignal,
-} from '../protocol/process-messages';
+import type { ProcessKillRequest, ProcessServerMessage, ProcessSignal } from '../protocol/process-messages';
 import { useStore } from '../state/store';
 import { useProcessStore } from '../state/processStore';
 
 const RECONNECT_MS = 2000;
 
 export function useProcessSocket(enabled: boolean) {
-  const viewMode = useProcessStore((s) => s.viewMode);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enabledRef = useRef(enabled);
@@ -29,13 +23,7 @@ export function useProcessSocket(enabled: boolean) {
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/processes`);
     socketRef.current = ws;
 
-    ws.onopen = () => {
-      setState('connected');
-      if (useProcessStore.getState().viewMode === 'ports') {
-        const request: ProcessPortsRequest = { type: 'set_ports', enabled: true };
-        ws.send(JSON.stringify(request));
-      }
-    };
+    ws.onopen = () => setState('connected');
 
     ws.onmessage = (event) => {
       try {
@@ -80,14 +68,6 @@ export function useProcessSocket(enabled: boolean) {
       socketRef.current = null;
     };
   }, [connect, enabled]);
-
-  useEffect(() => {
-    const ws = socketRef.current;
-    if (ws?.readyState === WebSocket.OPEN) {
-      const request: ProcessPortsRequest = { type: 'set_ports', enabled: viewMode === 'ports' };
-      ws.send(JSON.stringify(request));
-    }
-  }, [viewMode]);
 
   const sendKill = useCallback((pid: number, startTime: number, signal: ProcessSignal) => {
     const ws = socketRef.current;

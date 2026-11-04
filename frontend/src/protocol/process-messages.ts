@@ -13,6 +13,10 @@ export interface ProcessInfo {
   user: string | null;
   start_time: number;
   run_time: number;
+  /** Bytes per second. */
+  disk_read: number;
+  disk_write: number;
+  pane_id: string | null;
 }
 
 export interface ProcessSnapshot {
@@ -47,9 +51,4 @@ export interface ProcessKillRequest {
   pid: number;
   start_time: number;
   signal: ProcessSignal;
-}
-
-export interface ProcessPortsRequest {
-  type: 'set_ports';
-  enabled: boolean;
 }

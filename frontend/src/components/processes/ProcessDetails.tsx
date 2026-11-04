@@ -47,6 +47,10 @@ export function ProcessDetails() {
             value={`${formatBytes(process.memory)} (${formatMemoryPercent(process.memory, snapshot?.mem_total ?? 0)})`}
           />
           <Detail label="Virtual memory" value={formatBytes(process.virtual_memory)} />
+          <Detail
+            label="Disk"
+            value={`${formatBytes(process.disk_read)}/s read, ${formatBytes(process.disk_write)}/s written`}
+          />
           <Detail label="Elapsed" value={formatElapsed(process)} />
           <Detail label="Started" value={formatStarted(process)} />
         </VStack>

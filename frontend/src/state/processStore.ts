@@ -4,6 +4,14 @@ import { portKey, PORT_SORT_MODES, type PortSortMode } from '../lib/portRows';
 import { nextProcessSortMode, type ProcessSortMode } from '../lib/processTree';
 
 interface ProcessStore {
+  /** Which half takes keys: the process or port list, or pane usage. */
+  panel: 'list' | 'usage';
+  setPanel: (panel: 'list' | 'usage') => void;
+  togglePanel: () => void;
+  focusedUsage: string | null;
+  collapsedUsage: Set<string>;
+  setFocusedUsage: (key: string | null) => void;
+  toggleUsageCollapsed: (key: string) => void;
   snapshot: ProcessSnapshot | null;
   processes: ProcessInfo[];
   focusedPid: number | null;
@@ -40,6 +48,19 @@ interface ProcessStore {
 }
 
 export const useProcessStore = create<ProcessStore>((set, get) => ({
+  panel: 'list',
+  // The filter only applies to the list, and takes keys while active.
+  setPanel: (panel) => set(panel === 'usage' ? { panel, filterActive: false, filterQuery: '' } : { panel }),
+  togglePanel: () => get().setPanel(get().panel === 'list' ? 'usage' : 'list'),
+  focusedUsage: null,
+  collapsedUsage: new Set(),
+  setFocusedUsage: (focusedUsage) => set({ focusedUsage }),
+  toggleUsageCollapsed: (key) =>
+    set((state) => {
+      const collapsedUsage = new Set(state.collapsedUsage);
+      if (!collapsedUsage.delete(key)) collapsedUsage.add(key);
+      return { collapsedUsage };
+    }),
   snapshot: null,
   processes: [],
   focusedPid: null,
@@ -106,6 +127,9 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   setFilterActive: (filterActive) => set({ filterActive, filterQuery: filterActive ? get().filterQuery : '' }),
   reset: () => {
     set({
+      panel: 'list',
+      focusedUsage: null,
+      collapsedUsage: new Set(),
       snapshot: null,
       processes: [],
       focusedPid: null,

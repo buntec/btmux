@@ -38,6 +38,7 @@ export function PortTable({
   const focusedPort = useProcessStore((s) => s.focusedPort);
   const focusedPid = useProcessStore((s) => s.focusedPid);
   const followFocus = useProcessStore((s) => s.followFocus);
+  const panelActive = useProcessStore((s) => s.panel === 'list');
   const sortMode = useProcessStore((s) => s.portSortMode);
   const sortReversed = useProcessStore((s) => s.portSortReversed);
   const setFocusedPort = useProcessStore((s) => s.setFocusedPort);
@@ -104,7 +105,11 @@ export function PortTable({
                   }}
                   className={clsx(
                     'cursor-pointer',
-                    key === focusedPort ? 'bg-accent-bg text-on-accent' : 'hover:bg-overlay-hover',
+                    key !== focusedPort
+                      ? 'hover:bg-overlay-hover'
+                      : panelActive
+                        ? 'bg-accent-bg text-on-accent'
+                        : 'bg-overlay-hover',
                   )}
                 >
                   <TableCell>

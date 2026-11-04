@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::WebSocketUpgrade;
+use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use netstat2::{iterate_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
@@ -12,15 +13,15 @@ use sysinfo::{
     Uid, UpdateKind, Users, MINIMUM_CPU_UPDATE_INTERVAL,
 };
 use tokio::time::{interval, sleep, Duration, MissedTickBehavior};
+use uuid::Uuid;
+
+use crate::AppState;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
-    SetPorts {
-        enabled: bool,
-    },
     Kill {
         pid: u32,
         /// Guards against PID reuse between snapshot and signal.
@@ -51,6 +52,10 @@ struct ProcessInfo {
     user: Option<String>,
     start_time: u64,
     run_time: u64,
+    /// Bytes per second since the last refresh.
+    disk_read: u64,
+    disk_write: u64,
+    pane_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -202,12 +207,35 @@ impl UserNames {
     }
 }
 
+/// A process's parent and session.
+type Link = (Option<u32>, Option<u32>);
+
+/// The nearest ancestor that is a pane's shell, else the shell leading its
+/// session (orphans reparented to init). Processes that call `setsid` and
+/// reparent, like daemons, belong to no pane.
+fn pane_owner(pid: u32, links: &HashMap<u32, Link>, shells: &HashMap<u32, Uuid>) -> Option<Uuid> {
+    let mut current = pid;
+    for _ in 0..64 {
+        if let Some(&pane) = shells.get(&current) {
+            return Some(pane);
+        }
+        match links.get(&current).and_then(|link| link.0) {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    let session = links.get(&pid)?.1?;
+    shells.get(&session).copied()
+}
+
 struct ProcessSampler {
     system: System,
     users: UserNames,
     refresh: ProcessRefreshKind,
     cpu_count: usize,
-    ports_enabled: bool,
+    last_refresh: Option<Instant>,
+    /// Seconds between the last two refreshes.
+    refresh_seconds: f64,
 }
 
 impl ProcessSampler {
@@ -217,10 +245,12 @@ impl ProcessSampler {
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()),
             )?,
             users: UserNames::new()?,
-            ports_enabled: false,
+            last_refresh: None,
+            refresh_seconds: 1.0,
             refresh: ProcessRefreshKind::nothing()
                 .with_cpu()
                 .with_memory()
+                .with_disk_usage()
                 .with_user(UpdateKind::OnlyIfNotSet)
                 .with_cmd(UpdateKind::OnlyIfNotSet),
             // Per-process CPU% is relative to one logical CPU.
@@ -233,10 +263,32 @@ impl ProcessSampler {
             .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
         self.system
             .refresh_processes_specifics(ProcessesToUpdate::All, true, self.refresh);
+        let now = Instant::now();
+        if let Some(last) = self.last_refresh.replace(now) {
+            // A command can refresh right after a tick; don't inflate its rate.
+            self.refresh_seconds = (now - last)
+                .as_secs_f64()
+                .max(MINIMUM_CPU_UPDATE_INTERVAL.as_secs_f64());
+        }
     }
 
-    fn snapshot(&mut self) -> ProcessSnapshot {
+    fn snapshot(&mut self, shells: &HashMap<u32, Uuid>) -> ProcessSnapshot {
         let mut users_reloaded = false;
+        let links: HashMap<u32, Link> = self
+            .system
+            .processes()
+            .values()
+            .map(|process| {
+                (
+                    process.pid().as_u32(),
+                    (
+                        process.parent().map(Pid::as_u32),
+                        process.session_id().map(Pid::as_u32),
+                    ),
+                )
+            })
+            .collect();
+        let rate = |bytes: u64| (bytes as f64 / self.refresh_seconds) as u64;
         let processes = self
             .system
             .processes()
@@ -249,6 +301,7 @@ impl ProcessSampler {
                     .map(|part| part.to_string_lossy())
                     .collect::<Vec<_>>()
                     .join(" ");
+                let disk = process.disk_usage();
                 ProcessInfo {
                     pid: process.pid().as_u32(),
                     parent_pid: process.parent().map(Pid::as_u32),
@@ -263,16 +316,15 @@ impl ProcessSampler {
                         .map(|uid| self.users.resolve(uid, &mut users_reloaded)),
                     start_time: process.start_time(),
                     run_time: process.run_time(),
+                    disk_read: rate(disk.read_bytes),
+                    disk_write: rate(disk.written_bytes),
+                    pane_id: pane_owner(process.pid().as_u32(), &links, shells),
                 }
             })
             .collect();
-        let (ports, ports_error) = if self.ports_enabled {
-            match sample_ports() {
-                Ok(ports) => (Some(ports), None),
-                Err(error) => (None, Some(error)),
-            }
-        } else {
-            (None, None)
+        let (ports, ports_error) = match sample_ports() {
+            Ok(ports) => (Some(ports), None),
+            Err(error) => (None, Some(error)),
         };
         let load_average =
             System::load_average().map_or([0.0; 3], |load| [load.one, load.five, load.fifteen]);
@@ -346,21 +398,29 @@ async fn with_sampler<T: Send + 'static>(
 async fn send_snapshot(
     ws_tx: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     sampler: &SharedSampler,
+    state: &AppState,
 ) -> Result<(), ()> {
-    let text = with_sampler(sampler, |sampler| {
+    let shells: HashMap<u32, Uuid> = state
+        .read()
+        .await
+        .pane_shells()
+        .into_iter()
+        .map(|(pane, shell, _)| (shell, pane))
+        .collect();
+    let text = with_sampler(sampler, move |sampler| {
         sampler.refresh();
-        serde_json::to_string(&sampler.snapshot())
+        serde_json::to_string(&sampler.snapshot(&shells))
     })
     .await?
     .map_err(|_| ())?;
     ws_tx.send(Message::Text(text.into())).await.map_err(|_| ())
 }
 
-pub async fn handle(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_socket)
+pub async fn handle(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket) {
+async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let Ok(Ok(sampler)) =
         tokio::task::spawn_blocking(|| ProcessSampler::new().map(|s| Arc::new(Mutex::new(s))))
@@ -380,7 +440,7 @@ async fn handle_socket(socket: WebSocket) {
         return;
     }
     sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
-    if send_snapshot(&mut ws_tx, &sampler).await.is_err() {
+    if send_snapshot(&mut ws_tx, &sampler, &state).await.is_err() {
         return;
     }
 
@@ -393,7 +453,7 @@ async fn handle_socket(socket: WebSocket) {
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                if send_snapshot(&mut ws_tx, &sampler).await.is_err() {
+                if send_snapshot(&mut ws_tx, &sampler, &state).await.is_err() {
                     break;
                 }
             }
@@ -419,10 +479,6 @@ async fn handle_command(
     text: &str,
 ) -> Result<(), ()> {
     match serde_json::from_str::<ClientMessage>(text) {
-        Ok(ClientMessage::SetPorts { enabled }) => {
-            with_sampler(sampler, move |sampler| sampler.ports_enabled = enabled).await?;
-            send_snapshot(ws_tx, sampler).await
-        }
         Ok(ClientMessage::Kill {
             pid,
             start_time,
@@ -480,15 +536,50 @@ mod tests {
     }
 
     #[test]
-    fn process_snapshots_skip_ports_until_requested() {
+    fn pane_owner_follows_ancestors_then_session() {
+        let (pane, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let shells = HashMap::from([(10, pane), (20, other)]);
+        let links = HashMap::from([
+            (1, (None, Some(1))),
+            (10, (Some(1), Some(10))),
+            (11, (Some(10), Some(10))),
+            (12, (Some(11), Some(10))),
+            // A nested shell's session doesn't override its ancestry.
+            (13, (Some(11), Some(20))),
+            // Reparented to init.
+            (14, (Some(1), Some(10))),
+            // A daemon: its own session, under init.
+            (15, (Some(1), Some(15))),
+            (16, (Some(1), Some(1))),
+        ]);
+        let owner = |pid| pane_owner(pid, &links, &shells);
+        for pid in [10, 11, 12, 13, 14] {
+            assert_eq!(owner(pid), Some(pane), "pid {pid}");
+        }
+        for pid in [1, 15, 16, 99] {
+            assert_eq!(owner(pid), None, "pid {pid}");
+        }
+    }
+
+    #[test]
+    fn pane_owner_stops_at_parent_cycles() {
+        let links = HashMap::from([(5, (Some(6), None)), (6, (Some(5), None))]);
+        assert_eq!(pane_owner(5, &links, &HashMap::new()), None);
+    }
+
+    #[test]
+    fn snapshot_assigns_children_of_a_shell_to_its_pane() {
+        let mut child = spawn_sleeper();
         let mut sampler = ProcessSampler::new().unwrap();
-        let snapshot = sampler.snapshot();
-        assert!(snapshot.ports.is_none());
-        assert!(snapshot.ports_error.is_none());
-        sampler.ports_enabled = true;
-        assert!(sampler.snapshot().ports.is_some());
-        sampler.ports_enabled = false;
-        assert!(sampler.snapshot().ports.is_none());
+        sampler.refresh();
+        let pane = Uuid::new_v4();
+        let snapshot = sampler.snapshot(&HashMap::from([(std::process::id(), pane)]));
+        let process = |pid| snapshot.processes.iter().find(|p| p.pid == pid).unwrap();
+        assert_eq!(process(child.id()).pane_id, Some(pane));
+        assert_eq!(process(std::process::id()).pane_id, Some(pane));
+        assert!(snapshot.ports.is_some());
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 
     fn spawn_sleeper() -> std::process::Child {

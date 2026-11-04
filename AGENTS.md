@@ -270,6 +270,18 @@ preview or details. Footer key hints everywhere type their key when tapped
 session switcher window switches to it.
 `mobile-browser-test.ts` covers these in WebKit with iPhone emulation.
 
+### Process viewer
+
+`prefix + t` opens it (`ProcessOverlay.tsx`) over `/ws/processes`, which sends a
+snapshot of all processes and sockets each second while open. It is split in two
+(`Tab` switches; one at a time below 768px): the process or port list, and
+per-pane usage. The server assigns each process a `pane_id`, from its nearest
+ancestor that is a pane's shell, else the shell leading its session
+(`pane_owner`), so a daemon that calls `setsid` and reparents counts for no pane,
+nor do the built-in editors and browser. `lib/paneUsage.ts` groups by session,
+window, and pane, summing CPU (100% is one core), resident memory (shared pages
+count once per process), disk rates, and listening sockets, listed under panes.
+
 ### Frontend lifetime and routing
 
 `useControlSocket.ts` mirrors pushed `sessions`, `all_sessions`, and `config`

@@ -41,11 +41,11 @@ const metrics = ['input', 'output', 'cacheRead'].map((kind, j) => ({
   name: 'claude_code.token.usage',
   sum: {
     isMonotonic: true,
-    aggregationTemporality: 2,
+    aggregationTemporality: 1,
     dataPoints: Array.from({ length: 20 }, (_, i) => ({
-      startTimeUnixNano: nanos(now - 1200),
+      startTimeUnixNano: nanos(now - (20 - i) * 60),
       timeUnixNano: nanos(now - (19 - i) * 60),
-      asDouble: (i + 1) * [800, 200, 500][j],
+      asDouble: [800, 200, 500][j],
       attributes: [attr('type', kind), attr('model', 'claude-test')],
     })),
   },
@@ -96,7 +96,7 @@ try {
                 name: 'claude_code.cost.usage',
                 sum: {
                   isMonotonic: true,
-                  aggregationTemporality: 2,
+                  aggregationTemporality: 1,
                   dataPoints: [{ startTimeUnixNano: nanos(now - 1200), timeUnixNano: nanos(now), asDouble: 0.25 }],
                 },
               },

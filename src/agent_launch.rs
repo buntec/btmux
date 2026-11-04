@@ -95,7 +95,8 @@ fn command(
                     .env("CLAUDE_CODE_ENABLE_TELEMETRY", "1")
                     .env("OTEL_SDK_DISABLED", "false")
                     .env("OTEL_METRICS_EXPORTER", "otlp")
-                    .env("OTEL_LOGS_EXPORTER", "otlp");
+                    .env("OTEL_LOGS_EXPORTER", "otlp")
+                    .env("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta");
                 for (signal, path) in [("METRICS", "metrics"), ("LOGS", "logs")] {
                     command
                         .env(
@@ -288,6 +289,10 @@ mod tests {
         assert_eq!(settings["CLAUDE_CODE_ENABLE_TELEMETRY"], "1");
         assert_eq!(settings["OTEL_METRICS_EXPORTER"], "otlp");
         assert_eq!(settings["OTEL_LOGS_EXPORTER"], "otlp");
+        assert_eq!(
+            settings["OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"],
+            "delta"
+        );
         for (signal, path) in [("METRICS", "metrics"), ("LOGS", "logs")] {
             assert_eq!(
                 settings[&format!("OTEL_EXPORTER_OTLP_{signal}_ENDPOINT")],

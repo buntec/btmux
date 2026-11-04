@@ -77,7 +77,7 @@ the minutes that change.
 
 Only numeric usage, the agent name, and the model are retained. Prompts, tool
 arguments/results, and raw log records are discarded. Batches are limited to
-8 MiB after decompression, and stored pane, counter, and deduplication histories
+8 MiB after decompression, and stored pane and deduplication histories
 are bounded. Subscription quotas are not collected by this receiver.
 
 ### Claude Code
@@ -88,6 +88,7 @@ Start Claude Code with both metrics and logs enabled:
 CLAUDE_CODE_ENABLE_TELEMETRY=1 \
 OTEL_METRICS_EXPORTER=otlp \
 OTEL_LOGS_EXPORTER=otlp \
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta \
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
 OTEL_EXPORTER_OTLP_ENDPOINT="$BTMUX_OTEL_ENDPOINT" \
 OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $BTMUX_AUTH_TOKEN" \
@@ -97,13 +98,12 @@ claude
 ```
 
 Tokens and costs come from `claude_code.token.usage` and
-`claude_code.cost.usage` metrics. Both cumulative and delta monotonic sums are
-supported. Request and tool activity comes from `api_request` and `tool_result`
+`claude_code.cost.usage` metrics, which must use delta temporality. Cumulative
+points are ignored with a warning in the server log, so requests and tool calls
+would still appear with no tokens or cost. Request and tool activity comes from `api_request` and `tool_result`
 logs. Token counts in those logs are ignored so enabling both exports does not
 count usage twice. Cached input is included in input, and is also shown as a
 separate subset. Reported cost is the agent's estimate, not a subscription bill.
-When an existing counter started over 24 hours ago, its first export establishes
-a baseline; the graph counts its subsequent increases.
 
 ### Codex CLI
 

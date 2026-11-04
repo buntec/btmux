@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::io::Read;
+use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
@@ -14,7 +15,7 @@ use axum::{Json, Router};
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value, KeyValue};
-use opentelemetry_proto::tonic::metrics::v1::{metric, number_data_point};
+use opentelemetry_proto::tonic::metrics::v1::{metric, number_data_point, AggregationTemporality};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -25,7 +26,6 @@ use crate::AppState;
 const MAX_BODY: usize = 8 * 1024 * 1024;
 const MAX_RECORDS: usize = 4096;
 const MAX_PANES: usize = 128;
-const MAX_SERIES: usize = 256;
 // Larger than a batch, so a retried batch is still recognized.
 const MAX_SEEN: usize = 2 * MAX_RECORDS;
 const HISTORY_SECONDS: u64 = 24 * 3600;
@@ -98,7 +98,6 @@ pub struct PaneTelemetry {
     model: Option<String>,
     updated_at: u64,
     buckets: BTreeMap<u64, AgentUsage>,
-    counters: HashMap<u64, Counter>,
     #[serde(skip)]
     seen: HashSet<u64>,
     #[cfg_attr(test, ts(as = "Vec<u64>"))]
@@ -108,20 +107,13 @@ pub struct PaneTelemetry {
     dirty: BTreeSet<u64>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct Counter {
-    start: u64,
-    end: u64,
-    value: f64,
-}
-
 struct Sample {
     agent: &'static str,
     model: Option<String>,
     timestamp: u64,
     identity: u64,
-    counter: Option<(u64, bool, f64)>,
+    /// A delta metric point's start time and value, which scales `usage`.
+    delta: Option<(u64, f64)>,
     usage: AgentUsage,
 }
 
@@ -238,59 +230,16 @@ impl PaneTelemetry {
         if seconds < now.saturating_sub(HISTORY_SECONDS) || seconds > now + 300 {
             return false;
         }
-        if let Some((start, cumulative, value)) = sample.counter {
-            if !value.is_finite() || !(0.0..=MAX_VALUE).contains(&value) || sample.timestamp == 0 {
+        if let Some((start, delta)) = sample.delta {
+            if !delta.is_finite() || !(0.0..=MAX_VALUE).contains(&delta) || sample.timestamp == 0 {
                 return false;
             }
-            let delta = if cumulative {
-                let previous = self.counters.get(&sample.identity);
-                if previous.is_some_and(|old| sample.timestamp <= old.end) {
-                    return false;
-                }
-                let delta = previous
-                    .filter(|old| old.start == start && value >= old.value)
-                    .map_or_else(
-                        || {
-                            // An old counter's first export is a baseline, not recent usage.
-                            if previous.is_none()
-                                && start / 1_000_000_000 < now.saturating_sub(HISTORY_SECONDS)
-                            {
-                                0.0
-                            } else {
-                                value
-                            }
-                        },
-                        |old| value - old.value,
-                    );
-                // Each session adds series, so the stalest gives way to the newest.
-                if previous.is_none() && self.counters.len() >= MAX_SERIES {
-                    if let Some(oldest) = self
-                        .counters
-                        .iter()
-                        .min_by_key(|(_, counter)| counter.end)
-                        .map(|(identity, _)| *identity)
-                    {
-                        self.counters.remove(&oldest);
-                    }
-                }
-                self.counters.insert(
-                    sample.identity,
-                    Counter {
-                        start,
-                        end: sample.timestamp,
-                        value,
-                    },
-                );
-                delta
-            } else {
-                // Delta points stand alone, so a late retry still counts once.
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                (sample.identity, start, sample.timestamp).hash(&mut hasher);
-                if !self.remember(hasher.finish()) {
-                    return false;
-                }
-                value
-            };
+            // Each point stands alone, so a late retry still counts once.
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (sample.identity, start, sample.timestamp).hash(&mut hasher);
+            if !self.remember(hasher.finish()) {
+                return false;
+            }
             sample.usage.input_tokens *= delta;
             sample.usage.output_tokens *= delta;
             sample.usage.cached_tokens *= delta;
@@ -604,7 +553,7 @@ fn parse_logs(request: ExportLogsServiceRequest) -> Result<Vec<Sample>, StatusCo
                     model,
                     timestamp,
                     identity,
-                    counter: None,
+                    delta: None,
                     usage,
                 });
             }
@@ -630,7 +579,17 @@ fn parse_metrics(request: ExportMetricsServiceRequest) -> Result<Vec<Sample>, St
                 let Some(metric::Data::Sum(sum)) = metric.data else {
                     continue;
                 };
-                if !sum.is_monotonic || !matches!(sum.aggregation_temporality, 1 | 2) {
+                if !sum.is_monotonic {
+                    continue;
+                }
+                if sum.aggregation_temporality != AggregationTemporality::Delta as i32 {
+                    static WARNED: Once = Once::new();
+                    WARNED.call_once(|| {
+                        tracing::warn!(
+                            "ignoring non-delta {}: set OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta",
+                            metric.name
+                        )
+                    });
                     continue;
                 }
                 for point in sum.data_points {
@@ -675,11 +634,7 @@ fn parse_metrics(request: ExportMetricsServiceRequest) -> Result<Vec<Sample>, St
                             .map(|s| s.chars().take(100).collect()),
                         timestamp: point.time_unix_nano,
                         identity: hasher.finish(),
-                        counter: Some((
-                            point.start_time_unix_nano,
-                            sum.aggregation_temporality == 2,
-                            value,
-                        )),
+                        delta: Some((point.start_time_unix_nano, value)),
                         usage,
                     });
                 }
@@ -745,30 +700,6 @@ mod tests {
     }
 
     #[test]
-    fn cumulative_counters_handle_retries_resets_and_reordered_exports() {
-        let mut store = TelemetryStore::default();
-        let pane = Uuid::new_v4();
-        for (value, end, start) in [
-            (100.0, NOW, NOW - 10),
-            (100.0, NOW, NOW - 10),
-            (150.0, NOW + 1, NOW - 10),
-            (120.0, NOW, NOW - 10),
-            (20.0, NOW + 2, NOW + 2),
-            (30.0, NOW + 3, NOW + 2),
-            (5.0, NOW + 4, NOW + 2),
-        ] {
-            store.ingest(
-                pane,
-                parse_metrics(metric(value, end, start, 2, "input")).unwrap(),
-                NOW + 4,
-            );
-        }
-        let snapshot = &store.snapshots(NOW + 4)[0];
-        assert_eq!(snapshot.totals.input_tokens, 185.0);
-        assert_eq!(snapshot.buckets.len(), 1);
-    }
-
-    #[test]
     fn delta_counters_deduplicate_and_cache_is_part_of_input() {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
@@ -817,7 +748,7 @@ mod tests {
         let pane = Uuid::new_v4();
         store.ingest(
             pane,
-            parse_metrics(metric(100.0, NOW, NOW - 1, 2, "input")).unwrap(),
+            parse_metrics(metric(100.0, NOW, NOW - 1, 1, "input")).unwrap(),
             NOW,
         );
         store.ingest(
@@ -844,10 +775,10 @@ mod tests {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
         for value in [f64::NAN, f64::INFINITY, -1.0, MAX_VALUE + 1.0] {
-            let mut sample = parse_metrics(metric(1.0, NOW, NOW, 2, "input"))
+            let mut sample = parse_metrics(metric(1.0, NOW, NOW, 1, "input"))
                 .unwrap()
                 .remove(0);
-            sample.counter.as_mut().unwrap().2 = value;
+            sample.delta.as_mut().unwrap().1 = value;
             assert!(!store.ingest(pane, vec![sample], NOW));
         }
         for end in [NOW - HISTORY_SECONDS - 1, NOW + 301] {
@@ -866,25 +797,10 @@ mod tests {
             store.ingest(Uuid::new_v4(), parse_logs(completion(NOW)).unwrap(), NOW);
         }
         assert_eq!(store.panes.len(), MAX_PANES);
-        let id = *store.panes.keys().next().unwrap();
-        let tracked = store.panes.get_mut(&id).unwrap();
-        for index in 0..MAX_SERIES + 10 {
-            let mut sample = parse_metrics(metric(1.0, NOW, NOW, 2, "input"))
-                .unwrap()
-                .remove(0);
-            sample.identity = index as u64;
-            tracked.ingest(sample, NOW);
-        }
-        assert_eq!(tracked.counters.len(), MAX_SERIES);
     }
 
-    fn metric_with_session(
-        value: f64,
-        end: u64,
-        temporality: i32,
-        session: usize,
-    ) -> ExportMetricsServiceRequest {
-        let mut request = metric(value, end, NOW - 100, temporality, "input");
+    fn metric_with_session(value: f64, end: u64, session: usize) -> ExportMetricsServiceRequest {
+        let mut request = metric(value, end, NOW - 100, 1, "input");
         let data = request.resource_metrics[0].scope_metrics[0].metrics[0]
             .data
             .as_mut()
@@ -903,37 +819,22 @@ mod tests {
     }
 
     #[test]
-    fn new_sessions_count_after_the_series_limit() {
-        for temporality in [1, 2] {
-            let mut store = TelemetryStore::default();
-            let pane = Uuid::new_v4();
-            for session in 0..MAX_SERIES + 10 {
-                let request = metric_with_session(1.0, NOW, temporality, session);
-                assert!(store.ingest(pane, parse_metrics(request).unwrap(), NOW));
-            }
-            let total = store.snapshots(NOW)[0].totals.input_tokens;
-            assert_eq!(total, (MAX_SERIES + 10) as f64);
-            assert!(store.panes[&pane].counters.len() <= MAX_SERIES);
+    fn many_sessions_all_count() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        for session in 0..1000 {
+            let request = metric_with_session(1.0, NOW, session);
+            assert!(store.ingest(pane, parse_metrics(request).unwrap(), NOW));
         }
+        assert_eq!(store.snapshots(NOW)[0].totals.input_tokens, 1000.0);
     }
 
     #[test]
-    fn evicting_a_counter_keeps_the_most_recent_series() {
-        let mut store = TelemetryStore::default();
-        let pane = Uuid::new_v4();
-        for session in 0..MAX_SERIES {
-            let end = NOW - 10 + (session == 0) as u64 * 5;
-            let request = metric_with_session(1.0, end, 2, session);
-            store.ingest(pane, parse_metrics(request).unwrap(), NOW);
+    fn only_delta_metrics_are_read() {
+        for temporality in [0, 2] {
+            let request = metric(100.0, NOW, NOW - 10, temporality, "input");
+            assert!(parse_metrics(request).unwrap().is_empty());
         }
-        // Session 0 exported last, so a new series must not replace it.
-        let request = metric_with_session(1.0, NOW, 2, MAX_SERIES);
-        store.ingest(pane, parse_metrics(request).unwrap(), NOW);
-        let request = metric_with_session(3.0, NOW + 1, 2, 0);
-        store.ingest(pane, parse_metrics(request).unwrap(), NOW + 1);
-        // 257 first exports, plus session 0's increase of 2.
-        let total = store.snapshots(NOW + 1)[0].totals.input_tokens;
-        assert_eq!(total, (MAX_SERIES + 1) as f64 + 2.0);
     }
 
     #[test]
@@ -1021,33 +922,18 @@ mod tests {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
         store.ingest(pane, parse_logs(completion(NOW)).unwrap(), NOW);
-        let cumulative = metric(100.0, NOW, NOW - 10, 2, "input");
-        store.ingest(pane, parse_metrics(cumulative).unwrap(), NOW);
+        let delta = || metric(100.0, NOW, NOW - 10, 1, "input");
+        store.ingest(pane, parse_metrics(delta()).unwrap(), NOW);
         let json = serde_json::to_vec(&store).unwrap();
         let mut store = serde_json::from_slice::<TelemetryStore>(&json)
             .unwrap()
             .restored();
         assert_eq!(store.snapshots(NOW)[0].totals.input_tokens, 1100.0);
         assert!(!store.ingest(pane, parse_logs(completion(NOW)).unwrap(), NOW));
-        let cumulative = metric(150.0, NOW + 1, NOW - 10, 2, "input");
-        store.ingest(pane, parse_metrics(cumulative).unwrap(), NOW + 1);
-        let total = &store.snapshots(NOW + 1)[0].totals;
-        assert_eq!(total.input_tokens, 1150.0);
+        assert!(!store.ingest(pane, parse_metrics(delta()).unwrap(), NOW));
+        let total = &store.snapshots(NOW)[0].totals;
+        assert_eq!(total.input_tokens, 1100.0);
         assert_eq!(total.requests, 1.0);
-    }
-
-    #[test]
-    fn old_cumulative_counters_begin_at_a_baseline() {
-        let mut store = TelemetryStore::default();
-        let pane = Uuid::new_v4();
-        for (value, end) in [(10000.0, NOW), (10025.0, NOW + 1)] {
-            store.ingest(
-                pane,
-                parse_metrics(metric(value, end, NOW - HISTORY_SECONDS - 10, 2, "input")).unwrap(),
-                NOW + 1,
-            );
-        }
-        assert_eq!(store.snapshots(NOW + 1)[0].totals.input_tokens, 25.0);
     }
 
     async fn app() -> (Router, AppState, Uuid) {
@@ -1109,7 +995,7 @@ mod tests {
             serde_json::from_str::<Value>(&event).unwrap()["type"],
             "agent_telemetry"
         );
-        let metric = metric(123.0, now_seconds(), now_seconds() - 1, 2, "input");
+        let metric = metric(123.0, now_seconds(), now_seconds() - 1, 1, "input");
         let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gzip.write_all(&metric.encode_to_vec()).unwrap();
         let mut req = request(

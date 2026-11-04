@@ -114,6 +114,30 @@ try {
   assert.equal(rejected.status, 409);
   assert.match(await rejected.text(), /unexpected argument '--port' found/);
 
+  const usageLog = {
+    resourceLogs: [
+      {
+        scopeLogs: [
+          {
+            logRecords: [
+              {
+                timeUnixNano: String(BigInt(Date.now()) * 1_000_000n),
+                attributes: [
+                  { key: 'event.name', value: { stringValue: 'codex.sse_event' } },
+                  { key: 'event.kind', value: { stringValue: 'response.completed' } },
+                  { key: 'input_token_count', value: { doubleValue: 42 } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const usage = async () => (await api('/api/telemetry')).find((item: any) => item.pane_id === pane)?.totals;
+  await api(`/api/panes/${pane}/telemetry/v1/logs`, usageLog);
+  assert.equal((await usage()).input_tokens, 42);
+
   const info = await api('/api/info');
   await api('/api/server/upgrade', { executable: info.executable });
   await until(
@@ -122,6 +146,9 @@ try {
   );
   await until(async () => (await api('/api/info')).instance !== info.instance, 'server did not come back');
   assert.equal((await api('/api/info')).pid, info.pid, 'an in-place upgrade keeps the pid');
+  assert.equal((await usage())?.input_tokens, 42, 'an upgrade must keep agent telemetry');
+  await api(`/api/panes/${pane}/telemetry/v1/logs`, usageLog);
+  assert.equal((await usage()).requests, 1, 'an upgrade must keep telemetry deduplication');
   await until(async () => (await readyCount()) > readyBefore, 'pane did not reattach');
   await page.waitForTimeout(250);
   assert.equal(await readTerminal(), before, 'upgrade must preserve output without duplication');

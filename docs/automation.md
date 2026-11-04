@@ -25,8 +25,10 @@ the btmux user.
 ## Agent telemetry
 
 Agent view's **Usage** tab graphs tokens, completed requests, tool calls, and
-reported costs, for all panes or one selected pane. It keeps one hour of
-per-minute history in memory; restarting or upgrading the server clears it.
+reported costs, for all panes or one selected pane. It keeps 24 hours of
+per-minute history in memory, including panes that have since closed. `btmux
+upgrade` keeps it; restarting the server clears it. The 8- and 24-hour ranges
+group usage into 5-minute points.
 Telemetry does not change agent lifecycle state or replace notification hooks.
 
 Launch agents through btmux to enable collection for the current pane:
@@ -69,8 +71,9 @@ $BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/telemetry
 It accepts `POST .../v1/logs` and `POST .../v1/metrics`, with
 `application/x-protobuf` or `application/json`, and optional gzip compression.
 Requests require `Authorization: Bearer $BTMUX_AUTH_TOKEN`, just like other
-APIs. `GET /api/telemetry` returns the current numeric summaries. Summaries are
-also pushed to control sockets and replayed when viewers reconnect.
+APIs. `GET /api/telemetry` returns the current numeric summaries, including
+closed panes. Control sockets get the full history when they connect, then only
+the minutes that change.
 
 Only numeric usage, the agent name, and the model are retained. Prompts, tool
 arguments/results, and raw log records are discarded. Batches are limited to
@@ -99,7 +102,7 @@ supported. Request and tool activity comes from `api_request` and `tool_result`
 logs. Token counts in those logs are ignored so enabling both exports does not
 count usage twice. Cached input is included in input, and is also shown as a
 separate subset. Reported cost is the agent's estimate, not a subscription bill.
-When an existing counter started over an hour ago, its first export establishes
+When an existing counter started over 24 hours ago, its first export establishes
 a baseline; the graph counts its subsequent increases.
 
 ### Codex CLI

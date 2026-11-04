@@ -22,11 +22,12 @@ use crate::pty::replay::Output;
 use crate::pty::{set_cloexec, Handoff};
 use crate::session::manager::SessionSnapshot;
 use crate::session::NotificationLevel;
+use crate::telemetry::TelemetryStore;
 use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -56,6 +57,7 @@ struct Header {
     lock: Option<RawFd>,
     sessions: Vec<SessionSnapshot>,
     panes: Vec<PaneHeader>,
+    telemetry: TelemetryStore,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -96,6 +98,7 @@ pub struct Inherited {
     pub lock: Option<OwnedFd>,
     pub sessions: Vec<SessionSnapshot>,
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
+    pub telemetry: TelemetryStore,
 }
 
 impl Inherited {
@@ -107,6 +110,7 @@ impl Inherited {
     pub async fn restore(self, state: &AppState) -> std::net::TcpListener {
         let mut mgr = state.write().await;
         let restored = mgr.restore_handoff(self.sessions, self.panes);
+        mgr.telemetry = self.telemetry;
         tracing::info!("upgraded in place with {} session(s)", restored);
         self.listener
     }
@@ -193,6 +197,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
         lock,
         sessions: header.sessions,
         panes,
+        telemetry: header.telemetry.restored(),
     }))
 }
 
@@ -322,7 +327,7 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
-    let error = exec(context, exe, sessions, &panes);
+    let error = exec(context, exe, sessions, &panes, manager.telemetry.clone());
     let kept = [context.listener]
         .into_iter()
         .chain(context.lock)
@@ -340,6 +345,7 @@ fn exec(
     exe: &Path,
     sessions: Vec<SessionSnapshot>,
     panes: &[(Uuid, RawFd, Handoff)],
+    telemetry: TelemetryStore,
 ) -> String {
     let dir = context
         .state_file
@@ -347,7 +353,7 @@ fn exec(
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(std::env::temp_dir);
-    let file = match write(&dir, context, sessions, panes) {
+    let file = match write(&dir, context, sessions, panes, telemetry) {
         Ok(file) => file,
         Err(error) => return format!("cannot write handoff: {error}"),
     };
@@ -373,6 +379,7 @@ fn write(
     context: &Context,
     sessions: Vec<SessionSnapshot>,
     panes: &[(Uuid, RawFd, Handoff)],
+    telemetry: TelemetryStore,
 ) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     let path = dir.join(format!(".handoff-{}", Uuid::new_v4()));
@@ -417,6 +424,7 @@ fn write(
                 shell_name: pane.shell_name.clone(),
             })
             .collect(),
+        telemetry,
     };
     let header = serde_json::to_vec(&header)?;
     let mut out = std::io::BufWriter::new(&mut file);
@@ -557,6 +565,10 @@ mod tests {
             AgentState::decl(&config),
             NotificationLevel::decl(&config),
             Layout::decl(&config),
+            TelemetryStore::decl(&config),
+            crate::telemetry::PaneTelemetry::decl(&config),
+            crate::telemetry::Counter::decl(&config),
+            crate::telemetry::AgentUsage::decl(&config),
         ]
         .join("\n");
         // Without doc comments.

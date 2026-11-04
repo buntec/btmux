@@ -93,7 +93,7 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 
 ### Agent telemetry
 
-`telemetry.rs` receives OTLP/HTTP at `/api/panes/{id}/telemetry/v1/{logs,metrics}` (JSON or protobuf, optional gzip), behind `auth.rs`, and keeps per-minute numeric usage plus the agent and model for an hour in `SessionManager`. Raw log content is discarded. It isn't handed off, so upgrades clear it. Summaries reach tabs as `ServerMessage::AgentTelemetry`, also in the snapshot sent on connect or lag, and `GET /api/telemetry` returns them; `AgentUsageView.tsx` graphs them in agent view's Usage tab. Claude tokens and cost come from metrics, and its requests and tool calls from logs, so nothing counts twice; Codex uses only logs. Cumulative counters are per series in `counters`, the stalest giving way at `MAX_SERIES`, since each session adds series; deltas and log records are deduplicated individually through `seen`, so late retries count once. `agent_launch.rs` implements `btmux claude`/`codex`, which set exporter settings for one invocation from the pane's `BTMUX_OTEL_ENDPOINT` and exec the agent (on Windows, they spawn it, looking for `.exe`, `.cmd`, and `.bat` on `PATH`).
+`telemetry.rs` receives OTLP/HTTP at `/api/panes/{id}/telemetry/v1/{logs,metrics}` (JSON or protobuf, optional gzip), behind `auth.rs`, and keeps per-minute numeric usage plus the agent and model for 24 hours in `SessionManager`. Raw log content is discarded. Closed panes keep their usage, so totals don't shrink, and can still take an agent's last export. The store is in the handoff file, so upgrades keep it; restarts clear it. Tabs get all of it as `ServerMessage::AgentTelemetry` with `replace` on connect or lag, then only changed minutes, whole values they merge by timestamp (`mergeTelemetry`), since resending a day of history on every export is too much traffic. `GET /api/telemetry` returns it too; `AgentUsageView.tsx` graphs it in agent view's Usage tab, in 5-minute points at the 8- and 24-hour ranges. Claude tokens and cost come from metrics, and its requests and tool calls from logs, so nothing counts twice; Codex uses only logs. Cumulative counters are per series in `counters`, the stalest giving way at `MAX_SERIES`, since each session adds series; deltas and log records are deduplicated individually through `seen`, so late retries count once. `agent_launch.rs` implements `btmux claude`/`codex`, which set exporter settings for one invocation from the pane's `BTMUX_OTEL_ENDPOINT` and exec the agent (on Windows, they spawn it, looking for `.exe`, `.cmd`, and `.bat` on `PATH`).
 
 ### PTY lifecycle (`src/pty/mod.rs`)
 
@@ -184,7 +184,7 @@ server's arguments, which the exec passes on. It refuses
 while the built-in Neovim has unsaved changes. The server holds the state
 lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
 output stays in the kernel), and writes session snapshots, replay
-journals, title/cwd, program-set colors, kitty keyboard flags, any partly read escape sequence, and
+journals, title/cwd, program-set colors, kitty keyboard flags, agent telemetry, any partly read escape sequence, and
 accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them

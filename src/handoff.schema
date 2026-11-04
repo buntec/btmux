@@ -1,5 +1,5 @@
-// handoff version 5
-type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, panes: Array<PaneHeader>, };
+// handoff version 6
+type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, panes: Array<PaneHeader>, telemetry: TelemetryStore, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
 pending: number,
@@ -20,3 +20,9 @@ type AgentStatus = { state: AgentState, agent: string | null, source: string | n
 type AgentState = "unknown" | "idle" | "working" | "blocked" | "done";
 type NotificationLevel = "info" | "attention" | "success" | "error";
 type Layout = { "type": "leaf", pane_id: string, } | { "type": "v_split", id: string, ratio: number, left: Layout, right: Layout, } | { "type": "h_split", id: string, ratio: number, top: Layout, bottom: Layout, };
+type TelemetryStore = { panes: { [key in string]: PaneTelemetry }, };
+type PaneTelemetry = { agent: string, model: string | null, updated_at: bigint, buckets: { [key in bigint]: AgentUsage }, counters: { [key in bigint]: Counter }, seen_order: Array<bigint>, };
+type Counter = { start: bigint, end: bigint, value: number, };
+type AgentUsage = {
+input_tokens: number, output_tokens: number, cached_tokens: number, cache_write_tokens: number,
+reasoning_tokens: number, requests: number, tool_calls: number, duration_ms: number, cost_usd: number | null, };

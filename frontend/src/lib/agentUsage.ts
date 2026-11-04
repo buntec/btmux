@@ -1,5 +1,8 @@
 import type { AgentTelemetry, AgentUsage, UsageBucket } from '../generated/protocol';
 
+/** Mirrors `HISTORY_SECONDS` in `telemetry.rs`. */
+export const USAGE_HISTORY_SECONDS = 24 * 3600;
+
 export const emptyUsage = (): AgentUsage => ({
   input_tokens: 0,
   output_tokens: 0,
@@ -22,17 +25,31 @@ export function addUsage(total: AgentUsage, usage: AgentUsage): AgentUsage {
 }
 
 /** Missing minutes are zero; cache and reasoning counts remain subsets. */
-export function usageTimeline(panes: AgentTelemetry[], now: number, minutes: number): UsageBucket[] {
-  const end = Math.floor(now / 60) * 60;
-  const start = end - (minutes - 1) * 60;
-  const buckets = Array.from({ length: minutes }, (_, i) => ({ timestamp: start + i * 60, usage: emptyUsage() }));
+export function usageTimeline(panes: AgentTelemetry[], now: number, minutes: number, stepMinutes = 1): UsageBucket[] {
+  const step = stepMinutes * 60;
+  const length = Math.floor(minutes / stepMinutes);
+  const end = Math.floor(now / step) * step;
+  const start = end - (length - 1) * step;
+  const buckets = Array.from({ length }, (_, i) => ({ timestamp: start + i * step, usage: emptyUsage() }));
   for (const pane of panes) {
     for (const bucket of pane.buckets) {
-      const index = Math.floor((bucket.timestamp - start) / 60);
+      const index = Math.floor((bucket.timestamp - start) / step);
       if (index >= 0 && index < buckets.length) addUsage(buckets[index].usage, bucket.usage);
     }
   }
   return buckets;
+}
+
+/** Pushes hold only changed minutes, each with its whole value, so applying one twice is harmless. */
+export function mergeTelemetry(current: AgentTelemetry | undefined, update: AgentTelemetry): AgentTelemetry {
+  const buckets = new Map((current?.buckets ?? []).map((bucket) => [bucket.timestamp, bucket]));
+  for (const bucket of update.buckets) buckets.set(bucket.timestamp, bucket);
+  return {
+    ...update,
+    buckets: [...buckets.values()]
+      .filter((bucket) => bucket.timestamp + 60 > update.updated_at - USAGE_HISTORY_SECONDS)
+      .sort((a, b) => a.timestamp - b.timestamp),
+  };
 }
 
 export const usageTotal = (buckets: UsageBucket[]) =>

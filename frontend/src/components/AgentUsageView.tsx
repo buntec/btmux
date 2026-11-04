@@ -8,7 +8,7 @@ import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/Segme
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from '@astryxdesign/core/Table';
 import { Text } from '@astryxdesign/core/Text';
 import type { AgentTelemetry, UsageBucket } from '../generated/protocol';
-import { formatCost, formatTokens, usageTimeline, usageTotal } from '../lib/agentUsage';
+import { formatCost, formatTokens, USAGE_HISTORY_SECONDS, usageTimeline, usageTotal } from '../lib/agentUsage';
 import { useStore } from '../state/store';
 
 const INPUT = 'var(--color-data-categorical-blue)';
@@ -16,6 +16,13 @@ const OUTPUT = 'var(--color-data-categorical-green)';
 const CACHE = 'var(--color-data-categorical-purple)';
 const timeLabel = (seconds: number) =>
   new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+const RANGES = [
+  { value: '15', label: '15 min', step: 1, unit: 'minute' },
+  { value: '60', label: '1 hour', step: 1, unit: 'minute' },
+  { value: '480', label: '8 hours', step: 5, unit: '5 minutes' },
+  { value: '1440', label: '24 hours', step: 5, unit: '5 minutes' },
+];
 
 interface Series {
   label: string;
@@ -27,11 +34,13 @@ function UsageChart({
   title,
   buckets,
   series,
+  unit,
   money = false,
 }: {
   title: string;
   buckets: UsageBucket[];
   series: Series[];
+  unit: string;
   money?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
@@ -51,7 +60,7 @@ function UsageChart({
       <svg
         viewBox="0 0 720 210"
         role="img"
-        aria-label={`${title}, per minute`}
+        aria-label={`${title}, per ${unit}`}
         tabIndex={0}
         className="w-full text-secondary"
         onKeyDown={(event) => {
@@ -73,7 +82,7 @@ function UsageChart({
       >
         <title>{title}</title>
         <desc>
-          Per-minute values.{' '}
+          Values per {unit}.{' '}
           {series
             .map((s) => `${s.label}: ${format(buckets.reduce((sum, bucket) => sum + s.value(bucket), 0))}`)
             .join('. ')}
@@ -136,7 +145,7 @@ export function AgentUsageView() {
   const telemetry = useStore((s) => s.agentTelemetry);
   const sessions = useStore((s) => s.allSessions);
   const [now, setNow] = useState(() => Date.now() / 1000);
-  const [minutes, setMinutes] = useState('60');
+  const [minutes, setMinutes] = useState('480');
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now() / 1000), 5000);
@@ -157,14 +166,19 @@ export function AgentUsageView() {
   );
   const panes = useMemo(
     () =>
-      Object.values(telemetry).filter(
-        (pane) => labels.has(pane.pane_id) && pane.buckets.some((bucket) => bucket.timestamp + 60 > now - 3600),
+      Object.values(telemetry).filter((pane) =>
+        pane.buckets.some((bucket) => bucket.timestamp + 60 > now - USAGE_HISTORY_SECONDS),
       ),
-    [telemetry, labels, now],
+    [telemetry, now],
   );
-  const selectedPane = panes.find((pane) => pane.pane_id === selected);
-  const buckets = usageTimeline(selectedPane ? [selectedPane] : panes, now, Number(minutes));
+  const open = panes.filter((pane) => labels.has(pane.pane_id));
+  const closed = panes.filter((pane) => !labels.has(pane.pane_id));
+  const range = RANGES.find((item) => item.value === minutes) ?? RANGES[0];
+  const timeline = (items: AgentTelemetry[]) => usageTimeline(items, now, Number(range.value), range.step);
+  const selectedPane = open.find((pane) => pane.pane_id === selected);
+  const buckets = timeline(selectedPane ? [selectedPane] : panes);
   const total = usageTotal(buckets);
+  const closedUsage = usageTotal(timeline(closed));
   if (panes.length === 0)
     return (
       <VStack hAlign="center" vAlign="center" className="h-full">
@@ -172,7 +186,7 @@ export function AgentUsageView() {
           title="No usage received yet"
           description="Run btmux claude or btmux codex in a pane to see tokens, costs, and tool activity here."
         />
-        <Text color="secondary">Usage history covers the last hour and clears when the server restarts.</Text>
+        <Text color="secondary">Usage history covers the last 24 hours and clears when the server restarts.</Text>
       </VStack>
     );
   return (
@@ -181,13 +195,14 @@ export function AgentUsageView() {
         <VStack gap={1} className="min-w-0 flex-1">
           <Heading level={2}>{selectedPane ? labels.get(selectedPane.pane_id) : 'All agents'}</Heading>
           <Text color="secondary">
-            Collected usage · per-minute history · {panes.length} {panes.length === 1 ? 'pane' : 'panes'}
+            Collected usage · per {range.unit} · {panes.length} {panes.length === 1 ? 'pane' : 'panes'}
           </Text>
         </VStack>
         {selectedPane && <Button label="All agents" variant="ghost" onClick={() => setSelected(null)} />}
         <SegmentedControl label="Usage time range" value={minutes} onChange={setMinutes} size="sm">
-          <SegmentedControlItem value="15" label="15 min" />
-          <SegmentedControlItem value="60" label="1 hour" />
+          {RANGES.map((item) => (
+            <SegmentedControlItem key={item.value} value={item.value} label={item.label} />
+          ))}
         </SegmentedControl>
       </HStack>
       <Grid columns={{ minWidth: 160, max: 4 }} gap={4}>
@@ -209,6 +224,7 @@ export function AgentUsageView() {
         <UsageChart
           title="Tokens"
           buckets={buckets}
+          unit={range.unit}
           series={[
             { label: 'Input', color: INPUT, value: (b) => b.usage.input_tokens },
             { label: 'Output', color: OUTPUT, value: (b) => b.usage.output_tokens },
@@ -218,6 +234,7 @@ export function AgentUsageView() {
         <UsageChart
           title="Activity"
           buckets={buckets}
+          unit={range.unit}
           series={[
             { label: 'Requests', color: INPUT, value: (b) => b.usage.requests },
             { label: 'Tool calls', color: OUTPUT, value: (b) => b.usage.tool_calls },
@@ -227,6 +244,7 @@ export function AgentUsageView() {
           <UsageChart
             title="Reported cost"
             buckets={buckets}
+            unit={range.unit}
             money
             series={[{ label: 'USD', color: CACHE, value: (b) => b.usage.cost_usd ?? 0 }]}
           />
@@ -247,8 +265,8 @@ export function AgentUsageView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {panes.map((pane: AgentTelemetry) => {
-              const usage = usageTotal(usageTimeline([pane], now, Number(minutes)));
+            {open.map((pane) => {
+              const usage = usageTotal(timeline([pane]));
               return (
                 <TableRow key={pane.pane_id}>
                   <TableCell>
@@ -272,11 +290,28 @@ export function AgentUsageView() {
                 </TableRow>
               );
             })}
+            {closed.length > 0 && (
+              <TableRow data-usage-closed>
+                <TableCell>
+                  <VStack gap={1}>
+                    <Text>Closed panes</Text>
+                    <Text type="supporting" color="secondary">
+                      {closed.length} {closed.length === 1 ? 'pane' : 'panes'}
+                    </Text>
+                  </VStack>
+                </TableCell>
+                <TableCell>{formatTokens(closedUsage.input_tokens + closedUsage.output_tokens)}</TableCell>
+                <TableCell>{formatTokens(closedUsage.requests)}</TableCell>
+                <TableCell>{formatTokens(closedUsage.tool_calls)}</TableCell>
+                <TableCell>{formatCost(closedUsage.cost_usd)}</TableCell>
+                <TableCell>{timeLabel(Math.max(...closed.map((pane) => pane.updated_at)))}</TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </VStack>
       <Text type="supporting" color="secondary">
-        History is kept in memory for one hour and clears on server restart or upgrade.
+        History covers 24 hours, including closed panes. Upgrades keep it; restarting the server clears it.
       </Text>
     </VStack>
   );

@@ -5,6 +5,7 @@ import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from 
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
 import type { AgentTelemetry, TailscaleStatus } from '../generated/protocol';
+import { mergeTelemetry } from '../lib/agentUsage';
 import { cacheThemes } from './startupTheme';
 
 export type FileBrowserMode = 'files' | 'git' | 'process';
@@ -164,10 +165,8 @@ export const useStore = create<AppStore>((set, get) => ({
   agentTelemetry: {},
   updateAgentTelemetry: (panes, replace = false, removed = []) =>
     set((state) => {
-      const agentTelemetry = {
-        ...(replace ? {} : state.agentTelemetry),
-        ...Object.fromEntries(panes.map((pane) => [pane.pane_id, pane])),
-      };
+      const agentTelemetry = replace ? {} : { ...state.agentTelemetry };
+      for (const pane of panes) agentTelemetry[pane.pane_id] = mergeTelemetry(agentTelemetry[pane.pane_id], pane);
       for (const id of removed) delete agentTelemetry[id];
       return { agentTelemetry };
     }),
@@ -196,16 +195,7 @@ export const useStore = create<AppStore>((set, get) => ({
   navigateFn: null,
   controlSendFn: null,
   setSessions: (sessions) => set({ sessions }),
-  setAllSessions: (allSessions) =>
-    set((state) => {
-      const panes = new Set(
-        allSessions.flatMap((session) => session.windows.flatMap((window) => window.panes.map((pane) => pane.id))),
-      );
-      return {
-        allSessions,
-        agentTelemetry: Object.fromEntries(Object.entries(state.agentTelemetry).filter(([id]) => panes.has(id))),
-      };
-    }),
+  setAllSessions: (allSessions) => set({ allSessions }),
   setConfig: (config) => {
     set({ config });
     cacheThemes(config.appearance, config.dark_theme, config.light_theme);

@@ -1,6 +1,6 @@
 //! Bounded, pane-scoped OTLP/HTTP collection. Raw log content is never retained.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,10 +28,10 @@ const MAX_PANES: usize = 128;
 const MAX_SERIES: usize = 256;
 // Larger than a batch, so a retried batch is still recognized.
 const MAX_SEEN: usize = 2 * MAX_RECORDS;
-const HISTORY_SECONDS: u64 = 3600;
+const HISTORY_SECONDS: u64 = 24 * 3600;
 const MAX_VALUE: f64 = 1e15;
 
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct AgentUsage {
     /// Input includes cache reads and writes; cached tokens are a subset.
@@ -79,27 +79,38 @@ pub struct AgentTelemetry {
     pub agent: String,
     pub model: Option<String>,
     pub updated_at: f64,
+    /// Over all retained history, even when `buckets` holds only changed minutes.
     pub totals: AgentUsage,
     pub buckets: Vec<UsageBucket>,
 }
 
-#[derive(Default)]
+/// Keeps closed panes, so a day's totals don't shrink when a pane closes.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct TelemetryStore {
     panes: HashMap<Uuid, PaneTelemetry>,
 }
 
-#[derive(Default)]
-struct PaneTelemetry {
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PaneTelemetry {
     agent: String,
     model: Option<String>,
     updated_at: u64,
     buckets: BTreeMap<u64, AgentUsage>,
     counters: HashMap<u64, Counter>,
+    #[serde(skip)]
     seen: HashSet<u64>,
+    #[cfg_attr(test, ts(as = "Vec<u64>"))]
     seen_order: VecDeque<u64>,
+    /// Minutes changed since the last push.
+    #[serde(skip)]
+    dirty: BTreeSet<u64>,
 }
 
-struct Counter {
+#[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct Counter {
     start: u64,
     end: u64,
     value: f64,
@@ -122,6 +133,15 @@ fn now_seconds() -> u64 {
 }
 
 impl TelemetryStore {
+    /// After a handoff, which carries only the ordered copy of `seen`.
+    #[cfg(unix)]
+    pub fn restored(mut self) -> Self {
+        for pane in self.panes.values_mut() {
+            pane.seen = pane.seen_order.iter().copied().collect();
+        }
+        self
+    }
+
     pub fn snapshots(&self, now: u64) -> Vec<AgentTelemetry> {
         let mut panes: Vec<_> = self
             .panes
@@ -166,10 +186,31 @@ impl TelemetryStore {
 
 impl PaneTelemetry {
     fn snapshot(&self, pane_id: Uuid, now: u64) -> Option<AgentTelemetry> {
-        let buckets: Vec<_> = self
+        self.telemetry(pane_id, now, |_| true)
+    }
+
+    /// The minutes changed since the last update, which tabs merge into what they have.
+    fn take_update(&mut self, pane_id: Uuid, now: u64) -> Option<AgentTelemetry> {
+        let dirty = std::mem::take(&mut self.dirty);
+        self.telemetry(pane_id, now, |minute| dirty.contains(&minute))
+    }
+
+    fn telemetry(
+        &self,
+        pane_id: Uuid,
+        now: u64,
+        include: impl Fn(u64) -> bool,
+    ) -> Option<AgentTelemetry> {
+        let retained = self
             .buckets
             .iter()
-            .filter(|(minute, _)| **minute + 60 > now.saturating_sub(HISTORY_SECONDS))
+            .filter(|(minute, _)| **minute + 60 > now.saturating_sub(HISTORY_SECONDS));
+        let mut totals = AgentUsage::default();
+        for (_, usage) in retained.clone() {
+            totals.add(usage);
+        }
+        let buckets: Vec<_> = retained
+            .filter(|(minute, _)| include(**minute))
             .map(|(minute, usage)| UsageBucket {
                 timestamp: *minute as f64,
                 usage: usage.clone(),
@@ -177,10 +218,6 @@ impl PaneTelemetry {
             .collect();
         if buckets.is_empty() {
             return None;
-        }
-        let mut totals = AgentUsage::default();
-        for bucket in &buckets {
-            totals.add(&bucket.usage);
         }
         Some(AgentTelemetry {
             pane_id,
@@ -267,10 +304,9 @@ impl PaneTelemetry {
             self.model = sample.model;
         }
         self.updated_at = now;
-        self.buckets
-            .entry(seconds / 60 * 60)
-            .or_default()
-            .add(&sample.usage);
+        let minute = seconds / 60 * 60;
+        self.buckets.entry(minute).or_default().add(&sample.usage);
+        self.dirty.insert(minute);
         true
     }
 
@@ -298,11 +334,12 @@ pub fn routes() -> Router<AppState> {
 }
 
 pub fn snapshots(mgr: &crate::session::manager::SessionManager) -> Vec<AgentTelemetry> {
-    mgr.telemetry
-        .snapshots(now_seconds())
-        .into_iter()
-        .filter(|pane| mgr.find_pane(pane.pane_id).is_some())
-        .collect()
+    mgr.telemetry.snapshots(now_seconds())
+}
+
+/// An agent's last export can arrive just after its pane closes.
+fn accepts(mgr: &crate::session::manager::SessionManager, id: Uuid) -> bool {
+    mgr.find_pane(id).is_some() || mgr.telemetry.panes.contains_key(&id)
 }
 
 async fn snapshot(State(state): State<AppState>) -> Json<Vec<AgentTelemetry>> {
@@ -368,7 +405,7 @@ async fn collect(
         Some("gzip") => true,
         _ => return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
     };
-    if state.read().await.find_pane(id).is_none() {
+    if !accepts(&*state.read().await, id) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let json = content_type == "application/json";
@@ -398,7 +435,7 @@ async fn collect(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let mut mgr = state.write().await;
-    if mgr.find_pane(id).is_none() {
+    if !accepts(&mgr, id) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let now = now_seconds();
@@ -412,8 +449,8 @@ async fn collect(
         let panes = mgr
             .telemetry
             .panes
-            .get(&id)
-            .and_then(|pane| pane.snapshot(id, now))
+            .get_mut(&id)
+            .and_then(|pane| pane.take_update(id, now))
             .into_iter()
             .collect();
         let _ = mgr.events().send(
@@ -946,13 +983,67 @@ mod tests {
     }
 
     #[test]
+    fn history_covers_a_day_including_idle_panes() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        store.ingest(pane, parse_logs(completion(NOW)).unwrap(), NOW);
+        let later = NOW + 8 * 3600;
+        store.ingest(other, parse_logs(completion(later)).unwrap(), later);
+        assert_eq!(store.snapshots(later).len(), 2);
+        let expired = NOW + HISTORY_SECONDS + 60;
+        store.ingest(other, parse_logs(completion(expired)).unwrap(), expired);
+        assert!(!store.panes.contains_key(&pane));
+    }
+
+    #[test]
+    fn updates_hold_only_changed_minutes_but_totals_cover_all_history() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        store.ingest(pane, parse_logs(completion(NOW)).unwrap(), NOW);
+        store.ingest(pane, parse_logs(completion(NOW + 120)).unwrap(), NOW + 120);
+        let tracked = store.panes.get_mut(&pane).unwrap();
+        let update = tracked.take_update(pane, NOW + 120).unwrap();
+        assert_eq!(update.buckets.len(), 2);
+        assert!(tracked.take_update(pane, NOW + 120).is_none());
+        store.ingest(pane, parse_logs(completion(NOW + 121)).unwrap(), NOW + 121);
+        let tracked = store.panes.get_mut(&pane).unwrap();
+        let update = tracked.take_update(pane, NOW + 121).unwrap();
+        assert_eq!(update.buckets.len(), 1);
+        assert_eq!(update.buckets[0].usage.requests, 2.0);
+        assert_eq!(update.totals.requests, 3.0);
+        assert_eq!(store.snapshots(NOW + 121)[0].buckets.len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_handoff_keeps_history_and_deduplication() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        store.ingest(pane, parse_logs(completion(NOW)).unwrap(), NOW);
+        let cumulative = metric(100.0, NOW, NOW - 10, 2, "input");
+        store.ingest(pane, parse_metrics(cumulative).unwrap(), NOW);
+        let json = serde_json::to_vec(&store).unwrap();
+        let mut store = serde_json::from_slice::<TelemetryStore>(&json)
+            .unwrap()
+            .restored();
+        assert_eq!(store.snapshots(NOW)[0].totals.input_tokens, 1100.0);
+        assert!(!store.ingest(pane, parse_logs(completion(NOW)).unwrap(), NOW));
+        let cumulative = metric(150.0, NOW + 1, NOW - 10, 2, "input");
+        store.ingest(pane, parse_metrics(cumulative).unwrap(), NOW + 1);
+        let total = &store.snapshots(NOW + 1)[0].totals;
+        assert_eq!(total.input_tokens, 1150.0);
+        assert_eq!(total.requests, 1.0);
+    }
+
+    #[test]
     fn old_cumulative_counters_begin_at_a_baseline() {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
         for (value, end) in [(10000.0, NOW), (10025.0, NOW + 1)] {
             store.ingest(
                 pane,
-                parse_metrics(metric(value, end, NOW - 7200, 2, "input")).unwrap(),
+                parse_metrics(metric(value, end, NOW - HISTORY_SECONDS - 10, 2, "input")).unwrap(),
                 NOW + 1,
             );
         }
@@ -1056,6 +1147,26 @@ mod tests {
         assert_eq!(snapshots(&*state.read().await)[0].totals.requests, 1.0);
         let serialized = serde_json::to_string(&snapshots(&*state.read().await)).unwrap();
         assert!(!serialized.contains("event.name"));
+    }
+
+    #[tokio::test]
+    async fn closed_panes_keep_their_usage_and_accept_a_last_export() {
+        let (app, state, _) = app().await;
+        let closed = Uuid::new_v4();
+        let now = now_seconds();
+        state
+            .write()
+            .await
+            .telemetry
+            .ingest(closed, parse_logs(completion(now)).unwrap(), now);
+        assert_eq!(snapshots(&*state.read().await).len(), 1);
+        let last = serde_json::to_vec(&completion(now + 1)).unwrap();
+        let response = app
+            .oneshot(request(closed, "logs", "application/json", last))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(snapshots(&*state.read().await)[0].totals.requests, 2.0);
     }
 
     #[tokio::test]

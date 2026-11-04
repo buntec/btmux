@@ -274,7 +274,8 @@ try {
       expected,
     );
   };
-  assert.equal(await selectedTile(), 0);
+  // The grid opens on the active pane, whose tile depends on session order.
+  await pressAndExpect('1', 0);
   await pressAndExpect('2', 1);
   await pressAndExpect('l', 2);
   await pressAndExpect('h', 1);

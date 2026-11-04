@@ -120,6 +120,10 @@ try {
   await page.getByRole('radio', { name: '15 min', exact: true }).click();
   assert.notEqual(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');
   await page.getByRole('radio', { name: '1 hour', exact: true }).click();
+  assert.equal(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');
+  await page.getByRole('radio', { name: '24 hours', exact: true }).click();
+  assert.equal(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');
+  await page.getByRole('img', { name: 'Tokens, per 5 minutes' }).waitFor();
   if (process.env.BTMUX_TEST_SCREENSHOT)
     await page.screenshot({ path: process.env.BTMUX_TEST_SCREENSHOT, fullPage: true });
   const other = await context.newPage();
@@ -144,8 +148,33 @@ try {
       return JSON.stringify(useStore.getState().agentTelemetry).includes('private test content');
     })),
   );
+  // A push holds only the changed minute; earlier minutes must survive it.
+  await other.evaluate(() => {
+    (window as any).__updates = [];
+    (window as any).__controlSocket.addEventListener('message', (event: MessageEvent) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'agent_telemetry') (window as any).__updates.push(message);
+    });
+  });
+  const attributes = logs[19].attributes.filter((item) => item.key !== 'input_token_count');
+  const logRecords = [{ ...logs[19], attributes: [...attributes, attr('input_token_count', 1100)] }];
+  await post(`/api/panes/${codex}/telemetry/v1/logs`, { resourceLogs: [{ scopeLogs: [{ logRecords }] }] });
+  await waitForAsync(other, () => (window as any).__updates.length > 0);
+  const update = await other.evaluate(() => (window as any).__updates[0]);
+  assert.equal(update.replace, false);
+  assert.equal(update.panes[0].buckets.length, 1);
+  await waitForAsync(other, () => document.querySelector('[data-usage-total="Tokens"]')?.textContent !== '73.9K');
+  const afterUpdate = await other.locator('[data-usage-total="Tokens"]').textContent();
+  assert.equal(afterUpdate, '75.2K');
+  // A closed pane's usage stays in the totals, in its own row.
+  assert.equal(await other.locator('[data-usage-closed]').count(), 0);
+  const killed = await fetch(`${url}/api/panes/${claude}`, { method: 'DELETE', headers });
+  assert(killed.ok, `kill pane: ${killed.status}`);
+  await other.locator('[data-usage-closed]').waitFor();
+  assert.equal(await other.locator('[data-usage-total="Tokens"]').textContent(), afterUpdate);
+  assert.equal(await other.getByRole('button', { name: /usage-claude \/ / }).count(), 0);
   await other.setViewportSize({ width: 390, height: 844 });
-  await other.getByRole('img', { name: 'Tokens, per minute' }).waitFor();
+  await other.getByRole('img', { name: 'Tokens, per 5 minutes' }).waitFor();
   assert(await other.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await other.keyboard.press('Escape');
   await other.getByRole('dialog').waitFor({ state: 'hidden' });

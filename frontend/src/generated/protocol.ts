@@ -28,7 +28,11 @@ export type UsageBucket = {
 timestamp: number, usage: AgentUsage, };
 
 // prettier-ignore
-export type AgentTelemetry = { pane_id: string, agent: string, model: string | null, updated_at: number, totals: AgentUsage, buckets: Array<UsageBucket>, };
+export type AgentTelemetry = { pane_id: string, agent: string, model: string | null, updated_at: number,
+/**
+ * Over all retained history, even when `buckets` holds only changed minutes.
+ */
+totals: AgentUsage, buckets: Array<UsageBucket>, };
 
 // prettier-ignore
 export type NotificationLevel = "info" | "attention" | "success" | "error";

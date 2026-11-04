@@ -804,8 +804,14 @@ impl SessionManager {
             true
         };
         if removed {
-            self.agents.remove(&pane_id);
+            self.forget_pane(pane_id);
         }
+    }
+
+    /// Runtime state of a pane that just left the tree.
+    fn forget_pane(&mut self, pane_id: Uuid) {
+        self.agents.remove(&pane_id);
+        self.telemetry.pane_closed(pane_id);
     }
 
     pub async fn handle_pane_exit(&mut self, pane_id: Uuid) {
@@ -818,7 +824,7 @@ impl SessionManager {
             return;
         };
 
-        self.agents.remove(&pane_id);
+        self.forget_pane(pane_id);
         let window = &mut self.sessions[si].windows[wi];
         window.remove_pane(pane_id);
         if !window.panes.is_empty() {
@@ -1166,7 +1172,7 @@ impl SessionManager {
             {
                 window.remove_pane(pane_id);
             }
-            self.agents.remove(&pane_id);
+            self.forget_pane(pane_id);
         } else if session.windows.len() > 1 {
             self.kill_window(window.id);
         } else if self.sessions.len() > 1 {
@@ -1196,7 +1202,7 @@ impl SessionManager {
                 .collect::<Vec<_>>()
         };
         for pane_id in removed_panes {
-            self.agents.remove(&pane_id);
+            self.forget_pane(pane_id);
         }
     }
 
@@ -1258,7 +1264,7 @@ impl SessionManager {
         if let Some(idx) = self.sessions.iter().position(|s| s.id == id) {
             let removed = self.sessions.remove(idx);
             for pane in removed.windows.into_iter().flat_map(|window| window.panes) {
-                self.agents.remove(&pane.id);
+                self.forget_pane(pane.id);
             }
         }
     }
@@ -1269,7 +1275,11 @@ impl SessionManager {
     /// `kill_session` refusing to remove the last one and `handle_pane_exit`
     /// recreating "0" when the tree empties), so this resets rather than empties.
     pub async fn clear_sessions(&mut self) {
-        self.sessions.clear();
+        for session in std::mem::take(&mut self.sessions) {
+            for pane in session.windows.into_iter().flat_map(|window| window.panes) {
+                self.telemetry.pane_closed(pane.id);
+            }
+        }
         self.agents.clear();
         self.create_session(Some("0".to_string())).await;
     }
@@ -1355,6 +1365,7 @@ impl SessionManager {
                 }
                 let removed = session.windows.remove(wi);
                 for pane in removed.panes {
+                    self.telemetry.pane_closed(pane.id);
                     self.agents.remove(&pane.id);
                 }
                 if wi < session.active_window {

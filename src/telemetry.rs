@@ -28,6 +28,7 @@ const MAX_RECORDS: usize = 4096;
 const MAX_PANES: usize = 128;
 // Larger than a batch, so a retried batch is still recognized.
 const MAX_SEEN: usize = 2 * MAX_RECORDS;
+const MAX_CLOSED: usize = 1024;
 const HISTORY_SECONDS: u64 = 24 * 3600;
 const MAX_VALUE: f64 = 1e15;
 
@@ -89,6 +90,9 @@ pub struct AgentTelemetry {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct TelemetryStore {
     panes: HashMap<Uuid, PaneTelemetry>,
+    /// Recently closed panes, whose first export may still be on its way.
+    #[cfg_attr(test, ts(as = "Vec<Uuid>"))]
+    closed: VecDeque<Uuid>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -132,6 +136,17 @@ impl TelemetryStore {
             pane.seen = pane.seen_order.iter().copied().collect();
         }
         self
+    }
+
+    pub fn pane_closed(&mut self, id: Uuid) {
+        self.closed.push_back(id);
+        if self.closed.len() > MAX_CLOSED {
+            self.closed.pop_front();
+        }
+    }
+
+    fn accepts_closed(&self, id: Uuid) -> bool {
+        self.panes.contains_key(&id) || self.closed.contains(&id)
     }
 
     pub fn snapshots(&self, now: u64) -> Vec<AgentTelemetry> {
@@ -286,9 +301,9 @@ pub fn snapshots(mgr: &crate::session::manager::SessionManager) -> Vec<AgentTele
     mgr.telemetry.snapshots(now_seconds())
 }
 
-/// An agent's last export can arrive just after its pane closes.
+/// An agent's last export, even its first, can arrive just after its pane closes.
 fn accepts(mgr: &crate::session::manager::SessionManager, id: Uuid) -> bool {
-    mgr.find_pane(id).is_some() || mgr.telemetry.panes.contains_key(&id)
+    mgr.find_pane(id).is_some() || mgr.telemetry.accepts_closed(id)
 }
 
 async fn snapshot(State(state): State<AppState>) -> Json<Vec<AgentTelemetry>> {
@@ -936,6 +951,35 @@ mod tests {
         assert_eq!(total.requests, 1.0);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_handoff_keeps_closed_panes() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        store.pane_closed(pane);
+        let json = serde_json::to_vec(&store).unwrap();
+        let store = serde_json::from_slice::<TelemetryStore>(&json)
+            .unwrap()
+            .restored();
+        assert!(store.accepts_closed(pane));
+    }
+
+    #[test]
+    fn closed_panes_are_bounded() {
+        let mut store = TelemetryStore::default();
+        let first = Uuid::new_v4();
+        store.pane_closed(first);
+        for _ in 0..MAX_CLOSED - 1 {
+            store.pane_closed(Uuid::new_v4());
+        }
+        assert!(store.accepts_closed(first));
+        let last = Uuid::new_v4();
+        store.pane_closed(last);
+        assert_eq!(store.closed.len(), MAX_CLOSED);
+        assert!(!store.accepts_closed(first));
+        assert!(store.accepts_closed(last));
+    }
+
     async fn app() -> (Router, AppState, Uuid) {
         let (exit, _) = tokio::sync::mpsc::unbounded_channel();
         let (meta, _) = tokio::sync::mpsc::unbounded_channel();
@@ -1053,6 +1097,78 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(snapshots(&*state.read().await)[0].totals.requests, 2.0);
+    }
+
+    #[tokio::test]
+    async fn a_first_export_after_a_pane_closes_counts() {
+        let (app, state, _) = app().await;
+        let closed = {
+            let mut mgr = state.write().await;
+            let session = mgr.create_session(None).await;
+            let pane = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+            mgr.kill_session(session);
+            pane
+        };
+        assert!(snapshots(&*state.read().await).is_empty());
+        let body = serde_json::to_vec(&completion(now_seconds())).unwrap();
+        let response = app
+            .oneshot(request(closed, "logs", "application/json", body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let panes = snapshots(&*state.read().await);
+        assert_eq!(panes[0].pane_id, closed);
+        assert_eq!(panes[0].totals.requests, 1.0);
+    }
+
+    #[tokio::test]
+    async fn every_way_of_closing_a_pane_records_it() {
+        use crate::session::manager::SessionManager;
+        fn active_pane(mgr: &SessionManager, session: Uuid) -> Uuid {
+            let snapshot = mgr.snapshot_by_id(session).unwrap();
+            let window = &snapshot.windows[snapshot.active_window];
+            window.panes[window.active_pane].id
+        }
+        async fn split(mgr: &mut SessionManager, session: Uuid) -> Uuid {
+            let pane = active_pane(mgr, session);
+            mgr.split_pane(pane, "right", None, false).await.unwrap()
+        }
+        let (_, state, _) = app().await;
+        let mut mgr = state.write().await;
+        let session = mgr.create_session(None).await;
+
+        let pane = split(&mut mgr, session).await;
+        mgr.kill_pane(session, pane);
+        assert!(mgr.telemetry.accepts_closed(pane), "kill_pane");
+
+        let pane = split(&mut mgr, session).await;
+        mgr.kill_pane_by_id(pane).unwrap();
+        assert!(mgr.telemetry.accepts_closed(pane), "kill_pane_by_id");
+
+        let pane = split(&mut mgr, session).await;
+        mgr.handle_pane_exit(pane).await;
+        assert!(mgr.telemetry.accepts_closed(pane), "handle_pane_exit");
+
+        mgr.create_window(session).await;
+        let pane = active_pane(&mgr, session);
+        mgr.close_window(session);
+        assert!(mgr.find_pane(pane).is_none());
+        assert!(mgr.telemetry.accepts_closed(pane), "close_window");
+
+        mgr.create_window(session).await;
+        let pane = active_pane(&mgr, session);
+        let snapshot = mgr.snapshot_by_id(session).unwrap();
+        mgr.kill_window(snapshot.windows[snapshot.active_window].id);
+        assert!(mgr.find_pane(pane).is_none());
+        assert!(mgr.telemetry.accepts_closed(pane), "kill_window");
+
+        let pane = active_pane(&mgr, session);
+        mgr.kill_session(session);
+        assert!(mgr.telemetry.accepts_closed(pane), "kill_session");
+
+        let pane = mgr.sessions[0].windows[0].panes[0].id;
+        mgr.clear_sessions().await;
+        assert!(mgr.telemetry.accepts_closed(pane), "clear_sessions");
     }
 
     #[tokio::test]

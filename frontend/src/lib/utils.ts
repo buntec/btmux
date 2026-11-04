@@ -21,3 +21,14 @@ export function stepIndex(index: number, delta: number, count: number, wrap: boo
   if (wrap && delta < 0 && index <= 0) return count - 1;
   return Math.max(0, Math.min(index + delta, count - 1));
 }
+
+/** The focused row, or the row now at its position if it's gone or `keepPosition`. */
+export function resolveFocusedRow<T>(
+  rows: T[],
+  isFocused: (row: T) => boolean,
+  previousIndex: number,
+  keepPosition = false,
+): T | null {
+  if (rows.length === 0) return null;
+  return (!keepPosition && rows.find(isFocused)) || rows[Math.max(0, Math.min(previousIndex, rows.length - 1))];
+}

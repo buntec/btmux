@@ -413,6 +413,12 @@ try {
   // Keys of a multi-key hint are padded to a usable size.
   const keyBox = (await page.getByRole('button', { name: 'j: navigate', exact: true }).boundingBox())!;
   assert(keyBox.width >= 32 && keyBox.height >= 32, `small hint key: ${JSON.stringify(keyBox)}`);
+  // Pane usage takes the screen in place of the list.
+  await page.getByRole('button', { name: 'tab: panes', exact: true }).tap();
+  await page.getByRole('treegrid', { name: 'Pane usage', exact: true }).waitFor();
+  assert(!(await processRow.isVisible()));
+  await page.getByRole('button', { name: 'tab: processes', exact: true }).tap();
+  await processRow.waitFor();
   await page.getByRole('button', { name: 'V: tree', exact: true }).tap();
   await page.getByRole('tree', { name: 'Processes', exact: true }).waitFor();
   // At the PID: WebKit moves taps near the fold button onto it.
@@ -420,6 +426,15 @@ try {
   const processBack = page.getByRole('button', { name: 'Back to list' });
   await processBack.waitFor();
   assert(!(await processRow.isVisible()));
+  // Filtering from pane usage shows the list, not the details left behind it.
+  await page.getByRole('button', { name: 'tab: panes', exact: true }).tap();
+  await page.getByRole('button', { name: '/: filter processes', exact: true }).tap();
+  await page.getByRole('textbox', { name: 'Filter' }).waitFor();
+  await processRow.waitFor();
+  assert(!(await processBack.isVisible()));
+  await page.getByRole('button', { name: 'esc: close filter', exact: true }).tap();
+  await processRow.tap({ position: { x: 16, y: 8 } });
+  await processBack.waitFor();
   await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
   await processRow.waitFor();
   await page.getByRole('button', { name: '/: filter', exact: true }).tap();
@@ -432,6 +447,17 @@ try {
   await processFilter.waitFor({ state: 'detached' });
   await processRow.waitFor();
   assert(await page.evaluate(() => document.activeElement?.closest('dialog') !== null));
+  // Escape from pane usage closes the viewer, whatever details are behind it.
+  await processRow.tap({ position: { x: 16, y: 8 } });
+  await processBack.waitFor();
+  await page.getByRole('button', { name: 'tab: panes', exact: true }).tap();
+  await page.getByRole('button', { name: 'esc: close', exact: true }).tap();
+  await page.getByRole('button', { name: 'Close process viewer' }).waitFor({ state: 'hidden' });
+  await page.evaluate(async () => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const state = useStore.getState();
+    state.setFileBrowserOpen(true, null, state.getActivePaneId(state.allSessions[0].id), 'process');
+  });
   await page.getByRole('button', { name: 'Close process viewer' }).tap();
   await page.getByRole('button', { name: 'Close process viewer' }).waitFor({ state: 'hidden' });
 

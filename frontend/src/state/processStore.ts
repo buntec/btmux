@@ -1,9 +1,18 @@
 import { create } from 'zustand';
-import type { ProcessInfo, ProcessSnapshot } from '../protocol/process-messages';
+import type { ProcessInfo, ProcessSnapshot, ProcessSnapshotMessage } from '../protocol/process-messages';
 import { portKey, PORT_SORT_MODES, type PortSortMode } from '../lib/portRows';
 import { nextProcessSortMode, type ProcessSortMode } from '../lib/processTree';
 
 interface ProcessStore {
+  /** Which half takes keys: the process or port list, or pane usage. */
+  panel: 'list' | 'usage';
+  setPanel: (panel: 'list' | 'usage') => void;
+  togglePanel: () => void;
+  focusedUsage: string | null;
+  /** Rows folded differently from their default; see `isUsageFolded`. */
+  usageFoldToggles: Set<string>;
+  setFocusedUsage: (key: string | null) => void;
+  toggleUsageFold: (key: string) => void;
   snapshot: ProcessSnapshot | null;
   processes: ProcessInfo[];
   focusedPid: number | null;
@@ -26,7 +35,7 @@ interface ProcessStore {
   treeMode: boolean;
   filterQuery: string;
   filterActive: boolean;
-  setSnapshot: (snapshot: ProcessSnapshot) => void;
+  setSnapshot: (message: ProcessSnapshotMessage) => void;
   setFocusedPid: (pid: number | null) => void;
   toggleFollowFocus: () => void;
   toggleCollapsed: (pid: number) => void;
@@ -40,6 +49,19 @@ interface ProcessStore {
 }
 
 export const useProcessStore = create<ProcessStore>((set, get) => ({
+  panel: 'list',
+  // The filter only applies to the list, and takes keys while active.
+  setPanel: (panel) => set(panel === 'usage' ? { panel, filterActive: false, filterQuery: '' } : { panel }),
+  togglePanel: () => get().setPanel(get().panel === 'list' ? 'usage' : 'list'),
+  focusedUsage: null,
+  usageFoldToggles: new Set(),
+  setFocusedUsage: (focusedUsage) => set({ focusedUsage }),
+  toggleUsageFold: (key) =>
+    set((state) => {
+      const usageFoldToggles = new Set(state.usageFoldToggles);
+      if (!usageFoldToggles.delete(key)) usageFoldToggles.add(key);
+      return { usageFoldToggles };
+    }),
   snapshot: null,
   processes: [],
   focusedPid: null,
@@ -56,8 +78,14 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   filterQuery: '',
   filterActive: false,
   // Tables repair focus in displayed row order.
-  setSnapshot: (snapshot) =>
+  setSnapshot: (message) =>
     set((state) => {
+      const sampled = message.ports !== undefined || message.ports_error !== undefined;
+      const snapshot: ProcessSnapshot = {
+        ...message,
+        ports: (sampled ? message.ports : state.snapshot?.ports) ?? null,
+        ports_error: (sampled ? message.ports_error : state.snapshot?.ports_error) ?? null,
+      };
       const pids = new Set(snapshot.processes.map((process) => process.pid));
       const collapsedPids = new Set([...state.collapsedPids].filter((pid) => pids.has(pid)));
       const portKeys = snapshot.ports ? new Set(snapshot.ports.map(portKey)) : null;
@@ -106,6 +134,9 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   setFilterActive: (filterActive) => set({ filterActive, filterQuery: filterActive ? get().filterQuery : '' }),
   reset: () => {
     set({
+      panel: 'list',
+      focusedUsage: null,
+      usageFoldToggles: new Set(),
       snapshot: null,
       processes: [],
       focusedPid: null,

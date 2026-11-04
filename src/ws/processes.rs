@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::WebSocketUpgrade;
+use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use netstat2::{iterate_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
@@ -12,15 +13,17 @@ use sysinfo::{
     Uid, UpdateKind, Users, MINIMUM_CPU_UPDATE_INTERVAL,
 };
 use tokio::time::{interval, sleep, Duration, MissedTickBehavior};
+use uuid::Uuid;
+
+use crate::AppState;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+/// Snapshots per socket sample: on Linux, one reads every process's open fds.
+const PORT_SAMPLE_INTERVAL: u32 = 3;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
-    SetPorts {
-        enabled: bool,
-    },
     Kill {
         pid: u32,
         /// Guards against PID reuse between snapshot and signal.
@@ -51,6 +54,10 @@ struct ProcessInfo {
     user: Option<String>,
     start_time: u64,
     run_time: u64,
+    /// Bytes per second since the last refresh.
+    disk_read: u64,
+    disk_write: u64,
+    pane_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +122,13 @@ fn sample_ports() -> Result<Vec<PortInfo>, String> {
             });
         }
     }
+    sort_ports(&mut ports);
+    Ok(ports)
+}
+
+/// Sorts and drops repeats. State counts: a bound socket can share a listener's
+/// address, port, and owner.
+fn sort_ports(ports: &mut Vec<PortInfo>) {
     ports.sort_by(|a, b| {
         (
             a.local_port,
@@ -122,6 +136,7 @@ fn sample_ports() -> Result<Vec<PortInfo>, String> {
             &a.local_address,
             &a.remote_address,
             a.pid,
+            &a.state,
         )
             .cmp(&(
                 b.local_port,
@@ -129,6 +144,7 @@ fn sample_ports() -> Result<Vec<PortInfo>, String> {
                 &b.local_address,
                 &b.remote_address,
                 b.pid,
+                &b.state,
             ))
     });
     ports.dedup_by(|a, b| {
@@ -137,8 +153,14 @@ fn sample_ports() -> Result<Vec<PortInfo>, String> {
             && a.local_address == b.local_address
             && a.local_port == b.local_port
             && a.remote_address == b.remote_address
+            && a.state == b.state
     });
-    Ok(ports)
+}
+
+#[derive(Debug, Serialize)]
+struct PortSample {
+    ports: Option<Vec<PortInfo>>,
+    ports_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,8 +168,11 @@ struct ProcessSnapshot {
     #[serde(rename = "type")]
     message_type: &'static str,
     processes: Vec<ProcessInfo>,
-    ports: Option<Vec<PortInfo>>,
-    ports_error: Option<String>,
+    /// Absent between samples; tabs keep the last.
+    #[serde(flatten)]
+    ports: Option<PortSample>,
+    /// Panes whose programs aren't descendants of their shell.
+    uncounted_panes: Vec<Uuid>,
     cpu_count: usize,
     mem_used: u64,
     mem_total: u64,
@@ -202,12 +227,61 @@ impl UserNames {
     }
 }
 
+/// Finds the nearest ancestor that is a pane's shell, memoizing the chain.
+struct AncestorPanes<'a> {
+    parents: HashMap<u32, u32>,
+    shells: &'a HashMap<u32, Uuid>,
+    memo: HashMap<u32, Option<Uuid>>,
+}
+
+impl<'a> AncestorPanes<'a> {
+    fn new(parents: HashMap<u32, u32>, shells: &'a HashMap<u32, Uuid>) -> Self {
+        Self {
+            parents,
+            shells,
+            memo: HashMap::new(),
+        }
+    }
+
+    fn find(&mut self, pid: u32) -> Option<Uuid> {
+        let mut chain = Vec::new();
+        let mut current = pid;
+        let pane = loop {
+            if let Some(&pane) = self.shells.get(&current) {
+                break Some(pane);
+            }
+            if let Some(&pane) = self.memo.get(&current) {
+                break pane;
+            }
+            chain.push(current);
+            match self.parents.get(&current) {
+                // Parents can form a cycle when PIDs are reused mid-refresh.
+                Some(&parent) if chain.len() < 64 => current = parent,
+                _ => break None,
+            }
+        };
+        self.memo.extend(chain.into_iter().map(|pid| (pid, pane)));
+        pane
+    }
+
+    /// The nearest ancestor pane, else that of the shell leading the session
+    /// (orphans reparented to init). Processes that call `setsid` and reparent,
+    /// like daemons, belong to no pane.
+    fn owner(&mut self, pid: u32, session: impl FnOnce() -> Option<u32>) -> Option<Uuid> {
+        self.find(pid)
+            .or_else(|| self.shells.get(&session()?).copied())
+    }
+}
+
 struct ProcessSampler {
     system: System,
     users: UserNames,
     refresh: ProcessRefreshKind,
     cpu_count: usize,
-    ports_enabled: bool,
+    last_refresh: Option<Instant>,
+    /// Seconds between the last two refreshes.
+    refresh_seconds: f64,
+    snapshots: u32,
 }
 
 impl ProcessSampler {
@@ -217,10 +291,16 @@ impl ProcessSampler {
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()),
             )?,
             users: UserNames::new()?,
-            ports_enabled: false,
+            last_refresh: None,
+            refresh_seconds: 1.0,
+            snapshots: 0,
+            // On Linux, tasks would list each thread as a process with the
+            // whole process's memory.
             refresh: ProcessRefreshKind::nothing()
+                .without_tasks()
                 .with_cpu()
                 .with_memory()
+                .with_disk_usage()
                 .with_user(UpdateKind::OnlyIfNotSet)
                 .with_cmd(UpdateKind::OnlyIfNotSet),
             // Per-process CPU% is relative to one logical CPU.
@@ -233,10 +313,23 @@ impl ProcessSampler {
             .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
         self.system
             .refresh_processes_specifics(ProcessesToUpdate::All, true, self.refresh);
+        let now = Instant::now();
+        if let Some(last) = self.last_refresh.replace(now) {
+            self.refresh_seconds = (now - last).as_secs_f64();
+        }
     }
 
-    fn snapshot(&mut self) -> ProcessSnapshot {
+    fn snapshot(&mut self, shells: &HashMap<u32, Uuid>) -> ProcessSnapshot {
         let mut users_reloaded = false;
+        let mut panes = AncestorPanes::new(
+            self.system
+                .processes()
+                .values()
+                .filter_map(|process| Some((process.pid().as_u32(), process.parent()?.as_u32())))
+                .collect(),
+            shells,
+        );
+        let rate = |bytes: u64| (bytes as f64 / self.refresh_seconds) as u64;
         let processes = self
             .system
             .processes()
@@ -249,6 +342,7 @@ impl ProcessSampler {
                     .map(|part| part.to_string_lossy())
                     .collect::<Vec<_>>()
                     .join(" ");
+                let disk = process.disk_usage();
                 ProcessInfo {
                     pid: process.pid().as_u32(),
                     parent_pid: process.parent().map(Pid::as_u32),
@@ -263,24 +357,36 @@ impl ProcessSampler {
                         .map(|uid| self.users.resolve(uid, &mut users_reloaded)),
                     start_time: process.start_time(),
                     run_time: process.run_time(),
+                    disk_read: rate(disk.read_bytes),
+                    disk_write: rate(disk.written_bytes),
+                    pane_id: panes.owner(process.pid().as_u32(), || {
+                        // On Windows this is a Terminal Services session.
+                        process.session_id().filter(|_| cfg!(unix)).map(Pid::as_u32)
+                    }),
                 }
             })
             .collect();
-        let (ports, ports_error) = if self.ports_enabled {
-            match sample_ports() {
-                Ok(ports) => (Some(ports), None),
-                Err(error) => (None, Some(error)),
-            }
-        } else {
-            (None, None)
-        };
+        let ports =
+            self.snapshots
+                .is_multiple_of(PORT_SAMPLE_INTERVAL)
+                .then(|| match sample_ports() {
+                    Ok(ports) => PortSample {
+                        ports: Some(ports),
+                        ports_error: None,
+                    },
+                    Err(error) => PortSample {
+                        ports: None,
+                        ports_error: Some(error),
+                    },
+                });
+        self.snapshots = self.snapshots.wrapping_add(1);
         let load_average =
             System::load_average().map_or([0.0; 3], |load| [load.one, load.five, load.fifteen]);
         ProcessSnapshot {
             message_type: "snapshot",
             processes,
             ports,
-            ports_error,
+            uncounted_panes: Vec::new(),
             cpu_count: self.cpu_count,
             mem_used: self.system.used_memory(),
             mem_total: self.system.total_memory(),
@@ -308,7 +414,7 @@ impl ProcessSampler {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[target]),
             true,
-            ProcessRefreshKind::nothing(),
+            ProcessRefreshKind::nothing().without_tasks(),
         );
         let Some(process) = self.system.process(target) else {
             return result(false, "Process no longer exists");
@@ -346,21 +452,34 @@ async fn with_sampler<T: Send + 'static>(
 async fn send_snapshot(
     ws_tx: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     sampler: &SharedSampler,
+    state: &AppState,
 ) -> Result<(), ()> {
-    let text = with_sampler(sampler, |sampler| {
+    let panes = state.read().await.shell_pids();
+    let shells: HashMap<u32, Uuid> = panes
+        .iter()
+        .map(|&(pane, shell, _)| (shell, pane))
+        .collect();
+    let uncounted_panes = panes
+        .iter()
+        .filter(|(_, _, counted)| !counted)
+        .map(|&(pane, _, _)| pane)
+        .collect();
+    let text = with_sampler(sampler, move |sampler| {
         sampler.refresh();
-        serde_json::to_string(&sampler.snapshot())
+        let mut snapshot = sampler.snapshot(&shells);
+        snapshot.uncounted_panes = uncounted_panes;
+        serde_json::to_string(&snapshot)
     })
     .await?
     .map_err(|_| ())?;
     ws_tx.send(Message::Text(text.into())).await.map_err(|_| ())
 }
 
-pub async fn handle(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_socket)
+pub async fn handle(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket) {
+async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let Ok(Ok(sampler)) =
         tokio::task::spawn_blocking(|| ProcessSampler::new().map(|s| Arc::new(Mutex::new(s))))
@@ -380,7 +499,7 @@ async fn handle_socket(socket: WebSocket) {
         return;
     }
     sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
-    if send_snapshot(&mut ws_tx, &sampler).await.is_err() {
+    if send_snapshot(&mut ws_tx, &sampler, &state).await.is_err() {
         return;
     }
 
@@ -393,7 +512,7 @@ async fn handle_socket(socket: WebSocket) {
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                if send_snapshot(&mut ws_tx, &sampler).await.is_err() {
+                if send_snapshot(&mut ws_tx, &sampler, &state).await.is_err() {
                     break;
                 }
             }
@@ -419,10 +538,6 @@ async fn handle_command(
     text: &str,
 ) -> Result<(), ()> {
     match serde_json::from_str::<ClientMessage>(text) {
-        Ok(ClientMessage::SetPorts { enabled }) => {
-            with_sampler(sampler, move |sampler| sampler.ports_enabled = enabled).await?;
-            send_snapshot(ws_tx, sampler).await
-        }
         Ok(ClientMessage::Kill {
             pid,
             start_time,
@@ -480,15 +595,139 @@ mod tests {
     }
 
     #[test]
-    fn process_snapshots_skip_ports_until_requested() {
+    fn pane_owner_follows_ancestors_then_session() {
+        let (pane, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let shells = HashMap::from([(10, pane), (20, other)]);
+        let parents = HashMap::from([
+            (10, 1),
+            (11, 10),
+            (12, 11),
+            // A nested shell's session doesn't override its ancestry.
+            (13, 11),
+            // Reparented to init.
+            (14, 1),
+            // A daemon: its own session, under init.
+            (15, 1),
+            (16, 1),
+        ]);
+        let sessions = HashMap::from([
+            (1, 1),
+            (10, 10),
+            (11, 10),
+            (12, 10),
+            (13, 20),
+            (14, 10),
+            (15, 15),
+            (16, 1),
+        ]);
+        let mut panes = AncestorPanes::new(parents, &shells);
+        // Twice, so answers from the memo are checked too.
+        for _ in 0..2 {
+            for pid in [10, 11, 12, 13, 14] {
+                let owner = panes.owner(pid, || sessions.get(&pid).copied());
+                assert_eq!(owner, Some(pane), "pid {pid}");
+            }
+            for pid in [1, 15, 16, 99] {
+                let owner = panes.owner(pid, || sessions.get(&pid).copied());
+                assert_eq!(owner, None, "pid {pid}");
+            }
+        }
+    }
+
+    #[test]
+    fn pane_owner_reads_the_session_only_without_an_ancestor() {
+        let pane = Uuid::new_v4();
+        let shells = HashMap::from([(10, pane)]);
+        let mut panes = AncestorPanes::new(HashMap::from([(11, 10)]), &shells);
+        assert_eq!(
+            panes.owner(11, || panic!("read the session of a pane's child")),
+            Some(pane)
+        );
+    }
+
+    #[test]
+    fn pane_owner_stops_at_parent_cycles() {
+        let shells = HashMap::new();
+        let mut panes = AncestorPanes::new(HashMap::from([(5, 6), (6, 5)]), &shells);
+        assert_eq!(panes.owner(5, || None), None);
+    }
+
+    fn socket(state: &str) -> PortInfo {
+        PortInfo {
+            pid: Some(1),
+            protocol: "TCP".into(),
+            local_address: "127.0.0.1".into(),
+            local_port: 80,
+            remote_address: None,
+            state: state.into(),
+        }
+    }
+
+    #[test]
+    fn repeated_sockets_keep_each_state() {
+        let mut ports = vec![socket("LISTEN"), socket("CLOSE"), socket("LISTEN")];
+        sort_ports(&mut ports);
+        let states: Vec<_> = ports.iter().map(|port| port.state.as_str()).collect();
+        assert_eq!(states, ["CLOSE", "LISTEN"]);
+    }
+
+    #[test]
+    fn snapshots_carry_ports_only_when_sampled() {
         let mut sampler = ProcessSampler::new().unwrap();
-        let snapshot = sampler.snapshot();
-        assert!(snapshot.ports.is_none());
-        assert!(snapshot.ports_error.is_none());
-        sampler.ports_enabled = true;
-        assert!(sampler.snapshot().ports.is_some());
-        sampler.ports_enabled = false;
-        assert!(sampler.snapshot().ports.is_none());
+        sampler.refresh();
+        let shells = HashMap::new();
+        let mut sampled = Vec::new();
+        for _ in 0..=PORT_SAMPLE_INTERVAL {
+            let snapshot = serde_json::to_value(sampler.snapshot(&shells)).unwrap();
+            assert_eq!(
+                snapshot.get("ports").is_some(),
+                snapshot.get("ports_error").is_some()
+            );
+            sampled.push(snapshot.get("ports").is_some());
+        }
+        assert!(sampled[0] && sampled[PORT_SAMPLE_INTERVAL as usize]);
+        assert!(!sampled[1..PORT_SAMPLE_INTERVAL as usize]
+            .iter()
+            .any(|sampled| *sampled));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn threads_are_not_listed_as_processes() {
+        let stop = Arc::new(std::sync::Barrier::new(2));
+        let thread = std::thread::spawn({
+            let stop = stop.clone();
+            move || {
+                stop.wait();
+            }
+        });
+        let mut sampler = ProcessSampler::new().unwrap();
+        sampler.refresh();
+        let threads = sampler
+            .system
+            .processes()
+            .values()
+            // Kernel threads are top-level entries in `/proc`, whatever the refresh.
+            .filter(|process| process.thread_kind() == Some(sysinfo::ThreadKind::Userland))
+            .count();
+        stop.wait();
+        thread.join().unwrap();
+        assert_eq!(threads, 0);
+    }
+
+    #[test]
+    fn snapshot_assigns_children_of_a_shell_to_its_pane() {
+        let mut child = spawn_sleeper();
+        let mut sampler = ProcessSampler::new().unwrap();
+        sampler.refresh();
+        let pane = Uuid::new_v4();
+        let snapshot = sampler.snapshot(&HashMap::from([(std::process::id(), pane)]));
+        let process = |pid| snapshot.processes.iter().find(|p| p.pid == pid).unwrap();
+        assert_eq!(process(child.id()).pane_id, Some(pane));
+        assert_eq!(process(std::process::id()).pane_id, Some(pane));
+        assert!(snapshot.ports.is_some());
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 
     fn spawn_sleeper() -> std::process::Child {

@@ -654,6 +654,7 @@ mod tests {
             turn_id: None,
             tool: None,
             process: None,
+            ancestors: Vec::new(),
             agent: None,
             source: Some("hook".into()),
             message: None,

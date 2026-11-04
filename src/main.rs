@@ -1,6 +1,7 @@
 mod agent_cli;
 mod agent_hooks;
 mod agent_launch;
+mod agent_limits;
 mod api;
 mod api_client;
 mod auth;

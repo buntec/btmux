@@ -137,6 +137,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/vscode/{*path}", axum::routing::any(crate::vscode::proxy))
         .merge(crate::api::router())
         .merge(crate::telemetry::routes())
+        .merge(crate::agent_limits::routes())
         .nest_service("/mcp", crate::mcp::mcp_service(state.clone()))
         .route("/", get(|| async { serve("index.html") }))
         .route(

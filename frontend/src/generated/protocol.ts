@@ -50,6 +50,27 @@ totals: AgentUsage,
 models: Array<ModelTelemetry>, };
 
 // prettier-ignore
+export type LimitSeverity = "normal" | "warning" | "critical";
+
+// prettier-ignore
+export type AgentLimit = { label: string, percent: number,
+/**
+ * Unix seconds.
+ */
+resets_at: number | null, severity: LimitSeverity, };
+
+// prettier-ignore
+export type AgentLimits = { agent: string,
+/**
+ * As the CLI reports it, e.g. `max` or `prolite`.
+ */
+plan: string | null,
+/**
+ * Unix seconds of the last successful read.
+ */
+updated_at: number, limits: Array<AgentLimit>, };
+
+// prettier-ignore
 export type NotificationLevel = "info" | "attention" | "success" | "error";
 
 // prettier-ignore

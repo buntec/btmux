@@ -21,7 +21,9 @@ import {
   usageTimeline,
   usageTotal,
 } from '../lib/agentUsage';
+import { useAgentLimits } from '../hooks/useAgentLimits';
 import { useStore } from '../state/store';
+import { AgentLimitsPanel } from './AgentLimitsPanel';
 
 const TOTAL = 'var(--color-text-primary)';
 const NEUTRAL = 'var(--color-text-secondary)';
@@ -169,6 +171,7 @@ function UsageChart({
 export function AgentUsageView() {
   const telemetry = useStore((s) => s.agentTelemetry);
   const sessions = useStore((s) => s.allSessions);
+  const limits = useAgentLimits();
   const [now, setNow] = useState(() => Date.now() / 1000);
   const [minutes, setMinutes] = useState('480');
   const [selected, setSelected] = useState<string | null>(null);
@@ -244,21 +247,25 @@ export function AgentUsageView() {
   const tokenMetric = TOKEN_TYPES.find((type) => type.value === tokenType) ?? TOKEN_TYPES[0];
   if (panes.length === 0)
     return (
-      <VStack hAlign="center" vAlign="center" className="h-full">
-        <EmptyState
-          title="No usage received yet"
-          actions={
-            <Text color="secondary">
-              Run <Code>btmux claude</Code> or <Code>btmux codex</Code> in a pane to see tokens, costs, and tool
-              activity here.
-            </Text>
-          }
-        />
-        <Text color="secondary">Usage history covers the last 24 hours and clears when the server restarts.</Text>
+      <VStack gap={6} className="h-full">
+        <AgentLimitsPanel agents={limits} now={now} />
+        <VStack hAlign="center" vAlign="center" className="min-h-0 flex-1">
+          <EmptyState
+            title="No usage received yet"
+            actions={
+              <Text color="secondary">
+                Run <Code>btmux claude</Code> or <Code>btmux codex</Code> in a pane to see tokens, costs, and tool
+                activity here.
+              </Text>
+            }
+          />
+          <Text color="secondary">Usage history covers the last 24 hours and clears when the server restarts.</Text>
+        </VStack>
       </VStack>
     );
   return (
     <VStack gap={6} data-agent-usage>
+      <AgentLimitsPanel agents={limits} now={now} />
       <HStack gap={3} wrap="wrap" vAlign="center">
         <VStack gap={1} className="min-w-0 flex-1">
           <Heading level={2}>{selectedPane ? labels.get(selectedPane.pane_id) : 'All agents'}</Heading>

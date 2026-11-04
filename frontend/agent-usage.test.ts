@@ -3,7 +3,10 @@ import type { AgentTelemetry, ModelTelemetry } from './src/generated/protocol';
 import {
   cumulativeUsage,
   emptyUsage,
+  formatLimitPercent,
+  formatLimitReset,
   groupByModel,
+  limitsAreStale,
   mergeTelemetry,
   MODEL_COLORS,
   modelKey,
@@ -202,5 +205,24 @@ describe('chart colors', () => {
         expect(contrastRatio(chartColor(color, background, 0.5), background)).toBeGreaterThanOrEqual(3);
       }
     }
+  });
+});
+
+describe('plan limits', () => {
+  const now = 1_000_000;
+  test('reset times are relative within a day', () => {
+    expect(formatLimitReset(now - 1, now)).toBe('Resetting');
+    expect(formatLimitReset(now, now)).toBe('Resetting');
+    expect(formatLimitReset(now + 1, now)).toBe('Resets in 1m');
+    expect(formatLimitReset(now + 59 * 60, now)).toBe('Resets in 59m');
+    expect(formatLimitReset(now + 60 * 60, now)).toBe('Resets in 1h 0m');
+    expect(formatLimitReset(now + 5 * 3600 + 3 * 60, now)).toBe('Resets in 5h 3m');
+    expect(formatLimitReset(now + 24 * 3600, now)).toMatch(/^Resets \p{L}+/u);
+    expect(formatLimitReset(now + 24 * 3600, now)).not.toContain(' in ');
+  });
+  test('percentages and staleness', () => {
+    expect(formatLimitPercent(11.4)).toBe('11% used');
+    expect(limitsAreStale(now - 180, now)).toBe(false);
+    expect(limitsAreStale(now - 181, now)).toBe(true);
   });
 });

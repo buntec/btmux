@@ -134,20 +134,8 @@ Option+Left/Right and Option+Backspace move and delete by word without it. Set
 
 ## Editor
 
-`editor` chooses the editor that `<prefix> + e`, the file browser, and Git
-mode open: `"neovim"` (your Neovim in btmux's GUI over the pane), `"vscode"`
-(VS Code in the browser over the pane), or `"pane"` (the terminal: the pane's
-running Neovim, else `$EDITOR` in its shell). The default is `"neovim"` when
-Neovim 0.12 or newer is on the server's `PATH`, else `"pane"`. See
-[Neovim GUI](neovim.md) and [VS Code](vscode.md).
-
-Whatever `editor` says, the status bar shows a button for each editor the
-server can run: Neovim 0.12+ and, outside Windows, the `[vscode] server`
-program, found on the server's `PATH` (a service's `PATH` may be shorter than
-your shell's) or, for VS Code on macOS, in `/Applications`. The configured editor comes first. The `editor-neovim` and
-`editor-vscode` actions, unbound by default, toggle one of them from the
-command palette or a `[keys]` binding, and `btmux open-editor --kind vscode`
-opens one from a pane.
+`editor` chooses what `<prefix> + e`, the file browser, and Git mode open; see
+[Editors](editors.md).
 
 The `browser` action (`<prefix> + b`) toggles a browser over the active pane; see
 [Browser](browser.md).

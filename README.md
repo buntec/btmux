@@ -92,92 +92,32 @@ Homebrew, Windows, background services, and Home Manager are covered in [Install
 
 ## Quick start
 
-```sh
-btmux
-```
+**Desktop app**: open btmux. With no server running, it starts its own and
+connects, with no sign-in. If it finds other btmux servers, it
+[offers to connect to one](desktop/README.md) instead.
 
-This opens `http://127.0.0.1:8004`. Sign in with username `btmux` and the
-access token from the file whose path btmux prints at startup:
+**Browser / CLI**: run `btmux`. It opens `http://127.0.0.1:8004` and prints the
+path of its access token file. Sign in with username `btmux` and the file's
+contents as the password (see [Access tokens](docs/installation.md#access-tokens-and-reverse-proxies)).
 
-```sh
-cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
-```
-
-On Windows, in PowerShell:
-
-```powershell
-Get-Content "$env:LOCALAPPDATA\btmux\state.token"
-```
-
-Press `<prefix> + ?` to see all key bindings, or `<prefix> + :` to open the command palette.
-
-## Phones, tablets, and Tailscale
-
-```sh
-btmux --tailscale  # https://<machine>.<tailnet>.ts.net:8004
-```
-
-`--tailscale` serves btmux over HTTPS on your [tailnet](https://tailscale.com)
-with `tailscale serve`, while btmux itself stays on loopback. The status bar's
-tailnet button shows the address and a QR code: scan it on a phone or tablet to
-sign in without typing the access token. Each code signs in once and expires
-after two minutes. The desktop app can share its server the same way, and
-connect to btmux servers on other machines.
-
-On touch screens, a key bar supplies Esc, Tab, Ctrl, Alt, arrows, and the
-prefix; swipes scroll full-screen programs; and narrow screens show one pane
-at a time, with a full-screen file browser. Add btmux to the home screen to
-run it without browser chrome. See [Tailscale](docs/installation.md#tailscale)
-and [Phones and tablets](docs/installation.md#phones-and-tablets).
-
-## Editor
-
-`<prefix> + e` opens the configured `editor` over the active pane, and the file
-browser and Git mode open files there:
-
-- `"neovim"`: a Neovim GUI drawn by btmux, with its command line, completion
-  menu, messages, LSP signature help, and floating windows rendered as native
-  UI. The default when Neovim 0.12 or newer is on `PATH`; see
-  [Neovim GUI](docs/neovim.md).
-- `"vscode"`: VS Code in the browser, using btmux's color scheme and font; see
-  [VS Code](docs/vscode.md).
-- `"pane"`: `$EDITOR` run in the pane's shell. The default without Neovim 0.12.
-
-The status bar has a button for each editor the server can run, so the other
-one stays a click away. See [Editor](docs/configuration.md#editor) for details.
+Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
+`<prefix> + ?` to see them all, or `<prefix> + :` to open the command palette.
 
 ## Learn more
 
-- [Installation](docs/installation.md): Windows, services, tokens, remote access, Tailscale, phones, and shell completions
+- [Installation](docs/installation.md): Windows, services, tokens, remote access, and shell completions
+- [Phones, tablets, and Tailscale](docs/phones-and-tailscale.md): serving over HTTPS on your tailnet, QR sign-in, and touch screens
 - [In-place upgrades](docs/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
-- [Configuration](docs/configuration.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, editors, and profiles
+- [Configuration](docs/configuration.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, and profiles
 - [Shader wallpapers](docs/shaders.md): WebGPU generators, parameters, and randomization
 - [btmux for tmux users](docs/tmux.md): where keys and behavior differ from tmux
 - [Comparison](docs/competitors.md): feature matrix of btmux versus similar projects
+- [Editors](docs/editors.md): choosing what `<prefix> + e` and the file browser open
 - [Neovim GUI](docs/neovim.md): the Neovim GUI, its plugin, and config tips
 - [VS Code](docs/vscode.md): VS Code over a pane, its server, and sharing desktop settings and extensions
 - [Browser](docs/browser.md): a server-side Chrome or Chromium over a pane
 - [Automation and AI agents](docs/automation.md): tmux-style commands, agent skill, REST API, MCP, and agent notifications
-
-## Development
-
-Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and [`just`](https://github.com/casey/just).
-On macOS, install Xcode Command Line Tools (`xcode-select --install`): socket
-enumeration builds generate bindings using the macOS SDK and libclang. If
-libclang is installed separately, set `LIBCLANG_PATH` to its library directory.
-The pinned socket enumeration dependency does not require libclang on Linux.
-On Windows, install the MSVC build tools Rust needs. `just setup` and the
-desktop recipes run in PowerShell; the others need `sh`, so run them from Git
-Bash or put `C:\Program Files\Git\bin` on `PATH`.
-
-```sh
-just setup  # install dependencies
-just dev    # backend on :8044, frontend on http://localhost:5173
-just check  # type-check Rust and TypeScript
-```
-
-Run `just` to list all recipes. The dev server uses the `dev` profile and the
-fixed access token `1234`.
+- [Development](docs/development.md): building and running btmux from a checkout
 
 ## License
 

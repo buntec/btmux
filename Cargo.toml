@@ -16,7 +16,7 @@ rust-embed = { version = "8", features = ["axum", "compression"] }
 mime_guess = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "local-time"] }
-time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
 tracing-appender = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"

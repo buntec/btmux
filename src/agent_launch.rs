@@ -77,17 +77,22 @@ fn windows_program(name: &str, path: &std::ffi::OsStr) -> Option<std::path::Path
         .find(|candidate| candidate.is_file())
 }
 
+pub fn program(agent: Agent, env: &impl Fn(&str) -> Option<OsString>) -> OsString {
+    #[cfg(windows)]
+    if let Some(path) = env("PATH").and_then(|path| windows_program(agent.program(), &path)) {
+        return path.into();
+    }
+    #[cfg(not(windows))]
+    let _ = env;
+    agent.program().into()
+}
+
 fn command(
     agent: Agent,
     args: &[OsString],
     env: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Command, String> {
-    let program = OsString::from(agent.program());
-    #[cfg(windows)]
-    let program = env("PATH")
-        .and_then(|path| windows_program(agent.program(), &path))
-        .map_or(program, Into::into);
-    let mut command = Command::new(program);
+    let mut command = Command::new(program(agent, &env));
     if let Some(telemetry) = Telemetry::from_env(&env)? {
         match agent {
             Agent::Claude => {

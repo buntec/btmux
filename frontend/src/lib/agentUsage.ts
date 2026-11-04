@@ -146,3 +146,28 @@ export const formatCost = (value: number | null) =>
   value === null
     ? 'Unavailable'
     : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(value);
+
+/** Past two missed polls, the server is keeping these limits through failed reads. */
+const LIMITS_STALE_SECONDS = 180;
+
+export const limitsAreStale = (updatedAt: number, now: number) => now - updatedAt > LIMITS_STALE_SECONDS;
+
+export const formatLimitPercent = (value: number) => `${Math.round(value)}% used`;
+
+/** Relative within a day, where it's what you want to know; then a weekday and time. */
+export function formatLimitReset(resetsAt: number, now: number): string {
+  const seconds = resetsAt - now;
+  if (seconds <= 0) return 'Resetting';
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `Resets in ${minutes}m`;
+  if (minutes < 24 * 60) {
+    const hours = Math.floor(minutes / 60);
+    return `Resets in ${hours}h ${minutes % 60}m`;
+  }
+  const at = new Date(resetsAt * 1000).toLocaleString([], {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `Resets ${at}`;
+}

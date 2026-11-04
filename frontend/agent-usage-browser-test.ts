@@ -50,8 +50,37 @@ const metrics = ['input', 'output', 'cacheRead'].map((kind, j) => ({
     })),
   },
 }));
+// The real endpoint, whose result depends on the machine's logins.
+const realLimits = await fetch(`${url}/api/agent-limits`, { headers });
+assert(realLimits.ok, `agent limits: ${realLimits.status}`);
+assert(Array.isArray(await realLimits.json()));
+assert.equal((await fetch(`${url}/api/agent-limits`)).status, 401);
+const limitsNow = Date.now() / 1000;
+let limitReads = 0;
+let limitsReply: unknown[] = [
+  {
+    agent: 'Claude Code',
+    plan: 'max',
+    updated_at: limitsNow,
+    limits: [
+      { label: 'Current session', percent: 20, resets_at: limitsNow + 3600, severity: 'normal' },
+      { label: 'Current week', percent: 85, resets_at: limitsNow + 5 * 86400, severity: 'warning' },
+      { label: 'Current week (Fable)', percent: 100, resets_at: null, severity: 'critical' },
+    ],
+  },
+  {
+    agent: 'Codex',
+    plan: 'prolite',
+    updated_at: limitsNow - 600,
+    limits: [{ label: 'Weekly', percent: 8, resets_at: limitsNow + 1800, severity: 'normal' }],
+  },
+];
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+await context.route('**/api/agent-limits', (route) => {
+  limitReads += 1;
+  return route.fulfill({ json: limitsReply });
+});
 await context.addInitScript(() => {
   window.WebSocket = new Proxy(window.WebSocket, {
     construct(target, args) {
@@ -105,6 +134,58 @@ try {
     ['codex\0a', 1],
   ]);
   await page.getByText('No usage received yet').waitFor();
+  // Limits don't depend on telemetry, and rows keep their order and grade.
+  await page.locator('[data-agent-limits]').waitFor();
+  assert.deepEqual(
+    await page
+      .locator('[data-agent-limit]')
+      .evaluateAll((rows) =>
+        rows.map((row) => [row.getAttribute('data-agent-limit'), row.getAttribute('data-severity')]),
+      ),
+    [
+      ['Current session', 'normal'],
+      ['Current week', 'warning'],
+      ['Current week (Fable)', 'critical'],
+      ['Weekly', 'normal'],
+    ],
+  );
+  const session = page.locator('[data-agent-limit="Current session"]');
+  assert.match(await session.innerText(), /20% used/);
+  assert.match(await session.innerText(), /Resets in (59m|1h 0m)/);
+  assert.match(await page.locator('[data-agent-limit="Current week"]').innerText(), /Resets (?!in )/);
+  assert.doesNotMatch(await page.locator('[data-agent-limit="Current week (Fable)"]').innerText(), /Resets/);
+  assert.equal(await page.locator('[data-agent-limit-agent="Claude Code"] [data-agent-limit-stale]').count(), 0);
+  assert.equal(await page.locator('[data-agent-limit-agent="Codex"] [data-agent-limit-stale]').count(), 1);
+  assert.equal(limitReads, 1);
+  // On a short screen the empty state scrolls below the limits instead of covering them.
+  for (const viewport of [
+    { width: 375, height: 667 },
+    { width: 320, height: 568 },
+    { width: 844, height: 390 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const panel = await page.locator('[data-agent-limits]').boundingBox();
+    const title = await page.getByText('No usage received yet').boundingBox();
+    assert(panel && title);
+    assert(panel.y + panel.height <= title.y, `empty state overlaps limits at ${viewport.width}x${viewport.height}`);
+    const note = page.getByText('Usage history covers');
+    await note.scrollIntoViewIfNeeded();
+    const box = await note.boundingBox();
+    assert(box && box.y + box.height <= viewport.height, `empty state clipped at ${viewport.width}x${viewport.height}`);
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  // Without a subscription there is nothing to show, and only an open Usage tab polls.
+  const saved = limitsReply;
+  limitsReply = [];
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).click();
+  await page.getByRole('tab', { name: 'Usage', exact: true }).click();
+  await page.getByText('No usage received yet').waitFor();
+  await waitForAsync(page, () => document.querySelector('[data-agent-limits]') === null);
+  assert.equal(limitReads, 2);
+  limitsReply = saved;
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).click();
+  await page.getByRole('tab', { name: 'Usage', exact: true }).click();
+  await page.locator('[data-agent-limits]').waitFor();
   await post(`/api/panes/${codex}/telemetry/v1/logs`, { resourceLogs: [{ scopeLogs: [{ logRecords: logs }] }] });
   await post(`/api/panes/${claude}/telemetry/v1/metrics`, { resourceMetrics: [{ scopeMetrics: [{ metrics }] }] });
   await post(`/api/panes/${claude}/telemetry/v1/metrics`, {

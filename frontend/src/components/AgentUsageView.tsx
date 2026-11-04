@@ -249,7 +249,7 @@ export function AgentUsageView() {
     return (
       <VStack gap={6} className="h-full">
         <AgentLimitsPanel agents={limits} now={now} />
-        <VStack hAlign="center" vAlign="center" className="min-h-0 flex-1">
+        <VStack hAlign="center" vAlign="center" className="flex-1">
           <EmptyState
             title="No usage received yet"
             actions={

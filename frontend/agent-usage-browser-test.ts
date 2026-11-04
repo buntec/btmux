@@ -157,6 +157,23 @@ try {
   assert.equal(await page.locator('[data-agent-limit-agent="Claude Code"] [data-agent-limit-stale]').count(), 0);
   assert.equal(await page.locator('[data-agent-limit-agent="Codex"] [data-agent-limit-stale]').count(), 1);
   assert.equal(limitReads, 1);
+  // On a short screen the empty state scrolls below the limits instead of covering them.
+  for (const viewport of [
+    { width: 375, height: 667 },
+    { width: 320, height: 568 },
+    { width: 844, height: 390 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const panel = await page.locator('[data-agent-limits]').boundingBox();
+    const title = await page.getByText('No usage received yet').boundingBox();
+    assert(panel && title);
+    assert(panel.y + panel.height <= title.y, `empty state overlaps limits at ${viewport.width}x${viewport.height}`);
+    const note = page.getByText('Usage history covers');
+    await note.scrollIntoViewIfNeeded();
+    const box = await note.boundingBox();
+    assert(box && box.y + box.height <= viewport.height, `empty state clipped at ${viewport.width}x${viewport.height}`);
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   // Without a subscription there is nothing to show, and only an open Usage tab polls.
   const saved = limitsReply;
   limitsReply = [];

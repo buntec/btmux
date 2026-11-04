@@ -1270,13 +1270,22 @@ mod pane_notification_tests {
 
     #[test]
     fn hook_lineage_walks_up_from_the_reporter() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
+        // The child is this test binary, so no platform's `sleep` is needed.
+        const CHILD: &str = "BTMUX_TEST_LINEAGE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            return;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("hook_lineage_walks_up_from_the_reporter")
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap();
         let mut headers = HeaderMap::new();
         headers.insert("x-btmux-agent-pid", child.id().to_string().parse().unwrap());
         let lineage = hook_lineage(&headers);
+        assert!(child.try_wait().unwrap().is_none(), "child exited early");
         child.kill().unwrap();
         child.wait().unwrap();
         assert_eq!(lineage[0].pid, child.id());

@@ -41,7 +41,8 @@ Every argument after `claude` or `codex` goes to that agent, including `--help`,
 `--version`, `--profile`, and `--`. Both wrappers use the executable on `PATH`
 and inherit the working directory and terminal streams. On Unix the agent
 replaces the wrapper, preserving its PID, signals, and exit status; Windows
-runs the agent and returns its exit code. Missing executables exit with 127.
+runs the agent, including an npm `.cmd` shim, and returns its exit code. Missing
+executables exit with 127.
 
 Inside a pane, `btmux claude` sets the log and metric exporter environment for
 this invocation. Exports use HTTP/protobuf with 10-second metric and 5-second

@@ -23,10 +23,11 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 const MAX_BODY: usize = 8 * 1024 * 1024;
-const MAX_RECORDS: usize = 10_000;
+const MAX_RECORDS: usize = 4096;
 const MAX_PANES: usize = 128;
 const MAX_SERIES: usize = 256;
-const MAX_SEEN: usize = 4096;
+// Larger than a batch, so a retried batch is still recognized.
+const MAX_SEEN: usize = 2 * MAX_RECORDS;
 const HISTORY_SECONDS: u64 = 3600;
 const MAX_VALUE: f64 = 1e15;
 
@@ -137,7 +138,18 @@ impl TelemetryStore {
         }
         self.panes
             .retain(|_, pane| pane.updated_at + HISTORY_SECONDS > now);
-        if !self.panes.contains_key(&pane_id) && self.panes.len() >= MAX_PANES {
+        let mut pane = self.panes.remove(&pane_id).unwrap_or_default();
+        let mut changed = false;
+        for sample in samples {
+            changed |= pane.ingest(sample, now);
+        }
+        // A new pane with no accepted samples must not displace another.
+        if pane.updated_at == 0 {
+            return false;
+        }
+        pane.buckets
+            .retain(|minute, _| *minute + 60 > now.saturating_sub(HISTORY_SECONDS));
+        if self.panes.len() >= MAX_PANES {
             if let Some(oldest) = self
                 .panes
                 .iter()
@@ -147,13 +159,7 @@ impl TelemetryStore {
                 self.panes.remove(&oldest);
             }
         }
-        let pane = self.panes.entry(pane_id).or_default();
-        let mut changed = false;
-        for sample in samples {
-            changed |= pane.ingest(sample, now);
-        }
-        pane.buckets
-            .retain(|minute, _| *minute + 60 > now.saturating_sub(HISTORY_SECONDS));
+        self.panes.insert(pane_id, pane);
         changed
     }
 }
@@ -199,12 +205,12 @@ impl PaneTelemetry {
             if !value.is_finite() || !(0.0..=MAX_VALUE).contains(&value) || sample.timestamp == 0 {
                 return false;
             }
-            let previous = self.counters.get(&sample.identity);
-            if previous.is_some_and(|old| sample.timestamp <= old.end) {
-                return false;
-            }
             let delta = if cumulative {
-                previous
+                let previous = self.counters.get(&sample.identity);
+                if previous.is_some_and(|old| sample.timestamp <= old.end) {
+                    return false;
+                }
+                let delta = previous
                     .filter(|old| old.start == start && value >= old.value)
                     .map_or_else(
                         || {
@@ -218,36 +224,43 @@ impl PaneTelemetry {
                             }
                         },
                         |old| value - old.value,
-                    )
+                    );
+                // Each session adds series, so the stalest gives way to the newest.
+                if previous.is_none() && self.counters.len() >= MAX_SERIES {
+                    if let Some(oldest) = self
+                        .counters
+                        .iter()
+                        .min_by_key(|(_, counter)| counter.end)
+                        .map(|(identity, _)| *identity)
+                    {
+                        self.counters.remove(&oldest);
+                    }
+                }
+                self.counters.insert(
+                    sample.identity,
+                    Counter {
+                        start,
+                        end: sample.timestamp,
+                        value,
+                    },
+                );
+                delta
             } else {
+                // Delta points stand alone, so a late retry still counts once.
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                (sample.identity, start, sample.timestamp).hash(&mut hasher);
+                if !self.remember(hasher.finish()) {
+                    return false;
+                }
                 value
             };
-            if self.counters.len() >= MAX_SERIES && previous.is_none() {
-                return false;
-            }
-            self.counters.insert(
-                sample.identity,
-                Counter {
-                    start,
-                    end: sample.timestamp,
-                    value,
-                },
-            );
             sample.usage.input_tokens *= delta;
             sample.usage.output_tokens *= delta;
             sample.usage.cached_tokens *= delta;
             sample.usage.cache_write_tokens *= delta;
             sample.usage.cost_usd = sample.usage.cost_usd.map(|cost| cost * delta);
-        } else {
-            if !self.seen.insert(sample.identity) {
-                return false;
-            }
-            self.seen_order.push_back(sample.identity);
-            if self.seen_order.len() > MAX_SEEN {
-                if let Some(oldest) = self.seen_order.pop_front() {
-                    self.seen.remove(&oldest);
-                }
-            }
+        } else if !self.remember(sample.identity) {
+            return false;
         }
         self.agent = sample.agent.to_string();
         if sample.model.is_some() {
@@ -258,6 +271,20 @@ impl PaneTelemetry {
             .entry(seconds / 60 * 60)
             .or_default()
             .add(&sample.usage);
+        true
+    }
+
+    /// False if `identity` was already seen.
+    fn remember(&mut self, identity: u64) -> bool {
+        if !self.seen.insert(identity) {
+            return false;
+        }
+        self.seen_order.push_back(identity);
+        if self.seen_order.len() > MAX_SEEN {
+            if let Some(oldest) = self.seen_order.pop_front() {
+                self.seen.remove(&oldest);
+            }
+        }
         true
     }
 }
@@ -812,6 +839,110 @@ mod tests {
             tracked.ingest(sample, NOW);
         }
         assert_eq!(tracked.counters.len(), MAX_SERIES);
+    }
+
+    fn metric_with_session(
+        value: f64,
+        end: u64,
+        temporality: i32,
+        session: usize,
+    ) -> ExportMetricsServiceRequest {
+        let mut request = metric(value, end, NOW - 100, temporality, "input");
+        let data = request.resource_metrics[0].scope_metrics[0].metrics[0]
+            .data
+            .as_mut()
+            .unwrap();
+        let metric::Data::Sum(sum) = data else {
+            panic!("expected a sum");
+        };
+        sum.data_points[0].attributes.push(
+            serde_json::from_value(kv(
+                "session.id",
+                json!({"stringValue": format!("session-{session}")}),
+            ))
+            .unwrap(),
+        );
+        request
+    }
+
+    #[test]
+    fn new_sessions_count_after_the_series_limit() {
+        for temporality in [1, 2] {
+            let mut store = TelemetryStore::default();
+            let pane = Uuid::new_v4();
+            for session in 0..MAX_SERIES + 10 {
+                let request = metric_with_session(1.0, NOW, temporality, session);
+                assert!(store.ingest(pane, parse_metrics(request).unwrap(), NOW));
+            }
+            let total = store.snapshots(NOW)[0].totals.input_tokens;
+            assert_eq!(total, (MAX_SERIES + 10) as f64);
+            assert!(store.panes[&pane].counters.len() <= MAX_SERIES);
+        }
+    }
+
+    #[test]
+    fn evicting_a_counter_keeps_the_most_recent_series() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        for session in 0..MAX_SERIES {
+            let end = NOW - 10 + (session == 0) as u64 * 5;
+            let request = metric_with_session(1.0, end, 2, session);
+            store.ingest(pane, parse_metrics(request).unwrap(), NOW);
+        }
+        // Session 0 exported last, so a new series must not replace it.
+        let request = metric_with_session(1.0, NOW, 2, MAX_SERIES);
+        store.ingest(pane, parse_metrics(request).unwrap(), NOW);
+        let request = metric_with_session(3.0, NOW + 1, 2, 0);
+        store.ingest(pane, parse_metrics(request).unwrap(), NOW + 1);
+        // 257 first exports, plus session 0's increase of 2.
+        let total = store.snapshots(NOW + 1)[0].totals.input_tokens;
+        assert_eq!(total, (MAX_SERIES + 1) as f64 + 2.0);
+    }
+
+    #[test]
+    fn late_delta_retries_count_once() {
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        for (value, end) in [(20.0, NOW + 1), (10.0, NOW), (10.0, NOW), (20.0, NOW + 1)] {
+            store.ingest(
+                pane,
+                parse_metrics(metric(value, end, end - 1, 1, "input")).unwrap(),
+                NOW + 1,
+            );
+        }
+        assert_eq!(store.snapshots(NOW + 1)[0].totals.input_tokens, 30.0);
+    }
+
+    #[test]
+    fn rejected_samples_from_a_new_pane_displace_nothing() {
+        let mut store = TelemetryStore::default();
+        for _ in 0..MAX_PANES {
+            store.ingest(Uuid::new_v4(), parse_logs(completion(NOW)).unwrap(), NOW);
+        }
+        let before: HashSet<_> = store.panes.keys().copied().collect();
+        let stale = parse_logs(completion(NOW - HISTORY_SECONDS - 1)).unwrap();
+        assert!(!store.ingest(Uuid::new_v4(), stale, NOW));
+        assert_eq!(store.panes.keys().copied().collect::<HashSet<_>>(), before);
+    }
+
+    #[test]
+    fn a_full_retried_batch_is_recognized() {
+        let batch = |store: &mut TelemetryStore, pane| {
+            let samples = (0..MAX_RECORDS)
+                .flat_map(|i| {
+                    let mut request = completion(NOW);
+                    let record = &mut request.resource_logs[0].scope_logs[0].log_records[0];
+                    record.time_unix_nano = (NOW * 1_000_000_000) + i as u64;
+                    parse_logs(request).unwrap()
+                })
+                .collect();
+            store.ingest(pane, samples, NOW)
+        };
+        let mut store = TelemetryStore::default();
+        let pane = Uuid::new_v4();
+        assert!(batch(&mut store, pane));
+        assert!(!batch(&mut store, pane));
+        assert_eq!(store.snapshots(NOW)[0].totals.requests, MAX_RECORDS as f64);
     }
 
     #[test]

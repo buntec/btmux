@@ -258,6 +258,40 @@ try {
     'switching to usage must preserve mirror sockets',
   );
 
+  // The grid's keys work after switching tabs with the mouse or the keyboard.
+  const selectedTile = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll<HTMLInputElement>('[data-agent-tiles] input')].findIndex((tile) => tile.checked),
+    );
+  const pressAndExpect = async (key: string, expected: number) => {
+    await page.keyboard.press(key);
+    await waitForAsync(
+      page,
+      (expected) =>
+        [...document.querySelectorAll<HTMLInputElement>('[data-agent-tiles] input')].findIndex(
+          (tile) => tile.checked,
+        ) === expected,
+      expected,
+    );
+  };
+  assert.equal(await selectedTile(), 0);
+  await pressAndExpect('2', 1);
+  await pressAndExpect('l', 2);
+  await pressAndExpect('h', 1);
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).focus();
+  await pressAndExpect('1', 0);
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await selectedTile(), 0, 'arrow keys on a focused tab belong to the tabs');
+  await page.keyboard.press('Enter');
+  await page.getByText('No usage received yet').waitFor();
+  await page.keyboard.press('2');
+  assert.equal(await selectedTile(), 0, 'grid keys must not move the hidden selection');
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await replaysShown(page, 4);
+  await pressAndExpect('2', 1);
+  await pressAndExpect('1', 0);
+
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);
   await baseline(page);

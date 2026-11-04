@@ -68,12 +68,26 @@ impl Telemetry {
     }
 }
 
+/// `Command` only finds `.exe` on Windows, but npm installs agents as `.cmd` shims.
+#[cfg(any(windows, test))]
+fn windows_program(name: &str, path: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
+    std::env::split_paths(path)
+        .filter(|dir| dir.is_absolute())
+        .flat_map(|dir| [".exe", ".cmd", ".bat"].map(|ext| dir.join(format!("{name}{ext}"))))
+        .find(|candidate| candidate.is_file())
+}
+
 fn command(
     agent: Agent,
     args: &[OsString],
     env: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Command, String> {
-    let mut command = Command::new(agent.program());
+    let program = OsString::from(agent.program());
+    #[cfg(windows)]
+    let program = env("PATH")
+        .and_then(|path| windows_program(agent.program(), &path))
+        .map_or(program, Into::into);
+    let mut command = Command::new(program);
     if let Some(telemetry) = Telemetry::from_env(&env)? {
         match agent {
             Agent::Claude => {
@@ -205,6 +219,32 @@ mod tests {
             .get_envs()
             .filter_map(|(key, value)| Some((key.to_str()?.into(), value?.to_str()?.into())))
             .collect()
+    }
+
+    #[test]
+    fn windows_lookup_follows_path_order_and_prefers_executables() {
+        let root = std::env::temp_dir().join(format!("btmux-agent-path-{}", uuid::Uuid::new_v4()));
+        let (first, second) = (root.join("first"), root.join("second"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        assert_eq!(windows_program("codex", &path), None);
+        std::fs::write(second.join("codex.exe"), "").unwrap();
+        assert_eq!(
+            windows_program("codex", &path),
+            Some(second.join("codex.exe"))
+        );
+        std::fs::write(first.join("codex.cmd"), "").unwrap();
+        assert_eq!(
+            windows_program("codex", &path),
+            Some(first.join("codex.cmd"))
+        );
+        std::fs::write(first.join("codex.exe"), "").unwrap();
+        assert_eq!(
+            windows_program("codex", &path),
+            Some(first.join("codex.exe"))
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

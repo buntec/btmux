@@ -24,6 +24,9 @@ interface Props {
   send: (msg: ClientMessage) => void;
 }
 
+/** Keys a focused tab handles itself; the rest still reach the grid. */
+const TAB_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', ' ']);
+
 interface AgentPaneEntry {
   sessionId: string;
   sessionName: string;
@@ -251,7 +254,7 @@ export function AgentGrid({ send }: Props) {
       cancel();
       return;
     }
-    if (view !== 'panes' || (e.target as Element).closest('[role="tablist"]')) return;
+    if (view !== 'panes' || (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]'))) return;
     if (n === 0) return;
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -317,7 +320,17 @@ export function AgentGrid({ send }: Props) {
               }}
             />
             <LayoutHeader paddingBlockEnd={0}>
-              <TabList value={view} onChange={setView} role="tablist" hasDivider isFullBleed>
+              <TabList
+                value={view}
+                onChange={(value) => {
+                  setView(value);
+                  // A tab keeping focus would take the grid's keys.
+                  dialogRef.current?.focus();
+                }}
+                role="tablist"
+                hasDivider
+                isFullBleed
+              >
                 <Tab value="panes" label="Live panes" panelId="agents-panes" />
                 <Tab value="usage" label="Usage" panelId="agents-usage" />
               </TabList>

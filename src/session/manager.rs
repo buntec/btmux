@@ -29,7 +29,7 @@ pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     pub telemetry: crate::telemetry::TelemetryStore,
-    pub picks: crate::pick::Picks,
+    pub widgets: crate::widget::Widgets,
     shell: String,
     cli_shell: Option<String>,
     /// The config as last read from disk. Kept so a session-only override can be
@@ -119,7 +119,7 @@ impl SessionManager {
             detection_tick: None,
             next_client: 0,
             alert_client: None,
-            picks: Default::default(),
+            widgets: Default::default(),
             git: GitTracker::new(pty_env.meta_tx.clone()),
             pty_env,
         }

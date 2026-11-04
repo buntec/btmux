@@ -1,5 +1,5 @@
-//! `btmux pick`: a menu over the pane, whose choice answers a CLI process
-//! waiting on the request.
+//! `btmux pick`, `confirm`, and `input`: a widget over the pane, whose answer
+//! goes to a CLI process waiting on the request.
 
 use std::io::{IsTerminal, Read, Write};
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use crate::AppState;
 
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
 
-/// How long tabs have to report showing a pick.
+/// How long tabs have to report showing a widget.
 #[cfg(not(test))]
 const SHOW_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(test)]
@@ -30,6 +30,7 @@ const SHOW_TIMEOUT: Duration = Duration::from_millis(100);
 /// The request waits for the user, however long that takes.
 const NO_TIMEOUT: Duration = Duration::from_secs(10 * 365 * 24 * 3600);
 
+const EXIT_NO: i32 = 1;
 const EXIT_NOTHING_TO_PICK: i32 = 1;
 const EXIT_FAILED: i32 = 2;
 const EXIT_CANCELED: i32 = 130;
@@ -42,53 +43,103 @@ pub struct PickItem {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
-pub struct PickRequest {
-    pub prompt: Option<String>,
-    pub items: Vec<PickItem>,
+pub enum WidgetRequest {
+    Pick {
+        prompt: Option<String>,
+        items: Vec<PickItem>,
+    },
+    Confirm {
+        message: String,
+        default_yes: bool,
+    },
+    Input {
+        prompt: Option<String>,
+        default: Option<String>,
+    },
 }
 
-/// Tabs fetch the items only for a pane they show, so a long list isn't
-/// broadcast.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum WidgetKind {
+    Pick,
+    Confirm,
+    Input,
+}
+
+impl WidgetRequest {
+    fn kind(&self) -> WidgetKind {
+        match self {
+            Self::Pick { .. } => WidgetKind::Pick,
+            Self::Confirm { .. } => WidgetKind::Confirm,
+            Self::Input { .. } => WidgetKind::Input,
+        }
+    }
+
+    fn accepts(&self, answer: &WidgetAnswer) -> bool {
+        match (self, answer) {
+            (Self::Pick { items, .. }, WidgetAnswer::Pick { index }) => *index < items.len(),
+            (Self::Confirm { .. }, WidgetAnswer::Confirm { .. }) => true,
+            (Self::Input { .. }, WidgetAnswer::Input { .. }) => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum WidgetAnswer {
+    Pick { index: usize },
+    Confirm { yes: bool },
+    Input { text: String },
+}
+
+/// Tabs fetch the request only for a pane they show, so a long list isn't
+/// broadcast. The kind lets them take keys while that loads.
 #[derive(Serialize, Clone)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-pub struct PickSummary {
+pub struct WidgetSummary {
     pub id: Uuid,
     pub pane_id: Uuid,
+    pub kind: WidgetKind,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Progress {
     Waiting,
     Shown,
-    Answered(Option<usize>),
+    Answered(Option<WidgetAnswer>),
 }
 
 struct Pending {
     id: Uuid,
     pane_id: Uuid,
-    request: Arc<PickRequest>,
+    request: Arc<WidgetRequest>,
     progress: watch::Sender<Progress>,
 }
 
-/// Open picks, in `SessionManager` so that connecting tabs get them.
+/// Open widgets, in `SessionManager` so that connecting tabs get them.
 #[derive(Default)]
-pub struct Picks(Vec<Pending>);
+pub struct Widgets(Vec<Pending>);
 
-impl Picks {
-    pub fn summaries(&self) -> Vec<PickSummary> {
+impl Widgets {
+    pub fn summaries(&self) -> Vec<WidgetSummary> {
         self.0
             .iter()
-            .map(|pick| PickSummary {
-                id: pick.id,
-                pane_id: pick.pane_id,
+            .map(|widget| WidgetSummary {
+                id: widget.id,
+                pane_id: widget.pane_id,
+                kind: widget.request.kind(),
             })
             .collect()
     }
 
     pub fn shown(&self, id: Uuid) {
-        if let Some(pick) = self.0.iter().find(|pick| pick.id == id) {
-            pick.progress.send_if_modified(|progress| {
+        if let Some(widget) = self.0.iter().find(|widget| widget.id == id) {
+            widget.progress.send_if_modified(|progress| {
                 let waiting = matches!(progress, Progress::Waiting);
                 if waiting {
                     *progress = Progress::Shown;
@@ -98,19 +149,22 @@ impl Picks {
         }
     }
 
-    /// The first answer wins, as several tabs can show one pick. `index` is
-    /// an item, or `None` to cancel.
-    pub fn answer(&self, id: Uuid, index: Option<usize>) {
-        let Some(pick) = self.0.iter().find(|pick| pick.id == id) else {
+    /// The first answer wins, as several tabs can show one widget. `None`
+    /// cancels; an answer of the wrong kind or out of range is ignored.
+    pub fn answer(&self, id: Uuid, answer: Option<WidgetAnswer>) {
+        let Some(widget) = self.0.iter().find(|widget| widget.id == id) else {
             return;
         };
-        if index.is_some_and(|index| index >= pick.request.items.len()) {
+        if answer
+            .as_ref()
+            .is_some_and(|answer| !widget.request.accepts(answer))
+        {
             return;
         }
-        pick.progress.send_if_modified(|progress| {
+        widget.progress.send_if_modified(|progress| {
             let open = !matches!(progress, Progress::Answered(_));
             if open {
-                *progress = Progress::Answered(index);
+                *progress = Progress::Answered(answer);
             }
             open
         });
@@ -118,36 +172,36 @@ impl Picks {
 }
 
 fn broadcast(mgr: &SessionManager) {
-    let msg = ServerMessage::Picks {
-        picks: mgr.picks.summaries(),
+    let msg = ServerMessage::Widgets {
+        widgets: mgr.widgets.summaries(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
 }
 
-/// Closes the pick however the request ends, including the CLI going away.
-struct OpenPick {
+/// Closes the widget however the request ends, including the CLI going away.
+struct OpenWidget {
     state: AppState,
     id: Uuid,
 }
 
-impl Drop for OpenPick {
+impl Drop for OpenWidget {
     fn drop(&mut self) {
         let (state, id) = (self.state.clone(), self.id);
         tokio::spawn(async move {
             let mut mgr = state.write().await;
-            mgr.picks.0.retain(|pick| pick.id != id);
+            mgr.widgets.0.retain(|widget| widget.id != id);
             broadcast(&mgr);
         });
     }
 }
 
-/// Replies once the user answers: `{"index": n}`, or `null` if canceled.
-pub async fn api_pick(
+/// Replies once the user answers: `{"answer": ...}`, `null` if canceled.
+pub async fn api_widget(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
-    Json(request): Json<PickRequest>,
+    Json(request): Json<WidgetRequest>,
 ) -> Response {
-    if request.items.is_empty() {
+    if matches!(&request, WidgetRequest::Pick { items, .. } if items.is_empty()) {
         return (StatusCode::BAD_REQUEST, "nothing to pick").into_response();
     }
     let id = Uuid::new_v4();
@@ -157,10 +211,10 @@ pub async fn api_pick(
         if mgr.find_pane(pane_id).is_none() {
             return StatusCode::NOT_FOUND.into_response();
         }
-        if mgr.picks.0.iter().any(|pick| pick.pane_id == pane_id) {
-            return (StatusCode::CONFLICT, "this pane already has a pick open").into_response();
+        if mgr.widgets.0.iter().any(|widget| widget.pane_id == pane_id) {
+            return (StatusCode::CONFLICT, "this pane already has a widget open").into_response();
         }
-        mgr.picks.0.push(Pending {
+        mgr.widgets.0.push(Pending {
             id,
             pane_id,
             request: Arc::new(request),
@@ -168,7 +222,7 @@ pub async fn api_pick(
         });
         broadcast(&mgr);
     }
-    let _open = OpenPick {
+    let _open = OpenWidget {
         state: state.clone(),
         id,
     };
@@ -185,19 +239,19 @@ pub async fn api_pick(
     let answer = match watcher
         .wait_for(|progress| matches!(progress, Progress::Answered(_)))
         .await
-        .map(|progress| *progress)
+        .map(|progress| progress.clone())
     {
-        Ok(Progress::Answered(index)) => index,
+        Ok(Progress::Answered(answer)) => answer,
         _ => None,
     };
-    Json(serde_json::json!({ "index": answer })).into_response()
+    Json(serde_json::json!({ "answer": answer })).into_response()
 }
 
-pub async fn api_pick_items(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+pub async fn api_widget_request(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
     let request = {
         let mgr = state.read().await;
-        let pick = mgr.picks.0.iter().find(|pick| pick.id == id);
-        pick.map(|pick| pick.request.clone())
+        let widget = mgr.widgets.0.iter().find(|widget| widget.id == id);
+        widget.map(|widget| widget.request.clone())
     };
     match request {
         Some(request) => Json(&*request).into_response(),
@@ -225,22 +279,54 @@ fn parse_items(input: &[u8]) -> Vec<(&[u8], PickItem)> {
         .collect()
 }
 
-/// Returns the exit code.
-pub async fn run(prompt: Option<&str>) -> i32 {
-    match pick(prompt).await {
-        Ok(code) => code,
-        Err(error) => {
-            eprintln!("btmux: {error}");
-            EXIT_FAILED
-        }
-    }
-}
-
-async fn pick(prompt: Option<&str>) -> Result<i32, String> {
-    let pane = std::env::var("BTMUX_PANE_ID")
+fn pane_id() -> Result<String, String> {
+    std::env::var("BTMUX_PANE_ID")
         .ok()
         .filter(|pane| !pane.is_empty())
-        .ok_or("pick must run in a btmux pane")?;
+        .ok_or("this must run in a btmux pane".into())
+}
+
+/// Shows the widget and waits: `None` if canceled.
+async fn show(pane: &str, request: &WidgetRequest) -> Result<Option<WidgetAnswer>, String> {
+    let body = serde_json::to_value(request).map_err(|error| error.to_string())?;
+    let reply = crate::api_client::request(
+        None,
+        reqwest::Method::POST,
+        &format!("/api/panes/{pane}/widget"),
+        Some(body),
+        NO_TIMEOUT,
+    )
+    .await?;
+    let reply: Reply = serde_json::from_str(&reply).map_err(|error| error.to_string())?;
+    Ok(reply.answer)
+}
+
+#[derive(Deserialize)]
+struct Reply {
+    answer: Option<WidgetAnswer>,
+}
+
+fn exit_code(result: Result<i32, String>) -> i32 {
+    result.unwrap_or_else(|error| {
+        eprintln!("btmux: {error}");
+        EXIT_FAILED
+    })
+}
+
+/// A reader that went away doesn't change the answer.
+fn print_line(value: &[u8]) {
+    let mut stdout = std::io::stdout();
+    let _ = stdout
+        .write_all(value)
+        .and_then(|()| stdout.write_all(b"\n"));
+}
+
+pub async fn pick(prompt: Option<&str>) -> i32 {
+    exit_code(run_pick(prompt).await)
+}
+
+async fn run_pick(prompt: Option<&str>) -> Result<i32, String> {
+    let pane = pane_id()?;
     let mut stdin = std::io::stdin();
     if stdin.is_terminal() {
         return Err("pick reads its items from stdin".into());
@@ -253,32 +339,47 @@ async fn pick(prompt: Option<&str>) -> Result<i32, String> {
     if items.is_empty() {
         return Ok(EXIT_NOTHING_TO_PICK);
     }
-    let request = PickRequest {
+    let request = WidgetRequest::Pick {
         prompt: prompt.map(str::to_owned),
         items,
     };
-    let body = serde_json::to_value(&request).map_err(|error| error.to_string())?;
-    let reply = crate::api_client::request(
-        None,
-        reqwest::Method::POST,
-        &format!("/api/panes/{pane}/pick"),
-        Some(body),
-        NO_TIMEOUT,
-    )
-    .await?;
-    let reply: serde_json::Value =
-        serde_json::from_str(&reply).map_err(|error| error.to_string())?;
-    let Some(value) = reply["index"]
-        .as_u64()
-        .and_then(|index| values.get(index as usize))
-    else {
+    let Some(WidgetAnswer::Pick { index }) = show(&pane, &request).await? else {
         return Ok(EXIT_CANCELED);
     };
-    // A reader that went away doesn't change what was picked.
-    let mut stdout = std::io::stdout();
-    let _ = stdout
-        .write_all(value)
-        .and_then(|()| stdout.write_all(b"\n"));
+    let value = values.get(index).ok_or("the server chose no such item")?;
+    print_line(value);
+    Ok(0)
+}
+
+pub async fn confirm(message: &str, default_yes: bool) -> i32 {
+    exit_code(run_confirm(message, default_yes).await)
+}
+
+async fn run_confirm(message: &str, default_yes: bool) -> Result<i32, String> {
+    let request = WidgetRequest::Confirm {
+        message: message.to_owned(),
+        default_yes,
+    };
+    Ok(match show(&pane_id()?, &request).await? {
+        Some(WidgetAnswer::Confirm { yes: true }) => 0,
+        Some(WidgetAnswer::Confirm { yes: false }) => EXIT_NO,
+        _ => EXIT_CANCELED,
+    })
+}
+
+pub async fn input(prompt: Option<&str>, default: Option<&str>) -> i32 {
+    exit_code(run_input(prompt, default).await)
+}
+
+async fn run_input(prompt: Option<&str>, default: Option<&str>) -> Result<i32, String> {
+    let request = WidgetRequest::Input {
+        prompt: prompt.map(str::to_owned),
+        default: default.map(str::to_owned),
+    };
+    let Some(WidgetAnswer::Input { text }) = show(&pane_id()?, &request).await? else {
+        return Ok(EXIT_CANCELED);
+    };
+    print_line(text.as_bytes());
     Ok(0)
 }
 
@@ -325,13 +426,22 @@ mod tests {
         (state.clone(), crate::server::create_app(state), pane)
     }
 
+    const PICK: &str = r#"{"type":"pick","prompt":"p","items":[{"label":"a","description":null},{"label":"b","description":"note"}]}"#;
+
     fn open(app: &Router, pane: Uuid) -> tokio::task::JoinHandle<(StatusCode, serde_json::Value)> {
+        open_with(app, pane, PICK)
+    }
+
+    fn open_with(
+        app: &Router,
+        pane: Uuid,
+        body: &'static str,
+    ) -> tokio::task::JoinHandle<(StatusCode, serde_json::Value)> {
         let app = app.clone();
         tokio::spawn(async move {
-            let body = r#"{"prompt":"p","items":[{"label":"a","description":null},{"label":"b","description":"note"}]}"#;
             let response = app
                 .oneshot(
-                    Request::post(format!("/api/panes/{pane}/pick"))
+                    Request::post(format!("/api/panes/{pane}/widget"))
                         .header("content-type", "application/json")
                         .body(Body::from(body))
                         .unwrap(),
@@ -351,22 +461,22 @@ mod tests {
 
     async fn open_id(state: &AppState) -> Uuid {
         for _ in 0..200 {
-            if let Some(pick) = state.read().await.picks.summaries().first() {
-                return pick.id;
+            if let Some(widget) = state.read().await.widgets.summaries().first() {
+                return widget.id;
             }
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        panic!("the pick never opened");
+        panic!("the widget never opened");
     }
 
     async fn closed(state: &AppState) {
         for _ in 0..200 {
-            if state.read().await.picks.summaries().is_empty() {
+            if state.read().await.widgets.summaries().is_empty() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        panic!("the pick never closed");
+        panic!("the widget never closed");
     }
 
     #[tokio::test]
@@ -382,15 +492,15 @@ mod tests {
         let (state, app, pane) = app().await;
         let request = open(&app, pane);
         let id = open_id(&state).await;
-        state.read().await.picks.shown(id);
-        // Shown picks wait for the user.
+        state.read().await.widgets.shown(id);
+        // Shown widgets wait for the user.
         tokio::time::sleep(SHOW_TIMEOUT * 2).await;
         assert!(!request.is_finished());
 
         let items = app
             .clone()
             .oneshot(
-                Request::get(format!("/api/picks/{id}"))
+                Request::get(format!("/api/widgets/{id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -405,35 +515,39 @@ mod tests {
 
         {
             let mgr = state.read().await;
-            mgr.picks.answer(id, Some(99));
-            mgr.picks.answer(id, Some(1));
-            mgr.picks.answer(id, None);
+            mgr.widgets
+                .answer(id, Some(WidgetAnswer::Pick { index: 99 }));
+            mgr.widgets
+                .answer(id, Some(WidgetAnswer::Confirm { yes: true }));
+            mgr.widgets
+                .answer(id, Some(WidgetAnswer::Pick { index: 1 }));
+            mgr.widgets.answer(id, None);
         }
         let (status, reply) = request.await.unwrap();
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(reply["index"], 1);
+        assert_eq!(reply["answer"]["index"], 1);
         closed(&state).await;
     }
 
     #[tokio::test]
-    async fn a_pane_has_one_pick_and_cancel_replies_null() {
+    async fn a_pane_has_one_widget_and_cancel_replies_null() {
         let (state, app, pane) = app().await;
         let first = open(&app, pane);
         let id = open_id(&state).await;
         let (status, _) = open(&app, pane).await.unwrap();
         assert_eq!(status, StatusCode::CONFLICT);
-        state.read().await.picks.answer(id, None);
+        state.read().await.widgets.answer(id, None);
         let (status, reply) = first.await.unwrap();
         assert_eq!(status, StatusCode::OK);
-        assert!(reply["index"].is_null());
+        assert!(reply["answer"].is_null());
     }
 
     #[tokio::test]
-    async fn a_dropped_request_closes_the_pick() {
+    async fn a_dropped_request_closes_the_widget() {
         let (state, app, pane) = app().await;
         let request = open(&app, pane);
         let id = open_id(&state).await;
-        state.read().await.picks.shown(id);
+        state.read().await.widgets.shown(id);
         request.abort();
         closed(&state).await;
     }
@@ -445,13 +559,58 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         let response = app
             .oneshot(
-                Request::post(format!("/api/panes/{pane}/pick"))
+                Request::post(format!("/api/panes/{pane}/widget"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"prompt":null,"items":[]}"#))
+                    .body(Body::from(r#"{"type":"pick","prompt":null,"items":[]}"#))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn confirm_and_input_answer_with_their_own_kind() {
+        let (state, app, pane) = app().await;
+        let request = open_with(
+            &app,
+            pane,
+            r#"{"type":"confirm","message":"Sure?","default_yes":false}"#,
+        );
+        let id = open_id(&state).await;
+        {
+            let mgr = state.read().await;
+            assert!(mgr.widgets.summaries()[0].kind == WidgetKind::Confirm);
+            mgr.widgets.shown(id);
+            mgr.widgets
+                .answer(id, Some(WidgetAnswer::Pick { index: 0 }));
+            mgr.widgets
+                .answer(id, Some(WidgetAnswer::Confirm { yes: true }));
+        }
+        let (status, reply) = request.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(reply["answer"]["yes"], true);
+        closed(&state).await;
+
+        let request = open_with(
+            &app,
+            pane,
+            r#"{"type":"input","prompt":"Name","default":"x"}"#,
+        );
+        let id = open_id(&state).await;
+        {
+            let mgr = state.read().await;
+            mgr.widgets.shown(id);
+            mgr.widgets
+                .answer(id, Some(WidgetAnswer::Confirm { yes: true }));
+            let text = String::new();
+            mgr.widgets.answer(id, Some(WidgetAnswer::Input { text }));
+        }
+        let (status, reply) = request.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            reply["answer"]["text"], "",
+            "an empty answer isn't a cancel"
+        );
     }
 }

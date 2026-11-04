@@ -1,118 +1,43 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@astryxdesign/core/Card';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import type { ClientMessage } from '../protocol/messages';
-import type { PickRequest } from '../generated/protocol';
-import type { PaneTerminal } from '../lib/paneTerminal';
+import type { WidgetRequest } from '../generated/protocol';
+import { isCancelKey, usePaneWidget, type PaneWidgetProps } from '../hooks/usePaneWidget';
 import { filterPick, pickHaystack } from '../lib/pickFilter';
 import { plainTextInput } from '../lib/touch';
 import { stepIndex } from '../lib/utils';
-import { useStore } from '../state/store';
 
 /** Rows drawn; the count and a final row say when there are more. */
 const MAX_ROWS = 200;
 
-interface Props {
-  id: string;
-  term: PaneTerminal;
-  /** The tab can see this pane. */
-  shown: boolean;
-  send: (msg: ClientMessage) => void;
-}
+type PickRequest = Extract<WidgetRequest, { type: 'pick' }>;
 
 /** `btmux pick`: a filterable menu at the pane's cursor. Keys reach it through `term.focus()`. */
-export function PanePicker({ id, term, shown, send }: Props) {
-  const [request, setRequest] = useState<PickRequest | null>(null);
-  const [failed, setFailed] = useState(false);
+export function PanePicker(props: PaneWidgetProps) {
+  const { term } = props;
+  const { request, failed, measured, answer, cardProps } = usePaneWidget<PickRequest>(props);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
-  const cardRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // The unfiltered size, kept so that filtering never moves the input.
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
-
-  useEffect(() => {
-    if (shown) send({ type: 'pick_shown', id });
-  }, [shown, id, send]);
-
-  useEffect(() => {
-    if (!shown || request) return;
-    let canceled = false;
-    fetch(`/api/picks/${id}`, { cache: 'no-store' })
-      .then((response) => (response.ok ? (response.json() as Promise<PickRequest>) : Promise.reject()))
-      .then((loaded) => {
-        if (!canceled) setRequest(loaded);
-      })
-      .catch(() => {
-        if (!canceled) setFailed(true);
-      });
-    return () => {
-      canceled = true;
-    };
-  }, [shown, id, request]);
 
   useLayoutEffect(() => {
     term.setFocusTarget(inputRef.current);
-    term.scrollToBottom();
-    return () => term.setFocusTarget(null);
   }, [term]);
 
   const items = request?.items;
   const haystacks = useMemo(() => (items ?? []).map(pickHaystack), [items]);
   const { indices, total } = useMemo(
-    () => filterPick(haystacks, size ? query : '', MAX_ROWS),
-    [haystacks, query, size],
+    () => filterPick(haystacks, measured ? query : '', MAX_ROWS),
+    [haystacks, query, measured],
   );
-
-  useLayoutEffect(() => {
-    if (!shown || (!items && !failed) || size) return;
-    const card = cardRef.current;
-    if (card?.offsetParent) setSize({ width: card.offsetWidth, height: card.offsetHeight });
-  }, [shown, items, failed, size]);
-
-  useLayoutEffect(() => {
-    const card = cardRef.current;
-    const surface = card?.offsetParent;
-    if (!card || !surface || !size) return;
-    const place = () => {
-      const bounds = surface.getBoundingClientRect();
-      const anchor = term.cursorRect();
-      const top = Math.max(0, Math.min(anchor.top - bounds.top, bounds.height));
-      const bottom = Math.max(0, Math.min(anchor.bottom - bounds.top, bounds.height));
-      const below = bounds.height - bottom;
-      const above = size.height > below && top > below;
-      const width = Math.min(size.width, bounds.width);
-      card.style.width = `${width}px`;
-      card.style.height = `${Math.min(size.height, above ? top : below)}px`;
-      card.style.top = above ? '' : `${bottom}px`;
-      card.style.bottom = above ? `${bounds.height - top}px` : '';
-      card.style.left = `${Math.max(0, Math.min(anchor.left - bounds.left, bounds.width - width))}px`;
-    };
-    place();
-    const observer = new ResizeObserver(place);
-    observer.observe(surface);
-    // Output can arrive after the menu: they come over different sockets.
-    const offRender = term.onRender(place);
-    return () => {
-      observer.disconnect();
-      offRender();
-    };
-  }, [term, size, shown]);
 
   useLayoutEffect(() => {
     scrollRef.current?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [selected, indices]);
-
-  const answer = (index: number | null) => {
-    send({ type: 'pick_answer', id, index });
-    // Other tabs close when the server's update arrives.
-    const store = useStore.getState();
-    store.setPicks(store.picks.filter((pick) => pick.id !== id));
-  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     e.stopPropagation();
@@ -123,24 +48,17 @@ export function PanePicker({ id, term, shown, send }: Props) {
     };
     if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n') || (e.key === 'Tab' && !e.shiftKey)) step(1);
     else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p') || (e.key === 'Tab' && e.shiftKey)) step(-1);
-    else if (e.key === 'Escape' || (e.ctrlKey && e.key === 'c')) {
+    else if (isCancelKey(e)) {
       e.preventDefault();
       answer(null);
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (indices.length) answer(indices[selected]);
+      if (indices.length) answer({ type: 'pick', index: indices[selected] });
     }
   };
 
   return (
-    <Card
-      ref={cardRef}
-      padding={1}
-      elevation="high"
-      maxWidth="72ch"
-      data-pane-picker=""
-      className={`btm-mono absolute z-5 flex min-h-0 min-w-[24ch] flex-col gap-1 overflow-hidden ${size ? '' : 'opacity-0'}`}
-    >
+    <Card {...cardProps} maxWidth="72ch">
       <HStack gap={1} vAlign="center" className="shrink-0">
         <TextInput
           ref={(input) => {
@@ -192,7 +110,7 @@ export function PanePicker({ id, term, shown, send }: Props) {
                   </HStack>
                 }
                 isSelected={row === selected}
-                onClick={() => answer(index)}
+                onClick={() => answer({ type: 'pick', index })}
               />
             ))}
           </List>

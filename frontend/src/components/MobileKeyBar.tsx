@@ -29,10 +29,10 @@ const ARROWS = [
   { key: 'ArrowRight', label: 'Right', icon: ArrowRight },
 ];
 
-// Inputs the key bar types into: pane terminals, the built-in Neovim, the browser, and `btmux pick`.
+// Inputs the key bar types into: pane terminals, the built-in Neovim, the browser, and `btmux` widgets.
 const takesKeys = (target: EventTarget | null) =>
   target instanceof Element &&
-  target.closest('[data-pane-terminal], [data-nvim-input], [data-browser-input], [data-pane-picker]') !== null;
+  target.closest('[data-pane-terminal], [data-nvim-input], [data-browser-input], [data-pane-widget]') !== null;
 
 /** Keys phone keyboards lack. Ctrl and Alt apply to the next key, from here or the keyboard. */
 export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
@@ -60,11 +60,12 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
   const pressKey = (key: string, modifiers: KeyModifiers) => {
     const state = useStore.getState();
     const focused = document.activeElement;
-    // Neovim, or a text field such as pane search, gets the key itself.
+    // Neovim, a pane widget, or a text field such as pane search gets the key itself.
     if (
       focused instanceof HTMLElement &&
       (focused.dataset.nvimInput !== undefined ||
         focused.dataset.browserInput !== undefined ||
+        focused.closest('[data-pane-widget]') ||
         (focused.matches(TEXT_FIELDS) && !focused.closest('[data-pane-terminal]')))
     ) {
       return dispatchKey(focused, key, modifiers);

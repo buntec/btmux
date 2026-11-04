@@ -100,7 +100,7 @@ it tracks the btmux scheme, including live changes. The snippet selects it only
 inside btmux panes and overrides universal `fish_color_*` variables there. The
 Home Manager module installs both files when `programs.fish.enable` is set.
 
-To make Tab open a [`btmux pick` menu](automation.md#menus-from-the-shell) instead
+To make Tab open a [`btmux pick` menu](automation.md#menus) instead
 of fish's own, add this to `config.fish` (with Home Manager,
 `programs.fish.interactiveShellInit`):
 

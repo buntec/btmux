@@ -1,4 +1,4 @@
-/** `btmux pick` against the isolated browser-test stack. */
+/** `btmux pick`, `confirm`, and `input` against the isolated browser-test stack. */
 import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
@@ -8,7 +8,8 @@ const token = process.env.BTMUX_AUTH_TOKEN;
 assert(token, 'BTMUX_AUTH_TOKEN is required');
 
 const LIST = `printf 'alpha\\tfirst note\\nbeta\\ngamma\\n'`;
-const PICKER = '[data-pane-picker]';
+const PICKER = '[data-pane-widget]';
+const SHOWN = `${PICKER}:not(.opacity-0)`;
 
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 try {
@@ -164,7 +165,7 @@ try {
   assert(
     await last.evaluate((el) => {
       const row = el.getBoundingClientRect();
-      const list = el.closest('[data-pane-picker]')!.getBoundingClientRect();
+      const list = el.closest('[data-pane-widget]')!.getBoundingClientRect();
       return row.top >= list.top && row.bottom <= list.bottom;
     }),
     'the selection scrolls into view',
@@ -233,15 +234,136 @@ try {
     return session?.windows[0].panes[0].id as string | undefined;
   });
   const started = Date.now();
-  const refused = await page.request.post(api(`/panes/${hiddenPane}/pick`), {
-    data: { prompt: null, items: [{ label: 'x', description: null }] },
+  const refused = await page.request.post(api(`/panes/${hiddenPane}/widget`), {
+    data: { type: 'pick', prompt: null, items: [{ label: 'x', description: null }] },
   });
   assert.equal(refused.status(), 409);
   assert((await refused.text()).includes('no browser tab'));
   assert(Date.now() - started < 10_000);
 
+  const widget = page.locator(PICKER);
+  const focusedText = () => page.evaluate(() => document.activeElement?.textContent ?? '');
+  const ask = async (command: string) => {
+    await run(`clear; "$BTMUX_BIN" ${command}; echo "rc=$?"`);
+    await page.waitForSelector(SHOWN);
+  };
+  const answered = async (rc: number) => {
+    await closed();
+    await waitForOutput(`rc=${rc}`);
+  };
+
+  // Confirm: Enter takes the safe answer unless told otherwise.
+  await ask(`confirm 'Delete it?'`);
+  assert((await widget.innerText()).includes('Delete it?'));
+  assert.equal(await focusedText(), 'No');
+  await page.keyboard.press('Enter');
+  await answered(1);
+  await ask(`confirm --default-yes 'Keep going?'`);
+  assert.equal(await focusedText(), 'Yes');
+  await page.keyboard.press('Enter');
+  await answered(0);
+
+  // Letters, arrows, clicks, and cancel.
+  for (const [key, rc] of [['y', 0], ['Y', 0], ['n', 1], ['Escape', 130], ['Control+c', 130]] as const) {
+    await ask(`confirm 'Sure?'`);
+    await page.keyboard.press(key);
+    await answered(rc);
+  }
+  await ask(`confirm 'Sure?'`);
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'Yes');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'No');
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'Yes');
+  await page.keyboard.press('Enter');
+  await answered(0);
+  await ask(`confirm 'Sure?'`);
+  await widget.getByRole('button', { name: 'Yes' }).click();
+  await answered(0);
+
+  // Neither a held key nor a click on the question answers, and keys still work after it.
+  await ask(`confirm --default-yes 'Sure?'`);
+  await page.evaluate(() => {
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true }));
+  });
+  await widget.getByText('Sure?').click();
+  await page.waitForTimeout(200);
+  assert.equal(await widget.count(), 1, 'still open');
+  await page.keyboard.press('n');
+  await answered(1);
+  assert(
+    await page.evaluate(() => document.activeElement?.closest('[data-pane-terminal]') !== null),
+    'the terminal has focus again',
+  );
+
+  // Keys it took never reach the shell.
+  await run(`clear; printf 'typed:'; read -r line; echo "[$line]"`);
+  await waitForOutput('typed:');
+  await page.keyboard.type('ok');
+  await page.keyboard.press('Enter');
+  await waitForOutput('[ok]');
+  assert(!(await screen()).includes('not found'), await screen());
+
+  // A long question scrolls and leaves the buttons on screen.
+  await ask(`confirm "$(seq 200)"`);
+  const box = (await widget.boundingBox())!;
+  assert(box.y >= 0 && box.y + box.height <= 800, `the question fits: ${JSON.stringify(box)}`);
+  const yesBox = (await widget.getByRole('button', { name: 'Yes' }).boundingBox())!;
+  assert(yesBox.y + yesBox.height <= box.y + box.height, 'the buttons stay inside it');
+  const question = widget.getByText('199');
+  assert(
+    await question.evaluate((el) => el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === 'auto'),
+    'the question scrolls',
+  );
+  await page.keyboard.press('Escape');
+  await answered(130);
+
+  // Input: the label, default, and text as typed.
+  await run(`clear; v="$("$BTMUX_BIN" input --prompt Name --default ab)"; echo "rc=$? [$v]"`);
+  await page.waitForSelector(SHOWN);
+  assert((await widget.innerText()).includes('Name'));
+  assert.equal(await widget.locator('input').inputValue(), 'ab');
+  assert(await widget.locator('input').evaluate((input) => input === document.activeElement), 'the field has focus');
+  await page.keyboard.type(' héllo wörld');
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0 [ab héllo wörld]');
+  assert(
+    await page.evaluate(() => document.activeElement?.closest('[data-pane-terminal]') !== null),
+    'the terminal has focus again',
+  );
+
+  // Submitting nothing is an answer; Esc is not.
+  await run(`clear; v="$("$BTMUX_BIN" input)"; echo "rc=$? [$v]"`);
+  await page.waitForSelector(SHOWN);
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0 []');
+  await run(`clear; v="$("$BTMUX_BIN" input --default keep)"; echo "rc=$? [$v]"`);
+  await page.waitForSelector(SHOWN);
+  await page.keyboard.press('Escape');
+  await closed();
+  await waitForOutput('rc=130 []');
+
+  // Typing survives neither a reload nor the widget: it reopens with its default.
+  await run(`clear; v="$("$BTMUX_BIN" input --default start)"; echo "rc=$? [$v]"`);
+  await page.waitForSelector(SHOWN);
+  await page.reload();
+  await page.waitForSelector(SHOWN);
+  assert.equal(await widget.locator('input').inputValue(), 'start');
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0 [start]');
+
+  // Every command fails outside a pane.
+  for (const command of [`confirm x`, `input`]) {
+    await run(`clear; BTMUX_PANE_ID= "$BTMUX_BIN" ${command}; echo "rc=$?"`);
+    await waitForOutput('rc=2');
+  }
+
   assert.deepEqual(errors, []);
-  console.log('pick browser test passed');
+  console.log('widget browser test passed');
 } finally {
   await browser.close();
 }

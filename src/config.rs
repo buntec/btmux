@@ -378,6 +378,25 @@ pub enum SubCommand {
         #[arg(long)]
         prompt: Option<String>,
     },
+    /// Ask a yes/no question over this pane. Exits 0 for yes, 1 for no, 2 if
+    /// no tab shows the pane, and 130 if canceled.
+    Confirm {
+        /// The question.
+        message: String,
+        /// Make Enter answer yes rather than no.
+        #[arg(long)]
+        default_yes: bool,
+    },
+    /// Ask for a line of text over this pane and print it. Exits 2 if no tab
+    /// shows the pane and 130 if canceled.
+    Input {
+        /// Label above the text field.
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Text the field starts with.
+        #[arg(long)]
+        default: Option<String>,
+    },
     /// Print the panes running a coding agent, with their states, as JSON.
     /// Inside a btmux pane this targets that pane's server; otherwise the
     /// `--profile` server.

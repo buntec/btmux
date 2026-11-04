@@ -87,10 +87,10 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
-    // Sent when empty too, to close picks a previous server had open.
+    // Sent when empty too, to close widgets a previous server had open.
     messages.push(
-        serde_json::to_string(&ServerMessage::Picks {
-            picks: mgr.picks.summaries(),
+        serde_json::to_string(&ServerMessage::Widgets {
+            widgets: mgr.widgets.summaries(),
         })
         .unwrap(),
     );
@@ -170,12 +170,12 @@ async fn handle_socket(socket: WebSocket, state: AppState, color_mode: Option<Co
                     set_system_color_mode(&mut *state.write().await, mode);
                     Ok(())
                 }
-                Ok(ClientMessage::PickShown { id }) => {
-                    state.read().await.picks.shown(id);
+                Ok(ClientMessage::WidgetShown { id }) => {
+                    state.read().await.widgets.shown(id);
                     Ok(())
                 }
-                Ok(ClientMessage::PickAnswer { id, index }) => {
-                    state.read().await.picks.answer(id, index);
+                Ok(ClientMessage::WidgetAnswer { id, answer }) => {
+                    state.read().await.widgets.answer(id, answer);
                     Ok(())
                 }
                 Ok(cmd) => handle_command(cmd, &state).await,
@@ -413,8 +413,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::VscodeOpen { .. }
         | ClientMessage::FocusClient
         | ClientMessage::SystemColorMode { .. }
-        | ClientMessage::PickShown { .. }
-        | ClientMessage::PickAnswer { .. } => unreachable!(),
+        | ClientMessage::WidgetShown { .. }
+        | ClientMessage::WidgetAnswer { .. } => unreachable!(),
     }
 
     broadcast_state(&mgr);
@@ -896,14 +896,14 @@ pub(crate) enum ClientMessage {
     SystemColorMode {
         mode: ColorMode,
     },
-    /// This tab is showing the pick, so `btmux pick` should wait for the user.
-    PickShown {
+    /// This tab is showing the widget, so its command should wait for the user.
+    WidgetShown {
         id: Uuid,
     },
-    /// The chosen item, or `None` to cancel.
-    PickAnswer {
+    /// The answer, or `None` to cancel.
+    WidgetAnswer {
         id: Uuid,
-        index: Option<usize>,
+        answer: Option<crate::widget::WidgetAnswer>,
     },
     CyclePane {
         session_id: Uuid,
@@ -1053,9 +1053,9 @@ pub enum ServerMessage {
     Tailscale {
         status: crate::tailscale::TailscaleStatus,
     },
-    /// All open `btmux pick` menus; sent on connect and on change.
-    Picks {
-        picks: Vec<crate::pick::PickSummary>,
+    /// All open pane widgets; sent on connect and on change.
+    Widgets {
+        widgets: Vec<crate::widget::WidgetSummary>,
     },
 }
 
@@ -1189,12 +1189,12 @@ mod tests {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
         ));
         let state = std::sync::Arc::new(tokio::sync::RwLock::new(mgr));
-        let [config, snapshot, picks] = &resynchronize(&mut events, &state).await[..] else {
-            panic!("expected config, state, and picks");
+        let [config, snapshot, widgets] = &resynchronize(&mut events, &state).await[..] else {
+            panic!("expected config, state, and widgets");
         };
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(picks).unwrap()["type"],
-            "picks"
+            serde_json::from_str::<serde_json::Value>(widgets).unwrap()["type"],
+            "widgets"
         );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&config).unwrap()["type"],

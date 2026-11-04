@@ -544,7 +544,7 @@ export class PaneTerminal {
     if (active instanceof HTMLElement && (this.element.contains(active) || active === this.focusTarget)) active.blur();
   }
 
-  /** While set, this element takes the pane's focus and keys, as the pane's `btmux pick` menu does. */
+  /** While set, this element takes the pane's focus and keys, as the pane's `btmux` widgets do. */
   setFocusTarget(target: HTMLElement | null) {
     this.focusTarget = target;
   }

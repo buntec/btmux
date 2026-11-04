@@ -13,7 +13,7 @@ const configHome = process.env.BTMUX_TEST_CONFIG_HOME;
 assert(token, 'BTMUX_AUTH_TOKEN is required');
 assert(configHome, 'BTMUX_TEST_CONFIG_HOME is required; run this with `just test-fish-browser`');
 
-const PICKER = '[data-pane-picker]';
+const PICKER = '[data-pane-widget]';
 const dir = mkdtempSync(join(tmpdir(), 'btmux-fish-'));
 writeFileSync(join(dir, 'my file.txt'), '');
 writeFileSync(join(dir, 'my other.txt'), '');
@@ -153,7 +153,7 @@ try {
   await page.waitForTimeout(300);
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
-    useStore.setState({ setPicks: () => {} });
+    useStore.setState({ setWidgets: () => {} });
   });
   await page.keyboard.type('git che');
   await page.keyboard.press('Tab');

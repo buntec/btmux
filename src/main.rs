@@ -27,7 +27,6 @@ mod mcp;
 mod pane_git;
 mod paste_image;
 mod persistence;
-mod pick;
 mod process;
 #[cfg(test)]
 mod protocol;
@@ -44,6 +43,7 @@ mod tmux_cli;
 mod update_check;
 mod vscode;
 mod wallpaper;
+mod widget;
 mod worktree;
 mod ws;
 
@@ -120,7 +120,14 @@ async fn main() {
             std::process::exit(agent_launch::run(agent_launch::Agent::Codex, args))
         }
         Some(config::SubCommand::Pick { prompt }) => {
-            std::process::exit(pick::run(prompt.as_deref()).await)
+            std::process::exit(widget::pick(prompt.as_deref()).await)
+        }
+        Some(config::SubCommand::Confirm {
+            message,
+            default_yes,
+        }) => std::process::exit(widget::confirm(message, *default_yes).await),
+        Some(config::SubCommand::Input { prompt, default }) => {
+            std::process::exit(widget::input(prompt.as_deref(), default.as_deref()).await)
         }
         Some(config::SubCommand::Agents) => {
             std::process::exit(agent_cli::agents(args.profile.as_deref()).await)

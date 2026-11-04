@@ -529,14 +529,14 @@ try {
     const state = useStore.getState();
     return state.getActivePaneId(state.allSessions[0].id) as string;
   });
-  const picker = page.locator('[data-pane-picker]');
+  const picker = page.locator('[data-pane-widget]');
   const pick = async () => {
     const list = `for i in 1 2 3 4; do printf 'choice-%s\\tA description much too long to fit on the screen of a phone\\n' "$i"; done`;
     await api(`/api/panes/${pickPane}/input`, {
       method: 'POST',
       body: JSON.stringify({ text: `clear; ${list} | "$BTMUX_BIN" pick; echo "rc=$?"`, keys: ['Enter'] }),
     });
-    await page.waitForSelector('[data-pane-picker]:not(.opacity-0)');
+    await page.waitForSelector('[data-pane-widget]:not(.opacity-0)');
   };
   const pickFilter = picker.locator('input');
   const pickOutput = async (expected: RegExp) => {
@@ -592,8 +592,38 @@ try {
   await pick();
   await page.getByLabel('Terminal').first().tap({ force: true });
   await page.keyboard.type('choice-4');
-  await waitForAsync(page, () => document.querySelector('[data-pane-picker] input')?.getAttribute('value') === 'choice-4');
+  await waitForAsync(page, () => document.querySelector('[data-pane-widget] input')?.getAttribute('value') === 'choice-4');
   assert((await picker.innerText()).includes('1/4'));
+  await keys('Esc').tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=130/);
+
+  // `btmux confirm` and `input` fit too, and take taps and the key bar's keys.
+  const ask = async (command: string) => {
+    await api(`/api/panes/${pickPane}/input`, {
+      method: 'POST',
+      body: JSON.stringify({ text: `clear; "$BTMUX_BIN" ${command}; echo "rc=$?"`, keys: ['Enter'] }),
+    });
+    await page.waitForSelector('[data-pane-widget]:not(.opacity-0)');
+  };
+  const fits = async () => {
+    const box = (await picker.boundingBox())!;
+    assert(box.x >= 0 && box.x + box.width <= page.viewportSize()!.width, `it fits: ${JSON.stringify(box)}`);
+  };
+  await ask(`confirm 'Sure?'`);
+  await fits();
+  await picker.getByRole('button', { name: 'Yes' }).tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=0/);
+  await ask(`confirm 'Sure?'`);
+  await keys('Left').tap();
+  await waitForAsync(page, () => document.activeElement?.textContent === 'Yes');
+  await keys('Esc').tap();
+  await picker.waitFor({ state: 'detached' });
+  await pickOutput(/rc=130/);
+  await ask(`input --default typed`);
+  await fits();
+  assert.equal(await picker.locator('input').inputValue(), 'typed');
   await keys('Esc').tap();
   await picker.waitFor({ state: 'detached' });
   await pickOutput(/rc=130/);
@@ -606,7 +636,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pick menu, pairing, and manifest',
+    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pane widgets, pairing, and manifest',
   );
 } finally {
   await browser.close();

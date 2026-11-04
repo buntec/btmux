@@ -157,7 +157,7 @@ try {
   assert.equal(await waitForText(/\nAFTER_(\d+)\n/), shell, 'the same shell must survive the upgrade');
 
   // A menu open across an upgrade closes, and its command fails instead of hanging.
-  const picker = page.locator('[data-pane-picker]');
+  const picker = page.locator('[data-pane-widget]');
   const pick = (tag: string) =>
     api(`/api/panes/${pane}/input`, {
       text: `printf 'one\\ntwo\\n' | "$BTMUX_BIN" pick; printf '\\n${tag}_%s\\n' "$?"\r`,

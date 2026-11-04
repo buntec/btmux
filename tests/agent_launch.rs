@@ -22,7 +22,7 @@ impl Fixture {
             let path = dir.join(agent);
             std::fs::write(&path, r#"#!/bin/sh
 IFS= read -r input
-printf '%s\0' "$$" "$input" "$CLAUDE_CODE_ENABLE_TELEMETRY" "$OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" "$OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" "$OTEL_EXPORTER_OTLP_LOGS_HEADERS" "$BTMUX_OTEL_AUTHORIZATION" "$OTEL_EXPORTER_OTLP_LOGS_PROTOCOL" "$@"
+printf '%s\0' "$$" "$input" "$CLAUDE_CODE_ENABLE_TELEMETRY" "$OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" "$OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" "$OTEL_EXPORTER_OTLP_LOGS_HEADERS" "$OTEL_EXPORTER_OTLP_LOGS_PROTOCOL" "$@"
 printf 'agent stderr\n' >&2
 if [ "$BTMUX_TEST_SIGNAL" = yes ]; then kill -TERM "$$"; fi
 exit 23
@@ -115,8 +115,8 @@ fn outside_panes_executes_agents_with_exact_arguments_and_terminal_streams() {
         let fields = fields(&output);
         assert_eq!(fields[0], pid.to_string().as_str());
         assert_eq!(fields[1], "stdin with spaces");
-        assert!(fields[2..8].iter().all(|value| value.is_empty()));
-        assert_eq!(&fields[8..], args);
+        assert!(fields[2..7].iter().all(|value| value.is_empty()));
+        assert_eq!(&fields[7..], args);
         assert!(!fixture.0.join("config").exists());
         assert!(!fixture.0.join("home").exists());
     }
@@ -140,8 +140,8 @@ fn claude_routes_inherited_signal_settings_to_the_current_pane() {
     assert_eq!(fields[3], format!("{ENDPOINT}/v1/metrics").as_str());
     assert_eq!(fields[4], format!("{ENDPOINT}/v1/logs").as_str());
     assert_eq!(fields[5], "Authorization=Bearer test-token");
-    assert_eq!(fields[7], "http/protobuf");
-    assert_eq!(&fields[8..], ["--", "-literal"]);
+    assert_eq!(fields[6], "http/protobuf");
+    assert_eq!(&fields[7..], ["--", "-literal"]);
 }
 
 #[test]
@@ -151,8 +151,8 @@ fn codex_passes_runtime_configuration_and_user_overrides_without_token_arguments
     command.args(["-c", "model=\"test\"", "exec", "--json", "prompt"]);
     let (_, output) = run(command);
     let fields = fields(&output);
-    assert_eq!(fields[6], "Bearer test-token");
-    let args: Vec<_> = fields[8..]
+    assert_eq!(fields[5], "Authorization=Bearer%20test-token");
+    let args: Vec<_> = fields[7..]
         .iter()
         .map(|value| value.to_str().unwrap())
         .collect();

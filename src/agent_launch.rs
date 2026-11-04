@@ -121,10 +121,23 @@ fn command(
                 }
             }
             Agent::Codex => {
-                // A whole exporter replaces an existing gRPC exporter. The secret stays in env.
+                // A whole exporter replaces an existing gRPC exporter. The secret stays in env,
+                // since Codex doesn't expand `${VAR}` in a `-c` header.
                 let endpoint = toml::Value::String(format!("{}/v1/logs", telemetry.endpoint));
-                command.env("BTMUX_OTEL_AUTHORIZATION", telemetry.authorization)
-                    .args(["-c", &format!("otel.exporter={{otlp-http={{endpoint={endpoint},protocol=\"binary\",headers={{Authorization=\"${{BTMUX_OTEL_AUTHORIZATION}}\"}}}}}}")]);
+                command
+                    .env(
+                        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+                        format!(
+                            "Authorization={}",
+                            telemetry.authorization.replace(' ', "%20")
+                        ),
+                    )
+                    .args([
+                        "-c",
+                        &format!(
+                            "otel.exporter={{otlp-http={{endpoint={endpoint},protocol=\"binary\"}}}}"
+                        ),
+                    ]);
             }
         }
     }
@@ -311,14 +324,12 @@ mod tests {
         let config: toml::Value = toml::from_str(args[1]).unwrap();
         let exporter = &config["otel"]["exporter"]["otlp-http"];
         assert_eq!(exporter["protocol"].as_str(), Some("binary"));
-        assert_eq!(
-            exporter["headers"]["Authorization"].as_str(),
-            Some("${BTMUX_OTEL_AUTHORIZATION}")
-        );
+        // Codex sends a `${VAR}` header literally, so none may be configured here.
+        assert!(exporter.get("headers").is_none());
         assert!(!args.join(" ").contains("test-token"));
         assert_eq!(
-            settings(&command)["BTMUX_OTEL_AUTHORIZATION"],
-            "Bearer test-token"
+            settings(&command)["OTEL_EXPORTER_OTLP_LOGS_HEADERS"],
+            "Authorization=Bearer%20test-token"
         );
     }
 

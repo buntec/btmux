@@ -110,15 +110,14 @@ a baseline; the graph counts its subsequent increases.
 Configure the log exporter for this invocation:
 
 ```sh
-BTMUX_OTEL_AUTHORIZATION="Bearer $BTMUX_AUTH_TOKEN" \
+OTEL_EXPORTER_OTLP_LOGS_HEADERS="Authorization=Bearer%20$BTMUX_AUTH_TOKEN" \
 codex \
-  -c "otel.exporter.otlp-http.endpoint=\"${BTMUX_OTEL_ENDPOINT}/v1/logs\"" \
-  -c 'otel.exporter.otlp-http.protocol="binary"' \
-  -c 'otel.exporter.otlp-http.headers.Authorization="${BTMUX_OTEL_AUTHORIZATION}"'
+  -c "otel.exporter={otlp-http={endpoint=\"${BTMUX_OTEL_ENDPOINT}/v1/logs\",protocol=\"binary\"}}"
 ```
 
-Codex expands the header's environment reference. These flags leave the user's
-config file unchanged. Token counts and completed requests come from
+The header stays in the environment because Codex sends a `${VAR}` header from
+`-c` literally, which the receiver rejects with a 401. These flags leave the
+user's config file unchanged. Token counts and completed requests come from
 `response.completed` log events; tool calls come from `codex.tool_result`.
 Codex token metrics are ignored to avoid counting both log and metric exports.
 Cached tokens are part of input, and reasoning tokens are part of output.

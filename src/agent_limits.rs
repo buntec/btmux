@@ -31,6 +31,7 @@ const SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often to ask the pane shell again while a CLI is on no known `PATH`.
 const SHELL_PATH_RETRY: Duration = Duration::from_secs(600);
 /// Shell startup can print anything, even on the line of an unterminated escape.
+#[cfg(unix)]
 const SHELL_PATH_MARKER: &str = "__btmux_path__";
 /// Codex doesn't grade its windows; Claude's come graded.
 const CODEX_WARNING_PERCENT: f64 = 80.0;

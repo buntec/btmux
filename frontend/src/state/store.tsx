@@ -275,6 +275,8 @@ export const useStore = create<AppStore>((set, get) => ({
           controlSendFn({ type: 'switch_window', session_id: session.id, index: windowIndex });
           controlSendFn({ type: 'select_pane', session_id: session.id, pane_id: paneId });
           navigateFn(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(win.name)}`);
+          // The grids would cover the pane.
+          set({ agentGridOpen: false, windowGridOpen: false });
           return;
         }
       }

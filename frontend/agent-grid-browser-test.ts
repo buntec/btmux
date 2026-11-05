@@ -400,6 +400,17 @@ try {
   const ratio = (await tileWidthPerColumn('agent-closed', 130)) / (await tileWidthPerColumn('agent-a', 200));
   assert(ratio > 0.9 && ratio < 1.1, `closed-start agent's size: ${ratio}`);
 
+  // A notification's View pane leaves the grid for that pane.
+  const notified = await fetch(`${url}/api/panes/${agents.at(-1)!.id}/notify`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ hook_event_name: 'Stop', session_id: 'agent-closed' }),
+  });
+  assert(notified.ok);
+  await page.getByRole('button', { name: 'View pane', exact: true }).click({ timeout: 5000 });
+  await page.waitForURL(/\/s\/agent-closed\b/, { timeout: 5000 });
+  await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 });
+
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();

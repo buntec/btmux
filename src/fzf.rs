@@ -305,7 +305,7 @@ fn find_fzf(path: &OsStr, this: Option<&Path>) -> Option<PathBuf> {
 }
 
 /// The real fzf: this binary may be linked as `fzf`.
-fn real_fzf() -> Option<PathBuf> {
+pub(crate) fn real_fzf() -> Option<PathBuf> {
     let this = std::env::current_exe().and_then(std::fs::canonicalize).ok();
     find_fzf(&std::env::var_os("PATH")?, this.as_deref())
 }

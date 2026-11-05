@@ -138,6 +138,23 @@ try {
   await waitForOutput('rc=0');
   assert(/^alpha\ngamma$/m.test(await screen()), await screen());
 
+  // As in fzf, the wrapper prints in the order marked.
+  await run(
+    `clear; printf 'alpha\\nbeta\\ngamma\\n' | FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= "$BTMUX_BIN" fzf --multi; echo "rc=$?"`,
+  );
+  await page.waitForSelector(SHOWN);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('1 marked'), PICKER);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('2 marked'), PICKER);
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0');
+  assert(/^beta\nalpha$/m.test(await screen()), await screen());
+
   // With nothing marked, Enter chooses the current item; a second Tab unmarks.
   await open('--multi');
   await page.keyboard.press('Tab');

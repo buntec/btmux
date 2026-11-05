@@ -256,12 +256,14 @@ fn parse(default_opts: &[String], args: &[String]) -> Option<Options> {
         apply_args(&mut options, &shlex::split(opts)?)?;
     }
     apply_args(&mut options, args)?;
-    // Only fzf's own matching can decide these without a menu.
-    let pick = &options.pick;
+    // Only fzf's own matching can decide these without a menu, even for spaces,
+    // which `--no-extended` makes literal.
+    let pick = &mut options.pick;
     let query = pick.query.as_deref().unwrap_or_default();
-    if (pick.select_1 || pick.exit_0) && !query.trim().is_empty() {
+    if (pick.select_1 || pick.exit_0) && !query.is_empty() {
         return None;
     }
+    pick.selection_order = true;
     Some(options)
 }
 
@@ -488,6 +490,9 @@ mod tests {
             &["-q", "fbr", "-1"][..],
             &["--query=^main$", "--exit-0"],
             &["-1", "--query", "x"],
+            &["-q", " ", "-0"],
+            &["--no-extended", "-q", " ", "-1"],
+            &["+x", "-q", "  ", "-1"],
         ] {
             assert!(parsed(list).is_none(), "{list:?}");
         }
@@ -496,7 +501,7 @@ mod tests {
             &["-q", "x"][..],
             &["-1", "-0"],
             &["-q", "", "-1"],
-            &["-q", " ", "-0"],
+            &["-q", " "],
             &["-q", "x", "-1", "+1"],
         ] {
             assert!(parsed(list).is_some(), "{list:?}");

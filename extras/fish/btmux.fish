@@ -34,8 +34,8 @@ if status is-interactive; and set -q BTMUX_PANE_ID
 
     # Ctrl-R through `btmux pick`, filtering on the line, as fish's pager does.
     function __btmux_history
-        # Vi's normal mode is also named default, and redoes with Ctrl-R.
-        if test "$fish_bind_mode" = default; and string match -q '*_vi_*' -- $fish_key_bindings
+        # Normal mode is also named default, and redoes with Ctrl-R in vi and hybrid bindings.
+        if test "$fish_bind_mode" = default; and bind --preset ctrl-r 2>/dev/null | string match -q 'bind --preset ctrl-r redo'
             commandline -f redo
             return
         end

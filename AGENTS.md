@@ -104,6 +104,7 @@ stdout. `matches_query`, for `--select-1` and `--exit-0`, mirrors `filterPick`.
 to the same menu or are dropped; any other runs the real fzf, the first on `PATH`
 that isn't this binary, as does a failed menu, which passes on the stdin it read, and
 a query with `--select-1` or `--exit-0`, which only fzf's matching can decide.
+Marked items print in the order marked, as in fzf; `btmux pick` prints input order.
 Only add to its lists what doesn't change the result a caller gets. `POST
 /api/panes/{id}/widget` stays open until the user answers; dropping it (the CLI
 died) closes the widget. `ServerMessage::Widgets` lists open widgets by id and kind
@@ -119,9 +120,9 @@ focus rules in `TerminalPane` still apply. Shells have no UI protocol like Neovi
 `ext_popupmenu`, so menus replace the shell's own: when `btmux_pick_menus` is 1,
 `extras/fish/btmux.fish` binds Tab and Ctrl-R and wraps `cdh`, each falling back to
 fish's own when the pick fails. Tab also leaves fish to complete when its menu is
-open or with at most one candidate, and redo keeps Ctrl-R in vi's normal mode, also
-named `default`. It checks at the first prompt, as conf.d runs before config.fish,
-so it changes nothing when off.
+open or with at most one candidate, and redo keeps Ctrl-R in vi and hybrid normal
+mode, also named `default`, found from fish's preset. It checks at the first prompt,
+as conf.d runs before config.fish, so it changes nothing when off.
 
 ### Plan limits
 

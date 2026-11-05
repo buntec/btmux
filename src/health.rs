@@ -67,16 +67,16 @@ pub(crate) struct Probe {
 /// Kills a probe and its descendants when dropped, unless released. `kill_on_drop` only
 /// reaches the probe, and CLI wrappers often wait on a child.
 #[cfg(unix)]
-struct ProcessTree(libc::pid_t);
+pub(crate) struct ProcessTree(libc::pid_t);
 
 #[cfg(unix)]
 impl ProcessTree {
     /// The child must lead its own process group.
-    fn new(child: &tokio::process::Child) -> Option<Self> {
+    pub(crate) fn new(child: &tokio::process::Child) -> Option<Self> {
         child.id().map(|pid| Self(pid as libc::pid_t))
     }
 
-    fn release(self) {
+    pub(crate) fn release(self) {
         std::mem::forget(self);
     }
 }
@@ -542,7 +542,7 @@ async fn report(state: &AppState) -> HealthReport {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn found(output: Option<&str>) -> Probe {
@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn test_script(body: &str, mode: u32) -> (PathBuf, PathBuf) {
+    pub(crate) fn test_script(body: &str, mode: u32) -> (PathBuf, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("btmux-health-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -681,7 +681,7 @@ mod tests {
 
     /// Waits for the process whose pid `spawns_child` recorded to exit.
     #[cfg(unix)]
-    async fn assert_child_exits(dir: &Path) {
+    pub(crate) async fn assert_child_exits(dir: &Path) {
         let pid: libc::pid_t = std::fs::read_to_string(dir.join("tool.child"))
             .unwrap()
             .trim()
@@ -701,13 +701,13 @@ mod tests {
 
     /// Starts a child without `exec` and records its pid.
     #[cfg(unix)]
-    fn spawns_child(end: &str) -> String {
+    pub(crate) fn spawns_child(end: &str) -> String {
         format!("/bin/sleep 60 &\necho $! > \"$0.child\"\n{end}")
     }
 
     /// Long enough for a new script to start on a loaded machine.
     #[cfg(unix)]
-    const CHILD_STARTED: Duration = Duration::from_secs(2);
+    pub(crate) const CHILD_STARTED: Duration = Duration::from_secs(2);
 
     #[cfg(unix)]
     #[tokio::test]

@@ -49,6 +49,14 @@ pub enum WidgetRequest {
     Pick {
         prompt: Option<String>,
         items: Vec<PickItem>,
+        /// The filter's initial text.
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        multi: bool,
+        /// Filtering keeps input order instead of ranking label prefixes first.
+        #[serde(default)]
+        no_sort: bool,
     },
     Confirm {
         message: String,
@@ -80,7 +88,11 @@ impl WidgetRequest {
 
     fn accepts(&self, answer: &WidgetAnswer) -> bool {
         match (self, answer) {
-            (Self::Pick { items, .. }, WidgetAnswer::Pick { index }) => *index < items.len(),
+            (Self::Pick { items, multi, .. }, WidgetAnswer::Pick { indices }) => {
+                !indices.is_empty()
+                    && (*multi || indices.len() == 1)
+                    && indices.iter().all(|index| *index < items.len())
+            }
             (Self::Confirm { .. }, WidgetAnswer::Confirm { .. }) => true,
             (Self::Input { .. }, WidgetAnswer::Input { .. }) => true,
             _ => false,
@@ -92,7 +104,7 @@ impl WidgetRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum WidgetAnswer {
-    Pick { index: usize },
+    Pick { indices: Vec<usize> },
     Confirm { yes: bool },
     Input { text: String },
 }
@@ -259,6 +271,37 @@ pub async fn api_widget_request(State(state): State<AppState>, Path(id): Path<Uu
     }
 }
 
+/// Each NUL-terminated item, taken whole, and its menu item.
+fn parse_whole_items(input: &[u8]) -> Vec<(&[u8], PickItem)> {
+    input
+        .split(|&byte| byte == 0)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let label = String::from_utf8_lossy(value).into_owned();
+            (
+                value,
+                PickItem {
+                    label,
+                    description: None,
+                },
+            )
+        })
+        .collect()
+}
+
+/// As `filterPick` in the frontend: contains every whitespace-separated term, ignoring case.
+fn matches_query(item: &PickItem, query: &str) -> bool {
+    let label = item.label.to_lowercase();
+    let description = item.description.as_deref().map(str::to_lowercase);
+    query.split_whitespace().all(|term| {
+        let term = term.to_lowercase();
+        label.contains(&term)
+            || description
+                .as_ref()
+                .is_some_and(|text| text.contains(&term))
+    })
+}
+
 /// Each line's output value (its raw bytes before any tab) and menu item.
 fn parse_items(input: &[u8]) -> Vec<(&[u8], PickItem)> {
     input
@@ -314,18 +357,50 @@ fn exit_code(result: Result<i32, String>) -> i32 {
 }
 
 /// A reader that went away doesn't change the answer.
-fn print_line(value: &[u8]) {
+fn print_item(value: &[u8], end: u8) {
     let mut stdout = std::io::stdout();
     let _ = stdout
         .write_all(value)
-        .and_then(|()| stdout.write_all(b"\n"));
+        .and_then(|()| stdout.write_all(&[end]));
 }
 
-pub async fn pick(prompt: Option<&str>) -> i32 {
-    exit_code(run_pick(prompt).await)
+fn print_line(value: &[u8]) {
+    print_item(value, b'\n');
 }
 
-async fn run_pick(prompt: Option<&str>) -> Result<i32, String> {
+#[derive(clap::Args, Clone)]
+pub struct PickArgs {
+    /// Placeholder for the menu's filter.
+    #[arg(long)]
+    prompt: Option<String>,
+    /// The filter's initial text.
+    #[arg(long, short)]
+    query: Option<String>,
+    /// Let Tab mark several items, printed in input order.
+    #[arg(long, short)]
+    multi: bool,
+    /// Keep input order while filtering, rather than ranking label prefixes first.
+    #[arg(long)]
+    no_sort: bool,
+    /// Items end in NUL rather than a newline and are taken whole, with no descriptions.
+    #[arg(long)]
+    read0: bool,
+    /// End printed items in NUL rather than a newline.
+    #[arg(long)]
+    print0: bool,
+    /// Print the item without a menu if only one matches the query.
+    #[arg(long, short = '1')]
+    select_1: bool,
+    /// Exit 1 without a menu if nothing matches the query.
+    #[arg(long, short = '0')]
+    exit_0: bool,
+}
+
+pub async fn pick(args: &PickArgs) -> i32 {
+    exit_code(run_pick(args).await)
+}
+
+async fn run_pick(args: &PickArgs) -> Result<i32, String> {
     let pane = pane_id()?;
     let mut stdin = std::io::stdin();
     if stdin.is_terminal() {
@@ -335,19 +410,44 @@ async fn run_pick(prompt: Option<&str>) -> Result<i32, String> {
     stdin
         .read_to_end(&mut input)
         .map_err(|error| error.to_string())?;
-    let (values, items): (Vec<_>, Vec<_>) = parse_items(&input).into_iter().unzip();
+    let parsed = if args.read0 {
+        parse_whole_items(&input)
+    } else {
+        parse_items(&input)
+    };
+    let (values, items): (Vec<_>, Vec<_>) = parsed.into_iter().unzip();
     if items.is_empty() {
         return Ok(EXIT_NOTHING_TO_PICK);
     }
+    let end = if args.print0 { 0 } else { b'\n' };
+    let query = args.query.as_deref().unwrap_or_default();
+    if args.select_1 || args.exit_0 {
+        let mut matching = (0..items.len()).filter(|&index| matches_query(&items[index], query));
+        match (matching.next(), matching.next()) {
+            (None, _) if args.exit_0 => return Ok(EXIT_NOTHING_TO_PICK),
+            (Some(index), None) if args.select_1 => {
+                print_item(values[index], end);
+                return Ok(0);
+            }
+            _ => {}
+        }
+    }
     let request = WidgetRequest::Pick {
-        prompt: prompt.map(str::to_owned),
+        prompt: args.prompt.clone(),
         items,
+        query: args.query.clone(),
+        multi: args.multi,
+        no_sort: args.no_sort,
     };
-    let Some(WidgetAnswer::Pick { index }) = show(&pane, &request).await? else {
+    let Some(WidgetAnswer::Pick { mut indices }) = show(&pane, &request).await? else {
         return Ok(EXIT_CANCELED);
     };
-    let value = values.get(index).ok_or("the server chose no such item")?;
-    print_line(value);
+    indices.sort_unstable();
+    indices.dedup();
+    for index in indices {
+        let value = values.get(index).ok_or("the server chose no such item")?;
+        print_item(value, end);
+    }
     Ok(0)
 }
 
@@ -407,6 +507,53 @@ mod tests {
             [None, Some("A note"), None, Some("b\u{fffd}d")]
         );
         assert_eq!(parsed[3].1.label, "bad\u{fffd}");
+    }
+
+    #[test]
+    fn whole_items_keep_their_newlines_and_tabs() {
+        let parsed = parse_whole_items(b"one\ntwo\tthree\0\0four\0");
+        let values: Vec<_> = parsed.iter().map(|(value, _)| *value).collect();
+        assert_eq!(values, [&b"one\ntwo\tthree"[..], b"four"]);
+        assert_eq!(parsed[0].1.label, "one\ntwo\tthree");
+        assert!(parsed[0].1.description.is_none());
+    }
+
+    #[test]
+    fn queries_match_every_term_in_label_or_description() {
+        let item = PickItem {
+            label: "Alpha".into(),
+            description: Some("First Note".into()),
+        };
+        for query in ["", "  ", "alpha", "ALP note", "first"] {
+            assert!(matches_query(&item, query), "{query}");
+        }
+        for query in ["beta", "alpha beta"] {
+            assert!(!matches_query(&item, query), "{query}");
+        }
+    }
+
+    #[test]
+    fn only_a_multiple_menu_accepts_several_items() {
+        let pick = |multi| WidgetRequest::Pick {
+            prompt: None,
+            query: None,
+            multi,
+            no_sort: false,
+            items: ["a", "b"]
+                .map(|label| PickItem {
+                    label: label.into(),
+                    description: None,
+                })
+                .into(),
+        };
+        let answer = |indices: &[usize]| WidgetAnswer::Pick {
+            indices: indices.to_vec(),
+        };
+        assert!(pick(false).accepts(&answer(&[1])));
+        assert!(!pick(false).accepts(&answer(&[0, 1])));
+        assert!(pick(true).accepts(&answer(&[0, 1])));
+        assert!(!pick(true).accepts(&answer(&[])));
+        assert!(!pick(true).accepts(&answer(&[0, 2])));
     }
 
     async fn app() -> (AppState, Router, Uuid) {
@@ -516,16 +663,24 @@ mod tests {
         {
             let mgr = state.read().await;
             mgr.widgets
-                .answer(id, Some(WidgetAnswer::Pick { index: 99 }));
+                .answer(id, Some(WidgetAnswer::Pick { indices: vec![99] }));
+            mgr.widgets
+                .answer(id, Some(WidgetAnswer::Pick { indices: vec![] }));
+            mgr.widgets.answer(
+                id,
+                Some(WidgetAnswer::Pick {
+                    indices: vec![0, 1],
+                }),
+            );
             mgr.widgets
                 .answer(id, Some(WidgetAnswer::Confirm { yes: true }));
             mgr.widgets
-                .answer(id, Some(WidgetAnswer::Pick { index: 1 }));
+                .answer(id, Some(WidgetAnswer::Pick { indices: vec![1] }));
             mgr.widgets.answer(id, None);
         }
         let (status, reply) = request.await.unwrap();
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(reply["answer"]["index"], 1);
+        assert_eq!(reply["answer"]["indices"], serde_json::json!([1]));
         closed(&state).await;
     }
 
@@ -583,7 +738,7 @@ mod tests {
             assert!(mgr.widgets.summaries()[0].kind == WidgetKind::Confirm);
             mgr.widgets.shown(id);
             mgr.widgets
-                .answer(id, Some(WidgetAnswer::Pick { index: 0 }));
+                .answer(id, Some(WidgetAnswer::Pick { indices: vec![0] }));
             mgr.widgets
                 .answer(id, Some(WidgetAnswer::Confirm { yes: true }));
         }

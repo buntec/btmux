@@ -95,6 +95,67 @@ try {
   await closed();
   await waitForOutput('rc=130');
 
+  // A query starts the filter, and typing continues it.
+  await open('--query eta');
+  assert.equal(await filter().inputValue(), 'eta');
+  assert((await page.locator(PICKER).innerText()).includes('1/3'));
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('3/3'), PICKER);
+  await page.keyboard.press('Escape');
+  await closed();
+  await waitForOutput('rc=130');
+
+  // A lone match needs no menu, nor does no match, and neither applies otherwise.
+  await run(`clear; ${LIST} | "$BTMUX_BIN" pick --query gam --select-1; echo "rc=$?"`);
+  await waitForOutput('rc=0');
+  assert(/^gamma$/m.test(await screen()));
+  assert.equal(await page.locator(PICKER).count(), 0);
+  await run(`clear; ${LIST} | "$BTMUX_BIN" pick --query zzz --exit-0; echo "rc=$?"`);
+  await waitForOutput('rc=1');
+  assert.equal(await page.locator(PICKER).count(), 0);
+  await open('--select-1 --exit-0');
+  await page.keyboard.press('Escape');
+  await closed();
+  await waitForOutput('rc=130');
+
+  // Multiple choice: Tab marks across filtering, clicks mark, and input order is printed.
+  await open('--multi');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('1 marked'), PICKER);
+  await page.keyboard.type('alp');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('1/3'), PICKER);
+  await page.locator(PICKER).getByText('alpha').click();
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('2 marked'), PICKER);
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0');
+  assert(/^alpha\ngamma$/m.test(await screen()), await screen());
+
+  // With nothing marked, Enter chooses the current item; a second Tab unmarks.
+  await open('--multi');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('ArrowUp');
+  await page.waitForFunction((sel) => !document.querySelector(sel)?.textContent?.includes('marked'), PICKER);
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0');
+  assert(/^alpha$/m.test(await screen()));
+
+  // Whole items: line breaks and tabs show on one row and print unchanged.
+  await run(`clear; printf 'a b\\nc\\td\\0other\\0' | "$BTMUX_BIN" pick --read0 --print0 | od -c | head -2; echo "rc=$?"`);
+  await page.waitForSelector(`${PICKER}:not(.opacity-0)`);
+  assert((await page.locator(PICKER).innerText()).includes('a b␤c␉d'));
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0');
+  assert(/a\s+b\s+\\n\s+c\s+\\t\s+d\s+\\0/.test(await screen()), await screen());
+
   // Clicking the terminal doesn't take the keys from the menu.
   await open();
   await page.locator('[data-pane-terminal]').first().click({ position: { x: 900, y: 500 } });

@@ -4,18 +4,28 @@ export function pickHaystack(item: { label: string; description: string | null }
   return item.description ? `${label}\t${item.description.toLowerCase()}` : label;
 }
 
+/** A label on one row, with whole items' line breaks and tabs visible. */
+export function pickLabel(label: string): string {
+  return label.replace(/\n/g, '␤').replace(/\t/g, '␉');
+}
+
 /**
  * Items containing every whitespace-separated term, ignoring case, up to
  * `limit`: those whose label starts with the first term, then the rest, each
- * in input order. `total` counts every match.
+ * in input order, or only input order with `keepOrder`. `total` counts every match.
  */
-export function filterPick(haystacks: string[], query: string, limit: number): { indices: number[]; total: number } {
+export function filterPick(
+  haystacks: string[],
+  query: string,
+  limit: number,
+  keepOrder = false,
+): { indices: number[]; total: number } {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const first: number[] = [];
   const rest: number[] = [];
   haystacks.forEach((haystack, index) => {
     if (!terms.every((term) => haystack.includes(term))) return;
-    (terms.length && haystack.startsWith(terms[0]) ? first : rest).push(index);
+    (terms.length && !keepOrder && haystack.startsWith(terms[0]) ? first : rest).push(index);
   });
   return { indices: [...first, ...rest].slice(0, limit), total: first.length + rest.length };
 }

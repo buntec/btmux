@@ -98,7 +98,8 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 ### Widgets from the shell
 
 `widget.rs` implements `btmux pick` (stdin's lines become a menu; the choice goes to
-stdout), `confirm`, and `input`, whose text goes to stdout. `POST
+stdout, with flags named after fzf's), `confirm`, and `input`, whose text goes to
+stdout. `matches_query`, for `--select-1` and `--exit-0`, mirrors `filterPick`. `POST
 /api/panes/{id}/widget` stays open until the user answers; dropping it (the CLI
 died) closes the widget. `ServerMessage::Widgets` lists open widgets by id and kind
 on every change and on connect, and tabs showing the pane fetch the request (`GET
@@ -110,10 +111,12 @@ switches, with no timeout. The first `widget_answer` of the right kind wins.
 size, so filtering never moves the input. While it is open,
 `PaneTerminal.setFocusTarget` sends the pane's focus and keys to the widget, so the
 focus rules in `TerminalPane` still apply. Shells have no UI protocol like Neovim's
-`ext_popupmenu`, so completion menus replace the shell's own: `extras/fish/btmux.fish` binds Tab to one when
-`btmux_pick_completion` is 1, leaving fish to complete when its menu is open, with
-at most one candidate, or when the pick fails. It checks at the first prompt, as
-conf.d runs before config.fish, so it binds nothing when off.
+`ext_popupmenu`, so menus replace the shell's own: when `btmux_pick_menus` is 1,
+`extras/fish/btmux.fish` binds Tab and Ctrl-R and wraps `cdh`, each falling back to
+fish's own when the pick fails. Tab also leaves fish to complete when its menu is
+open or with at most one candidate, and redo keeps Ctrl-R in vi's normal mode, also
+named `default`. It checks at the first prompt, as conf.d runs before config.fish,
+so it changes nothing when off.
 
 ### Plan limits
 

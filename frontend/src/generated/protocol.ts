@@ -474,10 +474,18 @@ export type TailscaleStatus = { "state": "starting" } | { "state": "serving", ur
 export type PickItem = { label: string, description: string | null, };
 
 // prettier-ignore
-export type WidgetRequest = { "type": "pick", prompt: string | null, items: Array<PickItem>, } | { "type": "confirm", message: string, default_yes: boolean, } | { "type": "input", prompt: string | null, default: string | null, };
+export type WidgetRequest = { "type": "pick", prompt: string | null, items: Array<PickItem>,
+/**
+ * The filter's initial text.
+ */
+query: string | null, multi: boolean,
+/**
+ * Filtering keeps input order instead of ranking label prefixes first.
+ */
+no_sort: boolean, } | { "type": "confirm", message: string, default_yes: boolean, } | { "type": "input", prompt: string | null, default: string | null, };
 
 // prettier-ignore
-export type WidgetAnswer = { "type": "pick", index: number, } | { "type": "confirm", yes: boolean, } | { "type": "input", text: string, };
+export type WidgetAnswer = { "type": "pick", indices: Array<number>, } | { "type": "confirm", yes: boolean, } | { "type": "input", text: string, };
 
 // prettier-ignore
 export type WidgetKind = "pick" | "confirm" | "input";

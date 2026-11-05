@@ -2,6 +2,12 @@
 if status is-interactive; and set -q BTMUX_PANE_ID
     fish_config theme choose btmux
 
+    function __btmux_pick
+        set -l bin btmux
+        set -q BTMUX_BIN; and set bin $BTMUX_BIN
+        $bin pick $argv 2>/dev/null
+    end
+
     # Tab through `btmux pick`. fish completes on its own when its menu is open,
     # with at most one candidate, whose quoting and trailing space only it knows,
     # and when there's no tab to show the menu.
@@ -15,9 +21,7 @@ if status is-interactive; and set -q BTMUX_PANE_ID
             commandline -f complete
             return
         end
-        set -l bin btmux
-        set -q BTMUX_BIN; and set bin $BTMUX_BIN
-        set -l choice (string join \n -- $candidates | $bin pick 2>/dev/null)
+        set -l choice (string join \n -- $candidates | __btmux_pick)
         switch $status
             case 0
                 commandline -rt -- (string replace -a ' ' '\\ ' -- $choice)
@@ -28,12 +32,66 @@ if status is-interactive; and set -q BTMUX_PANE_ID
         commandline -f repaint
     end
 
+    # Ctrl-R through `btmux pick`, filtering on the line, as fish's pager does.
+    function __btmux_history
+        # Vi's normal mode is also named default, and redoes with Ctrl-R.
+        if test "$fish_bind_mode" = default; and string match -q '*_vi_*' -- $fish_key_bindings
+            commandline -f redo
+            return
+        end
+        if commandline --paging-mode
+            commandline -f history-pager
+            return
+        end
+        set -l query --query=(commandline | string collect --allow-empty)
+        set -l choice (history search --null | __btmux_pick --read0 --no-sort $query --prompt History)
+        switch $status
+            case 0
+                commandline -r -- (string join \n -- $choice | string collect)
+            case 130
+            case '*'
+                commandline -f history-pager
+        end
+        commandline -f repaint
+    end
+
+    # cdh through `btmux pick`, falling back to fish's with an argument, nothing to
+    # choose, or no tab to show the menu.
+    function __btmux_cdh
+        set -l dirs
+        set -l visited $dirprev $dirnext
+        for dir in $visited[-1..1]
+            test "$dir" != "$PWD"; and not contains -- $dir $dirs; and set -a dirs $dir
+        end
+        if set -q argv[1]; or not set -q dirs[1]
+            __btmux_fish_cdh $argv
+            return
+        end
+        # NUL-delimited, as a path can hold tabs and line breaks. split0 must take
+        # the output, so pick's status is kept from the pipeline.
+        set -l picked
+        set -l choice (string join0 -- $dirs | __btmux_pick --read0 --print0 --prompt Directory | string split0; set picked $pipestatus[2])
+        switch $picked
+            case 0
+                cd $choice
+            case 130
+            case '*'
+                __btmux_fish_cdh
+        end
+    end
+
     # At the first prompt, since conf.d runs before config.fish.
-    function __btmux_bind_tab --on-event fish_prompt
-        functions -e __btmux_bind_tab
-        if test "$btmux_pick_completion" = 1
+    function __btmux_pick_menus --on-event fish_prompt
+        functions -e __btmux_pick_menus
+        if test "$btmux_pick_menus" = 1
             bind tab __btmux_complete
             bind -M insert tab __btmux_complete
+            bind ctrl-r __btmux_history
+            bind -M insert ctrl-r __btmux_history
+            functions --copy cdh __btmux_fish_cdh
+            function cdh --description 'Menu based cd command'
+                __btmux_cdh $argv
+            end
         end
     end
 end

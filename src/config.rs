@@ -1129,6 +1129,12 @@ fn default_commands() -> Vec<Command> {
             description: "Show the server host and this browser, fastfetch-style.".to_string(),
             confirm: None,
         },
+        Command {
+            id: "health".to_string(),
+            label: "about: health".to_string(),
+            description: "Check the editors, agents, and tools btmux can use.".to_string(),
+            confirm: None,
+        },
     ]
 }
 

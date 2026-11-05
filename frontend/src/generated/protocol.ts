@@ -468,6 +468,30 @@ export type Address = { interface: string,
 address: string, };
 
 // prettier-ignore
+export type HealthReport = { groups: Array<HealthGroup>,
+/**
+ * The server's `PATH`, where programs are looked up.
+ */
+path: Array<string>, };
+
+// prettier-ignore
+export type HealthGroup = { title: string, checks: Array<HealthCheck>, };
+
+// prettier-ignore
+export type HealthCheck = { name: string, status: HealthStatus,
+/**
+ * A version, or a word such as "Not found".
+ */
+value: string, path: string | null, purpose: string,
+/**
+ * What is wrong, or what happens without it.
+ */
+note: string | null, };
+
+// prettier-ignore
+export type HealthStatus = "ok" | "missing" | "warning" | "error";
+
+// prettier-ignore
 export type TailscaleStatus = { "state": "starting" } | { "state": "serving", url: string, } | { "state": "error", message: string, };
 
 // prettier-ignore

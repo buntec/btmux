@@ -295,7 +295,7 @@ pub fn set_data_dir(dir: PathBuf) {
     let _ = DATA_DIR.set(dir);
 }
 
-fn program() -> Option<PathBuf> {
+pub(crate) fn program() -> Option<PathBuf> {
     PATH_PROGRAMS
         .iter()
         .find_map(|name| crate::vscode::find_on_path(name))

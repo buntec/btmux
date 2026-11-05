@@ -283,7 +283,7 @@ fn addresses() -> Vec<Address> {
 }
 
 /// "zsh 5.9", or the program name if it reports no version within a second.
-async fn shell_version(shell: String) -> String {
+pub(crate) async fn shell_version(shell: String) -> String {
     let argv = crate::shell::argv(&shell);
     let Some(program) = argv.first() else {
         return shell;
@@ -314,7 +314,7 @@ async fn shell_version(shell: String) -> String {
     }
 }
 
-fn version(output: &str) -> Option<&str> {
+pub(crate) fn version(output: &str) -> Option<&str> {
     let line = output.lines().next()?;
     let re = regex::Regex::new(r"\d+(\.\d+)+").unwrap();
     re.find(line).map(|m| m.as_str())

@@ -305,6 +305,10 @@ export function Overlay({ sessionId, send, config }: Props) {
             setOverlay({ mode: 'info', title: 'About btmux', tab: 'system' });
             return;
           }
+          if (id === 'health') {
+            setOverlay({ mode: 'info', title: 'About btmux', tab: 'health' });
+            return;
+          }
           if (id === 'toggle-latex') {
             const pane = state.getActivePaneId(sessionId);
             if (pane) state.toggleLatex(pane);

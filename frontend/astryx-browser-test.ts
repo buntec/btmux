@@ -658,16 +658,15 @@ try {
   console.log('PASS toast stacking and interaction across modal transitions');
 
   // Typing that keeps the same results must keep the top one highlighted
-  // ("ab" also matches "about: system info").
+  // ("ab" also matches "about: system info" and "about: health").
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   const aboutHighlighted = () =>
     page.waitForFunction(() => {
       const options = document.querySelectorAll('dialog[open] [role="option"]');
       const active = document.querySelector('dialog[open] input')?.getAttribute('aria-activedescendant');
       return (
-        options.length === 2 &&
+        options.length === 3 &&
         options[0].getAttribute('data-value') === 'about' &&
-        options[1].getAttribute('data-value') === 'system-info' &&
         options[0].id === active
       );
     });
@@ -680,6 +679,21 @@ try {
   await page.keyboard.press('Escape');
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });
   console.log('PASS command palette keeps the top result highlighted');
+
+  // The Health tab reports server programs and this browser.
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await page.keyboard.type('about: health');
+  await page.keyboard.press('Enter');
+  const health = page.getByRole('tabpanel', { name: 'Health' });
+  await health.getByText('Default shell', { exact: true }).waitFor();
+  await health.getByText('Neovim', { exact: true }).waitFor();
+  await health.getByText('Claude Code', { exact: true }).waitFor();
+  await health.getByText('ripgrep', { exact: true }).waitFor();
+  await health.getByText('This browser', { exact: true }).waitFor();
+  await health.getByText('WebGPU', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('dialog[open]').waitFor({ state: 'hidden' });
+  console.log('PASS health tab');
 
   // Ctrl-N/P cycle through the filtered results.
   await page.getByRole('button', { name: 'Commands', exact: true }).click();

@@ -19,6 +19,8 @@ export interface UsageRow {
   title?: string;
   /** Port rows have none. */
   usage: Usage | null;
+  /** The panes this row sums; none for a port row. */
+  panes: string[];
   /** A port's owning processes, or why usage is incomplete. */
   detail?: string;
   hasChildren: boolean;
@@ -127,6 +129,7 @@ export function buildUsageRows(
       depth: 0,
       label: session.name,
       usage: sessionUsage,
+      panes: session.windows.flatMap((window) => window.panes.map((pane) => pane.id)),
       hasChildren: session.windows.length > 0,
     };
     rows.push(sessionRow);
@@ -139,6 +142,7 @@ export function buildUsageRows(
         depth: 1,
         label: window.name,
         usage: windowUsage,
+        panes: window.panes.map((pane) => pane.id),
         hasChildren: window.panes.length > 0,
       };
       if (window.panes.some((pane) => uncounted.has(pane.id))) {
@@ -159,6 +163,7 @@ export function buildUsageRows(
           title: uncounted.has(pane.id) ? [pane.cwd, UNCOUNTED].filter(Boolean).join('\n') : (pane.cwd ?? undefined),
           detail: uncounted.has(pane.id) ? 'not counted' : undefined,
           usage,
+          panes: [pane.id],
           hasChildren: sockets.length > 0,
         });
         if (isUsageFolded(paneKey, toggles)) return;
@@ -169,6 +174,7 @@ export function buildUsageRows(
             depth: 3,
             label: portLabel(socket),
             usage: null,
+            panes: [],
             detail: [...socket.names].sort().join(', '),
             hasChildren: false,
           });
@@ -188,4 +194,16 @@ export function usageParentIndex(rows: UsageRow[], index: number): number {
     if (rows[i].depth < rows[index].depth) return i;
   }
   return -1;
+}
+
+/** The pane row of a port row's key, `port:<pane id>:<socket>`. */
+export function usagePortPane(key: string | null): string | null {
+  return key?.startsWith('port:') ? `pane:${key.split(':')[1]}` : null;
+}
+
+/** What selecting a row restricts the process list to; a port row means its pane. */
+export function usageScope(rows: UsageRow[], key: string | null): { label: string; panes: Set<string> } | null {
+  const index = rows.findIndex((row) => row.key === key);
+  const row = rows[index]?.kind === 'port' ? rows[usageParentIndex(rows, index)] : rows[index];
+  return row ? { label: `${row.kind}: ${row.label}`, panes: new Set(row.panes) } : null;
 }

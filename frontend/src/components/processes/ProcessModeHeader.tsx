@@ -8,17 +8,32 @@ import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { TOUCH_QUERY } from '@/lib/touch';
 import { useProcessStore } from '@/state/processStore';
 import { formatBytes } from '@/lib/processFormat';
-import { isPortSortDescending, portKey, PORT_SORT_LABELS } from '@/lib/portRows';
+import { isPortSortDescending, PORT_SORT_LABELS } from '@/lib/portRows';
 import { isProcessSortDescending, PROCESS_SORT_LABELS } from '@/lib/processTree';
 import { clsx } from 'clsx';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '@/lib/connectionState';
 
+/** What the list is restricted to, which the list can clear. */
+export function ScopeToken({ label, className }: { label: string; className?: string }) {
+  const listActive = useProcessStore((s) => s.panel === 'list');
+  const clearScope = useProcessStore((s) => s.clearScope);
+  return (
+    <Token size="sm" color="blue" label={label} className={className} onRemove={listActive ? clearScope : undefined} />
+  );
+}
+
 export function ProcessModeHeader({
   connectionState,
   animations,
+  count,
+  scope,
 }: {
   connectionState: ConnectionState;
   animations: boolean;
+  /** Listed processes or ports, before any filter. */
+  count: number;
+  /** What the list is restricted to, if the header shows it. */
+  scope?: string;
 }) {
   const viewMode = useProcessStore((s) => s.viewMode);
   const touch = useMediaQuery(TOUCH_QUERY);
@@ -26,7 +41,6 @@ export function ProcessModeHeader({
   const portSortReversed = useProcessStore((s) => s.portSortReversed);
   const setPortSortMode = useProcessStore((s) => s.setPortSortMode);
   const snapshot = useProcessStore((s) => s.snapshot);
-  const processCount = useProcessStore((s) => s.processes.length);
   const sortMode = useProcessStore((s) => s.sortMode);
   const sortReversed = useProcessStore((s) => s.sortReversed);
   const treeMode = useProcessStore((s) => s.treeMode);
@@ -42,7 +56,7 @@ export function ProcessModeHeader({
         {viewMode === 'ports' ? 'Ports' : 'Processes'}
       </Text>
       <Text size="sm" color="secondary" textWrap="nowrap">
-        {viewMode === 'ports' ? new Set(snapshot?.ports?.map(portKey)).size : processCount}
+        {count}
       </Text>
       <Token
         size="sm"
@@ -65,6 +79,7 @@ export function ProcessModeHeader({
       )}
       {viewMode === 'processes' && <Token size="sm" label={treeMode ? 'tree' : 'flat'} />}
       {followFocus && <Token size="sm" color="blue" label="follow" />}
+      {scope && <ScopeToken label={scope} className="max-w-[20ch] flex-none" />}
       {/* Touch screens show the filter's input instead. */}
       {filterActive && !touch && (
         <Text size="sm" color="secondary" textWrap="nowrap">
@@ -77,7 +92,7 @@ export function ProcessModeHeader({
         </Text>
       )}
       {snapshot && (
-        <Text size="sm" color="secondary" textWrap="nowrap" hasTabularNumbers className="ml-auto">
+        <Text size="sm" color="secondary" textWrap="nowrap" hasTabularNumbers className="ml-auto min-w-0 truncate">
           {snapshot.cpu_count} cores · {memoryPercent.toFixed(0)}% / {formatBytes(snapshot.mem_total)} · load{' '}
           {snapshot.load_average[0].toFixed(2)}
         </Text>

@@ -419,6 +419,21 @@ try {
   assert(!(await processRow.isVisible()));
   await page.getByRole('button', { name: 'tab: processes', exact: true }).tap();
   await processRow.waitFor();
+  // The list's scope stays readable, as usage is hidden, and can be cleared.
+  const scopeLabel = page.getByText(/^session: /);
+  const scopeBox = await scopeLabel.evaluate((label) => {
+    const token = label.parentElement!.getBoundingClientRect();
+    const remove = label.parentElement!.querySelector('button')!.getBoundingClientRect();
+    return {
+      shown: label.getBoundingClientRect().width,
+      text: label.scrollWidth,
+      clipped: remove.right > token.right || remove.width === 0 || token.right > window.innerWidth,
+    };
+  });
+  assert(scopeBox.shown > 0 && scopeBox.shown >= scopeBox.text, `scope label cut: ${JSON.stringify(scopeBox)}`);
+  assert(!scopeBox.clipped, `scope token clipped: ${JSON.stringify(scopeBox)}`);
+  await page.getByRole('button', { name: /^Remove session: / }).tap();
+  await scopeLabel.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'V: tree', exact: true }).tap();
   await page.getByRole('tree', { name: 'Processes', exact: true }).waitFor();
   // At the PID: WebKit moves taps near the fold button onto it.

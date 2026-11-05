@@ -312,7 +312,10 @@ as not counted. `lib/paneUsage.ts` groups by session, window, and pane, summing
 CPU (100% is one core), resident memory (shared pages count once per process),
 disk rates, and listening sockets, listed under panes. That is TCP in `LISTEN`
 and UDP below the ephemeral range, as nothing tells a UDP server from a client.
-Sessions start folded.
+Sessions start folded. On the usage side, the list shows only the processes and
+ports of the focused row's panes; going back keeps that scope, so the list doesn't
+change under a click, until Esc clears it or the row goes away (a closed port's
+row hands focus and scope to its pane).
 
 ### Frontend lifetime and routing
 

@@ -8,6 +8,9 @@ interface ProcessStore {
   panel: 'list' | 'usage';
   setPanel: (panel: 'list' | 'usage') => void;
   togglePanel: () => void;
+  /** The list shows only what the focused usage row covers. */
+  scoped: boolean;
+  clearScope: () => void;
   focusedUsage: string | null;
   /** Rows folded differently from their default; see `isUsageFolded`. */
   usageFoldToggles: Set<string>;
@@ -51,8 +54,12 @@ interface ProcessStore {
 export const useProcessStore = create<ProcessStore>((set, get) => ({
   panel: 'list',
   // The filter only applies to the list, and takes keys while active.
-  setPanel: (panel) => set(panel === 'usage' ? { panel, filterActive: false, filterQuery: '' } : { panel }),
+  // Leaving usage keeps the scope, so the list doesn't change under the move.
+  setPanel: (panel) =>
+    set(panel === 'usage' ? { panel, scoped: true, filterActive: false, filterQuery: '' } : { panel }),
   togglePanel: () => get().setPanel(get().panel === 'list' ? 'usage' : 'list'),
+  scoped: false,
+  clearScope: () => set({ scoped: false }),
   focusedUsage: null,
   usageFoldToggles: new Set(),
   setFocusedUsage: (focusedUsage) => set({ focusedUsage }),
@@ -135,6 +142,7 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   reset: () => {
     set({
       panel: 'list',
+      scoped: false,
       focusedUsage: null,
       usageFoldToggles: new Set(),
       snapshot: null,

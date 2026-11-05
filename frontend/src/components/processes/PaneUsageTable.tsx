@@ -6,7 +6,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { clsx } from 'clsx';
 import { formatBytes, formatCpu } from '@/lib/processFormat';
-import { isUsageFolded, type UsageRow } from '@/lib/paneUsage';
+import { isUsageFolded, usagePortPane, type UsageRow } from '@/lib/paneUsage';
 import { resolveFocusedRow } from '@/lib/utils';
 import { useProcessStore } from '@/state/processStore';
 import { Placeholder } from '../files/Placeholder';
@@ -39,14 +39,19 @@ export function PaneUsageTable({ rows }: { rows: UsageRow[] }) {
   const foldToggles = useProcessStore((s) => s.usageFoldToggles);
   const portsError = useProcessStore((s) => s.snapshot?.ports_error);
   const setFocused = useProcessStore((s) => s.setFocusedUsage);
+  const clearScope = useProcessStore((s) => s.clearScope);
   const toggleFold = useProcessStore((s) => s.toggleUsageFold);
   const tableRef = useRef<HTMLTableElement>(null);
   const focusIndexRef = useRef(0);
   const revealedRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
-    const next = resolveFocusedRow(rows, (row) => row.key === focused, focusIndexRef.current)?.key ?? null;
+    // A closed port leaves focus on its pane, so a scope on that pane stays.
+    const target = rows.some((row) => row.key === focused) ? focused : usagePortPane(focused);
+    const next = resolveFocusedRow(rows, (row) => row.key === target, focusIndexRef.current)?.key ?? null;
     if (next !== focused) {
+      // The list mustn't move to a neighbor of what it was scoped to.
+      if (next !== target && !panelActive) clearScope();
       setFocused(next);
       return;
     }
@@ -64,7 +69,7 @@ export function PaneUsageTable({ rows }: { rows: UsageRow[] }) {
     // Keep the row clear of the sticky header.
     row.style.scrollMarginTop = `${tableRef.current?.tHead?.offsetHeight ?? 0}px`;
     row.scrollIntoView({ block: 'nearest' });
-  }, [focused, panelActive, rows, setFocused]);
+  }, [focused, panelActive, rows, setFocused, clearScope]);
 
   return (
     <>

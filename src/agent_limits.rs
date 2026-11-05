@@ -4,13 +4,13 @@
 //! credential. `GET /api/agent-limits` reads at most once per `CACHE_FOR`, and
 //! only tabs showing the limits ask.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::ErrorKind;
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::{routing::get, Json, Router};
+use axum::{extract::State, routing::get, Json, Router};
 use serde::Serialize;
 use serde_json::{json, Value};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -26,6 +26,11 @@ const CACHE_FOR: Duration = Duration::from_secs(50);
 const KEEP_AFTER_FAILURE: Duration = Duration::from_secs(600);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+const SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
+/// How often to ask the pane shell again while a CLI is on no known `PATH`.
+const SHELL_PATH_RETRY: Duration = Duration::from_secs(600);
+/// Shell startup can print anything, even on the line of an unterminated escape.
+const SHELL_PATH_MARKER: &str = "__btmux_path__";
 /// Codex doesn't grade its windows; Claude's come graded.
 const CODEX_WARNING_PERCENT: f64 = 80.0;
 const CODEX_DEFAULT_LIMIT: &str = "codex";
@@ -83,6 +88,8 @@ type Read = Result<Option<AgentLimits>, String>;
 struct Slot {
     limits: Option<AgentLimits>,
     read_at: Option<Instant>,
+    /// Logged once per change, as tabs poll every minute.
+    error: Option<String>,
 }
 
 impl Slot {
@@ -91,9 +98,13 @@ impl Slot {
             Ok(limits) => {
                 self.limits = limits;
                 self.read_at = Some(now);
+                self.error = None;
             }
             Err(error) => {
-                tracing::debug!("agent limits: {error}");
+                if self.error.as_ref() != Some(&error) {
+                    tracing::warn!("agent limits: {error}");
+                    self.error = Some(error);
+                }
                 if self
                     .read_at
                     .is_none_or(|at| now.duration_since(at) >= KEEP_AFTER_FAILURE)
@@ -108,6 +119,7 @@ impl Slot {
 #[derive(Default)]
 struct Cache {
     fetched_at: Option<Instant>,
+    shell_path: ShellPath,
     claude: Slot,
     codex: Slot,
 }
@@ -119,10 +131,20 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/api/agent-limits", get(limits))
 }
 
-async fn limits() -> Json<Vec<AgentLimits>> {
+async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimits>> {
     let mut cache = CACHE.lock().await;
     if cache.fetched_at.is_none_or(|at| at.elapsed() >= CACHE_FOR) {
-        let (claude, codex) = tokio::join!(read_claude(), read_codex());
+        let shell = state.read().await.shell().to_owned();
+        let server_path = std::env::var_os("PATH");
+        let shell_path = cache
+            .shell_path
+            .refresh(&shell, server_path.as_deref(), Instant::now())
+            .await;
+        let path = |agent| agent_path(&agent_program(agent), server_path.as_deref(), shell_path);
+        let (claude, codex) = tokio::join!(
+            read_claude(path(Agent::Claude)),
+            read_codex(path(Agent::Codex))
+        );
         let now = Instant::now();
         cache.claude.update(claude, now);
         cache.codex.update(codex, now);
@@ -147,9 +169,103 @@ fn agent_program(agent: Agent) -> OsString {
     agent_launch::program(agent, &|key| std::env::var_os(key))
 }
 
-async fn read_claude() -> Read {
+fn on_path(program: &OsStr, path: &OsStr) -> bool {
+    std::env::split_paths(path).any(|dir| dir.join(program).is_file())
+}
+
+/// The `PATH` for a CLI the server's own can't find.
+fn agent_path(program: &OsStr, server: Option<&OsStr>, shell: Option<&OsStr>) -> Option<OsString> {
+    if server.is_some_and(|path| on_path(program, path)) {
+        return None;
+    }
+    shell.map(Into::into)
+}
+
+/// The `PATH` panes get. A service's lacks what shell startup adds, like `~/.local/bin`.
+#[derive(Default)]
+struct ShellPath {
+    value: Option<OsString>,
+    asked_at: Option<Instant>,
+}
+
+impl ShellPath {
+    /// Asks only while a CLI is on neither `PATH`, starting no shell when both are found.
+    async fn refresh(
+        &mut self,
+        shell: &str,
+        server: Option<&OsStr>,
+        now: Instant,
+    ) -> Option<&OsStr> {
+        let found = [Agent::Claude, Agent::Codex].into_iter().all(|agent| {
+            let program = agent_program(agent);
+            [server, self.value.as_deref()]
+                .into_iter()
+                .flatten()
+                .any(|path| on_path(&program, path))
+        });
+        let due = self
+            .asked_at
+            .is_none_or(|at| now.duration_since(at) >= SHELL_PATH_RETRY);
+        if !found && due {
+            self.asked_at = Some(now);
+            match shell_path(shell, SHELL_PATH_TIMEOUT).await {
+                Ok(path) => self.value = Some(path),
+                Err(error) => tracing::warn!("agent limits: no PATH from {shell}: {error}"),
+            }
+        }
+        self.value.as_deref()
+    }
+}
+
+#[cfg(unix)]
+async fn shell_path(shell: &str, timeout: Duration) -> Result<OsString, String> {
+    let mut command = Command::new(shell);
+    command
+        .args([
+            "-l",
+            "-i",
+            "-c",
+            &format!("echo {SHELL_PATH_MARKER}; exec printenv PATH"),
+        ])
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    // SAFETY: only an async-signal-safe call. No controlling terminal, or an
+    // interactive shell would take over the one the server runs in.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let output = tokio::time::timeout(timeout, command.output())
+        .await
+        .map_err(|_| "timed out".to_string())?
+        .map_err(|error| error.to_string())?;
+    parse_shell_path(&output.stdout).ok_or_else(|| "no PATH in its output".into())
+}
+
+#[cfg(not(unix))]
+async fn shell_path(_shell: &str, _timeout: Duration) -> Result<OsString, String> {
+    Err("unsupported".into())
+}
+
+#[cfg(unix)]
+fn parse_shell_path(output: &[u8]) -> Option<OsString> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut lines = output.split(|byte| *byte == b'\n');
+    lines.find(|line| line.ends_with(SHELL_PATH_MARKER.as_bytes()))?;
+    let path = lines.next().filter(|path| path.starts_with(b"/"))?;
+    Some(OsStr::from_bytes(path).into())
+}
+
+async fn read_claude(path: Option<OsString>) -> Read {
     let reply = exchange(
         agent_program(Agent::Claude),
+        path,
         CLAUDE_ARGS,
         &[json!({
             "type": "control_request",
@@ -169,9 +285,10 @@ async fn read_claude() -> Read {
     parse_claude(&reply["response"], now_seconds())
 }
 
-async fn read_codex() -> Read {
+async fn read_codex(path: Option<OsString>) -> Read {
     let reply = exchange(
         agent_program(Agent::Codex),
+        path,
         CODEX_ARGS,
         &[
             json!({
@@ -196,6 +313,7 @@ async fn read_codex() -> Read {
 /// Writes one JSON line per request, then returns the first output line `reply` accepts.
 async fn exchange(
     program: OsString,
+    path: Option<OsString>,
     args: &[&str],
     requests: &[Value],
     timeout: Duration,
@@ -213,6 +331,10 @@ async fn exchange(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    // Also where Unix looks for `program`.
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     let mut child = command
@@ -569,6 +691,7 @@ mod tests {
         slot.update(Ok(Some(limits)), start);
         slot.update(Ok(None), start);
         assert_eq!(slot.limits, None);
+        assert_eq!(slot.error, None);
     }
 
     #[cfg(unix)]
@@ -579,6 +702,7 @@ mod tests {
             let args = ["-c", script];
             super::super::exchange(
                 "sh".into(),
+                None,
                 &args,
                 &[json!({ "ping": 1 }), json!({ "ping": 2 })],
                 timeout,
@@ -614,6 +738,7 @@ mod tests {
         async fn run_unread(script: &str) -> Result<Value, String> {
             super::super::exchange(
                 "sh".into(),
+                None,
                 &["-c", script],
                 &[json!("x".repeat(1 << 20))],
                 Duration::from_secs(10),
@@ -634,6 +759,7 @@ mod tests {
         async fn fails_when_the_program_is_missing() {
             let error = super::super::exchange(
                 "btmux-no-such-agent".into(),
+                None,
                 &[],
                 &[],
                 Duration::from_secs(5),
@@ -642,6 +768,92 @@ mod tests {
             .await
             .unwrap_err();
             assert!(error.contains("btmux-no-such-agent"), "{error}");
+        }
+
+        #[tokio::test]
+        async fn finds_the_program_on_the_given_path() {
+            let dir = std::env::temp_dir().join(format!("btmux-limits-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            // A link, since running a just-written script can fail with ETXTBSY.
+            let sh = crate::vscode::find_on_path("sh").unwrap();
+            std::os::unix::fs::symlink(sh, dir.join("btmux-test-agent")).unwrap();
+            let reply = super::super::exchange(
+                "btmux-test-agent".into(),
+                Some(dir.clone().into()),
+                &["-c", r#"echo '{"reply":true}'"#],
+                &[],
+                Duration::from_secs(10),
+                Some,
+            )
+            .await;
+            std::fs::remove_dir_all(dir).unwrap();
+            assert_eq!(reply.unwrap()["reply"], true);
+        }
+
+        #[tokio::test]
+        async fn asks_the_shell_for_its_path() {
+            let path = shell_path("sh", Duration::from_secs(10)).await.unwrap();
+            assert!(!path.is_empty());
+            assert!(shell_path("sh", Duration::ZERO).await.is_err());
+            assert!(shell_path("btmux-no-such-shell", Duration::from_secs(10))
+                .await
+                .is_err());
+        }
+
+        #[test]
+        fn parses_the_path_after_startup_noise() {
+            assert_eq!(
+                parse_shell_path(b"welcome\n\x1b[6 q__btmux_path__\n/a/b:/c\n"),
+                Some("/a/b:/c".into())
+            );
+            for output in [
+                &b"/a/b:/c\n"[..],
+                b"__btmux_path__\n",
+                b"__btmux_path__\n\n",
+                b"__btmux_path__\nnot a path\n",
+            ] {
+                assert_eq!(parse_shell_path(output), None);
+            }
+        }
+
+        #[test]
+        fn only_a_cli_the_server_cannot_find_gets_the_shell_path() {
+            let sh = OsStr::new("sh");
+            let server = std::env::var_os("PATH").unwrap();
+            let shell = OsStr::new("/shell/bin");
+            assert_eq!(agent_path(sh, Some(&server), Some(shell)), None);
+            assert_eq!(
+                agent_path(
+                    OsStr::new("btmux-no-such-agent"),
+                    Some(&server),
+                    Some(shell)
+                ),
+                Some(shell.into())
+            );
+            assert_eq!(agent_path(sh, None, Some(shell)), Some(shell.into()));
+            assert_eq!(
+                agent_path(OsStr::new("btmux-no-such-agent"), Some(&server), None),
+                None
+            );
+        }
+
+        #[tokio::test]
+        async fn asks_the_shell_once_until_the_retry_is_due() {
+            let start = Instant::now();
+            let empty = OsStr::new("/btmux-no-such-dir");
+            let mut path = ShellPath::default();
+            // A shell that can't start leaves nothing, and isn't run again before the retry.
+            path.refresh("btmux-no-such-shell", Some(empty), start)
+                .await;
+            let asked = path.asked_at;
+            assert_eq!(asked, Some(start));
+            path.refresh("sh", Some(empty), start + Duration::from_secs(1))
+                .await;
+            assert_eq!(path.asked_at, asked);
+            assert_eq!(path.value, None);
+            let later = start + SHELL_PATH_RETRY;
+            assert!(path.refresh("sh", Some(empty), later).await.is_some());
+            assert_eq!(path.asked_at, Some(later));
         }
     }
 }

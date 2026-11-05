@@ -8,9 +8,10 @@ import { useDesktopVersion } from '../hooks/useDesktopVersion';
 import { desktopVersionMismatch } from '../lib/desktopApp';
 import { Layout, LayoutContent, LayoutHeader, VStack } from '@astryxdesign/core/Layout';
 import { TabList, Tab } from '@astryxdesign/core/TabList';
+import { HealthPanel } from './HealthPanel';
 import { SystemInfoPanel } from './SystemInfoPanel';
 
-type InfoTab = 'about' | 'system';
+type InfoTab = 'about' | 'system' | 'health';
 
 export function InfoDialog({ initialTab = 'about', onClose }: { initialTab?: InfoTab; onClose: () => void }) {
   const [tab, setTab] = useState<InfoTab>(initialTab);
@@ -84,12 +85,17 @@ export function InfoDialog({ initialTab = 'about', onClose }: { initialTab?: Inf
                 >
                   <Tab value="about" label="About" panelId="info-about" />
                   <Tab value="system" label="System" panelId="info-system" />
+                  <Tab value="health" label="Health" panelId="info-health" />
                 </TabList>
               </LayoutHeader>
             }
             content={
               <LayoutContent padding={4}>
-                {tab === 'system' ? (
+                {tab === 'health' ? (
+                  <VStack id="info-health" role="tabpanel" aria-label="Health">
+                    <HealthPanel />
+                  </VStack>
+                ) : tab === 'system' ? (
                   <VStack id="info-system" role="tabpanel" aria-label="System">
                     <SystemInfoPanel desktopVersion={desktopVersion} />
                   </VStack>

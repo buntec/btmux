@@ -2,6 +2,7 @@
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::net::IpAddr;
+#[cfg(target_os = "macos")]
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -83,7 +84,10 @@ pub async fn handle(State(state): State<AppState>) -> Json<SystemInfo> {
 /// Shared by `GET /api/system` and the `system_info` MCP tool.
 pub async fn report(state: &AppState) -> SystemInfo {
     let shell = state.read().await.shell().to_string();
-    let (shell, info) = tokio::join!(shell_version(shell), tokio::task::spawn_blocking(collect));
+    let ((shell, _), info) = tokio::join!(
+        shell_version(&shell, Duration::from_secs(1)),
+        tokio::task::spawn_blocking(collect)
+    );
     let mut info = info.expect("system info task panicked");
     info.shell = shell;
     info
@@ -282,11 +286,15 @@ fn addresses() -> Vec<Address> {
     list
 }
 
-/// "zsh 5.9", or the program name if it reports no version within a second.
-async fn shell_version(shell: String) -> String {
-    let argv = crate::shell::argv(&shell);
+/// "zsh 5.9", or the program name if it reports no version in time, and why it couldn't
+/// start, if so.
+pub(crate) async fn shell_version(
+    shell: &str,
+    timeout: Duration,
+) -> (String, Option<std::io::Error>) {
+    let argv = crate::shell::argv(shell);
     let Some(program) = argv.first() else {
-        return shell;
+        return (shell.to_string(), None);
     };
     let name = std::path::Path::new(program)
         .file_stem()
@@ -294,27 +302,20 @@ async fn shell_version(shell: String) -> String {
         .unwrap_or_else(|| program.clone());
     // cmd and wsl.exe don't take `--version`.
     if !matches!(
-        crate::shell::Dialect::of(&shell),
+        crate::shell::Dialect::of(shell),
         crate::shell::Dialect::Posix | crate::shell::Dialect::PowerShell
     ) {
-        return name;
+        return (name, None);
     }
-    let output = tokio::process::Command::new(program)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .output();
-    match tokio::time::timeout(Duration::from_secs(1), output).await {
-        Ok(Ok(output)) => match version(&String::from_utf8_lossy(&output.stdout)) {
-            Some(version) => format!("{name} {version}"),
-            None => name,
-        },
-        _ => name,
-    }
+    let probe = crate::health::probe(Some(program.into()), &["--version"], timeout).await;
+    let label = match probe.output.as_deref().and_then(version) {
+        Some(version) => format!("{name} {version}"),
+        None => name,
+    };
+    (label, probe.launch_error)
 }
 
-fn version(output: &str) -> Option<&str> {
+pub(crate) fn version(output: &str) -> Option<&str> {
     let line = output.lines().next()?;
     let re = regex::Regex::new(r"\d+(\.\d+)+").unwrap();
     re.find(line).map(|m| m.as_str())

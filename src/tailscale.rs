@@ -24,12 +24,12 @@ use crate::auth::Auth;
 use crate::ws::control::ServerMessage;
 
 #[cfg(target_os = "macos")]
-const PROGRAMS: &[&str] = &[
+pub(crate) const PROGRAMS: &[&str] = &[
     "tailscale",
     "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
 ];
 #[cfg(not(target_os = "macos"))]
-const PROGRAMS: &[&str] = &["tailscale"];
+pub(crate) const PROGRAMS: &[&str] = &["tailscale"];
 
 // Shutdown waits for a command in flight, up to this long.
 const TIMEOUT: Duration = Duration::from_secs(10);

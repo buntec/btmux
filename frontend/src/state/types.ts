@@ -61,7 +61,7 @@ export interface PickerItem {
 }
 
 export type Overlay =
-  | { mode: 'info'; title: string; tab?: 'about' | 'system' }
+  | { mode: 'info'; title: string; tab?: 'about' | 'system' | 'health' }
   | { mode: 'config-error'; title: string }
   | {
       mode: 'prompt';

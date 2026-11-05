@@ -181,7 +181,7 @@ fn install_plugin(dir: &Path) -> Result<(), String> {
 }
 
 /// Oldest Neovim the built-in UI supports.
-const MIN_VERSION: (u32, u32) = (0, 12);
+pub(crate) const MIN_VERSION: (u32, u32) = (0, 12);
 
 /// Whether `nvim` on `PATH` is new enough for the built-in UI. Checked once.
 pub fn available() -> bool {
@@ -192,10 +192,14 @@ pub fn available() -> bool {
             .stderr(std::process::Stdio::null())
             .output()
             .ok()
-            .and_then(|out| parse_version(&String::from_utf8_lossy(&out.stdout)))
-            .is_some_and(|version| version >= MIN_VERSION)
+            .is_some_and(|out| supported_version(&String::from_utf8_lossy(&out.stdout)))
     });
     *AVAILABLE
+}
+
+/// Whether `nvim --version` output names a version the built-in UI supports.
+pub(crate) fn supported_version(output: &str) -> bool {
+    parse_version(output).is_some_and(|version| version >= MIN_VERSION)
 }
 
 /// `(major, minor)` from `nvim --version` output (`NVIM v0.12.1`, `NVIM v0.13.0-dev-…`).

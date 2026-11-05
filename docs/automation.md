@@ -293,6 +293,7 @@ shows an error and leaves that program's input untouched.
 | `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session             |
 | `GET/POST/DELETE /api/panes/<pane-id>/agent-status`             | Explain, set, or clear semantic agent status                  |
 | `GET /api/system`                                               | Describe the server host (OS, CPU, memory, disks, shell, ...) |
+| `GET /api/health`                                               | Report which optional programs the server found and whether they run |
 | `POST /api/server/shutdown`                                     | Stop the server, closing every shell                          |
 
 ## MCP server

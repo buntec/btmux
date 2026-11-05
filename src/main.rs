@@ -24,6 +24,7 @@ mod handoff;
 #[cfg(windows)]
 #[path = "handoff_windows.rs"]
 mod handoff;
+mod health;
 mod mcp;
 mod pane_git;
 mod paste_image;

@@ -606,7 +606,7 @@ pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
 }
 
 /// The program `kind` runs, if installed.
-fn program(kind: Kind) -> Option<PathBuf> {
+pub(crate) fn program(kind: Kind) -> Option<PathBuf> {
     match kind {
         Kind::Code => find_on_path("code")
             .or_else(|| Some(PathBuf::from(MACOS_CODE)).filter(|path| path.is_file())),

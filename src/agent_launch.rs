@@ -70,7 +70,7 @@ impl Telemetry {
 
 /// `Command` only finds `.exe` on Windows, but npm installs agents as `.cmd` shims.
 #[cfg(any(windows, test))]
-fn windows_program(name: &str, path: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
+pub(crate) fn windows_program(name: &str, path: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
     std::env::split_paths(path)
         .filter(|dir| dir.is_absolute())
         .flat_map(|dir| [".exe", ".cmd", ".bat"].map(|ext| dir.join(format!("{name}{ext}"))))

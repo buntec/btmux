@@ -19,10 +19,14 @@ import { KeyHint } from './KeyHint';
 import { usePressHint } from '../hooks/usePressHint';
 import { chromePalette } from '../lib/chrome-colors';
 import { AgentUsageView } from './AgentUsageView';
+import { cycleTabs, enterTabPanel } from '../lib/tabKeys';
 
 interface Props {
   send: (msg: ClientMessage) => void;
 }
+
+const VIEWS = ['panes', 'usage'] as const;
+type AgentView = (typeof VIEWS)[number];
 
 /** Keys a focused tab handles itself; the rest still reach the grid. */
 const TAB_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', ' ']);
@@ -138,7 +142,7 @@ function SizeDeadline({ paneId, onExpire }: { paneId: string; onExpire: (paneId:
 
 /** Full-screen live mirrors of panes with detected or reported agents. */
 export function AgentGrid({ send }: Props) {
-  const [view, setView] = useState('panes');
+  const [view, setView] = useState<AgentView>('panes');
   const open = useStore((s) => s.agentGridOpen);
   const mounted = useStore((s) => s.agentGridMounted);
   const setOpen = useStore((s) => s.setAgentGridOpen);
@@ -246,7 +250,13 @@ export function AgentGrid({ send }: Props) {
     if (entry) send({ type: 'reset_agent', pane_id: entry.paneId });
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const changeView = (value: AgentView) => {
+    setView(value);
+    // A tab keeping focus would take the grid's keys.
+    dialogRef.current?.focus();
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
     e.stopPropagation();
     const n = entries.length;
     if (e.key === 'Escape') {
@@ -254,7 +264,12 @@ export function AgentGrid({ send }: Props) {
       cancel();
       return;
     }
-    if (view !== 'panes' || (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]'))) return;
+    if (cycleTabs(e, VIEWS, view, changeView)) return;
+    if (view !== 'panes') {
+      enterTabPanel(e);
+      return;
+    }
+    if (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]')) return;
     if (n === 0) return;
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -322,11 +337,7 @@ export function AgentGrid({ send }: Props) {
             <LayoutHeader paddingBlockEnd={0}>
               <TabList
                 value={view}
-                onChange={(value) => {
-                  setView(value);
-                  // A tab keeping focus would take the grid's keys.
-                  dialogRef.current?.focus();
-                }}
+                onChange={(value) => changeView(value as AgentView)}
                 role="tablist"
                 hasDivider
                 isFullBleed
@@ -408,6 +419,8 @@ export function AgentGrid({ send }: Props) {
                                       e.preventDefault();
                                       e.stopPropagation();
                                       reset(entry);
+                                      // A focused button would keep Tab inside the panel.
+                                      dialogRef.current?.focus();
                                     }}
                                   />
                                 </HStack>
@@ -459,6 +472,7 @@ export function AgentGrid({ send }: Props) {
 }
 
 const HINTS: [string[], string][] = [
+  [['tab'], 'next tab'],
   [['up', 'down', 'left', 'right'], 'navigate'],
   [['1', '9'], 'jump to cell'],
   [['enter'], 'switch'],
@@ -466,4 +480,7 @@ const HINTS: [string[], string][] = [
   [['esc'], 'close'],
 ];
 
-const CLOSE_HINTS: [string[], string][] = [[['esc'], 'close']];
+const CLOSE_HINTS: [string[], string][] = [
+  [['tab'], 'next tab'],
+  [['esc'], 'close'],
+];

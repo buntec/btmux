@@ -628,8 +628,31 @@ try {
     .click();
   await page.locator('.astryx-toast').filter({ hasText: 'Toast in settings' }).waitFor({ state: 'detached' });
   await dialog.getByRole('heading', { name: 'Settings', exact: true }).focus();
+  const settingsTab = () => dialog.locator('[role="tab"][aria-selected="true"]').innerText();
+  const firstTab = await settingsTab();
   await page.keyboard.press('Tab');
   assert(await page.evaluate(() => document.activeElement?.closest('dialog')?.open));
+  assert.notEqual(await settingsTab(), firstTab, 'Tab selects the next tab');
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await settingsTab(), firstTab, 'Shift+Tab selects the previous tab');
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await settingsTab(), 'Effects', 'Shift+Tab wraps to the last tab');
+  await page.keyboard.press('Tab');
+  // ArrowDown enters the panel, where Tab moves between its controls.
+  await page.keyboard.press('ArrowDown');
+  const inPanel = () => page.evaluate(() => !!document.activeElement?.closest('[role="tabpanel"]'));
+  assert(await inPanel(), 'ArrowDown enters the panel');
+  await page.keyboard.press('Tab');
+  assert(await inPanel(), 'Tab stays in the panel');
+  assert.equal(await settingsTab(), firstTab, 'Tab in a panel keeps the tab');
+  await dialog.getByRole('tab', { name: firstTab, exact: true }).focus();
+  await page.keyboard.press('Tab');
+  const focusedTab = await page.evaluate(() => {
+    const active = document.activeElement as HTMLElement;
+    return active.getAttribute('role') === 'tab' ? active.innerText : null;
+  });
+  assert.equal(focusedTab, await settingsTab(), 'focus follows the selected tab');
+  await page.keyboard.press('Shift+Tab');
   await page.keyboard.press('Escape');
   if (await dialog.count()) await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'hidden' });
@@ -757,6 +780,12 @@ try {
   await health.getByText('This browser', { exact: true }).waitFor();
   await health.getByText('WebGPU', { exact: true }).waitFor();
   await health.getByText("Allow clipboard access in the browser's site settings.").waitFor();
+  // Tab wraps past the last tab, even after clicking text.
+  await health.getByText('Default shell', { exact: true }).click();
+  await page.keyboard.press('Tab');
+  await page.getByRole('tabpanel', { name: 'About' }).waitFor();
+  await page.keyboard.press('Shift+Tab');
+  await health.waitFor();
   await clipboardPermission('prompt');
   await page.keyboard.press('Escape');
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });

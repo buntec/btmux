@@ -41,6 +41,7 @@ import { Slider } from '@astryxdesign/core/Slider';
 import { FormLayout } from '@astryxdesign/core/FormLayout';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { TabList, Tab } from '@astryxdesign/core/TabList';
+import { cycleTabs, enterTabPanel } from '../lib/tabKeys';
 import { Text } from '@astryxdesign/core/Text';
 import { useClipboard, useMediaQuery } from '@astryxdesign/core/hooks';
 import { Icon } from '@astryxdesign/core/Icon';
@@ -391,6 +392,7 @@ const TAB_LABELS = {
   effects: 'Effects',
 };
 type SettingsTab = keyof typeof TAB_LABELS;
+const SETTINGS_TABS = Object.keys(TAB_LABELS) as SettingsTab[];
 
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
 
@@ -732,6 +734,11 @@ export function ConfigPage({ config, send }: Props) {
       purpose="form"
       {...(isNarrow ? NARROW_DIALOG : { width: showToml ? 1200 : 640, maxHeight: '90dvh' })}
       className={clearBackdrop ? 'h-full btm-clear-backdrop' : 'h-full'}
+      // Clicking text keeps focus here, so Tab still reaches the handler.
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (!cycleTabs(e, SETTINGS_TABS, tab, setTab)) enterTabPanel(e);
+      }}
     >
       <Layout
         header={
@@ -756,7 +763,7 @@ export function ConfigPage({ config, send }: Props) {
                   hasDivider
                   isFullBleed
                 >
-                  {(Object.keys(TAB_LABELS) as SettingsTab[]).map((value) => (
+                  {SETTINGS_TABS.map((value) => (
                     <Tab key={value} value={value} label={TAB_LABELS[value]} panelId={`settings-${value}`} />
                   ))}
                 </TabList>

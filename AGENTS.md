@@ -307,7 +307,8 @@ disk rates, and listening sockets, listed under panes. That is TCP in `LISTEN`
 and UDP below the ephemeral range, as nothing tells a UDP server from a client.
 Sessions start folded. On the usage side, the list shows only the processes and
 ports of the focused row's panes; going back keeps that scope, so the list doesn't
-change under a click, until Esc clears it.
+change under a click, until Esc clears it or the row goes away (a closed port's
+row hands focus and scope to its pane).
 
 ### Frontend lifetime and routing
 

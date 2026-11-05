@@ -21,7 +21,7 @@ import { buildProcessRows } from '@/lib/processTree';
 import { KeyHint, type Hint } from './KeyHint';
 import { PaneUsageTable } from './processes/PaneUsageTable';
 import { ProcessDetails } from './processes/ProcessDetails';
-import { ProcessModeHeader } from './processes/ProcessModeHeader';
+import { ProcessModeHeader, ScopeToken } from './processes/ProcessModeHeader';
 import { PortTable } from './processes/PortTable';
 import { ProcessTree } from './processes/ProcessTree';
 import type { ProcessSignal } from '@/protocol/process-messages';
@@ -419,10 +419,16 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
           connectionState={connectionState}
           animations={animations}
           count={viewMode === 'ports' ? new Set(listPorts.map(portKey)).size : listProcesses.length}
-          scope={scope?.label}
+          scope={narrow ? undefined : scope?.label}
         />
         <IconButton label="Close process viewer" icon={<X />} variant="ghost" size="sm" onClick={onClose} />
       </HStack>
+      {/* The header has no room for it, and usage is hidden behind the list. */}
+      {narrow && scope && (
+        <HStack vAlign="center" className="min-w-0 flex-none border-b border-border px-3 py-1">
+          <ScopeToken label={scope.label} />
+        </HStack>
+      )}
 
       <HStack ref={splitRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <VStack

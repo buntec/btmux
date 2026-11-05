@@ -455,9 +455,43 @@ try {
       (scoped) => document.querySelectorAll('[data-process-pid]').length > scoped,
       scopedRows.length,
     );
+    // A closed port leaves the scope on its pane, not the pane after it.
+    const focusedUsage = () =>
+      page.evaluate(async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        return useProcessStore.getState().focusedUsage;
+      });
+    const split = await fetch(`${url}/api/panes/${pane}/split`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ direction: 'right', select: false }),
+    });
+    assert(split.ok, `split pane: ${split.status}`);
+    const otherPane = ((await split.json()) as { pane_id: string }).pane_id;
+    const otherRow = usage.locator('[data-usage-kind="pane"]').nth(1);
+    await otherRow.waitFor();
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'tab: processes', exact: true }).waitFor();
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'esc: show all', exact: true }).waitFor();
+    await paneInput('kill $USAGE_PID\n');
+    await portRow.waitFor({ state: 'detached' });
+    assert.equal(await focusedUsage(), `pane:${pane}`);
+    await viewer.getByRole('button', { name: 'esc: show all', exact: true }).waitFor();
+    const keptRows = await listedPanes();
+    assert(keptRows.length > 0 && keptRows.every((id) => id === pane), 'the scope outlives a closed port');
+    // A closed pane ends the scope instead of moving it to a neighbor.
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'tab: processes', exact: true }).waitFor();
+    await page.keyboard.press('j');
+    assert.equal(await focusedUsage(), `pane:${otherPane}`);
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'esc: show all', exact: true }).waitFor();
+    const closed = await fetch(`${url}/api/panes/${otherPane}`, { method: 'DELETE', headers });
+    assert(closed.ok, `close pane: ${closed.status}`);
+    await viewer.getByRole('button', { name: 'esc: close', exact: true }).waitFor();
     await page.keyboard.press('q');
     await viewer.waitFor({ state: 'detached' });
-    await paneInput('kill $USAGE_PID\n');
     console.log('PASS pane usage split, ports under panes, folding, scope, and panel keys');
   }
 

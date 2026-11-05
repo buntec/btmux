@@ -196,6 +196,11 @@ export function usageParentIndex(rows: UsageRow[], index: number): number {
   return -1;
 }
 
+/** The pane row of a port row's key, `port:<pane id>:<socket>`. */
+export function usagePortPane(key: string | null): string | null {
+  return key?.startsWith('port:') ? `pane:${key.split(':')[1]}` : null;
+}
+
 /** What selecting a row restricts the process list to; a port row means its pane. */
 export function usageScope(rows: UsageRow[], key: string | null): { label: string; panes: Set<string> } | null {
   const index = rows.findIndex((row) => row.key === key);

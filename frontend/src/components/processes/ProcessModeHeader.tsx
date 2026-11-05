@@ -13,6 +13,15 @@ import { isProcessSortDescending, PROCESS_SORT_LABELS } from '@/lib/processTree'
 import { clsx } from 'clsx';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '@/lib/connectionState';
 
+/** What the list is restricted to, which the list can clear. */
+export function ScopeToken({ label, className }: { label: string; className?: string }) {
+  const listActive = useProcessStore((s) => s.panel === 'list');
+  const clearScope = useProcessStore((s) => s.clearScope);
+  return (
+    <Token size="sm" color="blue" label={label} className={className} onRemove={listActive ? clearScope : undefined} />
+  );
+}
+
 export function ProcessModeHeader({
   connectionState,
   animations,
@@ -23,12 +32,10 @@ export function ProcessModeHeader({
   animations: boolean;
   /** Listed processes or ports, before any filter. */
   count: number;
-  /** What the list is restricted to. */
+  /** What the list is restricted to, if the header shows it. */
   scope?: string;
 }) {
   const viewMode = useProcessStore((s) => s.viewMode);
-  const panel = useProcessStore((s) => s.panel);
-  const clearScope = useProcessStore((s) => s.clearScope);
   const touch = useMediaQuery(TOUCH_QUERY);
   const portSortMode = useProcessStore((s) => s.portSortMode);
   const portSortReversed = useProcessStore((s) => s.portSortReversed);
@@ -72,15 +79,7 @@ export function ProcessModeHeader({
       )}
       {viewMode === 'processes' && <Token size="sm" label={treeMode ? 'tree' : 'flat'} />}
       {followFocus && <Token size="sm" color="blue" label="follow" />}
-      {scope && (
-        <Token
-          size="sm"
-          color="blue"
-          label={scope}
-          className="max-w-[20ch]"
-          onRemove={panel === 'list' ? clearScope : undefined}
-        />
-      )}
+      {scope && <ScopeToken label={scope} className="max-w-[20ch] flex-none" />}
       {/* Touch screens show the filter's input instead. */}
       {filterActive && !touch && (
         <Text size="sm" color="secondary" textWrap="nowrap">
@@ -93,7 +92,7 @@ export function ProcessModeHeader({
         </Text>
       )}
       {snapshot && (
-        <Text size="sm" color="secondary" textWrap="nowrap" hasTabularNumbers className="ml-auto">
+        <Text size="sm" color="secondary" textWrap="nowrap" hasTabularNumbers className="ml-auto min-w-0 truncate">
           {snapshot.cpu_count} cores · {memoryPercent.toFixed(0)}% / {formatBytes(snapshot.mem_total)} · load{' '}
           {snapshot.load_average[0].toFixed(2)}
         </Text>

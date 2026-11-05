@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { buildUsageRows, usageParentIndex, usageScope } from './src/lib/paneUsage';
+import { buildUsageRows, usageParentIndex, usagePortPane, usageScope } from './src/lib/paneUsage';
 import { resolveFocusedRow } from './src/lib/utils';
 import type { PortInfo, ProcessInfo } from './src/protocol/process-messages';
 import type { SessionState } from './src/state/types';
@@ -162,4 +162,11 @@ test('scopes to the panes under a row', () => {
   expect(scope('port:p1:TCP 127.0.0.1:4000')).toEqual({ label: 'pane: vim', panes: ['p1'] });
   expect(scope('gone')).toBeNull();
   expect(scope(null)).toBeNull();
+});
+
+test('finds a port row\'s pane from its key', () => {
+  const rows = buildUsageRows(sessions, processes, [socket(1, 4000)], open());
+  expect(usagePortPane(rows.find((row) => row.kind === 'port')!.key)).toBe('pane:p1');
+  expect(usagePortPane('pane:p1')).toBeNull();
+  expect(usagePortPane(null)).toBeNull();
 });

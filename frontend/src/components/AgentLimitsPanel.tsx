@@ -5,6 +5,7 @@ import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { Text } from '@astryxdesign/core/Text';
 import type { AgentLimits, LimitSeverity } from '../generated/protocol';
 import { formatLimitPercent, formatLimitReset, limitsAreStale } from '../lib/agentUsage';
+import { Spinner } from './Spinner';
 
 const VARIANTS: Record<LimitSeverity, 'accent' | 'warning' | 'error'> = {
   normal: 'accent',
@@ -12,7 +13,14 @@ const VARIANTS: Record<LimitSeverity, 'accent' | 'warning' | 'error'> = {
   critical: 'error',
 };
 
-export function AgentLimitsPanel({ agents, now }: { agents: AgentLimits[]; now: number }) {
+export function AgentLimitsPanel({ agents, now }: { agents: AgentLimits[] | null; now: number }) {
+  if (agents === null)
+    return (
+      <HStack gap={2} vAlign="center" data-agent-limits-loading>
+        <Heading level={3}>Plan limits</Heading>
+        <Spinner size="sm" aria-label="Reading plan limits" />
+      </HStack>
+    );
   if (agents.length === 0) return null;
   return (
     <VStack gap={3} className="w-full" data-agent-limits>

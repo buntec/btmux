@@ -57,6 +57,8 @@ assert(Array.isArray(await realLimits.json()));
 assert.equal((await fetch(`${url}/api/agent-limits`)).status, 401);
 const limitsNow = Date.now() / 1000;
 let limitReads = 0;
+let limitsHeld: Promise<void> = Promise.resolve();
+let limitsFail = false;
 let limitsReply: unknown[] = [
   {
     agent: 'Claude Code',
@@ -77,9 +79,10 @@ let limitsReply: unknown[] = [
 ];
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-await context.route('**/api/agent-limits', (route) => {
+await context.route('**/api/agent-limits', async (route) => {
   limitReads += 1;
-  return route.fulfill({ json: limitsReply });
+  await limitsHeld;
+  return limitsFail ? route.fulfill({ status: 500 }) : route.fulfill({ json: limitsReply });
 });
 await context.addInitScript(() => {
   window.WebSocket = new Proxy(window.WebSocket, {
@@ -91,6 +94,11 @@ await context.addInitScript(() => {
   });
 });
 const errors: string[] = [];
+const holdLimits = () => {
+  let release = () => {};
+  limitsHeld = new Promise((resolve) => (release = resolve));
+  return release;
+};
 const prepare = async (page: Page) => {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(`${url}/s/usage-codex`);
@@ -111,7 +119,12 @@ const prepare = async (page: Page) => {
 
 try {
   const page = await context.newPage();
+  const releaseLimits = holdLimits();
   await prepare(page);
+  // The first read shows it is pending.
+  await page.locator('[data-agent-limits-loading]').waitFor();
+  assert.equal(await page.locator('[data-agent-limits]').count(), 0);
+  releaseLimits();
   // Chromium limits spread arguments; a full day across the pane limit must fit.
   const slots = await page.evaluate(async () => {
     const { emptyUsage, modelSlots } = await import('/src/lib/agentUsage.ts' as string);
@@ -156,6 +169,7 @@ try {
   assert.doesNotMatch(await page.locator('[data-agent-limit="Current week (Fable)"]').innerText(), /Resets/);
   assert.equal(await page.locator('[data-agent-limit-agent="Claude Code"] [data-agent-limit-stale]').count(), 0);
   assert.equal(await page.locator('[data-agent-limit-agent="Codex"] [data-agent-limit-stale]').count(), 1);
+  assert.equal(await page.locator('[data-agent-limits-loading]').count(), 0);
   assert.equal(limitReads, 1);
   // On a short screen the empty state scrolls below the limits instead of covering them.
   for (const viewport of [
@@ -186,6 +200,21 @@ try {
   await page.getByRole('tab', { name: 'Live panes', exact: true }).click();
   await page.getByRole('tab', { name: 'Usage', exact: true }).click();
   await page.locator('[data-agent-limits]').waitFor();
+  // Reopening keeps the last limits while it reads again.
+  const releaseReopen = holdLimits();
+  await page.getByRole('tab', { name: 'Live panes', exact: true }).click();
+  await page.getByRole('tab', { name: 'Usage', exact: true }).click();
+  await page.locator('[data-agent-limits]').waitFor();
+  assert.equal(await page.locator('[data-agent-limits-loading]').count(), 0);
+  releaseReopen();
+  // A failed first read stops showing it is pending.
+  const failing = await context.newPage();
+  limitsFail = true;
+  await prepare(failing);
+  await waitForAsync(failing, () => document.querySelector('[data-agent-limits-loading]') === null);
+  assert.equal(await failing.locator('[data-agent-limits]').count(), 0);
+  limitsFail = false;
+  await failing.close();
   await post(`/api/panes/${codex}/telemetry/v1/logs`, { resourceLogs: [{ scopeLogs: [{ logRecords: logs }] }] });
   await post(`/api/panes/${claude}/telemetry/v1/metrics`, { resourceMetrics: [{ scopeMetrics: [{ metrics }] }] });
   await post(`/api/panes/${claude}/telemetry/v1/metrics`, {

@@ -2,10 +2,20 @@ import type { KeyboardEvent } from 'react';
 import { stepIndex } from './utils';
 
 const CONTROLS = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const PANEL = '[role="tabpanel"]';
+const TABLIST = '[role="tablist"]';
+
+/** Whether the key is the dialog's to handle: controls outside the tab strip keep theirs. */
+function navigates(e: KeyboardEvent<HTMLElement>): boolean {
+  const target = e.target as Element;
+  // Portaled content bubbles here too.
+  return e.currentTarget.contains(target) && (!target.matches(CONTROLS) || !!target.closest(TABLIST));
+}
 
 /**
- * Tab and Shift+Tab cycle a dialog's tabs. Inside a panel, Tab keeps moving
- * between its controls; call this from the dialog's `onKeyDown`.
+ * Tab and Shift+Tab cycle a dialog's tabs from its background, heading, tab
+ * strip, or a panel without controls; call this from the dialog's `onKeyDown`.
+ * Everywhere else, Tab keeps moving between controls.
  */
 export function cycleTabs<T extends string>(
   e: KeyboardEvent<HTMLElement>,
@@ -15,28 +25,33 @@ export function cycleTabs<T extends string>(
 ): boolean {
   if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return false;
   const target = e.target as Element;
-  // Portaled content bubbles here too.
-  if (!e.currentTarget.contains(target) || target.closest('[role="tabpanel"]')) return false;
+  const inPanel = !!target.closest(PANEL);
+  if (!navigates(e) || (inPanel && !target.matches(PANEL))) return false;
   e.preventDefault();
   const index = stepIndex(tabs.indexOf(value), e.shiftKey ? -1 : 1, tabs.length, true);
   // Focus left on the old tab would reselect it on Enter.
-  const tablist = target.closest('[role="tablist"]');
+  const tablist = target.closest(TABLIST);
   if (tablist) tablist.querySelectorAll<HTMLElement>('[role="tab"]')[index]?.focus();
+  // The panel may unmount, which would drop focus out of the dialog.
+  else if (inPanel) e.currentTarget.focus();
   onChange(tabs[index]);
   return true;
 }
 
-/** ArrowDown moves from outside the shown panel to its first control, as Tab no longer does. */
+/**
+ * ArrowDown moves into the shown panel, as Tab no longer does: to its first
+ * control, else the panel itself, so the keyboard can scroll it.
+ */
 export function enterTabPanel(e: KeyboardEvent<HTMLElement>): boolean {
   if (e.key !== 'ArrowDown' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false;
-  const target = e.target as Element;
-  if (!e.currentTarget.contains(target) || target.closest('[role="tabpanel"]')) return false;
-  const panel = [...e.currentTarget.querySelectorAll('[role="tabpanel"]')].find((item) => item.checkVisibility());
-  const control = [...(panel?.querySelectorAll<HTMLElement>(CONTROLS) ?? [])].find(
+  if (!navigates(e) || (e.target as Element).closest(PANEL)) return false;
+  const panel = [...e.currentTarget.querySelectorAll<HTMLElement>(PANEL)].find((item) => item.checkVisibility());
+  if (!panel) return false;
+  const control = [...panel.querySelectorAll<HTMLElement>(CONTROLS)].find(
     (item) => !item.matches(':disabled') && item.checkVisibility(),
   );
-  if (!control) return false;
   e.preventDefault();
-  control.focus();
+  if (!control) panel.tabIndex = -1;
+  (control ?? panel).focus();
   return true;
 }

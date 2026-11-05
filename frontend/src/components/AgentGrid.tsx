@@ -216,7 +216,9 @@ export function AgentGrid({ send }: Props) {
   );
   const [selectedIdx, setSelectedIdx] = useState(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const pressHint = usePressHint(dialogRef);
+  // A synthetic Tab moves no focus, so hints must reach the dialog's handler.
+  const focusDialog = useCallback(() => dialogRef.current?.focus(), []);
+  const pressHint = usePressHint(dialogRef, focusDialog);
   const wasOpen = useRef(false);
 
   useEffect(() => {

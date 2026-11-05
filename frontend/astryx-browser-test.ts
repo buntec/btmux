@@ -653,6 +653,28 @@ try {
   });
   assert.equal(focusedTab, await settingsTab(), 'focus follows the selected tab');
   await page.keyboard.press('Shift+Tab');
+  // Tab walks the footer up to Apply instead of cycling tabs.
+  await dialog.getByRole('tab', { name: 'Logging', exact: true }).click();
+  await dialog.getByLabel('Console level').fill('debug');
+  await dialog.getByLabel('File level').focus();
+  const footer: (string | undefined)[] = [];
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.press('Tab');
+    footer.push(
+      await page.evaluate(() => {
+        const active = document.activeElement as HTMLInputElement;
+        return active.labels?.[0]?.innerText ?? active.innerText;
+      }),
+    );
+  }
+  assert.deepEqual(footer, ['Reset', 'Show TOML', 'Clear background', 'Close', 'Apply']);
+  assert.equal(await settingsTab(), 'Logging', 'Tab in the footer keeps the tab');
+  // ArrowDown stays in the generated TOML.
+  await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'Generated TOML', exact: true }).focus();
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(() => document.activeElement?.tagName), 'TEXTAREA');
+  await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await page.keyboard.press('Escape');
   if (await dialog.count()) await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'hidden' });
@@ -786,6 +808,24 @@ try {
   await page.getByRole('tabpanel', { name: 'About' }).waitFor();
   await page.keyboard.press('Shift+Tab');
   await health.waitFor();
+  // ArrowDown enters a panel without controls, so the keyboard can scroll it.
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await page.getByRole('tab', { name: 'System', exact: true }).click();
+  const system = page.getByRole('tabpanel', { name: 'System' });
+  await system.getByText('Shell', { exact: true }).waitFor();
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'info-system');
+  await page.keyboard.press('PageDown');
+  await page.waitForFunction(() => {
+    let scroller = document.getElementById('info-system')?.parentElement;
+    while (scroller && scroller.scrollHeight <= scroller.clientHeight) scroller = scroller.parentElement;
+    return scroller && scroller.scrollTop > 0;
+  });
+  // Tab leaves it, with focus still in the dialog.
+  await page.keyboard.press('Tab');
+  await health.waitFor();
+  assert(await page.evaluate(() => document.activeElement?.closest('dialog')?.open));
+  await page.setViewportSize({ width: 1440, height: 900 });
   await clipboardPermission('prompt');
   await page.keyboard.press('Escape');
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });

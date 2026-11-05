@@ -256,6 +256,12 @@ fn parse(default_opts: &[String], args: &[String]) -> Option<Options> {
         apply_args(&mut options, &shlex::split(opts)?)?;
     }
     apply_args(&mut options, args)?;
+    // Only fzf's own matching can decide these without a menu.
+    let pick = &options.pick;
+    let query = pick.query.as_deref().unwrap_or_default();
+    if (pick.select_1 || pick.exit_0) && !query.trim().is_empty() {
+        return None;
+    }
     Some(options)
 }
 
@@ -299,7 +305,7 @@ fn find_fzf(path: &OsStr, this: Option<&Path>) -> Option<PathBuf> {
 }
 
 /// The real fzf: this binary may be linked as `fzf`.
-fn real_fzf() -> Option<PathBuf> {
+pub(crate) fn real_fzf() -> Option<PathBuf> {
     let this = std::env::current_exe().and_then(std::fs::canonicalize).ok();
     find_fzf(&std::env::var_os("PATH")?, this.as_deref())
 }
@@ -435,19 +441,11 @@ mod tests {
 
     #[test]
     fn maps_flags_in_every_spelling() {
-        let options = parsed(&[
-            "-q",
-            "a b",
-            "-m",
-            "--print0",
-            "-1",
-            "--tac",
-            "--prompt=Pick> ",
-        ])
-        .unwrap();
+        let options = parsed(&["-q", "a b", "-m", "--print0", "--tac", "--prompt=Pick> "]).unwrap();
         assert_eq!(options.pick.query.as_deref(), Some("a b"));
         assert_eq!(options.pick.prompt.as_deref(), Some("Pick"));
-        assert!(options.pick.multi && options.pick.print0 && options.pick.select_1 && options.tac);
+        assert!(options.pick.multi && options.pick.print0 && options.tac);
+        assert!(parsed(&["-1"]).unwrap().pick.select_1);
         assert_eq!(
             parsed(&["--query=x"]).unwrap().pick.query.as_deref(),
             Some("x")
@@ -481,6 +479,27 @@ mod tests {
             &["--no-sort=x"],
         ] {
             assert!(parsed(list).is_none(), "{list:?}");
+        }
+    }
+
+    #[test]
+    fn a_query_that_decides_without_a_menu_goes_to_fzf() {
+        for list in [
+            &["-q", "fbr", "-1"][..],
+            &["--query=^main$", "--exit-0"],
+            &["-1", "--query", "x"],
+        ] {
+            assert!(parsed(list).is_none(), "{list:?}");
+        }
+        assert!(parse(&args(&["-1"]), &args(&["-q", "x"])).is_none());
+        for list in [
+            &["-q", "x"][..],
+            &["-1", "-0"],
+            &["-q", "", "-1"],
+            &["-q", " ", "-0"],
+            &["-q", "x", "-1", "+1"],
+        ] {
+            assert!(parsed(list).is_some(), "{list:?}");
         }
     }
 

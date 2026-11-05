@@ -418,7 +418,7 @@ async fn report(state: &AppState) -> HealthReport {
         version_of(locate("codex")),
         version_of(locate("rg")),
         version_of(locate("fd").or_else(|| locate("fdfind"))),
-        version_of(locate("fzf")),
+        version_of(crate::fzf::real_fzf()),
         version_of(locate("git")),
         probe(
             crate::tailscale::PROGRAMS
@@ -517,9 +517,12 @@ async fn report(state: &AppState) -> HealthReport {
                     fd(fd_probe),
                     program(
                         "fzf",
-                        "Not used by btmux; for your shell and Neovim plugins.",
+                        "What btmux fzf runs when a menu won't do; also for your shell and Neovim plugins.",
                         fzf,
-                        (HealthStatus::Missing, None),
+                        (
+                            HealthStatus::Missing,
+                            Some("btmux fzf can only show its menu.".into()),
+                        ),
                     ),
                 ],
             },

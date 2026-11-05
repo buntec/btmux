@@ -210,7 +210,7 @@ fn apply_args(options: &mut Options, args: &[String]) -> Option<()> {
             _ => (arg.as_str(), None),
         };
         let mut value = |inline: Option<String>| inline.or_else(|| args.next().cloned());
-        let pick = &options.pick;
+        let pick = &mut options.pick;
         match name {
             "-q" | "--query" => pick.query = Some(value(inline)?),
             "--prompt" => {
@@ -258,11 +258,12 @@ fn parse(default_opts: &[String], args: &[String]) -> Option<Options> {
     apply_args(&mut options, args)?;
     // Only fzf's own matching can decide these without a menu, even for spaces,
     // which `--no-extended` makes literal.
-    let pick = &options.pick;
+    let pick = &mut options.pick;
     let query = pick.query.as_deref().unwrap_or_default();
     if (pick.select_1 || pick.exit_0) && !query.is_empty() {
         return None;
     }
+    pick.selection_order = true;
     Some(options)
 }
 

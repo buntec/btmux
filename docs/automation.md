@@ -631,7 +631,7 @@ git switch "$(git branch --format='%(refname:short)' | btmux fzf --height=40% --
 ```
 
 It understands `--query`, `--prompt`, `--multi`, `--no-sort`, `--read0`, `--print0`,
-`--select-1`, `--exit-0`, and `--tac`. It drops appearance, matching, and preview
+`--select-1`, `--exit-0`, and `--tac`. As in fzf, marked items print in the order marked. It drops appearance, matching, and preview
 options (the menu always shows no preview and matches every space-separated term), and
 `--bind`s of keys that only name movement, marking, accepting, or canceling. `FZF_DEFAULT_OPTS` and
 `FZF_DEFAULT_OPTS_FILE` apply as they do in fzf.

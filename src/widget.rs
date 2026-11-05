@@ -394,6 +394,9 @@ pub struct PickArgs {
     /// Exit 1 without a menu if nothing matches the query.
     #[arg(long, short = '0')]
     pub(crate) exit_0: bool,
+    /// Print marked items in the order marked, as fzf does.
+    #[arg(skip)]
+    pub(crate) selection_order: bool,
 }
 
 pub async fn pick(args: &PickArgs) -> i32 {
@@ -451,8 +454,11 @@ pub(crate) async fn pick_from(
     let Some(WidgetAnswer::Pick { mut indices }) = show(pane, &request).await? else {
         return Ok(EXIT_CANCELED);
     };
-    indices.sort_unstable();
-    indices.dedup();
+    let mut seen = std::collections::HashSet::new();
+    indices.retain(|index| seen.insert(*index));
+    if !args.selection_order {
+        indices.sort_unstable();
+    }
     for index in indices {
         let value = values.get(index).ok_or("the server chose no such item")?;
         print_item(value, end);

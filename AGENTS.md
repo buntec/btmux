@@ -104,6 +104,7 @@ stdout. `matches_query`, for `--select-1` and `--exit-0`, mirrors `filterPick`.
 to the same menu or are dropped; any other runs the real fzf, the first on `PATH`
 that isn't this binary, as does a failed menu, which passes on the stdin it read, and
 a query with `--select-1` or `--exit-0`, which only fzf's matching can decide.
+Marked items print in the order marked, as in fzf; `btmux pick` prints input order.
 Only add to its lists what doesn't change the result a caller gets. `POST
 /api/panes/{id}/widget` stays open until the user answers; dropping it (the CLI
 died) closes the widget. `ServerMessage::Widgets` lists open widgets by id and kind

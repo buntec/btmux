@@ -271,10 +271,10 @@ pub async fn api_widget_request(State(state): State<AppState>, Path(id): Path<Uu
     }
 }
 
-/// Each item ending in `separator`, taken whole, and its menu item.
-pub(crate) fn parse_whole_items(input: &[u8], separator: u8) -> Vec<(&[u8], PickItem)> {
+/// Each NUL-terminated item, taken whole, and its menu item.
+fn parse_whole_items(input: &[u8]) -> Vec<(&[u8], PickItem)> {
     input
-        .split(|&byte| byte == separator)
+        .split(|&byte| byte == 0)
         .filter(|value| !value.is_empty())
         .map(|value| {
             let label = String::from_utf8_lossy(value).into_owned();
@@ -411,7 +411,7 @@ async fn run_pick(args: &PickArgs) -> Result<i32, String> {
         .read_to_end(&mut input)
         .map_err(|error| error.to_string())?;
     let parsed = if args.read0 {
-        parse_whole_items(&input, 0)
+        parse_whole_items(&input)
     } else {
         parse_items(&input)
     };
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn whole_items_keep_their_newlines_and_tabs() {
-        let parsed = parse_whole_items(b"one\ntwo\tthree\0\0four\0", 0);
+        let parsed = parse_whole_items(b"one\ntwo\tthree\0\0four\0");
         let values: Vec<_> = parsed.iter().map(|(value, _)| *value).collect();
         assert_eq!(values, [&b"one\ntwo\tthree"[..], b"four"]);
         assert_eq!(parsed[0].1.label, "one\ntwo\tthree");

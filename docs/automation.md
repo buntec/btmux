@@ -629,15 +629,15 @@ ask:
 git switch "$(git branch --format='%(refname:short)' | btmux fzf --height=40% --query main)"
 ```
 
-It understands `--query`, `--prompt`, `--multi`, `--read0`, `--print0`, `--select-1`,
-`--exit-0`, and `--tac`. It drops appearance, matching, and preview options (the menu
-always shows no preview and matches every space-separated term), and `--bind`s that
-only name movement, marking, accepting, or canceling. `FZF_DEFAULT_OPTS` and
+It understands `--query`, `--prompt`, `--multi`, `--no-sort`, `--read0`, `--print0`,
+`--select-1`, `--exit-0`, and `--tac`. It drops appearance, matching, and preview
+options (the menu always shows no preview and matches every space-separated term), and
+`--bind`s of keys that only name movement, marking, accepting, or canceling. `FZF_DEFAULT_OPTS` and
 `FZF_DEFAULT_OPTS_FILE` apply as they do in fzf.
 
 Everything else runs the real fzf, unchanged: other arguments such as `--expect`,
-`--print-query`, `--with-nth`, `--header`, or `--bind` with `reload` or `execute`; no
-piped stdin; outside a btmux pane; more than 16 MiB of input; or when no tab can show
+`--print-query`, `--with-nth`, `--header`, or `--bind` with `reload`, `execute`, or an
+event such as `load`; no piped stdin; outside a btmux pane; more than 16 MiB of input; or when no tab can show
 the menu. Unlike fzf, the menu waits for stdin to end before it opens, so a producer
 that never finishes needs the real one.
 

@@ -201,6 +201,32 @@ try {
   await waitForRc(7);
   assert((await screen()).includes('sent-on'), await screen());
 
+  // Binds on events act with no key pressed, so they need the real fzf.
+  await run(rcOf(`printf 'kept\\n' | PATH="${real}:$PATH" "$BTMUX_BIN" fzf --bind=load:abort`));
+  await waitForRc(7);
+  assert((await screen()).includes('real-fzf:--bind=load:abort'));
+  assert.equal(await page.locator(PICKER).count(), 0);
+
+  // A file that can't execute earlier on PATH is passed over, as a shell does.
+  const denied = join(tools, 'denied');
+  mkdirSync(denied);
+  writeFileSync(join(denied, 'fzf'), '', { mode: 0o644 });
+  await run(rcOf(`printf 'kept\\n' | PATH="${denied}:${real}:$PATH" "$BTMUX_BIN" fzf --expect=x`));
+  await waitForRc(7);
+
+  // Empty records stay, as choices.
+  await run(rcOf(`printf '\\n' | "$BTMUX_BIN" fzf --select-1 | od -An -c`));
+  await waitForRc(0);
+  assert(/^\s*\\n\s*$/m.test(await screen()), await screen());
+  await run(rcOf(`printf 'a\\n\\nb\\n' | "$BTMUX_BIN" fzf | od -An -c`));
+  await page.waitForSelector(`${PICKER}:not(.opacity-0)`);
+  assert((await page.locator(PICKER).innerText()).includes('3/3'));
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForRc(0);
+  assert(/^\s*\\n\s*$/m.test(await screen()), await screen());
+
   // Linked as `fzf` it behaves the same, and never finds itself as the real one.
   await run(rcOf(`ln -s "$BTMUX_BIN" "${linked}/fzf"; ${FZF_LIST} | PATH="${linked}:${real}:$PATH" fzf`));
   await page.waitForSelector(`${PICKER}:not(.opacity-0)`);

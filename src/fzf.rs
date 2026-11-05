@@ -3,9 +3,9 @@
 //! Anything not known to be safe to drop goes to the real fzf, so a script
 //! never gets a menu that behaves differently from what it asked for.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::widget::{self, PickArgs};
@@ -27,8 +27,6 @@ const IGNORED_SWITCHES: &[&str] = &[
     "+x",
     "--extended",
     "--no-extended",
-    "+s",
-    "--no-sort",
     "--cycle",
     "--no-cycle",
     "--keep-right",
@@ -62,8 +60,7 @@ const IGNORED_SWITCHES: &[&str] = &[
 ];
 
 /// As above, with a value only after `=`.
-const IGNORED_OPTIONAL_VALUES: &[&str] =
-    &["--sort", "--border", "--info", "--separator", "--scrollbar"];
+const IGNORED_OPTIONAL_VALUES: &[&str] = &["--border", "--info", "--separator", "--scrollbar"];
 
 /// As above, with a required value, after `=` or as the next argument.
 const IGNORED_VALUES: &[&str] = &[
@@ -131,11 +128,60 @@ const IGNORED_ACTIONS: &[&str] = &[
     "preview-bottom",
 ];
 
+/// `--bind` keys, after any modifiers, besides single characters. Anything else,
+/// such as `load`, may be an event, which acts with no key pressed.
+const BIND_KEYS: &[&str] = &[
+    "tab",
+    "btab",
+    "enter",
+    "return",
+    "esc",
+    "space",
+    "bspace",
+    "bs",
+    "up",
+    "down",
+    "left",
+    "right",
+    "home",
+    "end",
+    "insert",
+    "delete",
+    "del",
+    "page-up",
+    "pgup",
+    "page-down",
+    "pgdn",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+];
+
 #[derive(Default)]
 struct Options {
     pick: PickArgs,
     /// Reverse the input.
     tac: bool,
+}
+
+fn is_bind_key(name: &str) -> bool {
+    let mut key = name;
+    while let Some(rest) = ["ctrl-", "alt-", "shift-"]
+        .iter()
+        .find_map(|modifier| key.strip_prefix(modifier))
+    {
+        key = rest;
+    }
+    key.chars().count() == 1 || BIND_KEYS.contains(&key)
 }
 
 /// Whether a menu can stand in for this `--bind` value.
@@ -148,9 +194,10 @@ fn ignorable_binds(binds: &str) -> bool {
             return false;
         };
         let accepting = matches!(key, "enter" | "return" | "ctrl-m");
-        actions
-            .split('+')
-            .all(|action| IGNORED_ACTIONS.contains(&action) && (!accepting || action == "accept"))
+        is_bind_key(key)
+            && actions.split('+').all(|action| {
+                IGNORED_ACTIONS.contains(&action) && (!accepting || action == "accept")
+            })
     })
 }
 
@@ -182,6 +229,8 @@ fn apply_args(options: &mut Options, args: &[String]) -> Option<()> {
             "+1" | "--no-select-1" => pick.select_1 = false,
             "-0" | "--exit-0" => pick.exit_0 = true,
             "+0" | "--no-exit-0" => pick.exit_0 = false,
+            "+s" | "--no-sort" if inline.is_none() => pick.no_sort = true,
+            "--sort" => pick.no_sort = false,
             "--tac" => options.tac = true,
             "--no-tac" => options.tac = false,
             "--bind" => {
@@ -223,18 +272,36 @@ fn default_opts() -> Option<Vec<String>> {
     Some(opts)
 }
 
-/// The real fzf: the first on PATH that isn't this binary, which may be linked as `fzf`.
-fn real_fzf() -> Option<PathBuf> {
-    let this = std::env::current_exe().and_then(std::fs::canonicalize).ok();
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes())
+        .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &Path) -> bool {
+    true
+}
+
+/// The first executable `fzf` on `path` that isn't `this`.
+fn find_fzf(path: &OsStr, this: Option<&Path>) -> Option<PathBuf> {
     let name = if cfg!(windows) { "fzf.exe" } else { "fzf" };
-    std::env::split_paths(&std::env::var_os("PATH")?)
+    std::env::split_paths(path)
         .map(|dir| dir.join(name))
         .find(|path| {
             path.is_file()
+                && is_executable(path)
                 && std::fs::canonicalize(path)
                     .ok()
-                    .is_some_and(|path| Some(path) != this)
+                    .is_some_and(|path| Some(path.as_path()) != this)
         })
+}
+
+/// The real fzf: this binary may be linked as `fzf`.
+fn real_fzf() -> Option<PathBuf> {
+    let this = std::env::current_exe().and_then(std::fs::canonicalize).ok();
+    find_fzf(&std::env::var_os("PATH")?, this.as_deref())
 }
 
 /// Runs the real fzf, sending what was already read from stdin and then the rest of it.
@@ -278,13 +345,18 @@ fn to_strings(args: &[OsString]) -> Option<Vec<String>> {
         .collect()
 }
 
-/// fzf shows tabs as space and prints them, and has no descriptions.
+/// fzf shows tabs as space and prints them, keeps empty records, and has no descriptions.
 fn items<'a>(input: &'a [u8], options: &Options) -> Vec<(&'a [u8], widget::PickItem)> {
     let separator = if options.pick.read0 { 0 } else { b'\n' };
-    let mut items = widget::parse_whole_items(input, separator);
-    for (_, item) in &mut items {
-        item.label = item.label.replace('\t', " ");
-    }
+    let mut items: Vec<_> = input
+        .split_inclusive(|&byte| byte == separator)
+        .map(|record| {
+            let value = record.strip_suffix(&[separator]).unwrap_or(record);
+            let label = String::from_utf8_lossy(value).replace('\t', " ");
+            let description = None;
+            (value, widget::PickItem { label, description })
+        })
+        .collect();
     if options.tac {
         items.reverse();
     }
@@ -358,6 +430,7 @@ mod tests {
         ])
         .unwrap();
         assert!(options.pick.read0 && options.pick.exit_0 && !options.pick.multi);
+        assert!(options.pick.no_sort, "zoxide lists by score");
     }
 
     #[test]
@@ -381,6 +454,8 @@ mod tests {
         );
         assert_eq!(parsed(&["--prompt", "> "]).unwrap().pick.prompt, None);
         assert!(!parsed(&["-m", "+m"]).unwrap().pick.multi, "later wins");
+        assert!(parsed(&["+s"]).unwrap().pick.no_sort);
+        assert!(!parsed(&["--no-sort", "--sort=1000"]).unwrap().pick.no_sort);
         assert!(
             parsed(&["--height", "40%", "-e"]).is_some(),
             "a value isn't a flag"
@@ -403,6 +478,7 @@ mod tests {
             &["positional"],
             &["--query"],
             &["--exact=x"],
+            &["--no-sort=x"],
         ] {
             assert!(parsed(list).is_none(), "{list:?}");
         }
@@ -415,6 +491,7 @@ mod tests {
             "tab:toggle+down,btab:up",
             "enter:accept",
             "ctrl-y:accept",
+            "alt-shift-up:up,ctrl-space:toggle,f12:down,x:ignore",
         ] {
             assert!(ignorable_binds(binds), "{binds}");
         }
@@ -426,6 +503,13 @@ mod tests {
             "start:reload(ls)",
             "ctrl-a:select-all+accept+nonsense",
             "nonsense",
+            "load:abort",
+            "load:select-all+accept",
+            "start:accept",
+            "one:accept",
+            "zero:abort",
+            "result:first",
+            "tab:down,load:abort",
         ] {
             assert!(!ignorable_binds(binds), "{binds}");
         }
@@ -454,5 +538,51 @@ mod tests {
         let lines = items(b"a\tb\nc\n", &parsed(&[]).unwrap());
         assert_eq!(lines[0].0, b"a\tb");
         assert!(lines[0].1.description.is_none());
+    }
+
+    #[test]
+    fn items_keep_empty_records() {
+        let values = |input, list: &[&str]| {
+            items(input, &parsed(list).unwrap())
+                .into_iter()
+                .map(|(value, _)| value.to_vec())
+                .collect::<Vec<_>>()
+        };
+        let none: Vec<Vec<u8>> = vec![];
+        assert_eq!(values(b"", &[]), none);
+        assert_eq!(values(b"\n", &[]), [b""]);
+        assert_eq!(values(b"\n\n", &[]), [b"", b""]);
+        assert_eq!(values(b"a", &[]), [b"a"]);
+        assert_eq!(values(b"a\n\nb\n", &[]), [&b"a"[..], b"", b"b"]);
+        assert_eq!(values(b"a\n\0\0", &["--read0"]), [&b"a\n"[..], b""]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finds_the_first_executable_fzf_but_not_itself() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("btmux-fzf-{}", uuid::Uuid::new_v4()));
+        let dir = |name: &str| {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        };
+        let fzf = |name: &str, mode| {
+            let path = dir(name).join("fzf");
+            std::fs::write(&path, "").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            path
+        };
+        fzf("plain", 0o644);
+        std::fs::create_dir_all(dir("nested").join("fzf")).unwrap();
+        let this = std::fs::canonicalize(fzf("this", 0o755)).unwrap();
+        let real = fzf("real", 0o755);
+        let path =
+            std::env::join_paths(["plain", "nested", "this", "real"].map(|name| root.join(name)))
+                .unwrap();
+        assert_eq!(find_fzf(&path, Some(&this)), Some(real));
+        let path = std::env::join_paths(["plain", "this"].map(|name| root.join(name))).unwrap();
+        assert_eq!(find_fzf(&path, Some(&this)), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -56,10 +56,78 @@ pub enum HealthStatus {
 
 /// What looking for a program found.
 #[derive(Default)]
-struct Probe {
+pub(crate) struct Probe {
     path: Option<PathBuf>,
     /// `stdout` of a successful version command.
-    output: Option<String>,
+    pub(crate) output: Option<String>,
+    /// Why the program couldn't start, as opposed to failing once started.
+    pub(crate) launch_error: Option<std::io::Error>,
+}
+
+/// Kills a probe and its descendants when dropped, unless released. `kill_on_drop` only
+/// reaches the probe, and CLI wrappers often wait on a child.
+#[cfg(unix)]
+struct ProcessTree(libc::pid_t);
+
+#[cfg(unix)]
+impl ProcessTree {
+    /// The child must lead its own process group.
+    fn new(child: &tokio::process::Child) -> Option<Self> {
+        child.id().map(|pid| Self(pid as libc::pid_t))
+    }
+
+    fn release(self) {
+        std::mem::forget(self);
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        // SAFETY: killpg has no memory-safety preconditions.
+        unsafe { libc::killpg(self.0, libc::SIGKILL) };
+    }
+}
+
+#[cfg(windows)]
+struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+
+// SAFETY: a job handle can be used from any thread.
+#[cfg(windows)]
+unsafe impl Send for ProcessTree {}
+
+#[cfg(windows)]
+impl ProcessTree {
+    fn new(child: &tokio::process::Child) -> Option<Self> {
+        use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+        let process = child.raw_handle()?;
+        // SAFETY: null attributes and name are allowed, and `process` is the live child's.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return None;
+            }
+            let tree = Self(job);
+            (AssignProcessToJobObject(job, process as _) != 0).then_some(tree)
+        }
+    }
+
+    fn release(self) {
+        // SAFETY: the handle is owned, and `forget` keeps `drop` from closing it again.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+        std::mem::forget(self);
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        // SAFETY: the handle is owned and open.
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
 }
 
 /// `name` on `PATH`, or a path as is.
@@ -77,29 +145,51 @@ fn locate(name: &str) -> Option<PathBuf> {
     crate::vscode::find_on_path(name)
 }
 
-async fn probe(path: Option<PathBuf>, args: &[&str], timeout: Duration) -> Probe {
+/// `stdout` if `path` succeeds in time. Dropping this kills the program's whole tree.
+async fn run(path: &Path, args: &[&str], timeout: Duration) -> std::io::Result<Option<String>> {
+    let mut command = tokio::process::Command::new(path);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    // Outside any project, whose version manager settings could apply. A missing directory
+    // would look like a launch failure.
+    let dir = std::env::temp_dir();
+    if dir.is_dir() {
+        command.current_dir(dir);
+    }
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let child = command.spawn()?;
+    let tree = ProcessTree::new(&child);
+    let Ok(Ok(output)) = tokio::time::timeout(timeout, child.wait_with_output()).await else {
+        return Ok(None);
+    };
+    if let Some(tree) = tree {
+        tree.release();
+    }
+    Ok(output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+pub(crate) async fn probe(path: Option<PathBuf>, args: &[&str], timeout: Duration) -> Probe {
     let Some(path) = path else {
         return Probe::default();
     };
-    let mut command = tokio::process::Command::new(&path);
-    command
-        .args(args)
-        // Outside any project, whose version manager settings could apply.
-        .current_dir(std::env::temp_dir())
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let output = match tokio::time::timeout(timeout, command.output()).await {
-        Ok(Ok(output)) if output.status.success() => {
-            Some(String::from_utf8_lossy(&output.stdout).into_owned())
-        }
-        _ => None,
+    let (output, launch_error) = match run(&path, args, timeout).await {
+        Ok(output) => (output, None),
+        Err(error) => (None, Some(error)),
     };
     Probe {
         path: Some(path),
         output,
+        launch_error,
     }
 }
 
@@ -286,14 +376,16 @@ async fn shell_check(shell: String) -> HealthCheck {
         return check("Default shell", purpose, HealthStatus::Error, "Not found")
             .note(format!("New panes can't start {shell}."));
     };
+    let (value, launch_error) = shell_version(&shell, PROBE_TIMEOUT).await;
+    let result = match launch_error {
+        Some(error) => check("Default shell", purpose, HealthStatus::Error, "Can't run")
+            .note(format!("New panes can't start {shell}: {error}.")),
+        // Not every shell takes `--version`, so failing it says nothing.
+        None => check("Default shell", purpose, HealthStatus::Ok, value),
+    };
     HealthCheck {
         path: Some(display(&path)),
-        ..check(
-            "Default shell",
-            purpose,
-            HealthStatus::Ok,
-            shell_version(shell).await,
-        )
+        ..result
     }
 }
 
@@ -454,6 +546,7 @@ mod tests {
         Probe {
             path: Some(PathBuf::from("/bin/tool")),
             output: output.map(str::to_string),
+            launch_error: None,
         }
     }
 
@@ -545,6 +638,121 @@ mod tests {
         .await;
         assert!(hung.path.is_some() && hung.output.is_none());
         assert!(probe(None, &[], timeout).await.path.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn timeouts_kill_descendants() {
+        // `cmd` waits on `ping`, which holds its redirected output open until it exits.
+        let name = format!("btmux-health-{}.txt", uuid::Uuid::new_v4());
+        let command = format!("ping -n 60 127.0.0.1 > {name}");
+        let hung = probe(
+            Some("cmd".into()),
+            &["/c", &command],
+            Duration::from_secs(2),
+        )
+        .await;
+        assert!(hung.output.is_none() && hung.launch_error.is_none());
+        let file = std::env::temp_dir().join(name);
+        assert!(file.exists());
+        for _ in 0..200 {
+            if std::fs::remove_file(&file).is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("ping outlived its probe");
+    }
+
+    #[cfg(unix)]
+    fn test_script(body: &str, mode: u32) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("btmux-health-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tool");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        (dir, path)
+    }
+
+    /// Waits for the process whose pid `spawns_child` recorded to exit.
+    #[cfg(unix)]
+    async fn assert_child_exits(dir: &Path) {
+        let pid: libc::pid_t = std::fs::read_to_string(dir.join("tool.child"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        for _ in 0..200 {
+            // SAFETY: signal 0 only checks that the process exists.
+            if unsafe { libc::kill(pid, 0) } != 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        // SAFETY: as above; this pid is the test's own stray child.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        panic!("child {pid} outlived its probe");
+    }
+
+    /// Starts a child without `exec` and records its pid.
+    #[cfg(unix)]
+    fn spawns_child(end: &str) -> String {
+        format!("/bin/sleep 60 &\necho $! > \"$0.child\"\n{end}")
+    }
+
+    /// Long enough for a new script to start on a loaded machine.
+    #[cfg(unix)]
+    const CHILD_STARTED: Duration = Duration::from_secs(2);
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeouts_kill_descendants() {
+        for end in ["wait", "exit 0"] {
+            // After `exit 0` the child still holds `stdout`, so the probe times out too.
+            let (dir, path) = test_script(&spawns_child(end), 0o755);
+            let hung = probe(Some(path), &[], CHILD_STARTED).await;
+            assert!(hung.output.is_none() && hung.launch_error.is_none());
+            assert_child_exits(&dir).await;
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_a_probe_kills_descendants() {
+        let (dir, path) = test_script(&spawns_child("wait"), 0o755);
+        let cancelled = tokio::time::timeout(
+            CHILD_STARTED,
+            probe(Some(path), &[], Duration::from_secs(30)),
+        )
+        .await;
+        assert!(cancelled.is_err());
+        assert_child_exits(&dir).await;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unlaunchable_shell_is_an_error() {
+        let (dir, path) = test_script("exit 0", 0o644);
+        let result = shell_check(display(&path)).await;
+        assert_eq!(result.status, HealthStatus::Error);
+        assert_eq!(result.value, "Can't run");
+        assert!(result.note.unwrap().contains("ermission denied"));
+        assert_eq!(result.path, Some(display(&path)));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_shell_without_a_version_command_is_fine() {
+        let (dir, path) = test_script("echo 'illegal option --version'; exit 2", 0o755);
+        let result = shell_check(display(&path)).await;
+        assert_eq!(result.status, HealthStatus::Ok);
+        assert_eq!(result.value, "tool");
+        assert_eq!(result.note, None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

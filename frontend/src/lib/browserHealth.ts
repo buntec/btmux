@@ -19,10 +19,24 @@ async function webGpu(): Promise<HealthCheck> {
   return check('WebGPU', purpose, 'missing', 'Not available', 'Wallpapers show without shaders.');
 }
 
-function clipboard(): HealthCheck {
+/** Whether this site may read the clipboard, if the browser can say; asking reads nothing. */
+async function clipboardReadPermission(nav: Pick<Navigator, 'permissions'>): Promise<PermissionState | null> {
+  try {
+    const status = await nav.permissions?.query({ name: 'clipboard-read' as PermissionName });
+    return status?.state ?? null;
+  } catch {
+    // Firefox and Safari reject this permission name.
+    return null;
+  }
+}
+
+export async function clipboard(nav: Pick<Navigator, 'clipboard' | 'permissions'> = navigator): Promise<HealthCheck> {
   const purpose = 'The paste shortcut and copying from the browser surface.';
-  if (!navigator.clipboard?.readText) {
+  if (!nav.clipboard?.readText) {
     return check('Clipboard', purpose, 'warning', 'Blocked', 'The browser blocks clipboard access on this page.');
+  }
+  if ((await clipboardReadPermission(nav)) === 'denied') {
+    return check('Clipboard', purpose, 'warning', 'Blocked', "Allow clipboard access in the browser's site settings.");
   }
   return check('Clipboard', purpose, 'ok', 'Available');
 }
@@ -53,5 +67,6 @@ export async function browserHealth(osNotifications: boolean): Promise<HealthChe
         'No',
         'Clipboard, notifications, and WebGPU need HTTPS or localhost.',
       );
-  return [secure, clipboard(), notifications(osNotifications), await webGpu()];
+  const [clipboardCheck, webGpuCheck] = await Promise.all([clipboard(), webGpu()]);
+  return [secure, clipboardCheck, notifications(osNotifications), webGpuCheck];
 }

@@ -680,7 +680,15 @@ try {
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });
   console.log('PASS command palette keeps the top result highlighted');
 
-  // The Health tab reports server programs and this browser.
+  // The Health tab reports server programs and this browser. Chromium keeps the
+  // clipboard API when the permission is denied.
+  const clipboardPermission = async (setting: string) =>
+    (await page.context().newCDPSession(page)).send('Browser.setPermission', {
+      permission: { name: 'clipboard-read' },
+      setting,
+      origin: new URL(page.url()).origin,
+    } as never);
+  await clipboardPermission('denied');
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await page.keyboard.type('about: health');
   await page.keyboard.press('Enter');
@@ -691,6 +699,8 @@ try {
   await health.getByText('ripgrep', { exact: true }).waitFor();
   await health.getByText('This browser', { exact: true }).waitFor();
   await health.getByText('WebGPU', { exact: true }).waitFor();
+  await health.getByText("Allow clipboard access in the browser's site settings.").waitFor();
+  await clipboardPermission('prompt');
   await page.keyboard.press('Escape');
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });
   console.log('PASS health tab');

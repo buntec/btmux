@@ -6,6 +6,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::ErrorKind;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -170,7 +171,23 @@ fn agent_program(agent: Agent) -> OsString {
 }
 
 fn on_path(program: &OsStr, path: &OsStr) -> bool {
-    std::env::split_paths(path).any(|dir| dir.join(program).is_file())
+    std::env::split_paths(path).any(|dir| is_executable(&dir.join(program)))
+}
+
+/// Whether exec would run it; its `PATH` search skips anything else.
+#[cfg(unix)]
+fn is_executable(file: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(file.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is a valid C string for the duration of the call.
+    file.is_file() && unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(file: &Path) -> bool {
+    file.is_file()
 }
 
 /// The `PATH` for a CLI the server's own can't find.
@@ -221,8 +238,8 @@ impl ShellPath {
 async fn shell_path(shell: &str, timeout: Duration) -> Result<OsString, String> {
     let mut command = Command::new(shell);
     command
+        // Interactive but not login, as panes start it: the two read different files.
         .args([
-            "-l",
             "-i",
             "-c",
             &format!("echo {SHELL_PATH_MARKER}; exec printenv PATH"),
@@ -258,8 +275,15 @@ fn parse_shell_path(output: &[u8]) -> Option<OsString> {
     use std::os::unix::ffi::OsStrExt;
     let mut lines = output.split(|byte| *byte == b'\n');
     lines.find(|line| line.ends_with(SHELL_PATH_MARKER.as_bytes()))?;
-    let path = lines.next().filter(|path| path.starts_with(b"/"))?;
-    Some(OsStr::from_bytes(path).into())
+    let path = OsStr::from_bytes(lines.next()?);
+    // Others would resolve against the CLI's working directory, the shared temp dir.
+    let dirs: Vec<_> = std::env::split_paths(path)
+        .filter(|dir| dir.is_absolute())
+        .collect();
+    if dirs.is_empty() {
+        return None;
+    }
+    std::env::join_paths(dirs).ok()
 }
 
 async fn read_claude(path: Option<OsString>) -> Read {
@@ -806,11 +830,20 @@ mod tests {
                 parse_shell_path(b"welcome\n\x1b[6 q__btmux_path__\n/a/b:/c\n"),
                 Some("/a/b:/c".into())
             );
+            for path in [".:/a/b:/c", ":/a/b:/c", "/a/b::rel:/c:"] {
+                let output = format!("__btmux_path__\n{path}\n");
+                assert_eq!(
+                    parse_shell_path(output.as_bytes()),
+                    Some("/a/b:/c".into()),
+                    "{path}"
+                );
+            }
             for output in [
                 &b"/a/b:/c\n"[..],
                 b"__btmux_path__\n",
                 b"__btmux_path__\n\n",
                 b"__btmux_path__\nnot a path\n",
+                b"__btmux_path__\n.:rel:\n",
             ] {
                 assert_eq!(parse_shell_path(output), None);
             }
@@ -835,6 +868,35 @@ mod tests {
                 agent_path(OsStr::new("btmux-no-such-agent"), Some(&server), None),
                 None
             );
+        }
+
+        #[test]
+        fn a_file_it_cannot_execute_is_not_on_the_path() {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = std::env::temp_dir().join(format!("btmux-limits-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(dir.join("folder")).unwrap();
+            let file = dir.join("file");
+            std::fs::write(&file, "").unwrap();
+            let set_mode = |mode| {
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+            };
+            let path = dir.as_os_str();
+            let shell = OsStr::new("/shell/bin");
+
+            set_mode(0o644);
+            assert!(!on_path(OsStr::new("file"), path));
+            assert_eq!(
+                agent_path(OsStr::new("file"), Some(path), Some(shell)),
+                Some(shell.into())
+            );
+            set_mode(0o755);
+            assert!(on_path(OsStr::new("file"), path));
+            assert_eq!(
+                agent_path(OsStr::new("file"), Some(path), Some(shell)),
+                None
+            );
+            assert!(!on_path(OsStr::new("folder"), path));
+            std::fs::remove_dir_all(dir).unwrap();
         }
 
         #[tokio::test]

@@ -432,10 +432,33 @@ try {
     await viewer.getByRole('button', { name: 'tab: panes', exact: true }).waitFor();
     await usage.getByText(`TCP 127.0.0.1:${usagePort}`).click();
     await viewer.getByRole('button', { name: 'tab: processes', exact: true }).waitFor();
+    // The list shows what the focused row covers, and stays so back on the list.
+    const listedPanes = () =>
+      page.evaluate(async () => {
+        const { useProcessStore } = await import('/src/state/processStore.ts' as string);
+        const { processes } = useProcessStore.getState();
+        return [...document.querySelectorAll<HTMLElement>('[data-process-pid]')].map(
+          (row) => processes.find((process) => process.pid === Number(row.dataset.processPid))?.pane_id,
+        );
+      });
+    const scopedRows = await listedPanes();
+    assert(scopedRows.length > 0 && scopedRows.every((id) => id === pane), 'a port row scopes to its pane');
+    await page.keyboard.press('Tab');
+    await viewer.getByRole('button', { name: 'esc: show all', exact: true }).waitFor();
+    assert((await listedPanes()).every((id) => id === pane), 'the scope survives leaving pane usage');
+    await page.keyboard.press('p');
+    await viewer.getByText(String(usagePort), { exact: true }).first().waitFor();
+    await page.keyboard.press('p');
+    await page.keyboard.press('Escape');
+    await viewer.getByRole('button', { name: 'esc: close', exact: true }).waitFor();
+    await page.waitForFunction(
+      (scoped) => document.querySelectorAll('[data-process-pid]').length > scoped,
+      scopedRows.length,
+    );
     await page.keyboard.press('q');
     await viewer.waitFor({ state: 'detached' });
     await paneInput('kill $USAGE_PID\n');
-    console.log('PASS pane usage split, ports under panes, folding, and panel keys');
+    console.log('PASS pane usage split, ports under panes, folding, scope, and panel keys');
   }
 
   const unavailablePage = await context.newPage();

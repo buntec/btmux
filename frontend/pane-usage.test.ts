@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { buildUsageRows, usageParentIndex } from './src/lib/paneUsage';
+import { buildUsageRows, usageParentIndex, usageScope } from './src/lib/paneUsage';
 import { resolveFocusedRow } from './src/lib/utils';
 import type { PortInfo, ProcessInfo } from './src/protocol/process-messages';
 import type { SessionState } from './src/state/types';
@@ -147,4 +147,19 @@ test('finds the parent row', () => {
   expect(usageParentIndex(rows, index('pane:p2'))).toBe(index('window:w1'));
   expect(usageParentIndex(rows, index('window:w2'))).toBe(index('session:s1'));
   expect(usageParentIndex(rows, index('session:s2'))).toBe(-1);
+});
+
+test('scopes to the panes under a row', () => {
+  const rows = buildUsageRows(sessions, processes, [socket(1, 4000)], open());
+  const scope = (key: string | null) => {
+    const found = usageScope(rows, key);
+    return found && { label: found.label, panes: [...found.panes] };
+  };
+  expect(scope('session:s1')).toEqual({ label: 'session: one', panes: ['p1', 'p2', 'p3'] });
+  expect(scope('window:w1')).toEqual({ label: 'window: w1', panes: ['p1', 'p2'] });
+  expect(scope('pane:p2')).toEqual({ label: 'pane: pane 2', panes: ['p2'] });
+  // A port counts as its pane.
+  expect(scope('port:p1:TCP 127.0.0.1:4000')).toEqual({ label: 'pane: vim', panes: ['p1'] });
+  expect(scope('gone')).toBeNull();
+  expect(scope(null)).toBeNull();
 });

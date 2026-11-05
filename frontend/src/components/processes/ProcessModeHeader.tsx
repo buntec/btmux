@@ -8,7 +8,7 @@ import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { TOUCH_QUERY } from '@/lib/touch';
 import { useProcessStore } from '@/state/processStore';
 import { formatBytes } from '@/lib/processFormat';
-import { isPortSortDescending, portKey, PORT_SORT_LABELS } from '@/lib/portRows';
+import { isPortSortDescending, PORT_SORT_LABELS } from '@/lib/portRows';
 import { isProcessSortDescending, PROCESS_SORT_LABELS } from '@/lib/processTree';
 import { clsx } from 'clsx';
 import { CONNECTION_STATE_LABEL, type ConnectionState } from '@/lib/connectionState';
@@ -16,17 +16,24 @@ import { CONNECTION_STATE_LABEL, type ConnectionState } from '@/lib/connectionSt
 export function ProcessModeHeader({
   connectionState,
   animations,
+  count,
+  scope,
 }: {
   connectionState: ConnectionState;
   animations: boolean;
+  /** Listed processes or ports, before any filter. */
+  count: number;
+  /** What the list is restricted to. */
+  scope?: string;
 }) {
   const viewMode = useProcessStore((s) => s.viewMode);
+  const panel = useProcessStore((s) => s.panel);
+  const clearScope = useProcessStore((s) => s.clearScope);
   const touch = useMediaQuery(TOUCH_QUERY);
   const portSortMode = useProcessStore((s) => s.portSortMode);
   const portSortReversed = useProcessStore((s) => s.portSortReversed);
   const setPortSortMode = useProcessStore((s) => s.setPortSortMode);
   const snapshot = useProcessStore((s) => s.snapshot);
-  const processCount = useProcessStore((s) => s.processes.length);
   const sortMode = useProcessStore((s) => s.sortMode);
   const sortReversed = useProcessStore((s) => s.sortReversed);
   const treeMode = useProcessStore((s) => s.treeMode);
@@ -42,7 +49,7 @@ export function ProcessModeHeader({
         {viewMode === 'ports' ? 'Ports' : 'Processes'}
       </Text>
       <Text size="sm" color="secondary" textWrap="nowrap">
-        {viewMode === 'ports' ? new Set(snapshot?.ports?.map(portKey)).size : processCount}
+        {count}
       </Text>
       <Token
         size="sm"
@@ -65,6 +72,15 @@ export function ProcessModeHeader({
       )}
       {viewMode === 'processes' && <Token size="sm" label={treeMode ? 'tree' : 'flat'} />}
       {followFocus && <Token size="sm" color="blue" label="follow" />}
+      {scope && (
+        <Token
+          size="sm"
+          color="blue"
+          label={scope}
+          className="max-w-[20ch]"
+          onRemove={panel === 'list' ? clearScope : undefined}
+        />
+      )}
       {/* Touch screens show the filter's input instead. */}
       {filterActive && !touch && (
         <Text size="sm" color="secondary" textWrap="nowrap">

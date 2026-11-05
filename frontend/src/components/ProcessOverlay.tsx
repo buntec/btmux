@@ -15,8 +15,8 @@ import { clsx } from 'clsx';
 import { stepIndex } from '@/lib/utils';
 import { usePressHint } from '@/hooks/usePressHint';
 import { NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '@/lib/touch';
-import { buildUsageRows, isUsageFolded, usageParentIndex, type UsageRow } from '@/lib/paneUsage';
-import { buildPortRows } from '@/lib/portRows';
+import { buildUsageRows, isUsageFolded, usageParentIndex, usageScope, type UsageRow } from '@/lib/paneUsage';
+import { buildPortRows, portKey } from '@/lib/portRows';
 import { buildProcessRows } from '@/lib/processTree';
 import { KeyHint, type Hint } from './KeyHint';
 import { PaneUsageTable } from './processes/PaneUsageTable';
@@ -52,6 +52,8 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   const viewMode = useProcessStore((s) => s.viewMode);
   const panel = useProcessStore((s) => s.panel);
   const usageFoldToggles = useProcessStore((s) => s.usageFoldToggles);
+  const focusedUsage = useProcessStore((s) => s.focusedUsage);
+  const scoped = useProcessStore((s) => s.scoped);
   const sessions = useStore((s) => s.allSessions);
   const ports = useProcessStore((s) => s.snapshot?.ports);
   const uncountedPanes = useProcessStore((s) => s.snapshot?.uncounted_panes);
@@ -93,20 +95,31 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
     { min: 0.3, max: 0.7 },
   );
 
+  const usageRows = useMemo(
+    () => buildUsageRows(sessions, processes, ports ?? [], usageFoldToggles, uncountedPanes),
+    [sessions, processes, ports, usageFoldToggles, uncountedPanes],
+  );
+  const scope = useMemo(() => (scoped ? usageScope(usageRows, focusedUsage) : null), [scoped, usageRows, focusedUsage]);
+  const listProcesses = useMemo(
+    () => (scope ? processes.filter((process) => process.pane_id && scope.panes.has(process.pane_id)) : processes),
+    [scope, processes],
+  );
+  const listPorts = useMemo(() => {
+    if (!scope) return ports ?? [];
+    const pids = new Set(listProcesses.map((process) => process.pid));
+    return (ports ?? []).filter((port) => port.pid !== null && pids.has(port.pid));
+  }, [scope, ports, listProcesses]);
   const rows = useMemo(
-    () => buildProcessRows(processes, collapsedPids, sortMode, treeMode, filterActive ? filterQuery : '', sortReversed),
-    [processes, collapsedPids, sortMode, sortReversed, treeMode, filterActive, filterQuery],
+    () =>
+      buildProcessRows(listProcesses, collapsedPids, sortMode, treeMode, filterActive ? filterQuery : '', sortReversed),
+    [listProcesses, collapsedPids, sortMode, sortReversed, treeMode, filterActive, filterQuery],
   );
   const portRows = useMemo(
     () =>
       viewMode === 'ports'
-        ? buildPortRows(ports ?? [], processes, portSortMode, filterActive ? filterQuery : '', portSortReversed)
+        ? buildPortRows(listPorts, processes, portSortMode, filterActive ? filterQuery : '', portSortReversed)
         : [],
-    [viewMode, ports, processes, portSortMode, portSortReversed, filterActive, filterQuery],
-  );
-  const usageRows = useMemo(
-    () => buildUsageRows(sessions, processes, ports ?? [], usageFoldToggles, uncountedPanes),
-    [sessions, processes, ports, usageFoldToggles, uncountedPanes],
+    [viewMode, listPorts, processes, portSortMode, portSortReversed, filterActive, filterQuery],
   );
   const navigationRows = useMemo(
     () =>
@@ -120,6 +133,11 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   // The key handler reads rows through a ref so snapshots don't re-register it.
   const rowsRef = useRef(navigationRows);
   rowsRef.current = navigationRows;
+
+  // Usage starts at this session, so entering it doesn't scope to an unrelated one.
+  useEffect(() => {
+    useProcessStore.getState().setFocusedUsage(`session:${sessionId}`);
+  }, [sessionId]);
 
   // Start the next open from a clean slate.
   useEffect(() => () => useProcessStore.getState().reset(), []);
@@ -159,6 +177,7 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
         if (store.filterActive) store.setFilterActive(false);
         else if (pendingKill) setPendingKill(null);
         else if (narrow && detailsShown && store.panel === 'list') setDetailsShown(false);
+        else if (store.scoped && store.panel === 'list') store.clearScope();
         else onClose();
         return;
       }
@@ -376,7 +395,12 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
           { keys: ['p'], label: viewMode === 'ports' ? 'processes' : 'ports' },
           { keys: ['/'], label: 'filter' },
           { keys: ['g', 'G'], label: 'top/bottom' },
-          { keys: ['esc', 'q'], label: 'close' },
+          ...(scoped && !(narrow && detailsShown)
+            ? [
+                { keys: ['esc'], label: 'show all' },
+                { keys: ['q'], label: 'close' },
+              ]
+            : [{ keys: ['esc', 'q'], label: 'close' }]),
         ];
 
   return (
@@ -391,7 +415,12 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
       }}
     >
       <HStack gap={3} vAlign="center" className="min-w-0 flex-none border-b border-border px-3 py-1.5">
-        <ProcessModeHeader connectionState={connectionState} animations={animations} />
+        <ProcessModeHeader
+          connectionState={connectionState}
+          animations={animations}
+          count={viewMode === 'ports' ? new Set(listPorts.map(portKey)).size : listProcesses.length}
+          scope={scope?.label}
+        />
         <IconButton label="Close process viewer" icon={<X />} variant="ghost" size="sm" onClick={onClose} />
       </HStack>
 

@@ -638,8 +638,8 @@ options (the menu always shows no preview and matches every space-separated term
 
 Everything else runs the real fzf, unchanged: other arguments such as `--expect`,
 `--print-query`, `--with-nth`, `--header`, or `--bind` with `reload`, `execute`, or an
-event such as `load`; no piped stdin; outside a btmux pane; more than 16 MiB of input; or when no tab can show
-the menu. Unlike fzf, the menu waits for stdin to end before it opens, so a producer
+event such as `load`; a query with `--select-1` or `--exit-0`, since fzf's matching decides those; no piped
+stdin; outside a btmux pane; more than 16 MiB of input; or when no tab can show the menu. Unlike fzf, the menu waits for stdin to end before it opens, so a producer
 that never finishes needs the real one.
 
 For programs that run `fzf` themselves, link btmux under that name, ahead of the real

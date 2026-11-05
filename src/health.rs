@@ -71,7 +71,7 @@ fn locate(name: &str) -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let name = name.strip_suffix(".exe").unwrap_or(name);
-        return crate::agent_launch::windows_program(name, &std::env::var_os("PATH")?);
+        crate::agent_launch::windows_program(name, &std::env::var_os("PATH")?)
     }
     #[cfg(not(windows))]
     crate::vscode::find_on_path(name)

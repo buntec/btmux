@@ -219,6 +219,17 @@ try {
   await waitForAsync(page, () => document.querySelectorAll('[data-agent-chart]').length === 4);
   assert.equal(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');
   assert.match((await page.locator('[data-usage-total="Reported cost"]').textContent()) ?? '', /0\.25/);
+  // Tab moves on from a Usage control, while the Tab hint still changes the view.
+  const selectedView = () => page.locator('dialog[open] [role="tab"][aria-selected="true"]').innerText();
+  await page.getByRole('radio', { checked: true }).first().click();
+  await page.keyboard.press('Tab');
+  assert.equal(await selectedView(), 'Usage');
+  await page.getByRole('radio', { checked: true }).first().click();
+  await page.getByText('next tab', { exact: true }).click();
+  assert.equal(await selectedView(), 'Live panes');
+  await page.getByText('next tab', { exact: true }).click();
+  assert.equal(await selectedView(), 'Usage');
+  await page.getByRole('table', { name: 'Agent usage by pane' }).waitFor();
   // Re-exporting the same batch leaves totals unchanged.
   await post(`/api/panes/${codex}/telemetry/v1/logs`, { resourceLogs: [{ scopeLogs: [{ logRecords: logs }] }] });
   assert.equal(await page.locator('[data-usage-total="Tokens"]').textContent(), '73.9K');

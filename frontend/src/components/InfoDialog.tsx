@@ -10,8 +10,10 @@ import { Layout, LayoutContent, LayoutHeader, VStack } from '@astryxdesign/core/
 import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { HealthPanel } from './HealthPanel';
 import { SystemInfoPanel } from './SystemInfoPanel';
+import { cycleTabs, enterTabPanel } from '../lib/tabKeys';
 
-type InfoTab = 'about' | 'system' | 'health';
+const INFO_TABS = ['about', 'system', 'health'] as const;
+type InfoTab = (typeof INFO_TABS)[number];
 
 export function InfoDialog({ initialTab = 'about', onClose }: { initialTab?: InfoTab; onClose: () => void }) {
   const [tab, setTab] = useState<InfoTab>(initialTab);
@@ -67,7 +69,17 @@ export function InfoDialog({ initialTab = 'about', onClose }: { initialTab?: Inf
     if (!open) onClose();
   };
   return (
-    <Dialog isOpen onOpenChange={changeOpen} maxHeight="85dvh" width={640}>
+    <Dialog
+      isOpen
+      onOpenChange={changeOpen}
+      maxHeight="85dvh"
+      width={640}
+      // Clicking text keeps focus here, so Tab still reaches the handler.
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (!cycleTabs(e, INFO_TABS, tab, setTab)) enterTabPanel(e);
+      }}
+    >
       <Layout
         header={
           <DialogHeader title={<span className="btm-brand">btmux</span>} hasDivider={false} onOpenChange={changeOpen} />

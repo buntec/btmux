@@ -293,6 +293,22 @@ try {
   await pressAndExpect('2', 1);
   await pressAndExpect('1', 0);
 
+  // Tab cycles the views and leaves the grid its keys.
+  const selectedView = () => page.locator('dialog[open] [role="tab"][aria-selected="true"]').innerText();
+  await page.keyboard.press('Tab');
+  await page.getByText('No usage received yet').waitFor();
+  assert.equal(await selectedView(), 'Usage');
+  await page.keyboard.press('Tab');
+  await replaysShown(page, 4);
+  assert.equal(await selectedView(), 'Live panes');
+  await page.keyboard.press('Shift+Tab');
+  await page.getByText('No usage received yet').waitFor();
+  assert.equal(await selectedView(), 'Usage');
+  await page.keyboard.press('Shift+Tab');
+  await replaysShown(page, 4);
+  await pressAndExpect('2', 1);
+  await pressAndExpect('1', 0);
+
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);
   await baseline(page);
@@ -383,6 +399,17 @@ try {
     );
   const ratio = (await tileWidthPerColumn('agent-closed', 130)) / (await tileWidthPerColumn('agent-a', 200));
   assert(ratio > 0.9 && ratio < 1.1, `closed-start agent's size: ${ratio}`);
+
+  // A notification's View pane leaves the grid for that pane.
+  const notified = await fetch(`${url}/api/panes/${agents.at(-1)!.id}/notify`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ hook_event_name: 'Stop', session_id: 'agent-closed' }),
+  });
+  assert(notified.ok);
+  await page.getByRole('button', { name: 'View pane', exact: true }).click({ timeout: 5000 });
+  await page.waitForURL(/\/s\/agent-closed\b/, { timeout: 5000 });
+  await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 });
 
   assert.deepEqual(errors, []);
 } finally {

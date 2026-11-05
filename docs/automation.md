@@ -620,6 +620,38 @@ printed, and 1 if stdin had no items.
 Status 2 lets a key binding fall back to the terminal, as the
 [fish integration](configuration.md#fish-integration)'s Tab completion does.
 
+### fzf
+
+`btmux fzf` takes fzf's arguments and shows the same menu when it can do what they
+ask:
+
+```sh
+git switch "$(git branch --format='%(refname:short)' | btmux fzf --height=40% --query main)"
+```
+
+It understands `--query`, `--prompt`, `--multi`, `--no-sort`, `--read0`, `--print0`,
+`--select-1`, `--exit-0`, and `--tac`. It drops appearance, matching, and preview
+options (the menu always shows no preview and matches every space-separated term), and
+`--bind`s of keys that only name movement, marking, accepting, or canceling. `FZF_DEFAULT_OPTS` and
+`FZF_DEFAULT_OPTS_FILE` apply as they do in fzf.
+
+Everything else runs the real fzf, unchanged: other arguments such as `--expect`,
+`--print-query`, `--with-nth`, `--header`, or `--bind` with `reload`, `execute`, or an
+event such as `load`; no piped stdin; outside a btmux pane; more than 16 MiB of input; or when no tab can show
+the menu. Unlike fzf, the menu waits for stdin to end before it opens, so a producer
+that never finishes needs the real one.
+
+For programs that run `fzf` themselves, link btmux under that name, ahead of the real
+fzf on your `PATH`. It finds the real one further along, so this is safe outside
+btmux too:
+
+```sh
+ln -s "$(command -v btmux)" ~/.local/bin/fzf
+```
+
+This doesn't reach programs built with an absolute path to fzf, such as zoxide from
+Nixpkgs.
+
 ### Questions
 
 `btmux confirm` asks a yes/no question, exiting 0 for yes and 1 for no:

@@ -1,5 +1,8 @@
 /** `btmux pick`, `confirm`, and `input` against the isolated browser-test stack. */
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 
@@ -155,6 +158,88 @@ try {
   await closed();
   await waitForOutput('rc=0');
   assert(/a\s+b\s+\\n\s+c\s+\\t\s+d\s+\\0/.test(await screen()), await screen());
+
+  // `btmux fzf`: a menu when it can honor the arguments, dropping previews and appearance.
+  const tools = mkdtempSync(join(tmpdir(), 'btmux-fzf-'));
+  const real = join(tools, 'real');
+  const linked = join(tools, 'linked');
+  mkdirSync(real);
+  mkdirSync(linked);
+  writeFileSync(join(real, 'fzf'), '#!/bin/sh\necho "real-fzf:$*"\ncat\nexit 7\n', { mode: 0o755 });
+  // Tagged, so a step can't take the previous step's output for its own.
+  let step = 0;
+  const rcOf = (command: string) => `clear; ${command}; echo "step${++step} rc=$?"`;
+  const waitForRc = (rc: number) => waitForOutput(`step${step} rc=${rc}`);
+  const FZF_LIST = `printf 'one\\ttab\\ntwo\\n'`;
+  await run(
+    rcOf(`out=$(${FZF_LIST} | "$BTMUX_BIN" fzf --height=40% --preview='cat {}' --layout=reverse --query one --prompt='Pick> ')`) +
+      `; printf '%s' "$out" | tr '\\t' '@'; echo`,
+  );
+  await page.waitForSelector(`${PICKER}:not(.opacity-0)`);
+  assert.equal(await filter().getAttribute('placeholder'), 'Pick');
+  assert.equal(await filter().inputValue(), 'one');
+  assert((await page.locator(PICKER).innerText()).includes('one tab'), 'tabs show as spaces');
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForRc(0);
+  await waitForOutput('one@tab');
+
+  // Arguments a menu can't honor go to the real fzf, with stdin untouched.
+  await run(rcOf(`printf 'kept\\n' | PATH="${real}:$PATH" "$BTMUX_BIN" fzf --expect=x`));
+  await waitForRc(7);
+  assert((await screen()).includes('real-fzf:--expect=x'));
+  assert((await screen()).includes('kept'));
+  assert.equal(await page.locator(PICKER).count(), 0);
+
+  // So do FZF_DEFAULT_OPTS, outside a pane, and a failed menu, which sends what it read.
+  await run(rcOf(`printf 'kept\\n' | FZF_DEFAULT_OPTS='--header=x' PATH="${real}:$PATH" "$BTMUX_BIN" fzf`));
+  await waitForRc(7);
+  await run(rcOf(`printf 'kept\\n' | BTMUX_PANE_ID= PATH="${real}:$PATH" "$BTMUX_BIN" fzf`));
+  await waitForRc(7);
+  assert((await screen()).includes('kept'));
+  await run(rcOf(`printf 'sent-on\\n' | BTMUX_API_URL=http://127.0.0.1:1 PATH="${real}:$PATH" "$BTMUX_BIN" fzf`));
+  await waitForRc(7);
+  assert((await screen()).includes('sent-on'), await screen());
+
+  // Binds on events act with no key pressed, so they need the real fzf.
+  await run(rcOf(`printf 'kept\\n' | PATH="${real}:$PATH" "$BTMUX_BIN" fzf --bind=load:abort`));
+  await waitForRc(7);
+  assert((await screen()).includes('real-fzf:--bind=load:abort'));
+  assert.equal(await page.locator(PICKER).count(), 0);
+
+  // A file that can't execute earlier on PATH is passed over, as a shell does.
+  const denied = join(tools, 'denied');
+  mkdirSync(denied);
+  writeFileSync(join(denied, 'fzf'), '', { mode: 0o644 });
+  await run(rcOf(`printf 'kept\\n' | PATH="${denied}:${real}:$PATH" "$BTMUX_BIN" fzf --expect=x`));
+  await waitForRc(7);
+
+  // Empty records stay, as choices.
+  await run(rcOf(`printf '\\n' | "$BTMUX_BIN" fzf --select-1 | od -An -c`));
+  await waitForRc(0);
+  assert(/^\s*\\n\s*$/m.test(await screen()), await screen());
+  await run(rcOf(`printf 'a\\n\\nb\\n' | "$BTMUX_BIN" fzf | od -An -c`));
+  await page.waitForSelector(`${PICKER}:not(.opacity-0)`);
+  assert((await page.locator(PICKER).innerText()).includes('3/3'));
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForRc(0);
+  assert(/^\s*\\n\s*$/m.test(await screen()), await screen());
+
+  // Linked as `fzf` it behaves the same, and never finds itself as the real one.
+  await run(rcOf(`ln -s "$BTMUX_BIN" "${linked}/fzf"; ${FZF_LIST} | PATH="${linked}:${real}:$PATH" fzf`));
+  await page.waitForSelector(`${PICKER}:not(.opacity-0)`);
+  await page.keyboard.press('Escape');
+  await closed();
+  await waitForRc(130);
+  await run(rcOf(`printf 'kept\\n' | PATH="${linked}:${real}:$PATH" fzf --print-query`));
+  await waitForRc(7);
+  assert((await screen()).includes('real-fzf:--print-query'));
+  await run(rcOf(`PATH="${linked}" "${linked}/fzf" --version`));
+  await waitForRc(2);
+  assert((await screen()).includes("isn't on PATH"), await screen());
+  rmSync(tools, { recursive: true, force: true });
 
   // Clicking the terminal doesn't take the keys from the menu.
   await open();

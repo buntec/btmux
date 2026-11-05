@@ -374,6 +374,13 @@ pub enum SubCommand {
     /// lines; a tab starts a description, which is shown but not printed.
     /// Exits 1 with no items, 2 if no tab shows the pane, and 130 if canceled.
     Pick(crate::widget::PickArgs),
+    /// Run fzf with a btmux menu when it can do what the arguments ask, else
+    /// the real fzf. Linked as `fzf` on PATH, btmux behaves as this command.
+    #[command(disable_help_flag = true)]
+    Fzf {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Ask a yes/no question over this pane. Exits 0 for yes, 1 for no, 2 if
     /// no tab shows the pane, and 130 if canceled.
     Confirm {

@@ -322,7 +322,7 @@ fn parse_items(input: &[u8]) -> Vec<(&[u8], PickItem)> {
         .collect()
 }
 
-fn pane_id() -> Result<String, String> {
+pub(crate) fn pane_id() -> Result<String, String> {
     std::env::var("BTMUX_PANE_ID")
         .ok()
         .filter(|pane| !pane.is_empty())
@@ -368,32 +368,32 @@ fn print_line(value: &[u8]) {
     print_item(value, b'\n');
 }
 
-#[derive(clap::Args, Clone)]
+#[derive(clap::Args, Clone, Default)]
 pub struct PickArgs {
     /// Placeholder for the menu's filter.
     #[arg(long)]
-    prompt: Option<String>,
+    pub(crate) prompt: Option<String>,
     /// The filter's initial text.
     #[arg(long, short)]
-    query: Option<String>,
+    pub(crate) query: Option<String>,
     /// Let Tab mark several items, printed in input order.
     #[arg(long, short)]
-    multi: bool,
+    pub(crate) multi: bool,
     /// Keep input order while filtering, rather than ranking label prefixes first.
     #[arg(long)]
-    no_sort: bool,
+    pub(crate) no_sort: bool,
     /// Items end in NUL rather than a newline and are taken whole, with no descriptions.
     #[arg(long)]
-    read0: bool,
+    pub(crate) read0: bool,
     /// End printed items in NUL rather than a newline.
     #[arg(long)]
-    print0: bool,
+    pub(crate) print0: bool,
     /// Print the item without a menu if only one matches the query.
     #[arg(long, short = '1')]
-    select_1: bool,
+    pub(crate) select_1: bool,
     /// Exit 1 without a menu if nothing matches the query.
     #[arg(long, short = '0')]
-    exit_0: bool,
+    pub(crate) exit_0: bool,
 }
 
 pub async fn pick(args: &PickArgs) -> i32 {
@@ -415,6 +415,15 @@ async fn run_pick(args: &PickArgs) -> Result<i32, String> {
     } else {
         parse_items(&input)
     };
+    pick_from(&pane, args, parsed).await
+}
+
+/// Shows the menu, unless the arguments or items make it unnecessary, and prints the choice.
+pub(crate) async fn pick_from(
+    pane: &str,
+    args: &PickArgs,
+    parsed: Vec<(&[u8], PickItem)>,
+) -> Result<i32, String> {
     let (values, items): (Vec<_>, Vec<_>) = parsed.into_iter().unzip();
     if items.is_empty() {
         return Ok(EXIT_NOTHING_TO_PICK);
@@ -439,7 +448,7 @@ async fn run_pick(args: &PickArgs) -> Result<i32, String> {
         multi: args.multi,
         no_sort: args.no_sort,
     };
-    let Some(WidgetAnswer::Pick { mut indices }) = show(&pane, &request).await? else {
+    let Some(WidgetAnswer::Pick { mut indices }) = show(pane, &request).await? else {
         return Ok(EXIT_CANCELED);
     };
     indices.sort_unstable();

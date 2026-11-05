@@ -17,6 +17,7 @@ mod file_git_ops;
 mod file_search;
 mod fish_integration;
 mod fs_ops;
+mod fzf;
 mod git;
 #[cfg(unix)]
 mod handoff;
@@ -89,6 +90,9 @@ fn make_filter(level: &str) -> EnvFilter {
 
 #[tokio::main]
 async fn main() {
+    if let Some(args) = fzf::args_when_linked() {
+        std::process::exit(fzf::run(&args).await);
+    }
     let args = CliArgs::parse();
 
     if let Some(config::SubCommand::Completions { shell }) = args.command.as_ref() {
@@ -120,6 +124,7 @@ async fn main() {
             std::process::exit(agent_launch::run(agent_launch::Agent::Codex, args))
         }
         Some(config::SubCommand::Pick(args)) => std::process::exit(widget::pick(args).await),
+        Some(config::SubCommand::Fzf { args }) => std::process::exit(fzf::run(args).await),
         Some(config::SubCommand::Confirm {
             message,
             default_yes,

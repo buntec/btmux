@@ -163,6 +163,16 @@ try {
   await page.keyboard.press('Enter');
   await until((text) => text.includes('last'), 'both lines should run');
 
+  // A query keeps history newest first, even when an older command starts with it.
+  await enter(`clear; history append 'rank-needle older'; history append 'echo rank-needle newer'`);
+  await atPrompt();
+  await page.keyboard.type('rank-needle');
+  await page.keyboard.press('Control+r');
+  await menu();
+  await page.keyboard.press('Enter');
+  await closed();
+  await expectLine('> echo rank-needle newer');
+
   // Canceling keeps the line.
   await enter('clear');
   await atPrompt();
@@ -206,6 +216,26 @@ try {
   await enter(`clear; cdh ${dir}; echo "arg=$PWD"`);
   await until((text) => text.includes(`arg=`) && !text.includes('cdh-29'), 'an argument should go straight there');
   assert.equal(await page.locator(PICKER).count(), 0);
+
+  // cdh keeps a path whole, with a tab (and a sibling it would be cut to) or a line break.
+  await enter('clear; mkdir cdh-tab cdh-tab\\tone cdh-line\\ntwo; cd cdh-tab\\tone; cd ../cdh-line\\ntwo; cd ..; cdh');
+  await menu();
+  await page.keyboard.type('cdh-tab');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('␉one'), PICKER);
+  await page.keyboard.press('Enter');
+  await closed();
+  await enter('clear; test (path basename -- $PWD) = cdh-tab\\tone; and echo tab-kept');
+  await until((text) => /^tab-kept$/m.test(text), 'a tab should stay in the path');
+  await enter('clear; cd ..; cdh');
+  await menu();
+  await page.keyboard.type('cdh-line');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('␤two'), PICKER);
+  await page.keyboard.press('Enter');
+  await closed();
+  await enter('clear; test (path basename -- $PWD | string collect) = cdh-line\\ntwo; and echo line-kept');
+  await until((text) => /^line-kept$/m.test(text), 'a line break should stay in the path');
+  await enter('clear; cd ..');
+  await atPrompt();
 
   // Vi's insert mode is bound too; normal mode keeps Ctrl-R as redo.
   await enter('clear; fish_vi_key_bindings');

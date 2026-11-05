@@ -54,6 +54,9 @@ pub enum WidgetRequest {
         query: Option<String>,
         #[serde(default)]
         multi: bool,
+        /// Filtering keeps input order instead of ranking label prefixes first.
+        #[serde(default)]
+        no_sort: bool,
     },
     Confirm {
         message: String,
@@ -376,6 +379,9 @@ pub struct PickArgs {
     /// Let Tab mark several items, printed in input order.
     #[arg(long, short)]
     multi: bool,
+    /// Keep input order while filtering, rather than ranking label prefixes first.
+    #[arg(long)]
+    no_sort: bool,
     /// Items end in NUL rather than a newline and are taken whole, with no descriptions.
     #[arg(long)]
     read0: bool,
@@ -431,6 +437,7 @@ async fn run_pick(args: &PickArgs) -> Result<i32, String> {
         items,
         query: args.query.clone(),
         multi: args.multi,
+        no_sort: args.no_sort,
     };
     let Some(WidgetAnswer::Pick { mut indices }) = show(&pane, &request).await? else {
         return Ok(EXIT_CANCELED);
@@ -531,6 +538,7 @@ mod tests {
             prompt: None,
             query: None,
             multi,
+            no_sort: false,
             items: ["a", "b"]
                 .map(|label| PickItem {
                     label: label.into(),

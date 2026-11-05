@@ -611,6 +611,7 @@ printed, and 1 if stdin had no items.
 | `--prompt TEXT`     | Placeholder for the filter                                                              |
 | `-q`, `--query TEXT` | The filter's initial text                                                              |
 | `-m`, `--multi`     | Tab and Shift-Tab mark and move, and a click marks; Enter prints the marked items, in input order, or the current one |
+| `--no-sort`         | Keep input order while filtering, rather than ranking label prefixes first              |
 | `--read0`           | Items end in NUL and are taken whole, so they can hold line breaks and tabs, shown as `␤` and `␉`, with no descriptions |
 | `--print0`          | Printed items end in NUL                                                                |
 | `-1`, `--select-1`  | Print the item without a menu if only one matches the query                             |
@@ -648,7 +649,7 @@ The commands wrap `POST /api/panes/<pane-id>/widget`, which takes up to 16 MiB:
 
 | `type`    | Fields                                                                         | `answer` when answered             |
 | --------- | ------------------------------------------------------------------------------ | ---------------------------------- |
-| `pick`    | `items` (each a `label` and an optional `description`), optional `prompt`, `query`, and `multi` | `{"type": "pick", "indices": [n]}` |
+| `pick`    | `items` (each a `label` and an optional `description`), optional `prompt`, `query`, `multi`, and `no_sort` | `{"type": "pick", "indices": [n]}` |
 | `confirm` | `message`, `default_yes`                                                       | `{"type": "confirm", "yes": bool}` |
 | `input`   | optional `prompt` and `default`                                                | `{"type": "input", "text": "..."}` |
 

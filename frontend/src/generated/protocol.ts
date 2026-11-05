@@ -478,7 +478,11 @@ export type WidgetRequest = { "type": "pick", prompt: string | null, items: Arra
 /**
  * The filter's initial text.
  */
-query: string | null, multi: boolean, } | { "type": "confirm", message: string, default_yes: boolean, } | { "type": "input", prompt: string | null, default: string | null, };
+query: string | null, multi: boolean,
+/**
+ * Filtering keeps input order instead of ranking label prefixes first.
+ */
+no_sort: boolean, } | { "type": "confirm", message: string, default_yes: boolean, } | { "type": "input", prompt: string | null, default: string | null, };
 
 // prettier-ignore
 export type WidgetAnswer = { "type": "pick", indices: Array<number>, } | { "type": "confirm", yes: boolean, } | { "type": "input", text: string, };

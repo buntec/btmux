@@ -44,7 +44,7 @@ if status is-interactive; and set -q BTMUX_PANE_ID
             return
         end
         set -l query --query=(commandline | string collect --allow-empty)
-        set -l choice (history search --null | __btmux_pick --read0 $query --prompt History)
+        set -l choice (history search --null | __btmux_pick --read0 --no-sort $query --prompt History)
         switch $status
             case 0
                 commandline -r -- (string join \n -- $choice | string collect)
@@ -67,8 +67,11 @@ if status is-interactive; and set -q BTMUX_PANE_ID
             __btmux_fish_cdh $argv
             return
         end
-        set -l choice (string join \n -- $dirs | __btmux_pick --prompt Directory)
-        switch $status
+        # NUL-delimited, as a path can hold tabs and line breaks. split0 must take
+        # the output, so pick's status is kept from the pipeline.
+        set -l picked
+        set -l choice (string join0 -- $dirs | __btmux_pick --read0 --print0 --prompt Directory | string split0; set picked $pipestatus[2])
+        switch $picked
             case 0
                 cd $choice
             case 130

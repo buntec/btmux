@@ -37,9 +37,10 @@ export function PanePicker(props: PaneWidgetProps) {
 
   const items = request?.items;
   const haystacks = useMemo(() => (items ?? []).map(pickHaystack), [items]);
+  const noSort = request?.no_sort;
   const { indices, total } = useMemo(
-    () => filterPick(haystacks, measured ? query : '', MAX_ROWS),
-    [haystacks, query, measured],
+    () => filterPick(haystacks, measured ? query : '', MAX_ROWS, noSort),
+    [haystacks, query, measured, noSort],
   );
 
   useLayoutEffect(() => {

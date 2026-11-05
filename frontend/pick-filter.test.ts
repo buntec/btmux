@@ -12,6 +12,12 @@ test('label prefixes rank first', () => {
   expect(filterPick(haystacks, 'che', 10).indices).toEqual([1, 0, 2]);
 });
 
+test('keeping order ignores prefixes', () => {
+  const haystacks = ['echo git-newer', 'git status'];
+  expect(filterPick(haystacks, 'git', 10, true).indices).toEqual([0, 1]);
+  expect(filterPick(haystacks, 'git', 1, true)).toEqual({ indices: [0], total: 2 });
+});
+
 test('every term must match, ignoring case', () => {
   expect(filterPick(items, 'CHE pick', 10).indices).toEqual([1]);
   expect(filterPick(items, 'che zzz', 10).total).toBe(0);

@@ -99,7 +99,11 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 
 `widget.rs` implements `btmux pick` (stdin's lines become a menu; the choice goes to
 stdout, with flags named after fzf's), `confirm`, and `input`, whose text goes to
-stdout. `matches_query`, for `--select-1` and `--exit-0`, mirrors `filterPick`. `POST
+stdout. `matches_query`, for `--select-1` and `--exit-0`, mirrors `filterPick`.
+`fzf.rs` implements `btmux fzf`, also run when linked as `fzf`: arguments it knows map
+to the same menu or are dropped; any other runs the real fzf, the first on `PATH`
+that isn't this binary, as does a failed menu, which passes on the stdin it read.
+Only add to its lists what doesn't change the result a caller gets. `POST
 /api/panes/{id}/widget` stays open until the user answers; dropping it (the CLI
 died) closes the widget. `ServerMessage::Widgets` lists open widgets by id and kind
 on every change and on connect, and tabs showing the pane fetch the request (`GET

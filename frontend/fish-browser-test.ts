@@ -66,7 +66,7 @@ try {
   };
   // Until fish has the terminal back: in cooked mode, the kernel takes Ctrl-R as reprint.
   const atPrompt = () =>
-    until((text) => /^(\[I\] )?>$/.test(text.split('\n').filter(Boolean).at(-1) ?? ''), 'the prompt should return');
+    until((text) => /(^|\s)(\[I\] )?>$/.test(text.split('\n').filter(Boolean).at(-1) ?? ''), 'the prompt should return');
   const startFish = async (enabled: boolean) => {
     config(enabled);
     await enter('exec fish');
@@ -142,7 +142,7 @@ try {
   await page.keyboard.press('Enter');
   await until((text) => /^'?my other\.txt'?$/m.test(text), 'ls should find one file');
 
-  // Ctrl-R lists commands containing the line, and multi-line ones survive the menu.
+  // Ctrl-R filters on the line, and multi-line commands survive the menu.
   await enter(`clear; history append 'echo needle-one'; history append (printf 'echo needle-two\\necho\\tlast' | string collect)`);
   await atPrompt();
   await page.keyboard.type('needle');
@@ -151,7 +151,7 @@ try {
   const history = await page.locator(PICKER).innerText();
   assert(history.includes('echo needle-one') && history.includes('echo needle-two␤echo␉last'), history);
   assert(!history.includes('ls my'), 'it searches for the line');
-  await page.keyboard.type('two');
+  await page.keyboard.type(' two');
   await page.keyboard.press('Enter');
   await closed();
   await until((text) => text.includes('> echo needle-two'), 'the command should replace the line');
@@ -173,13 +173,16 @@ try {
   await closed();
   await expectLine('> echo needle');
 
-  // With nothing to list, it's fish's pager.
+  // With no match, the menu still opens, to edit the filter.
+  await page.keyboard.press('Control+u');
+  await atPrompt();
   await page.keyboard.type('zzz-no-such-entry');
   await page.keyboard.press('Control+r');
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator(PICKER).count(), 0);
+  await menu();
+  assert((await page.locator(PICKER).innerText()).includes('0/'));
   await page.keyboard.press('Escape');
-  await page.keyboard.press('Control+u');
+  await closed();
+  await expectLine('> zzz-no-such-entry');
 
   // cdh is a menu, past fish's limit of 26 directories, without the current one.
   const dirs = Array.from({ length: 30 }, (_, index) => `cdh-${index}`);

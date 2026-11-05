@@ -113,9 +113,8 @@ panes, and is read at the first prompt. fish's own behavior remains as a fallbac
 when no tab can show a menu. Tab still completes directly with at most one
 candidate, and vi's normal mode keeps `Ctrl-R` as redo.
 
-`Ctrl-R` lists the commands containing the current line, newest first. Multi-line
-commands show `␤` for their line breaks and tabs as `␉`, and a command containing
-those characters itself comes back changed.
+`Ctrl-R` lists commands newest first, filtered on the current line. Multi-line
+commands show `␤` for their line breaks and tabs as `␉`.
 
 `complete -C` doesn't say how fish would quote a candidate or whether to add a
 space after it, so a choice from the menu has its spaces escaped and gets no

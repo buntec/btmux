@@ -373,11 +373,7 @@ pub enum SubCommand {
     /// Show a menu over this pane and print the chosen item. Items are stdin's
     /// lines; a tab starts a description, which is shown but not printed.
     /// Exits 1 with no items, 2 if no tab shows the pane, and 130 if canceled.
-    Pick {
-        /// Placeholder for the menu's filter.
-        #[arg(long)]
-        prompt: Option<String>,
-    },
+    Pick(crate::widget::PickArgs),
     /// Ask a yes/no question over this pane. Exits 0 for yes, 1 for no, 2 if
     /// no tab shows the pane, and 130 if canceled.
     Confirm {

@@ -4,6 +4,11 @@ export function pickHaystack(item: { label: string; description: string | null }
   return item.description ? `${label}\t${item.description.toLowerCase()}` : label;
 }
 
+/** A label on one row, with whole items' line breaks and tabs visible. */
+export function pickLabel(label: string): string {
+  return label.replace(/\n/g, '␤').replace(/\t/g, '␉');
+}
+
 /**
  * Items containing every whitespace-separated term, ignoring case, up to
  * `limit`: those whose label starts with the first term, then the rest, each

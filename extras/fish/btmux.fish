@@ -32,7 +32,7 @@ if status is-interactive; and set -q BTMUX_PANE_ID
         commandline -f repaint
     end
 
-    # Ctrl-R through `btmux pick`, over commands containing the line, as fish's pager.
+    # Ctrl-R through `btmux pick`, filtering on the line, as fish's pager does.
     function __btmux_history
         # Vi's normal mode is also named default, and redoes with Ctrl-R.
         if test "$fish_bind_mode" = default; and string match -q '*_vi_*' -- $fish_key_bindings
@@ -43,17 +43,11 @@ if status is-interactive; and set -q BTMUX_PANE_ID
             commandline -f history-pager
             return
         end
-        # An empty line passes no query, as searching for "" is an error.
-        set -l entries (history search --null --contains -- (commandline | string collect) | string split0)
-        if not set -q entries[1]
-            commandline -f history-pager
-            return
-        end
-        # Items are lines, and a tab would start a description.
-        set -l choice (string replace -a \n ␤ -- $entries | string replace -a \t ␉ | __btmux_pick --prompt History)
+        set -l query --query=(commandline | string collect --allow-empty)
+        set -l choice (history search --null | __btmux_pick --read0 $query --prompt History)
         switch $status
             case 0
-                commandline -r -- (string replace -a ␤ \n -- $choice | string replace -a ␉ \t | string collect)
+                commandline -r -- (string join \n -- $choice | string collect)
             case 130
             case '*'
                 commandline -f history-pager

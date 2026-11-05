@@ -98,7 +98,8 @@ REST handlers and MCP tools share the same `SessionManager`; structural mutation
 ### Widgets from the shell
 
 `widget.rs` implements `btmux pick` (stdin's lines become a menu; the choice goes to
-stdout), `confirm`, and `input`, whose text goes to stdout. `POST
+stdout, with flags named after fzf's), `confirm`, and `input`, whose text goes to
+stdout. `matches_query`, for `--select-1` and `--exit-0`, mirrors `filterPick`. `POST
 /api/panes/{id}/widget` stays open until the user answers; dropping it (the CLI
 died) closes the widget. `ServerMessage::Widgets` lists open widgets by id and kind
 on every change and on connect, and tabs showing the pane fetch the request (`GET

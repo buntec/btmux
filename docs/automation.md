@@ -606,6 +606,16 @@ filtered on but not printed. Typing filters; Up, Down, Tab, `Ctrl-N`, and
 `Ctrl-P` move; Enter or a click chooses. It exits 0 once an item is chosen and
 printed, and 1 if stdin had no items.
 
+| Flag                | Effect                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `--prompt TEXT`     | Placeholder for the filter                                                              |
+| `-q`, `--query TEXT` | The filter's initial text                                                              |
+| `-m`, `--multi`     | Tab and Shift-Tab mark and move, and a click marks; Enter prints the marked items, in input order, or the current one |
+| `--read0`           | Items end in NUL and are taken whole, so they can hold line breaks and tabs, shown as `␤` and `␉`, with no descriptions |
+| `--print0`          | Printed items end in NUL                                                                |
+| `-1`, `--select-1`  | Print the item without a menu if only one matches the query                             |
+| `-0`, `--exit-0`    | Exit 1 without a menu if nothing matches the query                                      |
+
 Status 2 lets a key binding fall back to the terminal, as the
 [fish integration](configuration.md#fish-integration)'s Tab completion does.
 
@@ -638,7 +648,7 @@ The commands wrap `POST /api/panes/<pane-id>/widget`, which takes up to 16 MiB:
 
 | `type`    | Fields                                                                         | `answer` when answered             |
 | --------- | ------------------------------------------------------------------------------ | ---------------------------------- |
-| `pick`    | `items` (each a `label` and an optional `description`), optional `prompt`      | `{"type": "pick", "index": n}`     |
+| `pick`    | `items` (each a `label` and an optional `description`), optional `prompt`, `query`, and `multi` | `{"type": "pick", "indices": [n]}` |
 | `confirm` | `message`, `default_yes`                                                       | `{"type": "confirm", "yes": bool}` |
 | `input`   | optional `prompt` and `default`                                                | `{"type": "input", "text": "..."}` |
 

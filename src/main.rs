@@ -119,9 +119,7 @@ async fn main() {
         Some(config::SubCommand::Codex { args }) => {
             std::process::exit(agent_launch::run(agent_launch::Agent::Codex, args))
         }
-        Some(config::SubCommand::Pick { prompt }) => {
-            std::process::exit(widget::pick(prompt.as_deref()).await)
-        }
+        Some(config::SubCommand::Pick(args)) => std::process::exit(widget::pick(args).await),
         Some(config::SubCommand::Confirm {
             message,
             default_yes,

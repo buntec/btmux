@@ -488,7 +488,10 @@ data and extensions are per profile (`<state dir>/vscode`, the same layout for
 both servers). The iframe is same-origin,
 so the surface replays its keydowns to the keybinding hook and swallows those
 btmux handles. Moving an iframe in the DOM or changing its `src` reloads VS
-Code: it reloads only when opened over a pane in another folder.
+Code: it reloads only when opened over a pane in another folder. WKWebView rejects VS
+Code's `navigator.clipboard` reads, so in the macOS desktop app Cmd+V in its terminal
+skips VS Code and takes the Edit menu's paste. Don't grant the webview clipboard access:
+WebKit's preferences and WebView2's permission let any frame read it without a gesture.
 
 The extension in `extras/vscode` is embedded and installed into the profile's
 extensions on each start, registered in VS Code's `extensions.json` (the

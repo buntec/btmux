@@ -12,6 +12,8 @@ import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { DOUBLE_ESC_MS } from './NvimSurface';
+import { isDesktopApp } from '../lib/desktopApp';
+import { IS_MAC } from '../lib/nvimKeys';
 
 /**
  * This page's `@font-face` rules with absolute URLs, so the same-origin iframe
@@ -41,6 +43,18 @@ function fontFaceCss(): string {
 }
 
 /** VS Code (`/vscode/`, proxied by the backend), pinned over a pane like the Neovim surface. */
+// WKWebView rejects VS Code's clipboard read, so its terminal gets the Edit menu's paste,
+// which runs only if nothing sees the key.
+const isTerminalPaste = (e: KeyboardEvent) =>
+  IS_MAC &&
+  isDesktopApp() &&
+  e.key === 'v' &&
+  e.metaKey &&
+  !e.ctrlKey &&
+  !e.altKey &&
+  !e.shiftKey &&
+  !!(e.target as Element).classList?.contains('xterm-helper-textarea');
+
 export function VscodeSurface({
   config,
   open,
@@ -143,6 +157,11 @@ export function VscodeSurface({
         e.stopImmediatePropagation();
         return;
       }
+      if (isTerminalPaste(e)) {
+        lastEsc = -Infinity;
+        e.stopImmediatePropagation();
+        return;
+      }
       if (e.key !== 'Escape' || e.repeat || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) {
         lastEsc = -Infinity;
       } else if (e.timeStamp - lastEsc < DOUBLE_ESC_MS) {
@@ -156,6 +175,13 @@ export function VscodeSurface({
       if (!focusedRef.current) onActivateRef.current();
     };
     win.addEventListener('keydown', onKeyDown, true);
+    win.addEventListener(
+      'keypress',
+      (e) => {
+        if (isTerminalPaste(e)) e.stopImmediatePropagation();
+      },
+      true,
+    );
     win.addEventListener('mousedown', onMouseDown, true);
   };
 

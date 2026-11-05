@@ -120,9 +120,9 @@ focus rules in `TerminalPane` still apply. Shells have no UI protocol like Neovi
 `ext_popupmenu`, so menus replace the shell's own: when `btmux_pick_menus` is 1,
 `extras/fish/btmux.fish` binds Tab and Ctrl-R and wraps `cdh`, each falling back to
 fish's own when the pick fails. Tab also leaves fish to complete when its menu is
-open or with at most one candidate, and redo keeps Ctrl-R in vi's normal mode, also
-named `default`. It checks at the first prompt, as conf.d runs before config.fish,
-so it changes nothing when off.
+open or with at most one candidate, and redo keeps Ctrl-R in vi and hybrid normal
+mode, also named `default`, found from fish's preset. It checks at the first prompt,
+as conf.d runs before config.fish, so it changes nothing when off.
 
 ### Plan limits
 

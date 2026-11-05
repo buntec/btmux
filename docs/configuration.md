@@ -111,7 +111,7 @@ set -g btmux_pick_menus 1
 It replaces any `Tab` or `Ctrl-R` binding and `cdh` function of your own in btmux
 panes, and is read at the first prompt. fish's own behavior remains as a fallback
 when no tab can show a menu. Tab still completes directly with at most one
-candidate, and vi's normal mode keeps `Ctrl-R` as redo.
+candidate, and normal mode in vi and hybrid bindings keeps `Ctrl-R` as redo.
 
 `Ctrl-R` lists commands newest first, filtered on the current line. Multi-line
 commands show `␤` for their line breaks and tabs as `␉`.

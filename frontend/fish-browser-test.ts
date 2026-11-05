@@ -238,31 +238,33 @@ try {
   await atPrompt();
 
   // Vi's insert mode is bound too; normal mode keeps Ctrl-R as redo.
-  await enter('clear; fish_vi_key_bindings');
-  await page.keyboard.type('git che');
-  await page.keyboard.press('Tab');
-  await menu();
-  await page.keyboard.press('Escape');
-  await closed();
-  await until((text) => text.includes('git che'), 'canceling keeps the line');
-  await page.keyboard.press('Control+u');
-  await atPrompt();
-  await page.keyboard.type('echo needle');
-  await page.keyboard.press('Control+r');
-  await menu();
-  await page.keyboard.press('Escape');
-  await closed();
-  await page.keyboard.press('Control+u');
-  await page.keyboard.type('echo redo-me');
-  await page.keyboard.press('Escape');
-  await until((text) => text.includes('[N]'), 'Escape should enter normal mode');
-  await page.keyboard.press('u');
-  await until((text) => !text.includes('redo-me'), 'u should undo');
-  await page.keyboard.press('Control+r');
-  await until((text) => text.includes('redo-me'), 'Ctrl-R should redo in normal mode');
-  assert.equal(await page.locator(PICKER).count(), 0);
-  await page.keyboard.press('A');
-  await page.keyboard.press('Control+u');
+  for (const bindings of ['fish_vi_key_bindings', 'fish_hybrid_key_bindings']) {
+    await enter(`clear; ${bindings}`);
+    await page.keyboard.type('git che');
+    await page.keyboard.press('Tab');
+    await menu();
+    await page.keyboard.press('Escape');
+    await closed();
+    await until((text) => text.includes('git che'), 'canceling keeps the line');
+    await page.keyboard.press('Control+u');
+    await atPrompt();
+    await page.keyboard.type('echo needle');
+    await page.keyboard.press('Control+r');
+    await menu();
+    await page.keyboard.press('Escape');
+    await closed();
+    await page.keyboard.press('Control+u');
+    await page.keyboard.type('echo redo-me');
+    await page.keyboard.press('Escape');
+    await until((text) => text.includes('[N]'), 'Escape should enter normal mode');
+    await page.keyboard.press('u');
+    await until((text) => !text.includes('redo-me'), 'u should undo');
+    await page.keyboard.press('Control+r');
+    await until((text) => text.includes('redo-me'), 'Ctrl-R should redo in normal mode');
+    assert.equal(await page.locator(PICKER).count(), 0);
+    await page.keyboard.press('A');
+    await page.keyboard.press('Control+u');
+  }
   await enter('clear; fish_default_key_bindings');
 
   // With no tab to show the menu, fish's opens, and further Tabs move through it.

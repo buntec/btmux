@@ -100,16 +100,22 @@ it tracks the btmux scheme, including live changes. The snippet selects it only
 inside btmux panes and overrides universal `fish_color_*` variables there. The
 Home Manager module installs both files when `programs.fish.enable` is set.
 
-To make Tab open a [`btmux pick` menu](automation.md#menus) instead
-of fish's own, add this to `config.fish` (with Home Manager,
-`programs.fish.interactiveShellInit`):
+To use [`btmux pick` menus](automation.md#menus) in place of fish's own for Tab
+completion, `Ctrl-R` history search, and `cdh`, add this to `config.fish` (with
+Home Manager, set `programs.btmux.fishPickMenus = true` instead):
 
 ```fish
-set -g btmux_pick_completion 1
+set -g btmux_pick_menus 1
 ```
 
-It replaces any Tab binding of your own in btmux panes. fish still completes when
-there is at most one candidate, and when no tab can show the menu.
+It replaces any `Tab` or `Ctrl-R` binding and `cdh` function of your own in btmux
+panes, and is read at the first prompt. fish's own behavior remains as a fallback
+when no tab can show a menu. Tab still completes directly with at most one
+candidate, and vi's normal mode keeps `Ctrl-R` as redo.
+
+`Ctrl-R` lists the commands containing the current line, newest first. Multi-line
+commands show `␤` for their line breaks and tabs as `␉`, and a command containing
+those characters itself comes back changed.
 
 `complete -C` doesn't say how fish would quote a candidate or whether to add a
 space after it, so a choice from the menu has its spaces escaped and gets no

@@ -250,7 +250,8 @@ starting it. Override `package` to use a different build or package source, or
 set it to `null` (with the service disabled) to only write the configuration.
 When `programs.fish.enable` is set, the module also installs the btmux fish
 integration (see [Configuration](configuration.md#fish-integration)); set
-`enableFishIntegration = false` to skip it.
+`enableFishIntegration = false` to skip it, or `fishPickMenus = true` to use
+[`btmux pick` menus](configuration.md#fish-integration) for Tab, `Ctrl-R`, and `cdh`.
 The module installs bash, fish, and zsh completions when the selected package
 supports `btmux completions`. The bundled fallback package currently uses an
 older release, so completions become available after selecting a newer package

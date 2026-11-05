@@ -138,6 +138,8 @@ in
       '';
     };
 
+    fishPickMenus = lib.mkEnableOption "`btmux pick` menus for Tab, Ctrl-R, and `cdh` in fish, which requires `enableFishIntegration`";
+
     desktop = {
       enable = lib.mkEnableOption "the btmux desktop app with its bundled server";
 
@@ -283,6 +285,10 @@ in
         (lib.lowPrio completionPackage)
       ]
       ++ lib.optionals (cfg.desktop.enable && cfg.desktop.package != null) [ cfg.desktop.package ];
+
+    programs.fish.interactiveShellInit = lib.mkIf (cfg.enableFishIntegration && cfg.fishPickMenus) ''
+      set -g btmux_pick_menus 1
+    '';
 
     xdg.configFile = lib.mkMerge [
       { "btmux/config.toml".source = configFile; }

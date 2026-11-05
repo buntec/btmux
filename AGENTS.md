@@ -110,10 +110,12 @@ switches, with no timeout. The first `widget_answer` of the right kind wins.
 size, so filtering never moves the input. While it is open,
 `PaneTerminal.setFocusTarget` sends the pane's focus and keys to the widget, so the
 focus rules in `TerminalPane` still apply. Shells have no UI protocol like Neovim's
-`ext_popupmenu`, so completion menus replace the shell's own: `extras/fish/btmux.fish` binds Tab to one when
-`btmux_pick_completion` is 1, leaving fish to complete when its menu is open, with
-at most one candidate, or when the pick fails. It checks at the first prompt, as
-conf.d runs before config.fish, so it binds nothing when off.
+`ext_popupmenu`, so menus replace the shell's own: when `btmux_pick_menus` is 1,
+`extras/fish/btmux.fish` binds Tab and Ctrl-R and wraps `cdh`, each falling back to
+fish's own when the pick fails. Tab also leaves fish to complete when its menu is
+open or with at most one candidate, and redo keeps Ctrl-R in vi's normal mode, also
+named `default`. It checks at the first prompt, as conf.d runs before config.fish,
+so it changes nothing when off.
 
 ### Plan limits
 

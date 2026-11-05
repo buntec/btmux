@@ -22,7 +22,7 @@ const config = (enabled: boolean) =>
     join(configHome, 'fish', 'config.fish'),
     `function fish_prompt; printf '> '; end
 set -g fish_autosuggestion_enabled 0
-${enabled ? 'set -g btmux_pick_completion 1' : ''}
+${enabled ? 'set -g btmux_pick_menus 1' : ''}
 `,
   );
 
@@ -64,6 +64,9 @@ try {
     await page.keyboard.press('Control+u');
     await until((text) => text.split('\n').filter(Boolean).at(-1) === '>', 'the line should clear');
   };
+  // Until fish has the terminal back: in cooked mode, the kernel takes Ctrl-R as reprint.
+  const atPrompt = () =>
+    until((text) => /^(\[I\] )?>$/.test(text.split('\n').filter(Boolean).at(-1) ?? ''), 'the prompt should return');
   const startFish = async (enabled: boolean) => {
     config(enabled);
     await enter('exec fish');
@@ -139,13 +142,93 @@ try {
   await page.keyboard.press('Enter');
   await until((text) => /^'?my other\.txt'?$/m.test(text), 'ls should find one file');
 
-  // Vi mode's insert mode is bound too.
+  // Ctrl-R lists commands containing the line, and multi-line ones survive the menu.
+  await enter(`clear; history append 'echo needle-one'; history append (printf 'echo needle-two\\necho\\tlast' | string collect)`);
+  await atPrompt();
+  await page.keyboard.type('needle');
+  await page.keyboard.press('Control+r');
+  await menu();
+  const history = await page.locator(PICKER).innerText();
+  assert(history.includes('echo needle-one') && history.includes('echo needle-two␤echo␉last'), history);
+  assert(!history.includes('ls my'), 'it searches for the line');
+  await page.keyboard.type('two');
+  await page.keyboard.press('Enter');
+  await closed();
+  await until((text) => text.includes('> echo needle-two'), 'the command should replace the line');
+  assert.equal(
+    (await page.request.get(`${url}/api/panes/${pane}/capture`).then((r) => r.text())).includes('␤'),
+    false,
+    'line breaks are restored',
+  );
+  await page.keyboard.press('Enter');
+  await until((text) => text.includes('last'), 'both lines should run');
+
+  // Canceling keeps the line.
+  await enter('clear');
+  await atPrompt();
+  await page.keyboard.type('echo needle');
+  await page.keyboard.press('Control+r');
+  await menu();
+  await page.keyboard.press('Escape');
+  await closed();
+  await expectLine('> echo needle');
+
+  // With nothing to list, it's fish's pager.
+  await page.keyboard.type('zzz-no-such-entry');
+  await page.keyboard.press('Control+r');
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator(PICKER).count(), 0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+u');
+
+  // cdh is a menu, past fish's limit of 26 directories, without the current one.
+  const dirs = Array.from({ length: 30 }, (_, index) => `cdh-${index}`);
+  await enter(`clear; mkdir ${dirs.join(' ')}; for d in ${dirs.join(' ')}; cd $d; cd ..; end; cd cdh-0`);
+  await enter('clear; cdh');
+  await menu();
+  const visited = await page.locator(PICKER).innerText();
+  assert(visited.includes('cdh-29') && !visited.includes('cdh-0\n'), visited);
+  await page.keyboard.press('Escape');
+  await closed();
+  await enter('clear; echo "canceled=$PWD"');
+  await until((text) => /canceled=.*cdh-0$/m.test(text), 'canceling stays put');
+  await enter('clear; cdh');
+  await menu();
+  await page.keyboard.type('cdh-29');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes('1/'), PICKER);
+  await page.keyboard.press('Enter');
+  await closed();
+  await enter('clear; echo "at=$PWD"');
+  await until((text) => /at=.*cdh-29$/m.test(text), 'cdh should change directory');
+  await enter(`clear; cdh ${dir}; echo "arg=$PWD"`);
+  await until((text) => text.includes(`arg=`) && !text.includes('cdh-29'), 'an argument should go straight there');
+  assert.equal(await page.locator(PICKER).count(), 0);
+
+  // Vi's insert mode is bound too; normal mode keeps Ctrl-R as redo.
   await enter('clear; fish_vi_key_bindings');
   await page.keyboard.type('git che');
   await page.keyboard.press('Tab');
   await menu();
   await page.keyboard.press('Escape');
   await closed();
+  await until((text) => text.includes('git che'), 'canceling keeps the line');
+  await page.keyboard.press('Control+u');
+  await atPrompt();
+  await page.keyboard.type('echo needle');
+  await page.keyboard.press('Control+r');
+  await menu();
+  await page.keyboard.press('Escape');
+  await closed();
+  await page.keyboard.press('Control+u');
+  await page.keyboard.type('echo redo-me');
+  await page.keyboard.press('Escape');
+  await until((text) => text.includes('[N]'), 'Escape should enter normal mode');
+  await page.keyboard.press('u');
+  await until((text) => !text.includes('redo-me'), 'u should undo');
+  await page.keyboard.press('Control+r');
+  await until((text) => text.includes('redo-me'), 'Ctrl-R should redo in normal mode');
+  assert.equal(await page.locator(PICKER).count(), 0);
+  await page.keyboard.press('A');
   await page.keyboard.press('Control+u');
   await enter('clear; fish_default_key_bindings');
 
@@ -160,9 +243,23 @@ try {
   await until((text) => text.includes('Reapply a commit'), "fish's menu should open as the fallback");
   await page.keyboard.press('Tab');
   await until((text) => text.split('\n').some((line) => line.trimEnd() === '> git checkout'), 'Tab should select in fish menu');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+u');
+
+  // And for Ctrl-R, fish's pager, and for cdh, its list.
+  await enter('clear');
+  await atPrompt();
+  await page.keyboard.type('echo needle');
+  await page.keyboard.press('Control+r');
+  await until((text) => text.includes('echo needle-one'), "fish's pager should open as the fallback");
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+u');
+  await enter('clear; cdh');
+  await until((text) => text.includes('Select directory'), "fish's cdh should run as the fallback");
+  await page.keyboard.press('Enter');
 
   assert.deepEqual(errors, []);
-  console.log('PASS the fish integration: theme install, opt-in, menu, fallbacks, escaping, and vi mode');
+  console.log('PASS the fish integration: theme install, opt-in, Tab, Ctrl-R, and cdh menus, fallbacks, escaping, and vi mode');
 } finally {
   await browser.close();
   rmSync(dir, { recursive: true, force: true });

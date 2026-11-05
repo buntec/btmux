@@ -247,6 +247,7 @@ async fn shell_path(shell: &str, timeout: Duration) -> Result<OsString, String> 
         ])
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
     // SAFETY: only an async-signal-safe call. No controlling terminal, or an
@@ -259,10 +260,16 @@ async fn shell_path(shell: &str, timeout: Duration) -> Result<OsString, String> 
             Ok(())
         });
     }
-    let output = tokio::time::timeout(timeout, command.output())
+    let child = command.spawn().map_err(|error| error.to_string())?;
+    // `setsid` made it a group leader. Startup may wait on a child, which must die with it.
+    let tree = crate::health::ProcessTree::new(&child);
+    let output = tokio::time::timeout(timeout, child.wait_with_output())
         .await
         .map_err(|_| "timed out".to_string())?
         .map_err(|error| error.to_string())?;
+    if let Some(tree) = tree {
+        tree.release();
+    }
     parse_shell_path(&output.stdout).ok_or_else(|| "no PATH in its output".into())
 }
 
@@ -722,6 +729,7 @@ mod tests {
     #[cfg(unix)]
     mod exchange {
         use super::*;
+        use crate::health::tests::{assert_child_exits, spawns_child, test_script, CHILD_STARTED};
 
         async fn run(script: &str, timeout: Duration) -> Result<Value, String> {
             let args = ["-c", script];
@@ -848,6 +856,50 @@ mod tests {
             ] {
                 assert_eq!(parse_shell_path(output), None);
             }
+        }
+
+        #[tokio::test]
+        async fn shell_path_timeouts_kill_descendants() {
+            for end in ["wait", "exit 0"] {
+                let (dir, shell) = test_script(&spawns_child(end), 0o755);
+                let shell = shell.to_str().unwrap();
+                assert!(shell_path(shell, CHILD_STARTED).await.is_err());
+                assert_child_exits(&dir).await;
+                std::fs::remove_dir_all(&dir).unwrap();
+            }
+        }
+
+        #[tokio::test]
+        async fn cancelling_shell_path_kills_descendants() {
+            let (dir, shell) = test_script(&spawns_child("wait"), 0o755);
+            let asked = shell_path(shell.to_str().unwrap(), Duration::from_secs(30));
+            assert!(tokio::time::timeout(CHILD_STARTED, asked).await.is_err());
+            assert_child_exits(&dir).await;
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+
+        #[tokio::test]
+        async fn shell_path_leaves_background_jobs_of_a_shell_that_answered() {
+            let (dir, shell) = test_script(
+                &format!(
+                    "/bin/sleep 60 >/dev/null 2>&1 &\necho $! > \"$0.child\"\n\
+                     echo {SHELL_PATH_MARKER}\necho /a/b"
+                ),
+                0o755,
+            );
+            let path = shell_path(shell.to_str().unwrap(), Duration::from_secs(30)).await;
+            assert_eq!(path.unwrap(), "/a/b");
+            let pid: libc::pid_t = std::fs::read_to_string(dir.join("tool.child"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            // SAFETY: signal 0 only checks; SIGKILL goes to the test's own child.
+            unsafe {
+                assert_eq!(libc::kill(pid, 0), 0, "the job should still run");
+                libc::kill(pid, libc::SIGKILL);
+            }
+            std::fs::remove_dir_all(&dir).unwrap();
         }
 
         #[test]

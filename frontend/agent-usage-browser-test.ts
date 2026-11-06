@@ -99,10 +99,14 @@ const holdLimits = () => {
   limitsHeld = new Promise((resolve) => (release = resolve));
   return release;
 };
+// AuthGate shows its form while probing, so only the first page logs in;
+// later pages share its cookie.
+let loggedIn = false;
 const prepare = async (page: Page) => {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(`${url}/s/usage-codex`);
-  if (await page.getByLabel('Access token').isVisible()) {
+  if (!loggedIn) {
+    loggedIn = true;
     await page.getByLabel('Access token').fill(token);
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
   }

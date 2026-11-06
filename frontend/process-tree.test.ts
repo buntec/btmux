@@ -16,6 +16,7 @@ const process = (pid: number, parent_pid: number | null, cpu: number): ProcessIn
   parent_pid,
   name: `process-${pid}`,
   command: `process-${pid}`,
+  binary: null,
   cpu,
   memory: 0,
   virtual_memory: 0,

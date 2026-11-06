@@ -121,13 +121,14 @@ impl Slot {
 #[derive(Default)]
 struct Cache {
     fetched_at: Option<Instant>,
-    shell_path: ShellPath,
     claude: Slot,
     codex: Slot,
 }
 
 /// Held across a read, so concurrent tabs share it.
 static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(Mutex::default);
+/// Shared with the Health tab, so it finds the CLIs where limits run them.
+static SHELL_PATH: LazyLock<Mutex<ShellPath>> = LazyLock::new(Mutex::default);
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/api/agent-limits", get(limits))
@@ -137,16 +138,8 @@ async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimits>> {
     let mut cache = CACHE.lock().await;
     if cache.fetched_at.is_none_or(|at| at.elapsed() >= CACHE_FOR) {
         let shell = state.read().await.shell().to_owned();
-        let server_path = std::env::var_os("PATH");
-        let shell_path = cache
-            .shell_path
-            .refresh(&shell, server_path.as_deref(), Instant::now())
-            .await;
-        let path = |agent| agent_path(&agent_program(agent), server_path.as_deref(), shell_path);
-        let (claude, codex) = tokio::join!(
-            read_claude(path(Agent::Claude)),
-            read_codex(path(Agent::Codex))
-        );
+        let [claude, codex] = agent_paths(&shell).await;
+        let (claude, codex) = tokio::join!(read_claude(claude), read_codex(codex));
         let now = Instant::now();
         cache.claude.update(claude, now);
         cache.codex.update(codex, now);
@@ -167,12 +160,30 @@ fn now_seconds() -> f64 {
         .as_secs_f64()
 }
 
+/// The `PATH` the Claude and Codex CLIs run with, `None` for the server's own.
+pub(crate) async fn agent_paths(shell: &str) -> [Option<OsString>; 2] {
+    let server = std::env::var_os("PATH");
+    let mut shell_path = SHELL_PATH.lock().await;
+    let shell_path = shell_path
+        .refresh(shell, server.as_deref(), Instant::now())
+        .await;
+    [Agent::Claude, Agent::Codex]
+        .map(|agent| agent_path(&agent_program(agent), server.as_deref(), shell_path))
+}
+
+/// `program` in `path`, as exec would find it.
+pub(crate) fn find_in(program: &OsStr, path: &OsStr) -> Option<std::path::PathBuf> {
+    std::env::split_paths(path)
+        .map(|dir| dir.join(program))
+        .find(|file| is_executable(file))
+}
+
 fn agent_program(agent: Agent) -> OsString {
     agent_launch::program(agent, &|key| std::env::var_os(key))
 }
 
 fn on_path(program: &OsStr, path: &OsStr) -> bool {
-    std::env::split_paths(path).any(|dir| is_executable(&dir.join(program)))
+    find_in(program, path).is_some()
 }
 
 /// Whether exec would run it; its `PATH` search skips anything else.

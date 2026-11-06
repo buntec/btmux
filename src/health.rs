@@ -1,4 +1,5 @@
 //! `GET /api/health`: which optional programs the server found, and whether they work.
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -146,8 +147,16 @@ fn locate(name: &str) -> Option<PathBuf> {
 }
 
 /// `stdout` if `path` succeeds in time. Dropping this kills the program's whole tree.
-async fn run(path: &Path, args: &[&str], timeout: Duration) -> std::io::Result<Option<String>> {
+async fn run(
+    path: &Path,
+    args: &[&str],
+    timeout: Duration,
+    search_path: Option<&OsStr>,
+) -> std::io::Result<Option<String>> {
     let mut command = tokio::process::Command::new(path);
+    if let Some(search_path) = search_path {
+        command.env("PATH", search_path);
+    }
     command
         .args(args)
         .stdin(Stdio::null())
@@ -179,10 +188,20 @@ async fn run(path: &Path, args: &[&str], timeout: Duration) -> std::io::Result<O
 }
 
 pub(crate) async fn probe(path: Option<PathBuf>, args: &[&str], timeout: Duration) -> Probe {
+    probe_with(path, args, timeout, None).await
+}
+
+/// `search_path` replaces the program's `PATH`.
+async fn probe_with(
+    path: Option<PathBuf>,
+    args: &[&str],
+    timeout: Duration,
+    search_path: Option<&OsStr>,
+) -> Probe {
     let Some(path) = path else {
         return Probe::default();
     };
-    let (output, launch_error) = match run(&path, args, timeout).await {
+    let (output, launch_error) = match run(&path, args, timeout, search_path).await {
         Ok(output) => (output, None),
         Err(error) => (None, Some(error)),
     };
@@ -195,6 +214,23 @@ pub(crate) async fn probe(path: Option<PathBuf>, args: &[&str], timeout: Duratio
 
 async fn version_of(path: Option<PathBuf>) -> Probe {
     probe(path, &["--version"], PROBE_TIMEOUT).await
+}
+
+/// Found and run as plan limits run it: with the pane shell's `PATH` if the server's lacks it.
+async fn agent_version(name: &str, search_path: Option<OsString>) -> Probe {
+    let Some(search_path) = search_path else {
+        return version_of(locate(name)).await;
+    };
+    let path = crate::agent_limits::find_in(OsStr::new(name), &search_path);
+    probe_with(path, &["--version"], PROBE_TIMEOUT, Some(&search_path)).await
+}
+
+async fn agent_versions(shell: &str) -> (Probe, Probe) {
+    let [claude, codex] = crate::agent_limits::agent_paths(shell).await;
+    tokio::join!(
+        agent_version("claude", claude),
+        agent_version("codex", codex)
+    )
 }
 
 fn check(name: &str, purpose: &str, status: HealthStatus, value: impl Into<String>) -> HealthCheck {
@@ -409,13 +445,12 @@ async fn report(state: &AppState) -> HealthReport {
         VscodeServer::Code => "VS Code",
         VscodeServer::OpenvscodeServer => "openvscode-server",
     };
-    let (shell, nvim, vscode, browser, claude, codex, rg, fd_probe, fzf, git, tailscale) = tokio::join!(
-        shell_check(shell),
+    let (shell, nvim, vscode, browser, (claude, codex), rg, fd_probe, fzf, git, tailscale) = tokio::join!(
+        shell_check(shell.clone()),
         version_of(locate("nvim")),
         version_of(crate::vscode::program(vscode_kind)),
         version_of(crate::browser::program()),
-        version_of(locate("claude")),
-        version_of(locate("codex")),
+        agent_versions(&shell),
         version_of(locate("rg")),
         version_of(locate("fd").or_else(|| locate("fdfind"))),
         version_of(crate::fzf::real_fzf()),
@@ -733,6 +768,18 @@ pub(crate) mod tests {
         .await;
         assert!(cancelled.is_err());
         assert_child_exits(&dir).await;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agents_run_with_the_path_they_were_found_on() {
+        let (dir, _) = test_script("echo \"tool $PATH\"", 0o755);
+        let found = agent_version("tool", Some(dir.clone().into())).await;
+        assert_eq!(found.path, Some(dir.join("tool")));
+        assert_eq!(found.output, Some(format!("tool {}\n", dir.display())));
+        let missing = agent_version("btmux-no-such-agent", Some(dir.clone().into())).await;
+        assert!(missing.path.is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -121,6 +121,49 @@ pub fn name(pid: Pid) -> Option<String> {
     )
 }
 
+/// Raise the soft open-file limit to the hard one: each pane holds several
+/// descriptors, and launchd starts services at 256.
+#[cfg(unix)]
+pub fn raise_fd_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return;
+    }
+    let mut target = limit.rlim_max;
+    // macOS rejects a soft limit above kern.maxfilesperproc.
+    #[cfg(target_os = "macos")]
+    {
+        let mut max: libc::c_int = 0;
+        let mut len = std::mem::size_of::<libc::c_int>();
+        let found = unsafe {
+            libc::sysctlbyname(
+                c"kern.maxfilesperproc".as_ptr(),
+                (&mut max as *mut libc::c_int).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        if found && max > 0 {
+            target = target.min(max as libc::rlim_t);
+        }
+    }
+    if target <= limit.rlim_cur {
+        return;
+    }
+    let previous = limit.rlim_cur;
+    limit.rlim_cur = target;
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
+        tracing::warn!(
+            "could not raise the open-file limit from {previous}: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
 /// Block until `pid` exits; returns at once if it can't be watched.
 #[cfg(windows)]
 pub fn wait_exit(pid: Pid) {

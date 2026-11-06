@@ -174,8 +174,10 @@ jobs:
         working-directory: desktop
         run: bun install --frozen-lockfile
 
+      # The cache may hold bundles of an older version.
       - name: Prepare desktop sidecar
         run: |
+          rm -rf desktop/src-tauri/target/${{ matrix.target }}/release/bundle
           mkdir -p desktop/src-tauri/binaries
           cp btmux-${{ matrix.target }}${{ matrix.exe }} desktop/src-tauri/binaries/btmux-${{ matrix.target }}${{ matrix.exe }}
 

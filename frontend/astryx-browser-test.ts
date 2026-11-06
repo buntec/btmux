@@ -808,6 +808,14 @@ try {
   await page.getByRole('tabpanel', { name: 'About' }).waitFor();
   await page.keyboard.press('Shift+Tab');
   await health.waitFor();
+  // Switching tabs keeps the dialog's height.
+  const dialogHeight = () => page.locator('dialog[open]').evaluate((el) => el.getBoundingClientRect().height);
+  const healthHeight = await dialogHeight();
+  await page.getByRole('tab', { name: 'About', exact: true }).click();
+  await page.getByRole('tabpanel', { name: 'About' }).waitFor();
+  assert.equal(await dialogHeight(), healthHeight);
+  await page.getByRole('tab', { name: 'Health', exact: true }).click();
+  await health.waitFor();
   // ArrowDown enters a panel without controls, so the keyboard can scroll it.
   await page.setViewportSize({ width: 1440, height: 700 });
   await page.getByRole('tab', { name: 'System', exact: true }).click();

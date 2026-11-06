@@ -58,8 +58,7 @@ brew install buntec/btmux/btmux          # server/CLI
 brew install --cask buntec/btmux/btmux   # desktop app
 ```
 
-The desktop app is not notarized; the cask clears its quarantine attribute so
-macOS does not block it. Both are updated with each release.
+Both are signed and notarized, and updated with each release.
 
 To upgrade, update the tap first, then move the background service (see
 `btmux install`) to the new binary:

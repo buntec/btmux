@@ -24,8 +24,8 @@ While the window is hidden, attention and error notifications from connected ser
 
 On macOS, the window is transparent with a theme-colored tint, defaulting to 95% opacity. Set `desktop-background-opacity = 0.95` in `config.toml` to adjust the tint from clear (`0`) to opaque (`1`); changes reload live. Linux and Windows windows remain opaque. macOS transparency requires Tauri's `macos-private-api` feature, so this build cannot be distributed through the Mac App Store.
 
-Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users.
+Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users (release CI does this with Tauri's `APPLE_*` variables).
 
 `app-icon.svg` is the desktop icon source. After editing it, run `cd desktop && bunx tauri icon app-icon.svg` to regenerate the bundled icons.
 
-Release CI uploads a zipped macOS app, Linux `.deb` packages, and Windows NSIS installers (`-setup.exe`, x64 and ARM64) alongside the server binaries. The macOS CI app uses an ad-hoc signature; users may need to allow it in Privacy & Security until a Developer ID signature and notarization are configured. The Windows installers are unsigned, so SmartScreen may ask users to choose **More info → Run anyway**. A failed Windows build doesn't hold back the other release artifacts.
+Release CI uploads a zipped macOS app, Linux `.deb` packages, and Windows NSIS installers (`-setup.exe`, x64 and ARM64) alongside the server binaries. The macOS app and server binary are signed with a Developer ID and notarized (`scripts/macos-sign.sh` for the binary, Tauri for the app, which it staples), using the secrets of the `release` environment listed in `release.yml`. The Windows installers are unsigned, so SmartScreen may ask users to choose **More info → Run anyway**. A failed Windows build doesn't hold back the other release artifacts.

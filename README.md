@@ -55,9 +55,9 @@ Windows. Windows support is experimental.
 - Linux: install `btmux-desktop-<arch>-unknown-linux-gnu.deb` from [Releases](https://github.com/buntec/btmux/releases/latest).
 - Windows: run `btmux-desktop-<arch>-pc-windows-msvc-setup.exe` from [Releases](https://github.com/buntec/btmux/releases/latest). It installs for the current user, without admin rights.
 
-The macOS app and Windows installers are unsigned. If macOS blocks the app, go
-to **System Settings → Privacy & Security → Open Anyway**; if SmartScreen blocks
-the installer, choose **More info → Run anyway**. See [desktop details](desktop/README.md).
+The macOS app and binary are signed and notarized. The Windows installers are
+unsigned; if SmartScreen blocks one, choose **More info → Run anyway**. See
+[desktop details](desktop/README.md).
 
 **Browser / CLI** on macOS or Linux:
 

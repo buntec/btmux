@@ -1,9 +1,20 @@
 name: Release
 
+# A vX.Y.Z tag builds, publishes the release, and updates Homebrew and Nix. A manual run
+# only builds, keeping the files as workflow artifacts.
+#
+# macOS signing and notarization use the secrets of the `release` environment:
+#   MACOS_CERTIFICATE_P12       base64 of the "Developer ID Application" certificate and key (.p12)
+#   MACOS_CERTIFICATE_PASSWORD  the .p12 file's password
+#   APPLE_API_KEY_P8            the App Store Connect API key (.p8 file contents)
+#   APPLE_API_KEY_ID            its key ID
+#   APPLE_API_ISSUER_ID         its issuer ID
+
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,6 +23,8 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 240 # notarization can be slow
     # A failed Windows build doesn't hold back the other releases.
     continue-on-error: ${{ matrix.experimental == true }}
     strategy:
@@ -20,6 +33,7 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
+            environment: release
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-22.04-arm
@@ -41,7 +55,7 @@ jobs:
 
       # The other targets check the same files; `python3` may be a Store stub here.
       - name: Verify release version
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && startsWith(github.ref, 'refs/tags/')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -101,6 +115,54 @@ jobs:
       - name: Rename binary
         run: cp target/${{ matrix.target }}/release/btmux${{ matrix.exe }} btmux-${{ matrix.target }}${{ matrix.exe }}
 
+      - name: Import the signing certificate
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          # The certificate's issuer, in case the runner image lacks it. Pinned by fingerprint.
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          fingerprint=$(openssl x509 -inform der -in "$RUNNER_TEMP/DeveloperIDG2CA.cer" -noout -fingerprint -sha256)
+          if [[ "$fingerprint" != *F1:6C:D3:C5:4C:7F:83:CE:A4:BF:1A:3E:6A:08:19:C8:AA:A8:E4:A1:52:8F:D1:44:71:5F:35:06:43:D2:DF:3A ]]; then
+            echo "::error::unexpected Developer ID G2 CA certificate: $fingerprint"
+            exit 1
+          fi
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -n 1)
+          if [[ -z "$identity" ]]; then
+            echo "::error::no Developer ID Application identity in MACOS_CERTIFICATE_P12"
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Write the notary key
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          echo "NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+
+      - name: Sign and notarize binary
+        if: runner.os == 'macOS'
+        env:
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: scripts/macos-sign.sh btmux-${{ matrix.target }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
@@ -117,12 +179,21 @@ jobs:
           mkdir -p desktop/src-tauri/binaries
           cp btmux-${{ matrix.target }}${{ matrix.exe }} desktop/src-tauri/binaries/btmux-${{ matrix.target }}${{ matrix.exe }}
 
+      # Tauri signs the app and the bundled server, then notarizes and staples the app.
       - name: Build macOS desktop app
         if: runner.os == 'macOS'
         working-directory: desktop
         env:
-          APPLE_SIGNING_IDENTITY: '-'
-        run: bun run build -- --target ${{ matrix.target }} --bundles app
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          APPLE_SIGNING_IDENTITY="$SIGN_IDENTITY" APPLE_API_KEY_PATH="$NOTARY_KEY" \
+            bun run build -- --target ${{ matrix.target }} --bundles app
+          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/btmux.app
+          codesign --verify --deep --strict --verbose=1 "$app"
+          codesign --display --verbose=2 "$app/Contents/MacOS/btmux" 2>&1 | grep -E '^(Authority|Timestamp|CodeDirectory)'
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
 
       - name: Build Linux desktop package
         if: runner.os == 'Linux'
@@ -164,9 +235,16 @@ jobs:
           path: btmux-desktop-${{ matrix.target }}*
           if-no-files-found: error
 
+      - name: Remove the signing keychain and notary key
+        if: always() && runner.os == 'macOS'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8"
+
   release:
     name: Create Release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8

@@ -295,6 +295,8 @@ async fn main() {
     });
     // Before an upgrade can replace the binary on disk.
     pty::server_exe();
+    #[cfg(unix)]
+    process::raise_fd_limit();
 
     let config_path = config::config_path();
     let mut config_error = None;

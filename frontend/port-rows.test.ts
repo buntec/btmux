@@ -14,6 +14,7 @@ const owner: ProcessInfo = {
   parent_pid: 1,
   name: 'btmux',
   command: 'btmux --profile dev',
+  binary: null,
   cpu: 0,
   memory: 0,
   virtual_memory: 0,

@@ -38,6 +38,7 @@ export function ProcessDetails() {
         </HStack>
         <VStack gap={2}>
           <Detail label="Command" value={process.command} />
+          <Detail label="Binary" value={process.binary ?? '—'} />
           <Detail label="Parent" value={process.parent_pid === null ? '—' : String(process.parent_pid)} />
           <Detail label="User" value={process.user ?? '—'} />
           <Detail label="Status" value={process.status} />

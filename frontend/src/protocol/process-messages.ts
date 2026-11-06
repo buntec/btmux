@@ -6,6 +6,8 @@ export interface ProcessInfo {
   parent_pid: number | null;
   name: string;
   command: string;
+  /** File name of the executable, as the OS reports it. */
+  binary: string | null;
   cpu: number;
   memory: number;
   virtual_memory: number;

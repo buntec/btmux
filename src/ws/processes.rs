@@ -47,6 +47,8 @@ struct ProcessInfo {
     parent_pid: Option<u32>,
     name: String,
     command: String,
+    /// File name of the executable, as the OS reports it.
+    binary: Option<String>,
     cpu: f32,
     memory: u64,
     virtual_memory: u64,
@@ -302,7 +304,8 @@ impl ProcessSampler {
                 .with_memory()
                 .with_disk_usage()
                 .with_user(UpdateKind::OnlyIfNotSet)
-                .with_cmd(UpdateKind::OnlyIfNotSet),
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_exe(UpdateKind::OnlyIfNotSet),
             // Per-process CPU% is relative to one logical CPU.
             cpu_count: std::thread::available_parallelism().map_or(1, usize::from),
         })
@@ -348,6 +351,10 @@ impl ProcessSampler {
                     parent_pid: process.parent().map(Pid::as_u32),
                     name: name.clone(),
                     command: if command.is_empty() { name } else { command },
+                    binary: process
+                        .exe()
+                        .and_then(|exe| exe.file_name())
+                        .map(|name| name.to_string_lossy().into_owned()),
                     cpu: process.cpu_usage(),
                     memory: process.memory(),
                     virtual_memory: process.virtual_memory(),

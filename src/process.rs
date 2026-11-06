@@ -132,10 +132,10 @@ pub fn raise_fd_limit() {
     if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
         return;
     }
-    let mut target = limit.rlim_max;
+    let target = limit.rlim_max;
     // macOS rejects a soft limit above kern.maxfilesperproc.
     #[cfg(target_os = "macos")]
-    {
+    let target = {
         let mut max: libc::c_int = 0;
         let mut len = std::mem::size_of::<libc::c_int>();
         let found = unsafe {
@@ -148,9 +148,11 @@ pub fn raise_fd_limit() {
             )
         } == 0;
         if found && max > 0 {
-            target = target.min(max as libc::rlim_t);
+            target.min(max as libc::rlim_t)
+        } else {
+            target
         }
-    }
+    };
     if target <= limit.rlim_cur {
         return;
     }

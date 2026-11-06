@@ -74,6 +74,8 @@ export function InfoDialog({ initialTab = 'about', onClose }: { initialTab?: Inf
       onOpenChange={changeOpen}
       maxHeight="85dvh"
       width={640}
+      // Fill maxHeight so switching tabs doesn't resize the dialog.
+      className="h-full"
       // Clicking text keeps focus here, so Tab still reaches the handler.
       tabIndex={-1}
       onKeyDown={(e) => {

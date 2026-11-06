@@ -17,7 +17,9 @@ function failureMessage(status: number) {
 // browser password challenge. This gate authenticates before opening sockets.
 export function AuthGate({ children }: { children: ReactNode }) {
   const [authenticated, setAuthenticated] = useState(false);
-  const [busy, setBusy] = useState(true);
+  // Until the first probe answers, show nothing rather than the form.
+  const [probing, setProbing] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   useEffect(() => {
@@ -31,7 +33,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         if (e.name !== 'AbortError') setError('Could not reach btmux. Check that the server is running.');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setBusy(false);
+        if (!controller.signal.aborted) setProbing(false);
       });
     const requireAuth = () => setAuthenticated(false);
     window.addEventListener('btmux-auth-required', requireAuth);
@@ -41,6 +43,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     };
   }, []);
   if (authenticated) return children;
+  if (probing) return null;
   return (
     <AppShell height="fill" contentPadding={6}>
       <Layout

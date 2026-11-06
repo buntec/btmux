@@ -74,7 +74,8 @@ const prefix = async (page: Page, key: string) => {
 const connect = async (page: Page) => {
   await page.goto(url);
   const form = page.getByLabel('Access token');
-  if (await form.isVisible({ timeout: 1500 }).catch(() => false)) {
+  await form.or(page.locator('[data-pane-terminal]')).first().waitFor();
+  if (await form.isVisible()) {
     await form.fill(token);
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
   }

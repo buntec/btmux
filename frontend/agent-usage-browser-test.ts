@@ -99,8 +99,7 @@ const holdLimits = () => {
   limitsHeld = new Promise((resolve) => (release = resolve));
   return release;
 };
-// AuthGate shows its form while probing, so only the first page logs in;
-// later pages share its cookie.
+// Only the first page logs in; later pages share its cookie.
 let loggedIn = false;
 const prepare = async (page: Page) => {
   page.on('pageerror', (error) => errors.push(error.message));

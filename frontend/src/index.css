@@ -330,6 +330,16 @@
   }
 }
 
+/* Session icon (SessionIcon.tsx): the gradient flows while an agent works. */
+.btm-session-flow[data-agent-animate] {
+  animation: btm-session-flow 4s linear infinite;
+}
+@keyframes btm-session-flow {
+  to {
+    transform: translate(var(--btm-flow-x), var(--btm-flow-y));
+  }
+}
+
 /* Working badge (PaneTitleBar.tsx): a highlight sweeps across the label. */
 @media (prefers-reduced-motion: no-preference) {
   .btm-agent-shimmer > span {

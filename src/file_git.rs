@@ -1698,7 +1698,7 @@ mod tests {
             .unwrap();
         commit_all(&root);
         // Status scoping compares against the resolved workdir.
-        root.canonicalize().unwrap()
+        crate::pane_git::real_path(&root)
     }
 
     fn unstaged(root: &Path) -> Vec<String> {

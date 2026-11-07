@@ -67,6 +67,12 @@ const MEDIA_EXTENSIONS = new Set([
 
 const DEFAULT_SIDEBAR_RATIO = 1 / 3;
 
+// `paths` are the unstaged entries a bulk discard confirmed.
+type PendingDiscard = { path: string; untracked: boolean } | { paths: string[] };
+
+// Leaves Cmd, Ctrl, and Alt chords of single-letter keys to the browser.
+const isChord = (e: KeyboardEvent) => e.key.length === 1 && (e.metaKey || e.ctrlKey || e.altKey);
+
 function scrollFilePreview(direction: 1 | -1) {
   const viewport =
     document.querySelector<HTMLElement>('.file-preview-scroll [data-preview-viewport]') ??
@@ -140,7 +146,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const [pendingDelete, setPendingDelete] = useState<{ paths: string[]; names: string[]; permanent: boolean } | null>(
     null,
   );
-  const [pendingDiscard, setPendingDiscard] = useState<{ path: string; untracked: boolean } | null>(null);
+  const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [gitPopup, setGitPopup] = useState<GitPopupKind | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -407,30 +413,33 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     [fileSend, currentPath, store],
   );
 
-  const gitStageAll = useCallback(
-    async (stage: boolean) => {
+  const gitRunAll = useCallback(
+    async (kind: 'stage_all' | 'unstage_all') => {
       try {
-        const resp = await fileSend('git_run', {
-          cwd: currentPath,
-          op: { kind: stage ? 'stage_all' : 'unstage_all' } satisfies GitOp,
-        });
+        const resp = await fileSend('git_run', { cwd: currentPath, op: { kind } satisfies GitOp });
         store.getState().setGitStatus((resp.payload as { status: GitStatusResult }).status);
       } catch (e) {
-        console.error(`${stage ? 'stage' : 'unstage'} all failed:`, e);
+        console.error(`${kind} failed:`, e);
       }
     },
     [fileSend, currentPath, store],
   );
 
   const gitDiscard = useCallback(
-    async (path: string, untracked: boolean) => {
+    async (target: PendingDiscard) => {
+      const deleted = 'path' in target && target.untracked ? target.path : null;
+      const type = deleted !== null ? 'git_delete_untracked' : 'git_discard';
       try {
-        const resp = await fileSend(untracked ? 'git_delete_untracked' : 'git_discard', { path, cwd: currentPath });
+        const resp = await fileSend(type, {
+          ...(deleted !== null ? { path: deleted } : { paths: 'paths' in target ? target.paths : [target.path] }),
+          cwd: currentPath,
+        });
         const payload = resp.payload as { status: GitStatusResult };
         store.getState().setGitStatus(payload.status);
-        if (untracked && store.getState().gitDiff?.path === path) store.getState().setGitDiff(null);
+        if (deleted !== null && store.getState().gitDiff?.path === deleted) store.getState().setGitDiff(null);
       } catch (e) {
-        console.error(`${untracked ? 'git_delete_untracked' : 'git_discard'} failed:`, e);
+        console.error(`${type} failed:`, e);
+        useStore.getState().showToast(e instanceof Error ? e.message : String(e), 'error');
       }
     },
     [fileSend, currentPath, store],
@@ -850,9 +859,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         e.preventDefault();
         e.stopPropagation();
         if (e.key === 'y' || e.key === 'Y') {
-          const { path, untracked } = pendingDiscard;
           setPendingDiscard(null);
-          gitDiscard(path, untracked);
+          gitDiscard(pendingDiscard);
         } else if (e.key === 'n' || e.key === 'N') {
           setPendingDiscard(null);
         }
@@ -945,6 +953,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             return;
           }
 
+          if (isChord(e)) return;
           switch (e.key) {
             case 'j':
             case 'ArrowDown':
@@ -1032,6 +1041,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           return;
         }
 
+        if (isChord(e)) return;
         switch (e.key) {
           case 'j':
           case 'ArrowDown':
@@ -1102,13 +1112,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           }
           case 'S':
             e.preventDefault();
-            if (gitStatus?.unstaged.length) gitStageAll(true);
+            if (gitStatus?.unstaged.length) gitRunAll('stage_all');
             break;
           case 'U':
             e.preventDefault();
-            if (gitStatus?.staged.length) gitStageAll(false);
+            if (gitStatus?.staged.length) gitRunAll('unstage_all');
             break;
-          case 'x': {
+          case 'd': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
             if (item?.kind === 'file' && item.path && (item.section === 'unstaged' || item.section === 'untracked')) {
@@ -1116,6 +1126,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             }
             break;
           }
+          case 'D':
+            e.preventDefault();
+            if (gitStatus?.unstaged.length) setPendingDiscard({ paths: gitStatus.unstaged.map((entry) => entry.path) });
+            break;
           case 'w':
             e.preventDefault();
             setIgnoreAllSpace((enabled) => !enabled);
@@ -1288,6 +1302,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         return;
       }
 
+      if (isChord(e)) return;
       switch (e.key) {
         case 'j':
         case 'ArrowDown':
@@ -1466,7 +1481,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     closeStatusFilter,
     gitStage,
     gitUnstage,
-    gitStageAll,
+    gitRunAll,
     gitDiscard,
     gitCommit,
     trashFile,
@@ -1731,15 +1746,19 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           <>
             <Text size="sm">
               {pendingDiscard
-                ? pendingDiscard.untracked
-                  ? 'Permanently delete untracked file '
-                  : 'Discard changes to '
+                ? 'paths' in pendingDiscard
+                  ? 'Discard all unstaged changes to '
+                  : pendingDiscard.untracked
+                    ? 'Permanently delete untracked file '
+                    : 'Discard changes to '
                 : pendingDelete!.permanent
                   ? 'Permanently delete '
                   : 'Move to trash '}
               <Text size="sm" color="inherit" className="text-yellow-vivid">
                 {pendingDiscard
-                  ? pendingDiscard.path
+                  ? 'paths' in pendingDiscard
+                    ? `${pendingDiscard.paths.length} ${pendingDiscard.paths.length === 1 ? 'file' : 'files'}`
+                    : pendingDiscard.path
                   : pendingDelete!.names.length === 1
                     ? pendingDelete!.names[0]
                     : `${pendingDelete!.names.length} items`}
@@ -1829,7 +1848,8 @@ const GIT_STATUS_HINTS: Hint[] = [
   { keys: ['S'], label: 'stage all' },
   { keys: ['u'], label: 'unstage' },
   { keys: ['U'], label: 'unstage all' },
-  { keys: ['x'], label: 'discard' },
+  { keys: ['d'], label: 'discard' },
+  { keys: ['D'], label: 'discard all' },
 ];
 
 const GIT_STATUS_TAIL_HINTS: Hint[] = [

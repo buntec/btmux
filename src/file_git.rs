@@ -4,7 +4,7 @@ use git2::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -181,12 +181,28 @@ pub async fn git_unstage_file(root: &Path, path: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
-pub async fn git_discard_file(root: &Path, path: &str) -> Result<(), String> {
+/// Restores `paths`, unstaged entries under `root`, from the index, keeping staged changes.
+pub async fn git_discard(root: &Path, paths: Vec<String>) -> Result<(), String> {
     let root = root.to_path_buf();
-    let path = path.to_string();
-    tokio::task::spawn_blocking(move || git_discard_file_sync(&root, &path))
+    let (workdir, targets) = tokio::task::spawn_blocking(move || discard_targets(&root, &paths))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let args = [
+        "--literal-pathspecs",
+        "restore",
+        "--quiet",
+        "--worktree",
+        "--pathspec-from-file=-",
+        "--pathspec-file-nul",
+    ]
+    .map(String::from);
+    let stdin = targets.join("\0").into_bytes();
+    crate::file_git_ops::run_git(&workdir, &args, Some(stdin))
+        .await
+        .map(|_| ())
 }
 
 pub async fn git_delete_untracked_file(root: &Path, path: &str) -> Result<(), String> {
@@ -997,16 +1013,65 @@ fn git_unstage_file_sync(root: &Path, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn git_discard_file_sync(root: &Path, path: &str) -> Result<(), String> {
+/// The index paths to restore for the unstaged entries in `paths`, the ones status
+/// under `root` still lists, refusing any whose restore would delete untracked files.
+fn discard_targets(root: &Path, paths: &[String]) -> Result<(PathBuf, Vec<String>), String> {
+    let status = git_status_sync(root, false)?;
     let repo = open_repo(root)?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "Repository has no working directory".to_string())?
+        .to_path_buf();
+    let index = repo
+        .index()
+        .map_err(|e| format!("Failed to read index: {}", e))?;
+    let requested: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let mut targets = Vec::new();
+    for entry in status
+        .unstaged
+        .iter()
+        .filter(|entry| requested.contains(entry.path.as_str()))
+    {
+        // A rename's new path is untracked; restoring its old path keeps it.
+        for path in std::iter::once(&entry.path).chain(&entry.old_path) {
+            let Some(indexed) = index.get_path(Path::new(path), 0) else {
+                if (1..=3).any(|stage| index.get_path(Path::new(path), stage).is_some()) {
+                    return Err(format!("{} has conflicts", path));
+                }
+                continue;
+            };
+            if restore_deletes_untracked(&workdir, path, indexed.mode == GITLINK_MODE) {
+                return Err(format!("Untracked files are in the way of {}", path));
+            }
+            if !targets.contains(path) {
+                targets.push(path.clone());
+            }
+        }
+    }
+    Ok((workdir, targets))
+}
 
-    let mut checkout = git2::build::CheckoutBuilder::new();
-    checkout.path(path).force();
+const GITLINK_MODE: u32 = 0o160000;
 
-    repo.checkout_head(Some(&mut checkout))
-        .map_err(|e| format!("Failed to discard changes: {}", e))?;
-
-    Ok(())
+/// Whether writing the indexed `path` would replace untracked content: a non-directory
+/// where a parent directory belongs, or a non-empty directory where the file belongs.
+fn restore_deletes_untracked(workdir: &Path, path: &str, gitlink: bool) -> bool {
+    let mut current = workdir.to_path_buf();
+    let mut parts = path.split('/').peekable();
+    while let Some(part) = parts.next() {
+        current.push(part);
+        let Ok(meta) = std::fs::symlink_metadata(&current) else {
+            return false;
+        };
+        if parts.peek().is_some() {
+            if !meta.is_dir() {
+                return true;
+            }
+        } else if meta.is_dir() && !gitlink {
+            return std::fs::read_dir(&current).map_or(true, |mut dir| dir.next().is_some());
+        }
+    }
+    false
 }
 
 fn git_delete_untracked_file_sync(root: &Path, path: &str) -> Result<(), String> {
@@ -1084,9 +1149,9 @@ fn git_commit_sync(root: &Path, subject: &str, body: &str) -> Result<(), String>
 mod tests {
     use super::{
         count_untracked_lines, git_commit_diff_sync, git_commit_sync,
-        git_delete_untracked_file_sync, git_diff_file_sync, git_log_sync, git_status_sync,
-        git_unstage_file_sync, MAX_COMMIT_DIFF_FILES, MAX_COMMIT_DIFF_LINES, MAX_DIFF_BYTES,
-        MAX_DIFF_FILE_LINES, MAX_DIFF_LINE_BYTES,
+        git_delete_untracked_file_sync, git_diff_file_sync, git_discard, git_log_sync,
+        git_stage_file_sync, git_status_sync, git_unstage_file_sync, MAX_COMMIT_DIFF_FILES,
+        MAX_COMMIT_DIFF_LINES, MAX_DIFF_BYTES, MAX_DIFF_FILE_LINES, MAX_DIFF_LINE_BYTES,
     };
     use git2::{Repository, Signature};
     use std::fs;
@@ -1614,6 +1679,128 @@ mod tests {
             assert_eq!(diff.truncated, truncated, "{path}");
             assert_eq!(has_next(&diff), truncated, "{path}");
         }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn discard_repo(files: &[&str]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("btmux-git-discard-{}", uuid::Uuid::new_v4()));
+        for file in files {
+            let path = root.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "one\n").unwrap();
+        }
+        let repo = Repository::init(&root).unwrap();
+        // Git for Windows enables autocrlf system-wide.
+        repo.config()
+            .unwrap()
+            .set_bool("core.autocrlf", false)
+            .unwrap();
+        commit_all(&root);
+        // Status scoping compares against the resolved workdir.
+        root.canonicalize().unwrap()
+    }
+
+    fn unstaged(root: &Path) -> Vec<String> {
+        let status = git_status_sync(root, false).unwrap();
+        status
+            .unstaged
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn discard_keeps_staged_and_untracked() {
+        let root = discard_repo(&["file.txt", "other.txt"]);
+        fs::write(root.join("file.txt"), "two\n").unwrap();
+        git_stage_file_sync(&root, "file.txt").unwrap();
+        fs::write(root.join("file.txt"), "three\n").unwrap();
+        fs::remove_file(root.join("other.txt")).unwrap();
+        fs::write(root.join("new.txt"), "new\n").unwrap();
+
+        git_discard(&root, unstaged(&root)).await.unwrap();
+        assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "two\n");
+        assert_eq!(fs::read_to_string(root.join("other.txt")).unwrap(), "one\n");
+        let status = git_status_sync(&root, false).unwrap();
+        assert_eq!(status.staged.len(), 1);
+        assert!(status.unstaged.is_empty());
+        assert_eq!(status.untracked, ["new.txt"]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn discard_stays_within_status_root() {
+        let root = discard_repo(&["src/a.txt", "outside.txt"]);
+        fs::write(root.join("src/a.txt"), "two\n").unwrap();
+        fs::write(root.join("outside.txt"), "two\n").unwrap();
+
+        let src = root.join("src");
+        assert_eq!(unstaged(&src), ["src/a.txt"]);
+        let paths = vec!["src/a.txt".to_string(), "outside.txt".to_string()];
+        git_discard(&src, paths).await.unwrap();
+        assert_eq!(fs::read_to_string(root.join("src/a.txt")).unwrap(), "one\n");
+        assert_eq!(
+            fs::read_to_string(root.join("outside.txt")).unwrap(),
+            "two\n"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn discard_refuses_to_delete_obstructing_untracked_files() {
+        let root = discard_repo(&["tracked.txt", "dir/file.txt"]);
+        // A directory where a tracked file belongs.
+        fs::remove_file(root.join("tracked.txt")).unwrap();
+        fs::create_dir(root.join("tracked.txt")).unwrap();
+        fs::write(root.join("tracked.txt/new.txt"), "keep\n").unwrap();
+        assert_eq!(unstaged(&root), ["tracked.txt"]);
+        let err = git_discard(&root, unstaged(&root)).await.unwrap_err();
+        assert!(err.contains("tracked.txt"), "{err}");
+        assert_eq!(
+            fs::read_to_string(root.join("tracked.txt/new.txt")).unwrap(),
+            "keep\n"
+        );
+
+        // A file where a tracked file's directory belongs.
+        fs::remove_dir_all(root.join("tracked.txt")).unwrap();
+        fs::write(root.join("tracked.txt"), "one\n").unwrap();
+        fs::remove_dir_all(root.join("dir")).unwrap();
+        fs::write(root.join("dir"), "keep\n").unwrap();
+        assert_eq!(unstaged(&root), ["dir/file.txt"]);
+        let err = git_discard(&root, unstaged(&root)).await.unwrap_err();
+        assert!(err.contains("dir/file.txt"), "{err}");
+        assert_eq!(fs::read_to_string(root.join("dir")).unwrap(), "keep\n");
+
+        // An empty directory holds nothing to lose.
+        fs::remove_file(root.join("dir")).unwrap();
+        fs::remove_file(root.join("tracked.txt")).unwrap();
+        fs::create_dir(root.join("tracked.txt")).unwrap();
+        git_discard(&root, unstaged(&root)).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("tracked.txt")).unwrap(),
+            "one\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("dir/file.txt")).unwrap(),
+            "one\n"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn discard_rename_restores_old_path_and_keeps_new() {
+        let root = discard_repo(&["file.txt"]);
+        fs::rename(root.join("file.txt"), root.join("moved.txt")).unwrap();
+        let status = git_status_sync(&root, false).unwrap();
+        assert_eq!(status.unstaged[0].old_path.as_deref(), Some("file.txt"));
+
+        git_discard(&root, unstaged(&root)).await.unwrap();
+        assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "one\n");
+        assert_eq!(fs::read_to_string(root.join("moved.txt")).unwrap(), "one\n");
 
         fs::remove_dir_all(root).unwrap();
     }

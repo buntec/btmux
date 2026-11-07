@@ -450,7 +450,7 @@ function buildActions(
           next: () => pick('Pop stash', (index) => ({ kind: 'stash_apply', index, pop: true })),
         },
         {
-          key: 'k',
+          key: 'd',
           label: 'Drop',
           isDisabled: noStashes,
           next: () => pick('Drop stash', (index) => ({ kind: 'stash_drop', index })),

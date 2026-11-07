@@ -159,7 +159,8 @@ sync-shaders:
 # Clean build artifacts
 clean:
     cargo clean
-    rm -rf frontend/dist
+    cargo clean --manifest-path desktop/src-tauri/Cargo.toml
+    rm -rf frontend/dist desktop/src-tauri/binaries
 
 # Bump version (patch by default; `just bump minor` or `just bump major`)
 # Requires cargo-edit: `cargo install cargo-edit`

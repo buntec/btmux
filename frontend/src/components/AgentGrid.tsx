@@ -296,7 +296,7 @@ export function AgentGrid({ send }: Props) {
       setSelectedIdx(target[Math.min(pos, target.length - 1)]);
       return;
     }
-    if (e.key === 'x') {
+    if (e.key === 'r' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       reset(entries[clampedIdx]);
       return;
@@ -478,7 +478,7 @@ const HINTS: [string[], string][] = [
   [['up', 'down', 'left', 'right'], 'navigate'],
   [['1', '9'], 'jump to cell'],
   [['enter'], 'switch'],
-  [['x'], 'reset agent state'],
+  [['r'], 'reset agent state'],
   [['esc'], 'close'],
 ];
 

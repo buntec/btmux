@@ -1108,7 +1108,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             e.preventDefault();
             if (gitStatus?.staged.length) gitStageAll(false);
             break;
-          case 'x': {
+          case 'd': {
             e.preventDefault();
             const item = items[gitFocusedIndex];
             if (item?.kind === 'file' && item.path && (item.section === 'unstaged' || item.section === 'untracked')) {
@@ -1829,7 +1829,7 @@ const GIT_STATUS_HINTS: Hint[] = [
   { keys: ['S'], label: 'stage all' },
   { keys: ['u'], label: 'unstage' },
   { keys: ['U'], label: 'unstage all' },
-  { keys: ['x'], label: 'discard' },
+  { keys: ['d'], label: 'discard' },
 ];
 
 const GIT_STATUS_TAIL_HINTS: Hint[] = [

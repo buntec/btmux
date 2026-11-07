@@ -8,7 +8,7 @@ use std::process::Command;
 pub struct RepoLayout {
     /// Sanitized repo directory name → session name.
     pub name: String,
-    /// One window per worktree: (sanitized worktree folder name, worktree path).
+    /// One window per worktree: (sanitized branch name, worktree path).
     /// Empty when the repo has no named worktree branches (detached/bare); the
     /// caller then makes a single window at `root`.
     pub windows: Vec<(String, PathBuf)>,
@@ -65,18 +65,8 @@ fn repo_layout_for(repo: PathBuf) -> RepoLayout {
     let windows = match crate::worktree::records(&repo) {
         Ok(wts) => wts
             .into_iter()
-            .filter_map(|wt| {
-                // Skip the bare repo entry and detached-HEAD worktrees (no
-                // branch), matching the previous behavior; name the window
-                // after the folder the worktree lives in, not the branch.
-                wt.branch?;
-                let path = PathBuf::from(wt.path);
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(sanitize_name)?;
-                Some((name, path))
-            })
+            // Skip the bare repo entry and detached-HEAD worktrees (no branch).
+            .filter_map(|wt| Some((sanitize_name(&wt.branch?), PathBuf::from(wt.path))))
             .collect(),
         Err(e) => {
             tracing::warn!("{}: git worktree list failed: {}", name, e);

@@ -1313,7 +1313,7 @@ impl SessionManager {
     /// Create one session per git repo in `layouts` (produced by
     /// `git::discover_repo_layouts`, which does the blocking filesystem/`git`
     /// work off the lock). Each repo becomes a session named after its directory,
-    /// with one window per worktree, named after the worktree's folder (the
+    /// with one window per worktree, named after its branch (the
     /// first worktree is the initial window, the rest are added windows). Repos
     /// whose sanitized name already matches an existing session are skipped, so
     /// re-running is idempotent.
@@ -1354,7 +1354,7 @@ impl SessionManager {
     }
 
     /// Add a window for each worktree in `layout` to the session `session_id`,
-    /// skipping any worktree whose sanitized folder name already exists as a
+    /// skipping any worktree whose sanitized branch name already exists as a
     /// window name in that session.
     pub async fn add_worktree_windows(&mut self, session_id: Uuid, layout: RepoLayout) {
         for (window_name, path) in layout.windows {

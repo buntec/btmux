@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
@@ -21,6 +21,9 @@ const read = (name: string) => readFileSync(path.join(repo, name), 'utf8');
 git('init', '--initial-branch=main');
 write('a.txt', 'one\n');
 write('b.txt', 'one\n');
+mkdirSync(path.join(repo, 'src'));
+write('src/c.txt', 'one\n');
+write('t.txt', 'one\n');
 git('add', '.');
 git('commit', '-m', 'Initial');
 write('a.txt', 'changed\n');
@@ -51,18 +54,33 @@ try {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return !!useStore.getState().config;
   });
-  await page.evaluate(
-    async ({ pane, repo }) => {
-      const { useStore } = await import('/src/state/store.tsx' as string);
-      useStore.getState().navigateToPane(pane);
-      useStore.getState().setFileBrowserOpen(true, repo, pane, 'git');
-    },
-    { pane, repo },
-  );
+  const openGit = async (dir: string, unstaged: number) => {
+    await page.evaluate(
+      async ({ pane, dir }) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        const { useFileStore } = await import('/src/state/fileStore.ts' as string);
+        useStore.getState().setFileBrowserOpen(false);
+        useFileStore.getState().setGitStatus(null);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        useStore.getState().navigateToPane(pane);
+        useStore.getState().setFileBrowserOpen(true, dir, pane, 'git');
+      },
+      { pane, dir },
+    );
+    await waitForAsync(
+      page,
+      async (unstaged) => {
+        const { useFileStore } = await import('/src/state/fileStore.ts' as string);
+        return useFileStore.getState().gitStatus?.unstaged.length === unstaged;
+      },
+      unstaged,
+    );
+    await page
+      .getByRole('button', { name: 'Close file browser' })
+      .evaluate((button) => (button.closest('[tabindex="-1"]') as HTMLElement).focus());
+  };
+  await openGit(repo, 2);
   await page.getByText('new.txt', { exact: true }).first().waitFor();
-  await page
-    .getByRole('button', { name: 'Close file browser' })
-    .evaluate((button) => (button.closest('[tabindex="-1"]') as HTMLElement).focus());
 
   const prompt = page.getByText('Discard all unstaged changes to', { exact: false });
   // Chords stay with the browser.
@@ -91,8 +109,48 @@ try {
   await page.keyboard.press('D');
   await page.waitForTimeout(100);
   assert.equal(await prompt.count(), 0);
+
+  // Only the confirmed files under the browsed directory are discarded.
+  write('a.txt', 'outside\n');
+  write('src/c.txt', 'changed\n');
+  await openGit(path.join(repo, 'src'), 1);
+  await page.keyboard.press('D');
+  await page.getByText('1 file', { exact: true }).waitFor();
+  await page.keyboard.press('y');
+  await prompt.waitFor({ state: 'detached' });
+  for (let i = 0; read('src/c.txt') !== 'one\n' && i < 50; i++) await page.waitForTimeout(100);
+  assert.equal(read('src/c.txt'), 'one\n');
+  assert.equal(read('a.txt'), 'outside\n', 'changes outside the browsed directory are kept');
+
+  // Untracked files where a tracked file belongs are never deleted.
+  rmSync(path.join(repo, 't.txt'));
+  mkdirSync(path.join(repo, 't.txt'));
+  write('t.txt/keep.txt', 'keep\n');
+  await openGit(repo, 2);
+  await page.keyboard.press('D');
+  await page.getByText('2 files', { exact: true }).waitFor();
+  await page.keyboard.press('y');
+  await page.getByText('Untracked files are in the way of t.txt').first().waitFor();
+  assert.equal(read('t.txt/keep.txt'), 'keep\n');
+  assert.equal(read('a.txt'), 'outside\n', 'a refused discard changes nothing');
+
+  // `d` discards one file's unstaged changes, keeping its staged ones.
+  write('b.txt', 'again\n');
+  await openGit(repo, 3);
+  await page.evaluate(async () => {
+    const { useFileStore } = await import('/src/state/fileStore.ts' as string);
+    const { computeGitItems } = await import('/src/components/files/GitStatus.tsx' as string);
+    const { gitStatus, gitExpandedSections, setGitFocusedIndex } = useFileStore.getState();
+    const items = computeGitItems(gitStatus, gitExpandedSections);
+    setGitFocusedIndex(items.findIndex((item: any) => item.section === 'unstaged' && item.path === 'b.txt'));
+  });
+  await page.keyboard.press('d');
+  await page.getByText('Discard changes to', { exact: false }).waitFor();
+  await page.keyboard.press('y');
+  for (let i = 0; read('b.txt') !== 'staged\n' && i < 50; i++) await page.waitForTimeout(100);
+  assert.equal(read('b.txt'), 'staged\n');
   assert.deepEqual(errors, []);
-  console.log('PASS discard all keeps staged and untracked changes; chords stay with the browser');
+  console.log('PASS discards keep staged, untracked, and out-of-scope changes; chords stay with the browser');
 } finally {
   await browser.close();
   await fetch(`${url}/api/sessions/${session.id}`, { method: 'DELETE', headers }).catch(() => {});

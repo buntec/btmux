@@ -109,8 +109,6 @@ pub enum GitOp {
     /// Stages all changes to tracked files, like magit's `S`.
     StageAll,
     UnstageAll,
-    /// Restores tracked files from the index, keeping staged changes.
-    DiscardAll,
 }
 
 /// The refs to act on, and the worktrees if `worktrees`.
@@ -138,19 +136,42 @@ pub async fn git_run(root: &Path, op: GitOp) -> Result<String, String> {
         .map_err(|e| e.to_string())??
     };
 
-    let child = tokio::process::Command::new("git")
-        .args(&args)
-        .current_dir(&workdir)
+    run_git(&workdir, &args, None).await
+}
+
+/// Runs `git args` in `workdir`, writing `stdin` to it, and returns its combined output.
+pub(crate) async fn run_git(
+    workdir: &Path,
+    args: &[String],
+    stdin: Option<Vec<u8>>,
+) -> Result<String, String> {
+    let mut child = tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(workdir)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Failed to run git: {}", e))?;
+    if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        use tokio::io::AsyncWriteExt;
+        pipe.write_all(&input)
+            .await
+            .map_err(|e| format!("Failed to write to git: {}", e))?;
+    }
+    let command = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map_or("", String::as_str);
     let output = tokio::time::timeout(GIT_TIMEOUT, child.wait_with_output())
         .await
-        .map_err(|_| format!("git {} timed out", args[0]))?
+        .map_err(|_| format!("git {} timed out", command))?
         .map_err(|e| format!("Failed to run git: {}", e))?;
 
     let text = [output.stdout, output.stderr]
@@ -162,7 +183,7 @@ pub async fn git_run(root: &Path, op: GitOp) -> Result<String, String> {
     if output.status.success() {
         Ok(text)
     } else if text.is_empty() {
-        Err(format!("git {} failed ({})", args[0], output.status))
+        Err(format!("git {} failed ({})", command, output.status))
     } else {
         Err(text)
     }
@@ -329,7 +350,6 @@ fn op_args(repo: &Repository, op: GitOp) -> Result<Vec<String>, String> {
         }
         GitOp::StageAll => push(&["add", "-u"]),
         GitOp::UnstageAll => push(&["reset", "-q"]),
-        GitOp::DiscardAll => push(&["checkout", "-q", "--", "."]),
     }
     Ok(args)
 }
@@ -763,24 +783,6 @@ mod tests {
         let status = crate::file_git::git_status(&root, false).await.unwrap();
         assert!(status.staged.is_empty());
         assert_eq!(status.unstaged.len(), 1);
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[tokio::test]
-    async fn discard_all_keeps_staged_and_untracked() {
-        let (root, _repo) = init_repo("btmux-git-ops-discard-all");
-        fs::write(root.join("file.txt"), "two\n").unwrap();
-        git_run(&root, GitOp::StageAll).await.unwrap();
-        fs::write(root.join("file.txt"), "three\n").unwrap();
-        fs::write(root.join("new.txt"), "new\n").unwrap();
-
-        git_run(&root, GitOp::DiscardAll).await.unwrap();
-        assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "two\n");
-        let status = crate::file_git::git_status(&root, false).await.unwrap();
-        assert_eq!(status.staged.len(), 1);
-        assert!(status.unstaged.is_empty());
-        assert_eq!(status.untracked, ["new.txt"]);
 
         fs::remove_dir_all(root).unwrap();
     }

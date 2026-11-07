@@ -394,6 +394,17 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("path")
                 .and_then(|p| p.as_str())
                 .unwrap_or("");
+            let paths: Vec<String> = request
+                .payload
+                .get("paths")
+                .and_then(|p| p.as_array())
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .filter_map(|p| p.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
             let cwd = request
                 .payload
                 .get("cwd")
@@ -404,7 +415,7 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
             let result = if request.msg_type == "git_delete_untracked" {
                 file_git::git_delete_untracked_file(&status_root, path).await
             } else {
-                file_git::git_discard_file(&status_root, path).await
+                file_git::git_discard(&status_root, paths).await
             };
             if let Err(e) = result {
                 return error_response(id, &e);

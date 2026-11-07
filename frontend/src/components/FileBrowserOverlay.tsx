@@ -67,7 +67,8 @@ const MEDIA_EXTENSIONS = new Set([
 
 const DEFAULT_SIDEBAR_RATIO = 1 / 3;
 
-type PendingDiscard = { path: string; untracked: boolean } | { count: number };
+// `paths` are the unstaged entries a bulk discard confirmed.
+type PendingDiscard = { path: string; untracked: boolean } | { paths: string[] };
 
 // Leaves Cmd, Ctrl, and Alt chords of single-letter keys to the browser.
 const isChord = (e: KeyboardEvent) => e.key.length === 1 && (e.metaKey || e.ctrlKey || e.altKey);
@@ -413,29 +414,32 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   );
 
   const gitRunAll = useCallback(
-    async (kind: 'stage_all' | 'unstage_all' | 'discard_all') => {
+    async (kind: 'stage_all' | 'unstage_all') => {
       try {
         const resp = await fileSend('git_run', { cwd: currentPath, op: { kind } satisfies GitOp });
         store.getState().setGitStatus((resp.payload as { status: GitStatusResult }).status);
       } catch (e) {
         console.error(`${kind} failed:`, e);
-        if (kind === 'discard_all') {
-          useStore.getState().showToast(e instanceof Error ? e.message : String(e), 'error');
-        }
       }
     },
     [fileSend, currentPath, store],
   );
 
   const gitDiscard = useCallback(
-    async (path: string, untracked: boolean) => {
+    async (target: PendingDiscard) => {
+      const deleted = 'path' in target && target.untracked ? target.path : null;
+      const type = deleted !== null ? 'git_delete_untracked' : 'git_discard';
       try {
-        const resp = await fileSend(untracked ? 'git_delete_untracked' : 'git_discard', { path, cwd: currentPath });
+        const resp = await fileSend(type, {
+          ...(deleted !== null ? { path: deleted } : { paths: 'paths' in target ? target.paths : [target.path] }),
+          cwd: currentPath,
+        });
         const payload = resp.payload as { status: GitStatusResult };
         store.getState().setGitStatus(payload.status);
-        if (untracked && store.getState().gitDiff?.path === path) store.getState().setGitDiff(null);
+        if (deleted !== null && store.getState().gitDiff?.path === deleted) store.getState().setGitDiff(null);
       } catch (e) {
-        console.error(`${untracked ? 'git_delete_untracked' : 'git_discard'} failed:`, e);
+        console.error(`${type} failed:`, e);
+        useStore.getState().showToast(e instanceof Error ? e.message : String(e), 'error');
       }
     },
     [fileSend, currentPath, store],
@@ -856,8 +860,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         e.stopPropagation();
         if (e.key === 'y' || e.key === 'Y') {
           setPendingDiscard(null);
-          if ('count' in pendingDiscard) gitRunAll('discard_all');
-          else gitDiscard(pendingDiscard.path, pendingDiscard.untracked);
+          gitDiscard(pendingDiscard);
         } else if (e.key === 'n' || e.key === 'N') {
           setPendingDiscard(null);
         }
@@ -1125,7 +1128,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           }
           case 'D':
             e.preventDefault();
-            if (gitStatus?.unstaged.length) setPendingDiscard({ count: gitStatus.unstaged.length });
+            if (gitStatus?.unstaged.length) setPendingDiscard({ paths: gitStatus.unstaged.map((entry) => entry.path) });
             break;
           case 'w':
             e.preventDefault();
@@ -1743,7 +1746,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           <>
             <Text size="sm">
               {pendingDiscard
-                ? 'count' in pendingDiscard
+                ? 'paths' in pendingDiscard
                   ? 'Discard all unstaged changes to '
                   : pendingDiscard.untracked
                     ? 'Permanently delete untracked file '
@@ -1753,8 +1756,8 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
                   : 'Move to trash '}
               <Text size="sm" color="inherit" className="text-yellow-vivid">
                 {pendingDiscard
-                  ? 'count' in pendingDiscard
-                    ? `${pendingDiscard.count} ${pendingDiscard.count === 1 ? 'file' : 'files'}`
+                  ? 'paths' in pendingDiscard
+                    ? `${pendingDiscard.paths.length} ${pendingDiscard.paths.length === 1 ? 'file' : 'files'}`
                     : pendingDiscard.path
                   : pendingDelete!.names.length === 1
                     ? pendingDelete!.names[0]

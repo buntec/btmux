@@ -498,8 +498,6 @@ function describeOp(op: PopupOp): string {
       return 'Staging all changes';
     case 'unstage_all':
       return 'Unstaging all changes';
-    case 'discard_all':
-      return 'Discarding all unstaged changes';
   }
 }
 

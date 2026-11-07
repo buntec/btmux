@@ -216,8 +216,7 @@ export type GitOp =
   | { kind: 'stash_apply'; index: number; pop: boolean }
   | { kind: 'stash_drop'; index: number }
   | { kind: 'stage_all' }
-  | { kind: 'unstage_all' }
-  | { kind: 'discard_all' };
+  | { kind: 'unstage_all' };
 
 /** `git_worktree` operations (`worktree::Op`). */
 export type WorktreeOp =

@@ -109,6 +109,8 @@ pub enum GitOp {
     /// Stages all changes to tracked files, like magit's `S`.
     StageAll,
     UnstageAll,
+    /// Restores tracked files from the index, keeping staged changes.
+    DiscardAll,
 }
 
 /// The refs to act on, and the worktrees if `worktrees`.
@@ -327,6 +329,7 @@ fn op_args(repo: &Repository, op: GitOp) -> Result<Vec<String>, String> {
         }
         GitOp::StageAll => push(&["add", "-u"]),
         GitOp::UnstageAll => push(&["reset", "-q"]),
+        GitOp::DiscardAll => push(&["checkout", "-q", "--", "."]),
     }
     Ok(args)
 }
@@ -760,6 +763,24 @@ mod tests {
         let status = crate::file_git::git_status(&root, false).await.unwrap();
         assert!(status.staged.is_empty());
         assert_eq!(status.unstaged.len(), 1);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn discard_all_keeps_staged_and_untracked() {
+        let (root, _repo) = init_repo("btmux-git-ops-discard-all");
+        fs::write(root.join("file.txt"), "two\n").unwrap();
+        git_run(&root, GitOp::StageAll).await.unwrap();
+        fs::write(root.join("file.txt"), "three\n").unwrap();
+        fs::write(root.join("new.txt"), "new\n").unwrap();
+
+        git_run(&root, GitOp::DiscardAll).await.unwrap();
+        assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "two\n");
+        let status = crate::file_git::git_status(&root, false).await.unwrap();
+        assert_eq!(status.staged.len(), 1);
+        assert!(status.unstaged.is_empty());
+        assert_eq!(status.untracked, ["new.txt"]);
 
         fs::remove_dir_all(root).unwrap();
     }

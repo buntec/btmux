@@ -7,7 +7,11 @@ export type Layout = { "type": "leaf", pane_id: string, } | { "type": "v_split",
 export type AgentState = "unknown" | "idle" | "working" | "blocked" | "done";
 
 // prettier-ignore
-export type AgentStatus = { state: AgentState, agent: string | null, source: string | null, message: string | null, };
+export type AgentStatus = { state: AgentState, agent: string | null, source: string | null, message: string | null,
+/**
+ * Background work the agent's screen shows, such as "2 shells, 1 monitor".
+ */
+background: string | null, };
 
 // prettier-ignore
 export type AgentUsage = {

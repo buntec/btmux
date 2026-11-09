@@ -86,7 +86,8 @@ export function PaneTitleBar({
           {dir}
         </Text>
       )}
-      <HStack gap={2} vAlign="center" className="ml-auto flex-none">
+      {/* Only the agent badge shrinks, so the pane number stays visible. */}
+      <HStack gap={2} vAlign="center" className="ml-auto min-w-0 *:flex-none">
         {(latexCount > 0 || latexOpen) && (
           <ToggleButton
             size="sm"
@@ -105,7 +106,7 @@ export function PaneTitleBar({
             {cols}×{rows}
           </Text>
         ) : null}
-        <AgentStatusBadge status={agentStatus} />
+        <AgentStatusBadge status={agentStatus} className="min-w-0 shrink!" />
         <Token size="sm" color={isActive ? 'blue' : 'gray'} aria-label={`Pane ${index}`} label={String(index)} />
       </HStack>
     </HStack>
@@ -154,19 +155,22 @@ const AGENT_TOKEN_COLORS: Record<Exclude<AgentState, 'unknown'>, TokenProps['col
   idle: 'gray',
 };
 
-export function AgentStatusBadge({ status }: { status?: AgentStatus }) {
+/** May truncate in narrow spaces; the tooltip has the full background work. */
+export function AgentStatusBadge({ status, className }: { status?: AgentStatus; className?: string }) {
   const animate = useStore((state) => getAnimations(state.config));
   if (!status || status.state === 'unknown') return null;
   const agent = status.agent ? AGENTS.get(status.agent) : undefined;
-  const label = agent || !status.agent ? status.state : `${status.agent} ${status.state}`;
+  const state = agent || !status.agent ? status.state : `${status.agent} ${status.state}`;
+  const label = status.background ? `${state} · ${status.background}` : state;
+  const tooltip = [status.message, status.background].filter(Boolean).join(' · ');
   const token = (
     <Token
       size="sm"
       color={AGENT_TOKEN_COLORS[status.state]}
       icon={agent && <Icon icon={agent.icon} size="xsm" label={agent.name} />}
       label={label}
-      className={animate && status.state === 'working' ? 'btm-agent-shimmer' : undefined}
+      className={clsx(animate && status.state === 'working' && 'btm-agent-shimmer', className)}
     />
   );
-  return status.message ? <Tooltip content={status.message}>{token}</Tooltip> : token;
+  return tooltip ? <Tooltip content={tooltip}>{token}</Tooltip> : token;
 }

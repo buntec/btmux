@@ -162,6 +162,8 @@ pub struct AgentStatus {
     pub agent: Option<String>,
     pub source: Option<String>,
     pub message: Option<String>,
+    /// Background work the agent's screen shows, such as "2 shells, 1 monitor".
+    pub background: Option<String>,
 }
 
 impl Default for AgentStatus {
@@ -171,6 +173,7 @@ impl Default for AgentStatus {
             agent: None,
             source: None,
             message: None,
+            background: None,
         }
     }
 }

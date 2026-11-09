@@ -1,8 +1,15 @@
 id = "claude"
-version = "2026.10.11.1"
-min_engine_version = 2
-updated_at = "2026-10-11T00:00:00Z"
+version = "2026.11.09.1"
+min_engine_version = 4
+updated_at = "2026-11-09T00:00:00Z"
 aliases = ["claude-code"]
+
+# The footer below the prompt box lists running background shells and monitors:
+#   ⏵⏵ auto mode on · 2 shells, 1 monitor
+# The turn summary above ("· 2 shells, 1 monitor still running") goes stale.
+[background]
+region = "after_last_horizontal_rule"
+regex = '(?m)(?:^|·)[ \t]*([1-9]\d* (?:shells?|monitors?)(?:,[ \t]*[1-9]\d* (?:shells?|monitors?))*)[ \t]*(?:·|$)'
 
 [[rules]]
 id = "osc_title_working"

@@ -283,6 +283,8 @@ pub struct AgentLifecycle {
     signal_floor: u64,
     screen_floor: Option<u64>,
     pending_screen: Option<(AgentState, Instant)>,
+    /// When the shown background work first went missing.
+    background_gone: Option<Instant>,
 }
 
 impl AgentLifecycle {
@@ -293,6 +295,7 @@ impl AgentLifecycle {
                 agent: Some(name.clone()),
                 source: Some("process".to_string()),
                 message: None,
+                background: None,
             },
             Authority::Process,
             now,
@@ -302,8 +305,18 @@ impl AgentLifecycle {
         lifecycle
     }
 
-    pub fn explicit(status: AgentStatus, now: Instant) -> Self {
-        Self::new(status, Authority::Explicit, now)
+    /// Keeps the observed agent of an active `previous` lifecycle, so its
+    /// background work stays shown.
+    pub fn explicit(mut status: AgentStatus, previous: Option<&Self>, now: Instant) -> Self {
+        let previous = previous.filter(|previous| previous.scans_screen());
+        status.background = previous.and_then(|previous| previous.status.background.clone());
+        let mut lifecycle = Self::new(status, Authority::Explicit, now);
+        if let Some(previous) = previous {
+            lifecycle.observed = previous.observed;
+            lifecycle.observed_name = previous.observed_name.clone();
+            lifecycle.signal_floor = previous.signal_floor;
+        }
+        lifecycle
     }
 
     pub fn reported(now: Instant) -> Self {
@@ -341,6 +354,7 @@ impl AgentLifecycle {
             signal_floor: 0,
             screen_floor: None,
             pending_screen: None,
+            background_gone: None,
         }
     }
 
@@ -419,33 +433,44 @@ impl AgentLifecycle {
         self.authority
     }
 
+    /// Background work is read from the screen whatever owns the state.
+    fn scans_screen(&self) -> bool {
+        !self.ended && self.observed.is_some()
+    }
+
     fn reads_screen(&self) -> bool {
-        !self.ended && self.observed.is_some() && self.authority != Authority::Explicit
+        self.scans_screen() && self.authority != Authority::Explicit
     }
 
     /// Whether a screen at `revision` could change this lifecycle.
     pub fn wants_screen(&self, revision: u64) -> bool {
-        self.reads_screen()
+        self.scans_screen()
             && !self.screen_floor.is_some_and(|floor| revision <= floor)
-            && (self.screen_revision != Some(revision) || self.pending_screen.is_some())
+            && (self.screen_revision != Some(revision)
+                || self.pending_screen.is_some()
+                || self.background_gone.is_some())
     }
 
     /// A suspended or background agent's activity is unknown, and the screen
     /// belongs to another program.
     pub fn observe_background(&mut self, revision: u64) -> bool {
-        if !self.reads_screen() {
+        if !self.scans_screen() {
             return false;
         }
         self.screen_revision = None;
         self.pending_screen = None;
+        self.background_gone = None;
         self.signal_floor = revision;
         self.screen_floor = Some(revision);
-        let previous = self.status.clone();
-        self.status.state = AgentState::Unknown;
-        self.status.source = Some("process".into());
-        self.status.message = None;
-        self.authority = Authority::Process;
         self.detection = None;
+        let previous = self.status.clone();
+        self.status.background = None;
+        if self.authority != Authority::Explicit {
+            self.status.state = AgentState::Unknown;
+            self.status.source = Some("process".into());
+            self.status.message = None;
+            self.authority = Authority::Process;
+        }
         self.status != previous
     }
 
@@ -464,10 +489,14 @@ impl AgentLifecycle {
             return false;
         };
         detection.screen_revision = screen.revision;
+        let previous = self.status.clone();
+        if !detection.skip_state_update {
+            self.observe_background_work(detection.background.clone(), now);
+        }
         let Some((state, settle)) = self.screen_verdict(&detection) else {
             self.detection = Some(detection);
             self.pending_screen = None;
-            return false;
+            return self.status != previous;
         };
         self.detection = Some(detection);
         if let Some(settle) = settle {
@@ -475,15 +504,14 @@ impl AgentLifecycle {
                 Some((pending, started)) if *pending == state => *started,
                 _ => {
                     self.pending_screen = Some((state, now));
-                    return false;
+                    return self.status != previous;
                 }
             };
             if now.duration_since(started) < settle {
-                return false;
+                return self.status != previous;
             }
         }
         self.pending_screen = None;
-        let previous = self.status.clone();
         self.status.state = state;
         self.status.source = Some("screen".into());
         self.status.message = None;
@@ -491,9 +519,27 @@ impl AgentLifecycle {
         self.status != previous
     }
 
+    /// Shows new background work at once; clears it only once it stays gone,
+    /// since a redraw can catch the footer half drawn.
+    fn observe_background_work(&mut self, background: Option<String>, now: Instant) {
+        if background.is_some() || self.status.background.is_none() {
+            self.background_gone = None;
+            self.status.background = background;
+            return;
+        }
+        let gone = *self.background_gone.get_or_insert(now);
+        if now.duration_since(gone) >= SCREEN_SETTLE {
+            self.background_gone = None;
+            self.status.background = None;
+        }
+    }
+
     /// Detects `screen`, ignoring OSC signals a prior program left.
     pub fn detect(&self, detector: &Detector, screen: &ScreenSnapshot) -> Option<Detection> {
-        let name = self.screen_manifest()?;
+        let name = self
+            .observed_name
+            .as_deref()
+            .filter(|_| self.scans_screen())?;
         detector.detect(
             name,
             DetectionInput {
@@ -820,6 +866,7 @@ impl AgentLifecycle {
         self.ended = true;
         self.detection = None;
         self.pending_screen = None;
+        self.background_gone = None;
     }
 
     pub fn is_active(&self) -> bool {
@@ -923,6 +970,81 @@ mod tests {
         agent.apply(report(AgentEvent::TurnFinished, "s", None), 0, now);
         assert!(!agent.scan_screen(&detector, &screen(&idle.text, "", 3), now));
         assert_eq!(agent.status.state, AgentState::Done);
+    }
+
+    #[test]
+    fn background_work_annotates_hook_states_and_clears_once_gone() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::TurnStart, "s", None), 0, now);
+        agent.apply(report(AgentEvent::TurnFinished, "s", None), 0, now);
+        let footer = format!("{CLAUDE_IDLE}\n  ⏵⏵ auto mode on · 1 shell, 1 monitor");
+        assert!(agent.scan_screen(&detector, &screen(&footer, "", 1), now));
+        assert_eq!(agent.status.state, AgentState::Done);
+        assert_eq!(agent.status.source.as_deref(), Some("hook"));
+        assert_eq!(
+            agent.status.background.as_deref(),
+            Some("1 shell, 1 monitor")
+        );
+        let gone = screen(CLAUDE_IDLE, "", 2);
+        assert!(!agent.scan_screen(&detector, &gone, now));
+        assert!(agent.wants_screen(2));
+        assert!(!agent.scan_screen(&detector, &gone, now + Duration::from_millis(300)));
+        assert!(agent.scan_screen(&detector, &gone, now + Duration::from_millis(700)));
+        assert_eq!(agent.status.background, None);
+        assert!(!agent.wants_screen(2));
+        assert!(agent.scan_screen(&detector, &screen(&footer, "", 3), now));
+        assert!(agent.observe_background(4));
+        assert_eq!(agent.status.background, None);
+    }
+
+    #[test]
+    fn background_work_annotates_explicit_states() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let status = AgentStatus {
+            state: AgentState::Idle,
+            source: Some("api".into()),
+            message: Some("ready".into()),
+            ..AgentStatus::default()
+        };
+        let mut agent = AgentLifecycle::explicit(status.clone(), None, now);
+        let process = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        agent.observe_process(process, "claude", 0, now, |_| true);
+        assert!(agent.wants_screen(1));
+        let footer = format!("{CLAUDE_IDLE}\n  ⏵⏵ auto mode on · 2 shells, 1 monitor");
+        assert!(agent.scan_screen(&detector, &screen(&footer, "", 1), now));
+        assert_eq!(agent.authority(), Authority::Explicit);
+        assert_eq!(agent.status.state, AgentState::Idle);
+        assert_eq!(agent.status.source.as_deref(), Some("api"));
+        assert_eq!(agent.status.message.as_deref(), Some("ready"));
+        assert_eq!(
+            agent.status.background.as_deref(),
+            Some("2 shells, 1 monitor")
+        );
+
+        // A new explicit status keeps the counts and the observed agent.
+        let mut agent = AgentLifecycle::explicit(
+            AgentStatus {
+                state: AgentState::Working,
+                ..status
+            },
+            Some(&agent),
+            now,
+        );
+        assert_eq!(
+            agent.status.background.as_deref(),
+            Some("2 shells, 1 monitor")
+        );
+        assert_eq!(agent.observed_process(), Some(process));
+
+        assert!(agent.observe_background(2));
+        assert_eq!(agent.status.state, AgentState::Working);
+        assert_eq!(agent.status.background, None);
     }
 
     #[test]
@@ -1154,7 +1276,9 @@ mod tests {
                 agent: Some("deploy-bot".into()),
                 source: None,
                 message: Some("awaiting approval".into()),
+                background: None,
             },
+            None,
             now,
         );
         let process = AgentProcess {
@@ -1480,7 +1604,7 @@ mod tests {
     #[test]
     fn compaction_start_preserves_working_turn() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::SessionStart, "s", None), 0, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         agent.apply(report(AgentEvent::SessionStart, "s", None), 0, now);
@@ -1490,7 +1614,7 @@ mod tests {
     #[test]
     fn a_new_process_resets_a_resumed_session() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         let mut start = report(AgentEvent::SessionStart, "s", None);
         start.process = Some(AgentProcess {
             pid: 42,
@@ -1511,7 +1635,7 @@ mod tests {
     #[test]
     fn late_events_cannot_overwrite_a_new_turn_or_session() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("old")), 0, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("new")), 0, now);
         assert_eq!(
@@ -1540,7 +1664,7 @@ mod tests {
     #[test]
     fn repeated_and_late_turn_starts_cannot_revive_a_turn() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         let apply = |agent: &mut AgentLifecycle, event, turn| {
             agent.apply(report(event, "s", Some(turn)), 0, now)
         };
@@ -1568,7 +1692,7 @@ mod tests {
     #[test]
     fn retired_turns_stay_bounded_and_reset_with_the_session() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         for turn in 0..20 {
             let turn = turn.to_string();
             agent.apply(report(AgentEvent::TurnStart, "s", Some(&turn)), 0, now);
@@ -1589,7 +1713,7 @@ mod tests {
             )),
         };
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
         permission.tool = Some(call(Some("t2")));
@@ -1625,7 +1749,7 @@ mod tests {
     #[test]
     fn completed_tool_resumes_only_the_matching_blocked_turn() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
         permission.tool = Some(tool_call("approval"));
@@ -1660,7 +1784,7 @@ mod tests {
     #[test]
     fn process_identity_and_unverified_lease_bound_liveness() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         assert!(
             !agent.is_stale(now + UNVERIFIED_AGENT_TTL - Duration::from_secs(1), |_| {
                 false

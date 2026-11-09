@@ -1,4 +1,4 @@
-// handoff version 10
+// handoff version 11
 type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, panes: Array<PaneHeader>, telemetry: TelemetryStore, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
@@ -16,7 +16,8 @@ repo_id: string, repo_name: string, worktree_root: string,
 branch: string | null,
 main_worktree: boolean, };
 type PaneAlert = { level: NotificationLevel, title: string | null, body: string | null, };
-type AgentStatus = { state: AgentState, agent: string | null, source: string | null, message: string | null, };
+type AgentStatus = { state: AgentState, agent: string | null, source: string | null, message: string | null,
+background: string | null, };
 type AgentState = "unknown" | "idle" | "working" | "blocked" | "done";
 type NotificationLevel = "info" | "attention" | "success" | "error";
 type Layout = { "type": "leaf", pane_id: string, } | { "type": "v_split", id: string, ratio: number, left: Layout, right: Layout, } | { "type": "h_split", id: string, ratio: number, top: Layout, bottom: Layout, };

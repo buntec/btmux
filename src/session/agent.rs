@@ -305,8 +305,18 @@ impl AgentLifecycle {
         lifecycle
     }
 
-    pub fn explicit(status: AgentStatus, now: Instant) -> Self {
-        Self::new(status, Authority::Explicit, now)
+    /// Keeps the observed agent of an active `previous` lifecycle, so its
+    /// background work stays shown.
+    pub fn explicit(mut status: AgentStatus, previous: Option<&Self>, now: Instant) -> Self {
+        let previous = previous.filter(|previous| previous.scans_screen());
+        status.background = previous.and_then(|previous| previous.status.background.clone());
+        let mut lifecycle = Self::new(status, Authority::Explicit, now);
+        if let Some(previous) = previous {
+            lifecycle.observed = previous.observed;
+            lifecycle.observed_name = previous.observed_name.clone();
+            lifecycle.signal_floor = previous.signal_floor;
+        }
+        lifecycle
     }
 
     pub fn reported(now: Instant) -> Self {
@@ -423,13 +433,18 @@ impl AgentLifecycle {
         self.authority
     }
 
+    /// Background work is read from the screen whatever owns the state.
+    fn scans_screen(&self) -> bool {
+        !self.ended && self.observed.is_some()
+    }
+
     fn reads_screen(&self) -> bool {
-        !self.ended && self.observed.is_some() && self.authority != Authority::Explicit
+        self.scans_screen() && self.authority != Authority::Explicit
     }
 
     /// Whether a screen at `revision` could change this lifecycle.
     pub fn wants_screen(&self, revision: u64) -> bool {
-        self.reads_screen()
+        self.scans_screen()
             && !self.screen_floor.is_some_and(|floor| revision <= floor)
             && (self.screen_revision != Some(revision)
                 || self.pending_screen.is_some()
@@ -439,7 +454,7 @@ impl AgentLifecycle {
     /// A suspended or background agent's activity is unknown, and the screen
     /// belongs to another program.
     pub fn observe_background(&mut self, revision: u64) -> bool {
-        if !self.reads_screen() {
+        if !self.scans_screen() {
             return false;
         }
         self.screen_revision = None;
@@ -447,13 +462,15 @@ impl AgentLifecycle {
         self.background_gone = None;
         self.signal_floor = revision;
         self.screen_floor = Some(revision);
-        let previous = self.status.clone();
-        self.status.state = AgentState::Unknown;
-        self.status.source = Some("process".into());
-        self.status.message = None;
-        self.status.background = None;
-        self.authority = Authority::Process;
         self.detection = None;
+        let previous = self.status.clone();
+        self.status.background = None;
+        if self.authority != Authority::Explicit {
+            self.status.state = AgentState::Unknown;
+            self.status.source = Some("process".into());
+            self.status.message = None;
+            self.authority = Authority::Process;
+        }
         self.status != previous
     }
 
@@ -519,7 +536,10 @@ impl AgentLifecycle {
 
     /// Detects `screen`, ignoring OSC signals a prior program left.
     pub fn detect(&self, detector: &Detector, screen: &ScreenSnapshot) -> Option<Detection> {
-        let name = self.screen_manifest()?;
+        let name = self
+            .observed_name
+            .as_deref()
+            .filter(|_| self.scans_screen())?;
         detector.detect(
             name,
             DetectionInput {
@@ -980,6 +1000,54 @@ mod tests {
     }
 
     #[test]
+    fn background_work_annotates_explicit_states() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let status = AgentStatus {
+            state: AgentState::Idle,
+            source: Some("api".into()),
+            message: Some("ready".into()),
+            ..AgentStatus::default()
+        };
+        let mut agent = AgentLifecycle::explicit(status.clone(), None, now);
+        let process = AgentProcess {
+            pid: 10,
+            start_time: 5,
+        };
+        agent.observe_process(process, "claude", 0, now, |_| true);
+        assert!(agent.wants_screen(1));
+        let footer = format!("{CLAUDE_IDLE}\n  ⏵⏵ auto mode on · 2 shells, 1 monitor");
+        assert!(agent.scan_screen(&detector, &screen(&footer, "", 1), now));
+        assert_eq!(agent.authority(), Authority::Explicit);
+        assert_eq!(agent.status.state, AgentState::Idle);
+        assert_eq!(agent.status.source.as_deref(), Some("api"));
+        assert_eq!(agent.status.message.as_deref(), Some("ready"));
+        assert_eq!(
+            agent.status.background.as_deref(),
+            Some("2 shells, 1 monitor")
+        );
+
+        // A new explicit status keeps the counts and the observed agent.
+        let mut agent = AgentLifecycle::explicit(
+            AgentStatus {
+                state: AgentState::Working,
+                ..status
+            },
+            Some(&agent),
+            now,
+        );
+        assert_eq!(
+            agent.status.background.as_deref(),
+            Some("2 shells, 1 monitor")
+        );
+        assert_eq!(agent.observed_process(), Some(process));
+
+        assert!(agent.observe_background(2));
+        assert_eq!(agent.status.state, AgentState::Working);
+        assert_eq!(agent.status.background, None);
+    }
+
+    #[test]
     fn stale_screens_hooks_and_titles_cannot_overwrite_replacement_process() {
         let now = Instant::now();
         let detector = Detector::new(None);
@@ -1210,6 +1278,7 @@ mod tests {
                 message: Some("awaiting approval".into()),
                 background: None,
             },
+            None,
             now,
         );
         let process = AgentProcess {
@@ -1535,7 +1604,7 @@ mod tests {
     #[test]
     fn compaction_start_preserves_working_turn() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::SessionStart, "s", None), 0, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         agent.apply(report(AgentEvent::SessionStart, "s", None), 0, now);
@@ -1545,7 +1614,7 @@ mod tests {
     #[test]
     fn a_new_process_resets_a_resumed_session() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         let mut start = report(AgentEvent::SessionStart, "s", None);
         start.process = Some(AgentProcess {
             pid: 42,
@@ -1566,7 +1635,7 @@ mod tests {
     #[test]
     fn late_events_cannot_overwrite_a_new_turn_or_session() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("old")), 0, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("new")), 0, now);
         assert_eq!(
@@ -1595,7 +1664,7 @@ mod tests {
     #[test]
     fn repeated_and_late_turn_starts_cannot_revive_a_turn() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         let apply = |agent: &mut AgentLifecycle, event, turn| {
             agent.apply(report(event, "s", Some(turn)), 0, now)
         };
@@ -1623,7 +1692,7 @@ mod tests {
     #[test]
     fn retired_turns_stay_bounded_and_reset_with_the_session() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         for turn in 0..20 {
             let turn = turn.to_string();
             agent.apply(report(AgentEvent::TurnStart, "s", Some(&turn)), 0, now);
@@ -1644,7 +1713,7 @@ mod tests {
             )),
         };
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
         permission.tool = Some(call(Some("t2")));
@@ -1680,7 +1749,7 @@ mod tests {
     #[test]
     fn completed_tool_resumes_only_the_matching_blocked_turn() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
         let mut permission = report(AgentEvent::PermissionRequest, "s", Some("t"));
         permission.tool = Some(tool_call("approval"));
@@ -1715,7 +1784,7 @@ mod tests {
     #[test]
     fn process_identity_and_unverified_lease_bound_liveness() {
         let now = Instant::now();
-        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), now);
+        let mut agent = AgentLifecycle::explicit(AgentStatus::default(), None, now);
         assert!(
             !agent.is_stale(now + UNVERIFIED_AGENT_TTL - Duration::from_secs(1), |_| {
                 false

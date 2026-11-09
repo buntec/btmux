@@ -729,8 +729,8 @@ impl SessionManager {
         if status.state == AgentState::Unknown {
             self.agents.remove(&pane_id);
         } else {
-            self.agents
-                .insert(pane_id, AgentLifecycle::explicit(status, Instant::now()));
+            let agent = AgentLifecycle::explicit(status, self.agents.get(&pane_id), Instant::now());
+            self.agents.insert(pane_id, agent);
         }
         true
     }

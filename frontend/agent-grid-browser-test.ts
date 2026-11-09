@@ -309,6 +309,49 @@ try {
   await pressAndExpect('2', 1);
   await pressAndExpect('1', 0);
 
+  // Minimized agents leave the tiles, drop their mirror, and stay in the list.
+  const tileCountNow = () => page.locator('[data-agent-tiles] [data-agent-mirror]').count();
+  const openMirrors = () =>
+    page.evaluate(
+      () =>
+        ((window as any).__sockets as WebSocket[]).filter(
+          (socket) => socket.url.includes('mirror=1') && socket.readyState === WebSocket.OPEN,
+        ).length,
+    );
+  const rows = page.locator('[data-agent-row]');
+  assert.equal(await rows.count(), 4);
+  await page.keyboard.press('m');
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 3);
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-row][data-minimized]').length === 1);
+  await waitForAsync(
+    page,
+    () =>
+      ((window as any).__sockets as WebSocket[]).filter(
+        (socket) => socket.url.includes('mirror=1') && socket.readyState === WebSocket.OPEN,
+      ).length === 3,
+  );
+  assert.equal(await rows.count(), 4, 'minimized agents stay listed');
+  // Enter on a minimized agent restores it.
+  await page.keyboard.press('1');
+  await page.keyboard.press('Enter');
+  await replaysShown(page, 4);
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'restoring must not leave the grid');
+  // A list click toggles.
+  await rows.nth(2).click();
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 3);
+  await rows.nth(2).click();
+  await replaysShown(page, 4);
+  // `o` shows only the selected agent, and again shows all.
+  await page.keyboard.press('2');
+  await page.keyboard.press('o');
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 1);
+  assert.equal(await selectedTile(), 0);
+  await page.keyboard.press('o');
+  await replaysShown(page, 4);
+  assert.equal(await tileCountNow(), 4);
+  assert.equal(await openMirrors(), 4);
+  await pressAndExpect('1', 0);
+
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);
   await baseline(page);

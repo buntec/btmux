@@ -2175,6 +2175,7 @@ mod agent_tests {
                 agent: Some("custom".to_string()),
                 source: Some("api".to_string()),
                 message: None,
+                background: None,
             },
         );
         assert_eq!(mgr.running_agent_panes(), vec![pane_id]);

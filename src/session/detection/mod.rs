@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::AgentState;
 
-const ENGINE_VERSION: u32 = 3;
+const ENGINE_VERSION: u32 = 4;
 const BUNDLED: &[(&str, &str)] = &[
     ("claude", include_str!("manifests/claude.toml")),
     ("codex", include_str!("manifests/codex.toml")),
@@ -37,6 +37,8 @@ pub struct Detection {
     pub visible_working: bool,
     pub visible_blocker: bool,
     pub skip_state_update: bool,
+    /// Background work shown on screen, from the manifest's `background`.
+    pub background: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +52,16 @@ struct Manifest {
     #[serde(default, rename = "aliases")]
     _aliases: Vec<String>,
     rules: Vec<Rule>,
+    background: Option<BackgroundRule>,
+}
+
+/// Names the agent's background work: the regex's first group, else its match.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BackgroundRule {
+    #[serde(default = "default_region")]
+    region: String,
+    regex: String,
 }
 
 #[derive(Deserialize)]
@@ -156,8 +168,11 @@ impl CompiledGate {
 struct CompiledManifest {
     manifest: Manifest,
     gates: Vec<CompiledGate>,
+    background: Option<Regex>,
     source: String,
 }
+
+const MAX_BACKGROUND_CHARS: usize = 80;
 
 fn default_region() -> String {
     "whole_recent".into()
@@ -235,9 +250,19 @@ impl CompiledManifest {
                 CompiledGate::compile(gate, 0)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let background = match &manifest.background {
+            None => None,
+            Some(rule) => {
+                if !valid_region(&rule.region) || rule.regex.len() > 8192 {
+                    return Err("invalid background region or pattern".into());
+                }
+                Some(Regex::new(&rule.regex).map_err(|error| error.to_string())?)
+            }
+        };
         Ok(Self {
             manifest,
             gates,
+            background,
             source,
         })
     }
@@ -271,7 +296,26 @@ impl CompiledManifest {
             visible_blocker: matched
                 .is_some_and(|rule| rule.visible_blocker && rule.state == AgentState::Blocked),
             skip_state_update: matched.is_some_and(|rule| rule.skip_state_update),
+            background: self.background(input),
         }
+    }
+
+    fn background(&self, input: DetectionInput<'_>) -> Option<String> {
+        let (rule, regex) = self
+            .manifest
+            .background
+            .as_ref()
+            .zip(self.background.as_ref())?;
+        let captures = regex.captures(regions::region(input, &rule.region))?;
+        let text = captures.get(1).or_else(|| captures.get(0))?.as_str();
+        let text: String = text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(MAX_BACKGROUND_CHARS)
+            .collect();
+        (!text.is_empty()).then_some(text)
     }
 }
 
@@ -520,6 +564,40 @@ mod tests {
     }
 
     #[test]
+    fn claude_footer_names_background_work() {
+        let screen = |summary: &str, prompt: &str, footer: &str| {
+            format!(
+                "✻ Cogitated for 1m 46s · done 9:22 AM{summary}\n\n{rule}\n❯ {prompt}\n{rule}\n  \
+                 Opus 5.5 (high) | ~/repos/btmux | main | 9% ctx\n{footer}\n",
+                rule = "─".repeat(40),
+            )
+        };
+        let summary = " · 2 shells, 1 monitor still running";
+        for (text, background) in [
+            (
+                screen(summary, "", "  ⏵⏵ auto mode on · 2 shells, 1 monitor"),
+                Some("2 shells, 1 monitor"),
+            ),
+            (screen("", "", "  1 shell · ↓ to manage"), Some("1 shell")),
+            (
+                screen("", "", "  ? for shortcuts · 3 monitors"),
+                Some("3 monitors"),
+            ),
+            (screen(summary, "", "  ⏵⏵ auto mode on"), None),
+            (screen("", "· 2 shells", "  ? for shortcuts"), None),
+            (screen("", "", "  ? for shortcuts · 0 shells"), None),
+        ] {
+            let result = detect("claude", &text, "");
+            assert_eq!(result.state, AgentState::Idle, "{text}");
+            assert_eq!(result.background.as_deref(), background, "{text}");
+        }
+        assert_eq!(
+            detect("codex", &screen("", "", "  1 shell"), "").background,
+            None
+        );
+    }
+
+    #[test]
     fn knows_which_agents_can_report_idle() {
         let detector = Detector::new(None);
         for (agent, idle) in [
@@ -545,6 +623,8 @@ mod tests {
             manifest.replace("contains=['marker']", "regex=['[']"),
             manifest.replace("contains=['marker']", "region='typo'\ncontains=['marker']"),
             manifest.replace("contains=['marker']", "not=[{contains=['marker']}]"),
+            format!("{manifest}[background]\nregex='['\n"),
+            format!("{manifest}[background]\nregion='typo'\nregex='x'\n"),
         ] {
             assert!(CompiledManifest::parse("codex", &text, "test".into()).is_err());
         }

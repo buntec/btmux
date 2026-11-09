@@ -283,6 +283,8 @@ pub struct AgentLifecycle {
     signal_floor: u64,
     screen_floor: Option<u64>,
     pending_screen: Option<(AgentState, Instant)>,
+    /// When the shown background work first went missing.
+    background_gone: Option<Instant>,
 }
 
 impl AgentLifecycle {
@@ -293,6 +295,7 @@ impl AgentLifecycle {
                 agent: Some(name.clone()),
                 source: Some("process".to_string()),
                 message: None,
+                background: None,
             },
             Authority::Process,
             now,
@@ -341,6 +344,7 @@ impl AgentLifecycle {
             signal_floor: 0,
             screen_floor: None,
             pending_screen: None,
+            background_gone: None,
         }
     }
 
@@ -427,7 +431,9 @@ impl AgentLifecycle {
     pub fn wants_screen(&self, revision: u64) -> bool {
         self.reads_screen()
             && !self.screen_floor.is_some_and(|floor| revision <= floor)
-            && (self.screen_revision != Some(revision) || self.pending_screen.is_some())
+            && (self.screen_revision != Some(revision)
+                || self.pending_screen.is_some()
+                || self.background_gone.is_some())
     }
 
     /// A suspended or background agent's activity is unknown, and the screen
@@ -438,12 +444,14 @@ impl AgentLifecycle {
         }
         self.screen_revision = None;
         self.pending_screen = None;
+        self.background_gone = None;
         self.signal_floor = revision;
         self.screen_floor = Some(revision);
         let previous = self.status.clone();
         self.status.state = AgentState::Unknown;
         self.status.source = Some("process".into());
         self.status.message = None;
+        self.status.background = None;
         self.authority = Authority::Process;
         self.detection = None;
         self.status != previous
@@ -464,10 +472,14 @@ impl AgentLifecycle {
             return false;
         };
         detection.screen_revision = screen.revision;
+        let previous = self.status.clone();
+        if !detection.skip_state_update {
+            self.observe_background_work(detection.background.clone(), now);
+        }
         let Some((state, settle)) = self.screen_verdict(&detection) else {
             self.detection = Some(detection);
             self.pending_screen = None;
-            return false;
+            return self.status != previous;
         };
         self.detection = Some(detection);
         if let Some(settle) = settle {
@@ -475,20 +487,34 @@ impl AgentLifecycle {
                 Some((pending, started)) if *pending == state => *started,
                 _ => {
                     self.pending_screen = Some((state, now));
-                    return false;
+                    return self.status != previous;
                 }
             };
             if now.duration_since(started) < settle {
-                return false;
+                return self.status != previous;
             }
         }
         self.pending_screen = None;
-        let previous = self.status.clone();
         self.status.state = state;
         self.status.source = Some("screen".into());
         self.status.message = None;
         self.authority = Authority::Screen;
         self.status != previous
+    }
+
+    /// Shows new background work at once; clears it only once it stays gone,
+    /// since a redraw can catch the footer half drawn.
+    fn observe_background_work(&mut self, background: Option<String>, now: Instant) {
+        if background.is_some() || self.status.background.is_none() {
+            self.background_gone = None;
+            self.status.background = background;
+            return;
+        }
+        let gone = *self.background_gone.get_or_insert(now);
+        if now.duration_since(gone) >= SCREEN_SETTLE {
+            self.background_gone = None;
+            self.status.background = None;
+        }
     }
 
     /// Detects `screen`, ignoring OSC signals a prior program left.
@@ -820,6 +846,7 @@ impl AgentLifecycle {
         self.ended = true;
         self.detection = None;
         self.pending_screen = None;
+        self.background_gone = None;
     }
 
     pub fn is_active(&self) -> bool {
@@ -923,6 +950,33 @@ mod tests {
         agent.apply(report(AgentEvent::TurnFinished, "s", None), 0, now);
         assert!(!agent.scan_screen(&detector, &screen(&idle.text, "", 3), now));
         assert_eq!(agent.status.state, AgentState::Done);
+    }
+
+    #[test]
+    fn background_work_annotates_hook_states_and_clears_once_gone() {
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::TurnStart, "s", None), 0, now);
+        agent.apply(report(AgentEvent::TurnFinished, "s", None), 0, now);
+        let footer = format!("{CLAUDE_IDLE}\n  ⏵⏵ auto mode on · 1 shell, 1 monitor");
+        assert!(agent.scan_screen(&detector, &screen(&footer, "", 1), now));
+        assert_eq!(agent.status.state, AgentState::Done);
+        assert_eq!(agent.status.source.as_deref(), Some("hook"));
+        assert_eq!(
+            agent.status.background.as_deref(),
+            Some("1 shell, 1 monitor")
+        );
+        let gone = screen(CLAUDE_IDLE, "", 2);
+        assert!(!agent.scan_screen(&detector, &gone, now));
+        assert!(agent.wants_screen(2));
+        assert!(!agent.scan_screen(&detector, &gone, now + Duration::from_millis(300)));
+        assert!(agent.scan_screen(&detector, &gone, now + Duration::from_millis(700)));
+        assert_eq!(agent.status.background, None);
+        assert!(!agent.wants_screen(2));
+        assert!(agent.scan_screen(&detector, &screen(&footer, "", 3), now));
+        assert!(agent.observe_background(4));
+        assert_eq!(agent.status.background, None);
     }
 
     #[test]
@@ -1154,6 +1208,7 @@ mod tests {
                 agent: Some("deploy-bot".into()),
                 source: None,
                 message: Some("awaiting approval".into()),
+                background: None,
             },
             now,
         );

@@ -158,7 +158,8 @@ export function AgentStatusBadge({ status }: { status?: AgentStatus }) {
   const animate = useStore((state) => getAnimations(state.config));
   if (!status || status.state === 'unknown') return null;
   const agent = status.agent ? AGENTS.get(status.agent) : undefined;
-  const label = agent || !status.agent ? status.state : `${status.agent} ${status.state}`;
+  const state = agent || !status.agent ? status.state : `${status.agent} ${status.state}`;
+  const label = status.background ? `${state} · ${status.background}` : state;
   const token = (
     <Token
       size="sm"

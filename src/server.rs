@@ -800,6 +800,7 @@ async fn api_pane_agent_status(
             agent: clean_status_field(body.agent, 48),
             source: clean_status_field(body.source, 64),
             message: clean_status_field(body.message, 200),
+            background: None,
         },
     );
     ws::control::broadcast_state(&mgr);

@@ -147,6 +147,7 @@ mod agent_status_tests {
                         agent: Some("codex".to_string()),
                         source: Some("hook".to_string()),
                         message: Some("private prompt".to_string()),
+                        background: None,
                     },
                     unread: Some(PaneAlert {
                         level: NotificationLevel::Attention,

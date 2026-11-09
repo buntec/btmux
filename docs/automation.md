@@ -486,6 +486,13 @@ When hooks and screens disagree, the more reliable evidence wins:
    missed hooks such as an interrupt without `Stop`. The next hook takes over again.
 4. Process presence alone reports `unknown` activity.
 
+Whatever set the state, the screen also fills `background` with the work an agent
+leaves running between turns, such as Claude Code's background shells and
+monitors (`"2 shells, 1 monitor"`), which can start a new turn when they finish.
+The state stays as it is (an idle agent with a dev server running is still idle),
+and status badges show it as `idle · 2 shells, 1 monitor`. It clears once the
+screen has shown none for 700 ms.
+
 Hooks may report a wrapper's child process; the process scan's own choice
 identifies the agent and selects its manifest. Names reported by hooks take
 precedence over process names. A newly detected agent ignores OSC titles that a
@@ -518,8 +525,9 @@ The directory follows `XDG_CONFIG_HOME`, like `config.toml`. Edits are checked
 every five seconds. Invalid overrides log a warning and fall back to bundled
 rules. Rules support priorities, scoped regions, `contains` (case-insensitive),
 `regex`, per-line `line_regex`, nested `all`/`any`/`not`, visible evidence flags,
-and `skip_state_update` for transcript viewers. Engine versions through 3 are
-supported. Manifests are local; btmux does not fetch remote rule updates.
+and `skip_state_update` for transcript viewers. An optional `[background]` table
+(`region`, `regex`) names background work: the regex's first group, else its
+whole match. Engine versions through 4 are supported. Manifests are local; btmux does not fetch remote rule updates.
 
 For example, a custom Codex approval rule:
 

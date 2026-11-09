@@ -15,7 +15,7 @@ repo="buntec/btmux"
 if [[ -z "$version" ]]; then
   echo "looking up the latest GitHub release"
   version="$({
-    curl --fail --location --silent --show-error \
+    curl --fail --location --silent --show-error --retry 5 --retry-delay 20 \
       --header 'Accept: application/vnd.github+json' \
       "https://api.github.com/repos/$repo/releases/latest"
   } | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')"
@@ -34,7 +34,7 @@ sha256() {
   local name="$1"
   local url="https://github.com/$repo/releases/download/v$version/$name"
   echo "fetching $url" >&2
-  curl --fail --location --silent --show-error --output "$tmp_dir/$name" "$url"
+  curl --fail --location --silent --show-error --retry 5 --retry-delay 20 --output "$tmp_dir/$name" "$url"
   shasum -a 256 "$tmp_dir/$name" | cut -d' ' -f1
 }
 

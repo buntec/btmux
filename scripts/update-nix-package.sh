@@ -11,7 +11,7 @@ version="${version#v}"
 if [[ -z "$version" ]]; then
   echo "looking up the latest GitHub release"
   version="$({
-    curl --fail --location --silent --show-error \
+    curl --fail --location --silent --show-error --retry 5 --retry-delay 20 \
       --header 'Accept: application/vnd.github+json' "$release_api"
   } | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')"
 fi
@@ -40,7 +40,7 @@ for package_file in "${package_files[@]}"; do
     url="https://github.com/buntec/btmux/releases/download/v$version/$name"
 
     echo "fetching $url"
-    curl --fail --location --silent --show-error --output "$artifact" "$url"
+    curl --fail --location --silent --show-error --retry 5 --retry-delay 20 --output "$artifact" "$url"
     hashes[$i]="$(nix hash file --type sha256 --sri "$artifact")"
   done
 

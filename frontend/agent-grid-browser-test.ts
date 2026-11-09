@@ -351,6 +351,22 @@ try {
   assert.equal(await tileCountNow(), 4);
   assert.equal(await openMirrors(), 4);
   await pressAndExpect('1', 0);
+  // Enter on a focused sidebar control activates it, not the selected agent.
+  await page.keyboard.press('o');
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 1);
+  await page.getByRole('button', { name: 'Show all' }).focus();
+  await page.keyboard.press('Enter');
+  await replaysShown(page, 4);
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'Show all must not leave the grid');
+  await rows.nth(2).locator('button').focus();
+  await page.keyboard.press('Enter');
+  await waitForAsync(page, () => document.querySelector('[data-agent-row][data-minimized]') !== null);
+  assert.equal(await page.locator('[data-agent-row]').nth(2).getAttribute('data-minimized'), 'true');
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'a row must not leave the grid');
+  await rows.nth(2).locator('button').focus();
+  await page.keyboard.press('Enter');
+  await replaysShown(page, 4);
+  await pressAndExpect('1', 0);
 
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);

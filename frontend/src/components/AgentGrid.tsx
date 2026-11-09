@@ -338,6 +338,8 @@ export function AgentGrid({ send }: Props) {
     if (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]')) return;
     if (n === 0 || !selected) return;
     if (e.key === 'Enter') {
+      // A focused control activates itself.
+      if ((e.target as Element).closest('button, a[href], input')) return;
       e.preventDefault();
       if (minimized.has(selected.paneId)) toggleMinimized(selected);
       else select(selected);

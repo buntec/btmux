@@ -7,7 +7,7 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Spinner } from './Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, FolderOpen, GitBranch, Globe } from 'lucide-react';
+import { Activity, Box, FolderOpen, GitBranch, Globe } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -18,6 +18,7 @@ import { SysStatBar } from './SysStatBar';
 import { editorButton, toolbarEditors } from './EditorIcon';
 import { runAction } from '../hooks/useKeybindings';
 import { TailscaleButton } from './TailscaleButton';
+import { MultipassButton } from './MultipassButton';
 
 let mruVersion = 0;
 window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
@@ -64,6 +65,8 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     >
       <Button
         label={session.name}
+        icon={session.runtime.type === 'multipass' ? <Box /> : undefined}
+        tooltip={session.runtime.type === 'multipass' ? 'Runs in the Multipass sandbox' : undefined}
         variant="ghost"
         size="sm"
         onClick={() => {
@@ -163,6 +166,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
           }}
         />
       )}
+      <MultipassButton />
       <IconButton
         label="File browser"
         tooltip="File browser"

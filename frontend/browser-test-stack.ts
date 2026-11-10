@@ -2,7 +2,8 @@
  * Run each browser test file against its own fresh btmux stack: a debug
  * backend and Vite on free ports, with a random token, `/bin/sh`, and
  * temporary XDG and Git config, so neither the user's config, profiles, shell,
- * nor a running `just dev` affects it. Usage: bun browser-test-stack.ts <test.ts>...
+ * nor a running `just dev` affects it. A fake `multipass` (`test-bin`) logs to
+ * the stack's `multipass` directory. Usage: bun browser-test-stack.ts <test.ts>...
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -118,6 +119,8 @@ async function withStack(
       env: {
         ...baseEnv(),
         ...xdg,
+        PATH: `${path.join(frontend, 'test-bin')}${path.delimiter}${process.env.PATH}`,
+        BTMUX_FAKE_MULTIPASS: path.join(dir, 'multipass'),
         BTMUX_AUTH_TOKEN: token,
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_CONFIG_NOSYSTEM: '1',
@@ -171,6 +174,7 @@ for (const [index, test] of tests.entries()) {
           BTMUX_TEST_BACKEND_URL: backendUrl,
           BTMUX_AUTH_TOKEN: token,
           BTMUX_TEST_CONFIG_HOME: configHome,
+          BTMUX_TEST_MULTIPASS: path.join(dir, 'multipass'),
         },
       });
       const code = await exited(child);

@@ -102,8 +102,16 @@ pub struct AgentTelemetry {
 pub struct TelemetryStore {
     panes: HashMap<Uuid, PaneTelemetry>,
     /// Recently closed panes, whose first export may still be on its way.
-    #[cfg_attr(test, ts(as = "Vec<Uuid>"))]
-    closed: VecDeque<Uuid>,
+    #[cfg_attr(test, ts(as = "Vec<ClosedPane>"))]
+    closed: VecDeque<ClosedPane>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+struct ClosedPane {
+    id: Uuid,
+    /// Its exports come with the guest token.
+    guest: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -155,15 +163,20 @@ impl TelemetryStore {
         self
     }
 
-    pub fn pane_closed(&mut self, id: Uuid) {
-        self.closed.push_back(id);
+    pub fn pane_closed(&mut self, id: Uuid, guest: bool) {
+        self.closed.push_back(ClosedPane { id, guest });
         if self.closed.len() > MAX_CLOSED {
             self.closed.pop_front();
         }
     }
 
     fn accepts_closed(&self, id: Uuid) -> bool {
-        self.panes.contains_key(&id) || self.closed.contains(&id)
+        self.panes.contains_key(&id) || self.closed.iter().any(|c| c.id == id)
+    }
+
+    /// Whether a recently closed pane was a guest's, for its last exports.
+    pub fn closed_guest(&self, id: Uuid) -> bool {
+        self.closed.iter().any(|c| c.id == id && c.guest)
     }
 
     pub fn snapshots(&self, now: u64) -> Vec<AgentTelemetry> {
@@ -1177,27 +1190,31 @@ mod tests {
     fn a_handoff_keeps_closed_panes() {
         let mut store = TelemetryStore::default();
         let pane = Uuid::new_v4();
-        store.pane_closed(pane);
+        store.pane_closed(pane, true);
         let json = serde_json::to_vec(&store).unwrap();
         let store = serde_json::from_slice::<TelemetryStore>(&json)
             .unwrap()
             .restored();
         assert!(store.accepts_closed(pane));
+        assert!(store.closed_guest(pane));
     }
 
     #[test]
     fn closed_panes_are_bounded() {
         let mut store = TelemetryStore::default();
         let first = Uuid::new_v4();
-        store.pane_closed(first);
+        store.pane_closed(first, true);
         for _ in 0..MAX_CLOSED - 1 {
-            store.pane_closed(Uuid::new_v4());
+            store.pane_closed(Uuid::new_v4(), false);
         }
+        assert!(store.closed_guest(first));
         assert!(store.accepts_closed(first));
         let last = Uuid::new_v4();
-        store.pane_closed(last);
+        store.pane_closed(last, false);
         assert_eq!(store.closed.len(), MAX_CLOSED);
         assert!(!store.accepts_closed(first));
+        assert!(!store.closed_guest(first));
+        assert!(!store.closed_guest(last));
         assert!(store.accepts_closed(last));
     }
 
@@ -1318,6 +1335,71 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(snapshots(&*state.read().await)[0].totals.requests, 2.0);
+    }
+
+    #[tokio::test]
+    async fn closed_guest_panes_take_only_telemetry() {
+        let (app, state, local) = app().await;
+        crate::auth::load_guest_token(None).unwrap();
+        let token = crate::auth::guest_token().unwrap();
+        let guest = |pane: Uuid, path: &str| {
+            let mut request = request(pane, "logs", "application/json", Vec::new());
+            *request.uri_mut() = format!("/api/panes/{pane}/{path}").parse().unwrap();
+            if path == "agent-status" {
+                *request.method_mut() = axum::http::Method::GET;
+            } else {
+                *request.body_mut() =
+                    Body::from(serde_json::to_vec(&completion(now_seconds())).unwrap());
+            }
+            request.headers_mut().insert(
+                header::AUTHORIZATION,
+                format!("Bearer {token}").parse().unwrap(),
+            );
+            request
+        };
+        let (sandboxed, closed_local) = {
+            let mut mgr = state.write().await;
+            let runtime = crate::session::Runtime::Multipass {
+                mounts: vec!["/src/app".into()],
+                shell: crate::multipass::GuestShell::Bash,
+            };
+            let session = mgr.create_session_in(None, None, None, runtime).await;
+            let first = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+            let sandboxed = mgr.split_pane(first, "right", None, false).await.unwrap();
+            let closed_local = mgr.split_pane(local, "right", None, false).await.unwrap();
+            mgr.kill_pane_by_id(closed_local).unwrap();
+            (sandboxed, closed_local)
+        };
+        let status = |request: Request<Body>| {
+            let app = app.clone();
+            async move { app.oneshot(request).await.unwrap().status() }
+        };
+
+        assert_eq!(
+            status(guest(sandboxed, "telemetry/v1/logs")).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(guest(sandboxed, "agent-status")).await,
+            StatusCode::OK
+        );
+        state.write().await.kill_pane_by_id(sandboxed).unwrap();
+        assert_eq!(
+            status(guest(sandboxed, "telemetry/v1/logs")).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(guest(sandboxed, "agent-status")).await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status(guest(closed_local, "telemetry/v1/logs")).await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status(guest(local, "telemetry/v1/logs")).await,
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[tokio::test]

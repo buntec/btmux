@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { AlertDialog } from '@astryxdesign/core/AlertDialog';
@@ -10,6 +10,7 @@ import {
 } from '@astryxdesign/core/CommandPalette';
 import { createStaticSource } from '@astryxdesign/core/Typeahead';
 import { TextInput } from '@astryxdesign/core/TextInput';
+import { Selector } from '@astryxdesign/core/Selector';
 import { Button } from '@astryxdesign/core/Button';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Text } from '@astryxdesign/core/Text';
@@ -19,7 +20,7 @@ import { InfoDialog } from './InfoDialog';
 import { ConfigErrorDialog } from './ConfigErrorBanner';
 import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
-import type { Bind, ClientConfig, Command } from '../state/types';
+import type { Bind, ClientConfig, Command, NewSessionSandbox, Runtime } from '../state/types';
 import { getPrefix, getSmoothScrollDuration } from '../state/configDefaults';
 import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
@@ -117,6 +118,16 @@ interface Props {
 }
 
 const ACTION_ID_PREFIX = 'action:';
+
+/** The active pane's worktree, else its directory (a sandbox's mount, as its cwd may be the guest's own). */
+function defaultMount(sessionId: string): string {
+  const session = useStore.getState().getSession(sessionId);
+  const window = session?.windows[session.active_window];
+  const pane = window?.panes[window.active_pane];
+  if (pane?.git) return pane.git.worktree_root;
+  if (session?.runtime.type === 'multipass') return session.runtime.mounts[0] ?? '';
+  return pane?.cwd ?? '';
+}
 
 // Desktop app only, where just macOS has a menu for it.
 const SWITCH_SERVER: Command = {
@@ -331,11 +342,25 @@ export function Overlay({ sessionId, send, config }: Props) {
       />
     );
   if (overlay.mode === 'prompt') {
+    const newSession = overlay.action === 'new-session';
+    const canSandbox = newSession && !!config?.multipass;
+    const sandbox: NewSessionSandbox = overlay.sandbox ?? {
+      enabled: false,
+      mount: '',
+      shell: config?.multipass_shell ?? 'bash',
+    };
+    const setSandbox = (change: Partial<NewSessionSandbox>) =>
+      setOverlay({ ...overlay, sandbox: { ...sandbox, ...change } });
     const submit = () => {
       const name = overlay.value.trim();
       const target = overlay.targetSessionId ?? sessionId;
-      if (overlay.action === 'new-session') send({ type: 'create_session', name: name || null });
-      else if (overlay.action === 'new-worktree') {
+      if (newSession) {
+        const runtime: Runtime =
+          canSandbox && sandbox.enabled
+            ? { type: 'multipass', mounts: [sandbox.mount.trim()], shell: sandbox.shell }
+            : { type: 'local' };
+        send({ type: 'create_session', name: name || null, runtime });
+      } else if (overlay.action === 'new-worktree') {
         if (name && overlay.targetPaneId)
           send({ type: 'create_worktree', pane_id: overlay.targetPaneId, branch: name });
       } else if (name && overlay.action === 'rename-window') send({ type: 'rename_window', session_id: target, name });
@@ -345,31 +370,83 @@ export function Overlay({ sessionId, send, config }: Props) {
       }
       close();
     };
+    // Closing refocuses the pane before Enter's default action,
+    // which would then type a newline into it.
+    const keepEnter = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' && !event.nativeEvent.isComposing) event.preventDefault();
+    };
     return (
       <Dialog isOpen onOpenChange={changeOpen} purpose="form">
         <Layout
           header={<DialogHeader title={overlay.title} onOpenChange={changeOpen} />}
           content={
             <LayoutContent padding={4}>
-              <TextInput
-                label={overlay.action === 'new-worktree' ? 'Branch' : 'Name'}
-                value={overlay.value}
-                hasAutoFocus
-                onChange={(value) => setOverlay({ ...overlay, value })}
-                onEnter={submit}
-                // Closing refocuses the pane before Enter's default action,
-                // which would then type a newline into it.
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.nativeEvent.isComposing) event.preventDefault();
-                }}
-              />
+              <VStack gap={3}>
+                <TextInput
+                  label={overlay.action === 'new-worktree' ? 'Branch' : 'Name'}
+                  value={overlay.value}
+                  hasAutoFocus
+                  onChange={(value) => setOverlay({ ...overlay, value })}
+                  onEnter={submit}
+                  onKeyDown={keepEnter}
+                />
+                {canSandbox && (
+                  <Selector
+                    label="Runs on"
+                    value={sandbox.enabled ? 'multipass' : 'local'}
+                    options={[
+                      { value: 'local', label: 'This machine' },
+                      {
+                        value: 'multipass',
+                        label: 'Multipass sandbox',
+                        description: 'A shared Ubuntu VM that sees only the directory you mount',
+                      },
+                    ]}
+                    onChange={(value) =>
+                      setSandbox({
+                        enabled: value === 'multipass',
+                        mount: sandbox.mount || defaultMount(sessionId),
+                      })
+                    }
+                    presentation="adaptive"
+                  />
+                )}
+                {canSandbox && sandbox.enabled && (
+                  <>
+                    <TextInput
+                      label="Mount"
+                      description="Mounted read-write at the same path, with a linked worktree's repository .git. Not your home directory."
+                      value={sandbox.mount}
+                      onChange={(mount) => setSandbox({ mount })}
+                      onEnter={submit}
+                      onKeyDown={keepEnter}
+                    />
+                    <Selector
+                      label="Shell"
+                      value={sandbox.shell}
+                      options={[
+                        { value: 'bash', label: 'bash' },
+                        { value: 'zsh', label: 'zsh' },
+                        { value: 'fish', label: 'fish' },
+                      ]}
+                      onChange={(shell) => setSandbox({ shell: shell as NewSessionSandbox['shell'] })}
+                      presentation="adaptive"
+                    />
+                  </>
+                )}
+              </VStack>
             </LayoutContent>
           }
           footer={
             <LayoutFooter hasDivider>
               <HStack gap={2} hAlign="end">
                 <Button label="Cancel" onClick={close} />
-                <Button label="Save" variant="primary" onClick={submit} />
+                <Button
+                  label={newSession ? 'Create' : 'Save'}
+                  variant="primary"
+                  isDisabled={canSandbox && sandbox.enabled && !sandbox.mount.trim()}
+                  onClick={submit}
+                />
               </HStack>
             </LayoutFooter>
           }

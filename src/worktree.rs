@@ -335,6 +335,7 @@ pub async fn create_in(
         return Err(Error::Conflict("The session no longer exists".into()));
     }
     let (path, branch) = add_async(state, dir, branch, track).await?;
+    mount_in_sandbox(state, session_id, &path).await?;
     let name = crate::git::sanitize_name(&branch);
     let mut mgr = state.write().await;
     let pane_id = mgr
@@ -365,6 +366,25 @@ async fn add_async(
         .map_err(|e| Error::Failed(e.to_string()))?
 }
 
+/// Mount `dir` in a sandboxed session, for a window there: a guest shell
+/// can't start outside its mounts.
+async fn mount_in_sandbox(state: &AppState, session_id: Uuid, dir: &Path) -> Result<(), Error> {
+    let Some(crate::session::Runtime::Multipass { mounts, .. }) =
+        state.read().await.session_runtime(session_id).cloned()
+    else {
+        return Ok(());
+    };
+    let dir = dir.to_path_buf();
+    let extended = tokio::task::spawn_blocking(move || crate::multipass::with_mount(&mounts, &dir))
+        .await
+        .map_err(|e| Error::Failed(e.to_string()))?
+        .map_err(Error::Conflict)?;
+    if let Some(mounts) = extended {
+        state.write().await.add_sandbox_mounts(session_id, mounts);
+    }
+    Ok(())
+}
+
 /// Open a window in `session_id` at the root of the worktree containing
 /// `dir`, named for its branch, and select it.
 pub async fn open(state: &AppState, session_id: Uuid, dir: &Path) -> Result<Uuid, Error> {
@@ -381,6 +401,7 @@ pub async fn open(state: &AppState, session_id: Uuid, dir: &Path) -> Result<Uuid
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| git.repo_name.clone()),
     };
+    mount_in_sandbox(state, session_id, &root).await?;
     let mut mgr = state.write().await;
     let pane_id = mgr
         .create_window_named(
@@ -553,10 +574,9 @@ fn worktree_path(template: &str, main: &Path, repo: &str, branch: &str) -> PathB
     let path = template
         .replace("{repo}", repo)
         .replace("{branch}", &branch.replace('/', "-"));
-    if let (Some(rest), Some(home)) = (path.strip_prefix("~/"), dirs::home_dir()) {
-        return home.join(rest);
-    }
-    main.parent().unwrap_or(main).join(path)
+    main.parent()
+        .unwrap_or(main)
+        .join(crate::config::expand_home(&path))
 }
 
 struct Target {

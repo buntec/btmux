@@ -1,0 +1,1753 @@
+//! Sandboxed sessions: shells in one shared Multipass instance, with host
+//! directories mounted at the same paths so cwds mean the same on both sides.
+//! A pane runs `btmux guest-shell`, which creates, starts, and sets up the
+//! instance, printing progress in the pane, then execs `multipass exec`.
+//! Guests reach the server through a listener on the bridge address, with a
+//! token scoped to guest panes (`auth::guest_route`).
+
+use std::{
+    collections::HashSet,
+    net::IpAddr,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
+    time::{Duration, Instant},
+};
+
+use axum::{http::StatusCode, response::IntoResponse, Json};
+use serde::{Deserialize, Serialize};
+
+use crate::config::MultipassConfig;
+
+/// Where the guest's btmux lives, for hooks and `btmux` commands.
+pub const GUEST_BIN: &str = "/usr/local/bin/btmux";
+
+#[derive(
+    Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, clap::ValueEnum,
+)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum GuestShell {
+    #[default]
+    Bash,
+    Zsh,
+    Fish,
+}
+
+impl GuestShell {
+    /// The guest shell named like the shell `program`.
+    pub fn of(program: &str) -> Option<Self> {
+        let argv = crate::shell::argv(program);
+        let name = Path::new(argv.first()?).file_name()?.to_str()?;
+        match name.trim_end_matches(".exe") {
+            "bash" => Some(Self::Bash),
+            "zsh" => Some(Self::Zsh),
+            "fish" => Some(Self::Fish),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bash => "bash",
+            Self::Zsh => "zsh",
+            Self::Fish => "fish",
+        }
+    }
+}
+
+pub fn program() -> Option<PathBuf> {
+    crate::vscode::find_on_path("multipass").or_else(|| {
+        // A service's PATH lacks /usr/local/bin and /snap/bin.
+        [
+            "/usr/local/bin/multipass",
+            "/snap/bin/multipass",
+            "/opt/homebrew/bin/multipass",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+    })
+}
+
+/// Whether sandboxed sessions can run here.
+pub fn available() -> bool {
+    cfg!(unix) && program().is_some()
+}
+
+static PROFILE: OnceLock<Option<String>> = OnceLock::new();
+
+pub fn set_profile(profile: Option<String>) {
+    let _ = PROFILE.set(profile);
+}
+
+/// The shared instance: `instance`, else `btmux-sandbox` with the profile.
+pub fn instance_name(config: &MultipassConfig) -> String {
+    if let Some(name) = &config.instance {
+        return name.clone();
+    }
+    match PROFILE.get().cloned().flatten() {
+        Some(profile) => format!("btmux-sandbox-{profile}"),
+        None => "btmux-sandbox".into(),
+    }
+}
+
+/// A directory to mount, canonical. Refuses the home directory and its
+/// ancestors, which would hand the guest everything isolation hides.
+pub fn check_mount(path: &str) -> Result<String, String> {
+    let expanded = crate::config::expand_home(path);
+    if !expanded.is_absolute() {
+        return Err(format!("{path}: use an absolute path"));
+    }
+    let canonical = expanded
+        .canonicalize()
+        .map_err(|e| format!("{path}: {e}"))?;
+    if !canonical.is_dir() {
+        return Err(format!("{path}: not a directory"));
+    }
+    let home = dirs::home_dir().and_then(|home| home.canonicalize().ok());
+    if canonical.parent().is_none() || home.is_some_and(|home| home.starts_with(&canonical)) {
+        return Err(format!(
+            "{}: mount a project directory, not your home directory or above it",
+            canonical.display()
+        ));
+    }
+    let canonical = canonical.to_string_lossy().into_owned();
+    if canonical.contains(':') {
+        return Err(format!("{canonical}: Multipass can't mount paths with ':'"));
+    }
+    Ok(canonical)
+}
+
+/// Checked, deduplicated mounts, plus the git dir each worktree root keeps
+/// outside its mount (a linked worktree's repository, a submodule's), without
+/// which Git in the guest finds no repository.
+pub fn mounts(requested: &[String]) -> Result<Vec<String>, String> {
+    let mut mounts: Vec<String> = Vec::new();
+    for mount in requested {
+        let mount = check_mount(mount.trim())?;
+        if !mounts.contains(&mount) {
+            mounts.push(mount);
+        }
+    }
+    if mounts.is_empty() {
+        return Err("choose a directory to mount".into());
+    }
+    for mount in mounts.clone() {
+        let Some(git_dir) = external_git_dir(Path::new(&mount)) else {
+            continue;
+        };
+        if !mounts.iter().any(|m| Path::new(&git_dir).starts_with(m)) {
+            mounts.push(check_mount(&git_dir)?);
+        }
+    }
+    Ok(mounts)
+}
+
+/// `mounts` plus `dir`, with the git dir it needs, unless a mount has it.
+pub fn with_mount(mounts: &[String], dir: &Path) -> Result<Option<Vec<String>>, String> {
+    let dir = check_mount(&dir.to_string_lossy())?;
+    if mounts
+        .iter()
+        .any(|mount| Path::new(&dir).starts_with(mount))
+    {
+        return Ok(None);
+    }
+    let mut requested = mounts.to_vec();
+    requested.push(dir);
+    self::mounts(&requested).map(Some)
+}
+
+/// The git dir a worktree root at `dir` names in its `.git` file.
+fn external_git_dir(dir: &Path) -> Option<String> {
+    if !dir.join(".git").is_file() {
+        return None;
+    }
+    let (git, _) = crate::pane_git::worktree_of(dir)?;
+    (Path::new(&git.worktree_root) == dir).then_some(git.repo_id)
+}
+
+/// A pane's guest.
+#[derive(Debug)]
+pub struct Guest {
+    pub instance: String,
+    /// Grows as worktrees are added to the session.
+    pub mounts: std::sync::RwLock<Vec<String>>,
+    pub shell: GuestShell,
+    pub config: MultipassConfig,
+}
+
+impl Guest {
+    /// Whether an OSC 7 host names the guest.
+    pub fn is_host(&self, host: &str) -> bool {
+        let label = |name: &str| {
+            name.split('.')
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+        };
+        host.is_empty()
+            || host.eq_ignore_ascii_case("localhost")
+            || label(host) == label(&self.instance)
+    }
+
+    /// Whether a guest path is a mounted host path.
+    pub fn mounted(&self, path: &str) -> bool {
+        self.mounts
+            .read()
+            .unwrap()
+            .iter()
+            .any(|mount| Path::new(path).starts_with(mount))
+    }
+
+    pub fn add_mounts(&self, added: &[String]) {
+        let mut mounts = self.mounts.write().unwrap();
+        for mount in added {
+            if !mounts.contains(mount) {
+                mounts.push(mount.clone());
+            }
+        }
+    }
+
+    /// `btmux guest-shell` arguments for a shell in `cwd`.
+    pub fn wrapper_args(&self, cwd: Option<&str>) -> Vec<String> {
+        let mut args = vec![
+            "guest-shell".to_string(),
+            "--instance".into(),
+            self.instance.clone(),
+            "--shell".into(),
+            self.shell.name().into(),
+            "--image".into(),
+            self.config.image.clone(),
+            "--cpus".into(),
+            self.config.cpus.to_string(),
+            "--memory".into(),
+            self.config.memory.clone(),
+            "--disk".into(),
+            self.config.disk.clone(),
+        ];
+        if let Some(cloud_init) = &self.config.cloud_init {
+            args.extend(["--cloud-init".into(), cloud_init.clone()]);
+        }
+        let mounts = self.mounts.read().unwrap();
+        for mount in mounts.iter() {
+            args.extend(["--mount".into(), mount.clone()]);
+        }
+        for path in &self.config.copy {
+            args.extend(["--copy".into(), path.clone()]);
+        }
+        let cwd = cwd
+            .filter(|cwd| self.mounted(cwd))
+            .or(mounts.first().map(String::as_str));
+        if let Some(cwd) = cwd {
+            args.extend(["--cwd".into(), cwd.to_string()]);
+        }
+        args
+    }
+}
+
+#[derive(clap::Args, Clone, Debug)]
+pub struct GuestShellArgs {
+    #[arg(long)]
+    instance: String,
+    #[arg(long, value_enum)]
+    shell: GuestShell,
+    #[arg(long = "mount")]
+    mounts: Vec<String>,
+    #[arg(long)]
+    cwd: Option<String>,
+    #[arg(long)]
+    image: String,
+    #[arg(long)]
+    cpus: u32,
+    #[arg(long)]
+    memory: String,
+    #[arg(long)]
+    disk: String,
+    #[arg(long)]
+    cloud_init: Option<String>,
+    #[arg(long = "copy")]
+    copies: Vec<String>,
+}
+
+/// The default cloud-init: tools agents expect, the shells, and the agents.
+const CLOUD_INIT: &str = r#"#cloud-config
+package_update: true
+packages:
+  - build-essential
+  - ca-certificates
+  - curl
+  - fish
+  - git
+  - jq
+  - nodejs
+  - npm
+  - ripgrep
+  - unzip
+  - zsh
+write_files:
+  # DNS can fail early in the first boot, so retry.
+  - path: /usr/local/lib/btmux/install-agents.sh
+    content: |
+      #!/bin/bash
+      set -o pipefail
+      retry() { for _ in 1 2 3 4 5 6; do "$@" && return; sleep 10; done; return 1; }
+      # A hung installer would hold up initialization until launch times out.
+      status=0
+      retry timeout 600 su - ubuntu -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' || status=1
+      retry timeout 600 npm install -g @openai/codex || status=1
+      exit $status
+runcmd:
+  - bash /usr/local/lib/btmux/install-agents.sh
+"#;
+
+/// Shell integration: OSC 7 with the guest's hostname, which the server maps
+/// back to host paths under mounts, and OSC 133 marks, from which it tells
+/// the shell's prompt from a running program (`Probe`).
+const BASH_INTEGRATION: &str = r#"# btmux: cwd and prompt marks in btmux panes.
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+if [ -n "$BASH_VERSION" ] && [ "$TERM_PROGRAM" = btmux ]; then
+  __btmux_prompt() {
+    local s=$? p=${PWD//%/%25}
+    printf '\e]7;file://%s%s\a\e]133;A\a' "$HOSTNAME" "${p// /%20}"
+    return $s
+  }
+  PROMPT_COMMAND="__btmux_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+  PS0='\e]133;C\a'"${PS0:-}"
+fi
+"#;
+
+const ZSH_INTEGRATION: &str = r#"# btmux: cwd and prompt marks in btmux panes.
+if [[ $TERM_PROGRAM == btmux ]]; then
+  path=(~/.local/bin $path)
+  __btmux_precmd() {
+    local p=${PWD//\%/%25}
+    printf '\e]7;file://%s%s\a\e]133;A\a' "$HOST" "${p// /%20}"
+  }
+  __btmux_preexec() { printf '\e]133;C\a' }
+  autoload -Uz add-zsh-hook
+  add-zsh-hook precmd __btmux_precmd
+  add-zsh-hook preexec __btmux_preexec
+fi
+"#;
+
+const FISH_INTEGRATION: &str = r#"# btmux: cwd and prompt marks in btmux panes.
+if test "$TERM_PROGRAM" = btmux
+    fish_add_path -g ~/.local/bin
+    function __btmux_prompt --on-event fish_prompt
+        set -l p (string replace -a % %25 -- $PWD | string replace -a ' ' %20)
+        printf '\e]7;file://%s%s\a\e]133;A\a' $hostname "$p"
+    end
+    function __btmux_preexec --on-event fish_preexec
+        printf '\e]133;C\a'
+    end
+end
+"#;
+
+/// Installs the shell integration and makes sure `shell` exists. Idempotent.
+fn integration_script(shell: GuestShell) -> String {
+    format!(
+        r#"set -e
+mkdir -p /etc/btmux /etc/fish/conf.d
+cat > /etc/profile.d/btmux.sh <<'BTMUX_EOF'
+{BASH_INTEGRATION}BTMUX_EOF
+cat > /etc/btmux/btmux.zsh <<'BTMUX_EOF'
+{ZSH_INTEGRATION}BTMUX_EOF
+cat > /etc/fish/conf.d/btmux-guest.fish <<'BTMUX_EOF'
+{FISH_INTEGRATION}BTMUX_EOF
+if [ -f /etc/zsh/zshrc ] && ! grep -q btmux.zsh /etc/zsh/zshrc; then
+  echo '[ -r /etc/btmux/btmux.zsh ] && . /etc/btmux/btmux.zsh' >> /etc/zsh/zshrc
+fi
+if ! command -v {shell} >/dev/null; then
+  echo "btmux: installing {shell}"
+  apt-get install -y -qq {shell} >/dev/null
+  if [ -f /etc/zsh/zshrc ] && ! grep -q btmux.zsh /etc/zsh/zshrc; then
+    echo '[ -r /etc/btmux/btmux.zsh ] && . /etc/btmux/btmux.zsh' >> /etc/zsh/zshrc
+  fi
+fi
+# Skip zsh's new-user wizard.
+[ -e /home/ubuntu/.zshrc ] || install -o ubuntu -g ubuntu -m 644 /dev/null /home/ubuntu/.zshrc
+"#,
+        shell = shell.name()
+    )
+}
+
+fn multipass() -> Result<Command, String> {
+    let program = program().ok_or("Multipass is not installed (https://multipass.run)")?;
+    Ok(Command::new(program))
+}
+
+fn run(args: &[&str]) -> Result<String, String> {
+    let output = multipass()?
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let error = match stderr.trim() {
+            "" => output.status.to_string(),
+            stderr => stderr.to_string(),
+        };
+        Err(format!("multipass {}: {error}", args[0]))
+    }
+}
+
+/// cloud-init's status (`done`, `running`, `error`, …), read from its output:
+/// it exits 2 when done with warnings.
+fn cloud_init_status(instance: &str, wait: bool) -> Option<String> {
+    let mut args = vec!["exec", instance, "-n", "--", "cloud-init", "status"];
+    if wait {
+        args.push("--wait");
+    }
+    let output = multipass()
+        .ok()?
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    parse_cloud_init_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_cloud_init_status(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find_map(|line| line.trim_start_matches('.').strip_prefix("status:"))
+        .map(|status| status.trim().to_string())
+}
+
+/// Copy a host file into the instance, owner-only. Streamed, since snap
+/// Multipass can't read the host's /tmp or hidden directories.
+pub fn copy_in(instance: &str, host: &Path, guest: &str) -> Result<(), String> {
+    let file = std::fs::File::open(host).map_err(|e| format!("{}: {e}", host.display()))?;
+    write_in(instance, guest, file.into())
+}
+
+/// Write `input` to the guest file `path` (a relative one in the guest's
+/// home), owner-only.
+fn write_in(instance: &str, path: &str, input: Stdio) -> Result<(), String> {
+    const SCRIPT: &str = r#"umask 077 && cd && mkdir -p "$(dirname "$1")" && cat > "$1""#;
+    let output = multipass()?
+        .args(["exec", instance, "-n", "--", "sh", "-c", SCRIPT, "sh", path])
+        .stdin(input)
+        .output()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "cannot write {path} in {instance}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// `bytes` as a child's stdin.
+fn stdin_of(bytes: &[u8]) -> Result<Stdio, String> {
+    use std::io::Write;
+    // Small enough for the pipe's buffer.
+    let (reader, mut writer) = std::io::pipe().map_err(|e| e.to_string())?;
+    writer.write_all(bytes).map_err(|e| e.to_string())?;
+    Ok(reader.into())
+}
+
+/// `multipass launch`, showing its progress until it waits for cloud-init, then
+/// cloud-init's log, where the minutes go.
+fn launch(instance: &str, args: &[&str], input: Stdio) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let started = Instant::now();
+    let mut child = multipass()?
+        .args(args)
+        .stdin(input)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    let waiting = Arc::new(AtomicBool::new(false));
+    let mut stdout = child.stdout.take().unwrap();
+    let forward = {
+        let waiting = waiting.clone();
+        std::thread::spawn(move || {
+            const MARKER: &[u8] = b"Waiting for initialization";
+            let mut recent = Vec::new();
+            let mut buf = [0; 4096];
+            while let Ok(n @ 1..) = stdout.read(&mut buf) {
+                if waiting.load(Ordering::Relaxed) {
+                    continue;
+                }
+                recent.extend_from_slice(&buf[..n]);
+                if recent.windows(MARKER.len()).any(|w| w == MARKER) {
+                    // Clear its spinner's line; the log takes over.
+                    eprint!("\r\x1b[2K");
+                    waiting.store(true, Ordering::Relaxed);
+                    continue;
+                }
+                recent.drain(..recent.len().saturating_sub(MARKER.len()));
+                let _ = std::io::stderr().write_all(&buf[..n]);
+            }
+        })
+    };
+    let mut stderr = child.stderr.take().unwrap();
+    let errors = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.read_to_string(&mut text);
+        text
+    });
+    let tail = LogTail::start(instance, waiting);
+    let status = child.wait().map_err(|e| e.to_string())?;
+    tail.stop(!status.success());
+    let _ = forward.join();
+    let errors = errors.join().unwrap_or_default();
+    if !status.success() {
+        let error = errors.trim();
+        return Err(if error.is_empty() {
+            format!("multipass launch failed ({status})")
+        } else {
+            format!("multipass launch: {error}")
+        });
+    }
+    say(&format!(
+        "{instance} is ready after {}s",
+        started.elapsed().as_secs()
+    ));
+    Ok(())
+}
+
+/// The cloud-init log's last lines, redrawn in place below the cursor.
+struct LogTail {
+    /// Set when stopping, with whether to keep the lines shown.
+    stop: Arc<Mutex<Option<bool>>>,
+    tail: Arc<Mutex<Option<std::process::Child>>>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+const LOG_LINES: usize = 10;
+const CLOUD_INIT_LOG: &str = "/var/log/cloud-init-output.log";
+
+impl LogTail {
+    /// Starts showing once `ready` is set.
+    fn start(instance: &str, ready: Arc<AtomicBool>) -> Self {
+        let stop = Arc::new(Mutex::new(None));
+        let tail: Arc<Mutex<Option<std::process::Child>>> = Arc::default();
+        let instance = instance.to_string();
+        let thread = {
+            let (stop, tail) = (stop.clone(), tail.clone());
+            std::thread::spawn(move || {
+                let mut window = LogWindow::default();
+                let mut seen = 0;
+                // Exec fails until the instance is up, and its log may not exist yet.
+                while stop.lock().unwrap().is_none() {
+                    if ready.load(Ordering::Relaxed) {
+                        seen += follow(&instance, seen, &stop, &tail, &mut window);
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                if *stop.lock().unwrap() == Some(false) {
+                    window.clear();
+                }
+            })
+        };
+        Self { stop, tail, thread }
+    }
+
+    fn stop(self, keep: bool) {
+        *self.stop.lock().unwrap() = Some(keep);
+        if let Some(mut tail) = self.tail.lock().unwrap().take() {
+            let _ = tail.kill();
+        }
+        let _ = self.thread.join();
+    }
+}
+
+/// Show the log from line `seen + 1` until cloud-init finishes or `stop` is
+/// set; returns the lines read.
+fn follow(
+    instance: &str,
+    seen: usize,
+    stop: &Mutex<Option<bool>>,
+    tail: &Mutex<Option<std::process::Child>>,
+    window: &mut LogWindow,
+) -> usize {
+    use std::io::BufRead;
+    let Ok(command) = multipass() else {
+        return 0;
+    };
+    // The guest's tail outlives a killed exec, so it ends with cloud-init.
+    let script = format!(
+        "tail -F -n +{} {CLOUD_INIT_LOG} 2>/dev/null & t=$!; \
+         cloud-init status --wait >/dev/null 2>&1; sleep 1; kill $t",
+        seen + 1
+    );
+    let Ok(mut child) = { command }
+        .args(["exec", instance, "-n", "--", "sh", "-c", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return 0;
+    };
+    let stdout = child.stdout.take().unwrap();
+    *tail.lock().unwrap() = Some(child);
+    // `stop` takes the child after setting the flag, so one of us kills it.
+    if stop.lock().unwrap().is_some() {
+        if let Some(mut child) = tail.lock().unwrap().take() {
+            let _ = child.kill();
+        }
+    }
+    let mut read = 0;
+    for line in std::io::BufReader::new(stdout).split(b'\n') {
+        let Ok(line) = line else { break };
+        read += 1;
+        window.push(&String::from_utf8_lossy(&line));
+    }
+    if let Some(mut child) = tail.lock().unwrap().take() {
+        let _ = child.wait();
+    }
+    read
+}
+
+/// A log line as shown: what a CR-redrawn progress bar ended with, without
+/// CSI sequences or control characters; `None` if blank.
+fn clean_log_line(line: &str) -> Option<String> {
+    let line = line.rsplit('\r').next().unwrap_or_default();
+    let mut clean = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            // Parameters and intermediates, then a final byte in @..~.
+            while chars.next().is_some_and(|c| !('@'..='~').contains(&c)) {}
+        } else if !c.is_control() {
+            clean.push(c);
+        }
+    }
+    (!clean.trim().is_empty()).then_some(clean)
+}
+
+#[derive(Default)]
+struct LogWindow {
+    lines: std::collections::VecDeque<String>,
+    shown: usize,
+}
+
+impl LogWindow {
+    fn push(&mut self, line: &str) {
+        let Some(line) = clean_log_line(line) else {
+            return;
+        };
+        let (columns, rows) = size();
+        // Cursor-up stops at the top, so the window must fit.
+        let height = LOG_LINES.min(rows.saturating_sub(3)).max(1);
+        self.lines.push_back(line);
+        while self.lines.len() > height {
+            self.lines.pop_front();
+        }
+        let width = columns.saturating_sub(4).max(10);
+        let mut out = self.rewind();
+        for line in &self.lines {
+            let line: String = line.chars().take(width).collect();
+            out.push_str(&format!("\x1b[2K\x1b[2m  │ {line}\x1b[0m\n"));
+        }
+        self.shown = self.lines.len();
+        eprint!("{out}");
+    }
+
+    fn clear(&mut self) {
+        eprint!("{}\x1b[J", self.rewind());
+        self.shown = 0;
+    }
+
+    /// Back to the first line shown.
+    fn rewind(&self) -> String {
+        match self.shown {
+            0 => String::new(),
+            n => format!("\x1b[{n}F"),
+        }
+    }
+}
+
+/// The pane's columns and rows.
+fn size() -> (usize, usize) {
+    #[cfg(unix)]
+    {
+        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+        if unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) } == 0
+            && size.ws_col > 0
+            && size.ws_row > 0
+        {
+            return (size.ws_col.into(), size.ws_row.into());
+        }
+    }
+    (80, 24)
+}
+
+/// Run with the pane's terminal, so progress shows.
+fn run_visible(args: &[&str]) -> Result<(), String> {
+    let status = multipass()?
+        .args(args)
+        .status()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("multipass {} failed ({status})", args[0]))
+    }
+}
+
+#[derive(Deserialize)]
+struct Info {
+    info: std::collections::HashMap<String, InstanceInfo>,
+}
+
+#[derive(Deserialize)]
+struct InstanceInfo {
+    state: String,
+    #[serde(default)]
+    mounts: std::collections::HashMap<String, MountInfo>,
+    #[serde(default)]
+    image_release: Option<String>,
+    /// Numbers, or strings of them, or empty while stopped.
+    #[serde(default)]
+    cpu_count: serde_json::Value,
+    #[serde(default)]
+    memory: SizeInfo,
+    #[serde(default)]
+    disks: std::collections::HashMap<String, SizeInfo>,
+}
+
+#[derive(Deserialize, Default)]
+struct SizeInfo {
+    #[serde(default)]
+    used: serde_json::Value,
+    #[serde(default)]
+    total: serde_json::Value,
+}
+
+impl SizeInfo {
+    fn usage(&self) -> Option<crate::system_info::Usage> {
+        Some(crate::system_info::Usage {
+            used: number(&self.used)?,
+            total: number(&self.total)?,
+        })
+    }
+}
+
+fn number(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+#[derive(Deserialize)]
+struct MountInfo {
+    source_path: String,
+}
+
+/// The instance's state and mounts, or `None` if it doesn't exist.
+fn info(instance: &str) -> Result<Option<InstanceInfo>, String> {
+    let output = multipass()?
+        .args(["info", instance, "--format", "json"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("does not exist") {
+            return Ok(None);
+        }
+        return Err(format!("multipass info: {}", stderr.trim()));
+    }
+    let mut info: Info = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("cannot read multipass info: {e}"))?;
+    Ok(info.info.remove(instance))
+}
+
+/// The host's address on the instance's network: its default gateway.
+fn gateway(instance: &str) -> Result<IpAddr, String> {
+    let route = run(&[
+        "exec", instance, "-n", "--", "ip", "-4", "route", "show", "default",
+    ])?;
+    route
+        .split_whitespace()
+        .skip_while(|word| *word != "via")
+        .nth(1)
+        .and_then(|ip| ip.parse().ok())
+        .ok_or_else(|| format!("no default route in {instance}: {}", route.trim()))
+}
+
+fn lock_file(instance: &str) -> Result<std::fs::File, String> {
+    let dir = dirs::cache_dir()
+        .ok_or("cannot resolve the cache directory")?
+        .join("btmux");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::File::create(dir.join(format!("multipass-{instance}.lock"))).map_err(|e| e.to_string())
+}
+
+/// Serializes setup across panes starting at once, and instance actions.
+fn lock(instance: &str) -> Result<std::fs::File, String> {
+    let file = lock_file(instance)?;
+    if file.try_lock().is_err() {
+        say(&format!("waiting for another pane to set up {instance}"));
+        file.lock().map_err(|e| e.to_string())?;
+    }
+    Ok(file)
+}
+
+/// [`lock`], unless it's held.
+fn try_lock(instance: &str) -> Result<Option<std::fs::File>, String> {
+    let file = lock_file(instance)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.to_string()),
+    }
+}
+
+fn say(message: &str) {
+    eprintln!("\x1b[2mbtmux: {message}\x1b[0m");
+}
+
+/// Create or start the instance, mount, and install btmux and the shell
+/// integration.
+fn prepare(args: &GuestShellArgs) -> Result<(), String> {
+    let instance = args.instance.as_str();
+    let _lock = lock(instance)?;
+    let mut created = false;
+    let current = match info(instance)? {
+        Some(current) => current,
+        None => {
+            say(&format!(
+                "creating the Multipass instance {instance}; the first one downloads an image and takes a few minutes"
+            ));
+            // On stdin: snap Multipass can't read the host's /tmp or hidden
+            // directories.
+            let (cloud_init, input) = match args.cloud_init.as_deref() {
+                Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
+                    (url, Stdio::null())
+                }
+                Some(path) => {
+                    let path = crate::config::expand_home(path);
+                    let file = std::fs::File::open(&path)
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                    ("-", file.into())
+                }
+                None => ("-", stdin_of(CLOUD_INIT.as_bytes())?),
+            };
+            let cpus = args.cpus.to_string();
+            launch(
+                instance,
+                &[
+                    "launch",
+                    &args.image,
+                    "--name",
+                    instance,
+                    "--cpus",
+                    &cpus,
+                    "--memory",
+                    &args.memory,
+                    "--disk",
+                    &args.disk,
+                    "--cloud-init",
+                    cloud_init,
+                    "--timeout",
+                    "1800",
+                ],
+                input,
+            )?;
+            created = true;
+            info(instance)?.ok_or("the new instance is missing")?
+        }
+    };
+    if current.state == "Deleted" {
+        say(&format!("recovering {instance}, which was deleted"));
+        run(&["recover", instance])?;
+    }
+    if current.state != "Running" {
+        say(&format!("starting {instance}"));
+        run_visible(&["start", instance])?;
+    }
+    // SSH can briefly fail right after a start.
+    for attempt in 0.. {
+        match run(&["exec", instance, "-n", "--", "true"]) {
+            Ok(_) => break,
+            Err(error) if attempt == 30 => return Err(error),
+            Err(_) => std::thread::sleep(std::time::Duration::from_secs(2)),
+        }
+    }
+    // Still initializing when another server or a timed-out launch left it.
+    let mut status = cloud_init_status(instance, false);
+    if !created && status.as_deref() != Some("done") {
+        let tail = LogTail::start(instance, Arc::new(AtomicBool::new(true)));
+        status = cloud_init_status(instance, true);
+        tail.stop(status.as_deref() != Some("done"));
+    }
+    if status.as_deref() != Some("done") {
+        say(&format!(
+            "cloud-init ended with status {}; see {CLOUD_INIT_LOG} in {instance}",
+            status.as_deref().unwrap_or("unknown")
+        ));
+    }
+    let mounted: HashSet<(&str, &str)> = current
+        .mounts
+        .iter()
+        .map(|(target, mount)| (target.as_str(), mount.source_path.as_str()))
+        .collect();
+    for mount in &args.mounts {
+        if !mounted.contains(&(mount.as_str(), mount.as_str())) {
+            say(&format!("mounting {mount}"));
+            run(&["mount", mount, &format!("{instance}:{mount}")])?;
+        }
+    }
+    install_btmux(instance)?;
+    let script = integration_script(args.shell);
+    let status = multipass()?
+        .args(["exec", instance, "-n", "--", "sudo", "bash", "-c", &script])
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    if !status.success() {
+        return Err(format!("setting up {instance} failed ({status})"));
+    }
+    if !args.copies.is_empty() {
+        if let Some(home) = dirs::home_dir() {
+            if let Err(error) = copy_home_files(instance, &home, &args.copies) {
+                say(&format!("cannot copy your files: {error}"));
+            }
+        }
+    }
+    if created {
+        say("log in to Claude Code or Codex once in a sandboxed pane; the login stays in the instance");
+    }
+    Ok(())
+}
+
+/// `copy` entries as paths relative to `home`, skipping (and reporting) any
+/// outside it or missing.
+fn home_paths(home: &Path, entries: &[String]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for entry in entries {
+        let relative = match entry.strip_prefix("~/") {
+            Some(rest) => Some(PathBuf::from(rest)),
+            None => Path::new(entry)
+                .strip_prefix(home)
+                .ok()
+                .map(Path::to_path_buf),
+        };
+        let relative = relative.filter(|path| {
+            !path.as_os_str().is_empty()
+                && path
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)))
+        });
+        let Some(relative) = relative else {
+            say(&format!(
+                "not copying {entry}: it isn't in your home directory"
+            ));
+            continue;
+        };
+        if !home.join(&relative).exists() {
+            say(&format!("not copying {entry}: it doesn't exist"));
+            continue;
+        }
+        let relative = relative.to_string_lossy().into_owned();
+        if !paths.contains(&relative) {
+            paths.push(relative);
+        }
+    }
+    paths
+}
+
+/// The most `copy` sends.
+const MAX_COPY_BYTES: usize = 64 << 20;
+
+/// A tar of `paths` in `home`, following symlinks (dotfile managers link
+/// into a store). ustar has no access times, so unchanged files give the
+/// same bytes.
+fn home_archive(home: &Path, paths: &[String]) -> Result<Vec<u8>, String> {
+    let output = Command::new("tar")
+        .args(["-c", "-h", "--format=ustar", "-f", "-", "-C"])
+        .arg(home)
+        .arg("--")
+        .args(paths)
+        // No AppleDouble files from macOS's tar.
+        .env("COPYFILE_DISABLE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run tar: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tar: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    if output.stdout.len() > MAX_COPY_BYTES {
+        return Err(format!("they take more than {} MiB", MAX_COPY_BYTES >> 20));
+    }
+    Ok(output.stdout)
+}
+
+/// Where the guest records the last copy's hash.
+const COPIED: &str = ".cache/btmux/copied";
+
+/// Copy `entries` from `home` to the guest's home, unless unchanged since
+/// the last copy.
+fn copy_home_files(instance: &str, home: &Path, entries: &[String]) -> Result<(), String> {
+    let paths = home_paths(home, entries);
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let archive = home_archive(home, &paths)?;
+    let hash = git2::Oid::hash_object(git2::ObjectType::Blob, &archive)
+        .map_err(|e| e.to_string())?
+        .to_string();
+    let copied = run(&[
+        "exec",
+        instance,
+        "-n",
+        "--",
+        "sh",
+        "-c",
+        &format!("cat ~/{COPIED} 2>/dev/null; true"),
+    ])?;
+    if copied.trim() == hash {
+        return Ok(());
+    }
+    say(&format!("copying {}", paths.join(", ")));
+    // Writable, since store files are read-only and the next copy replaces them.
+    let script = format!(
+        r#"cd && tar -x -m -f - && chmod -R u+w -- "$@" && mkdir -p "$(dirname {COPIED})" && echo {hash} > {COPIED}"#
+    );
+    let mut child = multipass()?
+        .args(["exec", instance, "-n", "--", "sh", "-c", &script, "sh"])
+        .args(&paths)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || {
+        use std::io::Write;
+        stdin.write_all(&archive)
+    });
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let written = writer.join().unwrap_or(Ok(()));
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    written.map_err(|e| e.to_string())
+}
+
+/// Records the host version a guest binary was installed for, which differs
+/// from its own when no release matched.
+const INSTALLED_FOR: &str = "/usr/local/lib/btmux/installed-for";
+
+/// Put this btmux version at `GUEST_BIN`, then install its agent hooks.
+fn install_btmux(instance: &str) -> Result<(), String> {
+    let version = run(&["exec", instance, "-n", "--", GUEST_BIN, "version"]).unwrap_or_default();
+    let installed_for = || run(&["exec", instance, "-n", "--", "cat", INSTALLED_FOR]);
+    if version.split_whitespace().last() == Some(crate::config::VERSION)
+        || installed_for().is_ok_and(|v| v.trim() == crate::config::VERSION)
+    {
+        return Ok(());
+    }
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "aarch64",
+        "x86_64" => "x86_64",
+        arch => return Err(format!("no btmux release for {arch} guests")),
+    };
+    // In the guest's home, where `write_in` puts it.
+    let staged = ".cache/btmux-install";
+    let runs = || {
+        let script = format!("cd && chmod +x {staged} && ./{staged} version");
+        run(&["exec", instance, "-n", "--", "sh", "-c", &script])
+            .is_ok_and(|v| v.split_whitespace().last() == Some(crate::config::VERSION))
+    };
+    // Guests share the host's architecture, so a Linux host's binary may run
+    // there, unless it links against the host's libraries (Nix).
+    let local = cfg!(target_os = "linux")
+        .then(crate::pty::server_exe)
+        .flatten()
+        .map(|exe| exe.to_string_lossy().into_owned());
+    let copied = local.is_some_and(|exe| {
+        say(&format!(
+            "copying btmux {} into {instance}",
+            crate::config::VERSION
+        ));
+        let ok = copy_in(instance, Path::new(&exe), staged).is_ok() && runs();
+        if !ok {
+            say("the copy doesn't run there");
+        }
+        ok
+    });
+    if !copied {
+        say(&format!(
+            "downloading btmux {} into {instance}",
+            crate::config::VERSION
+        ));
+        let asset = format!("btmux-{arch}-unknown-linux-gnu");
+        let base = "https://github.com/buntec/btmux/releases";
+        let script = format!(
+            "cd && mkdir -p .cache && {{ curl -fsSL -o {staged} {base}/download/v{version}/{asset} \\
+             || {{ echo 'btmux: no release for this version; using the latest' >&2; \\
+             curl -fsSL -o {staged} {base}/latest/download/{asset}; }}; }}",
+            version = crate::config::VERSION
+        );
+        run(&["exec", instance, "-n", "--", "sh", "-c", &script])?;
+    }
+    let script = format!(
+        "cd && sudo install -m 755 {staged} {GUEST_BIN} && rm {staged} \\
+         && sudo mkdir -p {dir} && echo {version} | sudo tee {INSTALLED_FOR} >/dev/null",
+        dir = Path::new(INSTALLED_FOR).parent().unwrap().display(),
+        version = crate::config::VERSION
+    );
+    run(&["exec", instance, "-n", "--", "sh", "-c", &script])?;
+    let hooks = format!(
+        "{GUEST_BIN} install-claude-code-hooks >/dev/null; {GUEST_BIN} install-codex-hooks >/dev/null; \
+         command -v fish >/dev/null && {GUEST_BIN} install-fish-integration >/dev/null; true"
+    );
+    run(&["exec", instance, "-n", "--", "sh", "-c", &hooks])?;
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BridgeRequest {
+    address: IpAddr,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BridgeResponse {
+    url: String,
+    token: String,
+}
+
+/// Ask the server for its guest address and token.
+async fn bridge(instance: &str) -> Result<BridgeResponse, String> {
+    let instance = instance.to_string();
+    let address = tokio::task::spawn_blocking(move || gateway(&instance))
+        .await
+        .map_err(|e| e.to_string())??;
+    let body = crate::api_client::request(
+        None,
+        reqwest::Method::POST,
+        "/api/multipass/bridge",
+        Some(serde_json::json!(BridgeRequest { address })),
+        std::time::Duration::from_secs(10),
+    )
+    .await?;
+    serde_json::from_str(&body).map_err(|e| e.to_string())
+}
+
+/// The guest token's file, in the guest's home.
+const GUEST_TOKEN: &str = ".config/btmux/guest-token";
+
+/// `btmux guest-shell`: prepare the instance, then run the guest's shell,
+/// again after the instance stops or is deleted, so sessions survive that.
+pub async fn guest_shell(args: GuestShellArgs) -> i32 {
+    let Ok(pane) = std::env::var("BTMUX_PANE_ID") else {
+        return fail("BTMUX_PANE_ID is unset");
+    };
+    loop {
+        let command = match enter(&args, &pane).await {
+            Ok(command) => command,
+            Err(error) => return fail(&error),
+        };
+        let code = match run_shell(command) {
+            Ok(code) => code,
+            Err(error) => return fail(&error),
+        };
+        // A shell that exits cleanly closes the pane without the check.
+        if code == 0 {
+            return 0;
+        }
+        let instance = args.instance.clone();
+        let gone = tokio::task::spawn_blocking(move || instance_gone(&instance))
+            .await
+            .ok()
+            .flatten();
+        let Some((why, verb)) = gone else {
+            return code;
+        };
+        // Modes the shell's programs may have left on.
+        eprint!(
+            "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+        );
+        eprint!("\r\n\x1b[33mbtmux: {why}.\x1b[0m Press Enter to {verb} it again.\r\n");
+        let mut line = String::new();
+        if !matches!(std::io::stdin().read_line(&mut line), Ok(1..)) {
+            return code;
+        }
+    }
+}
+
+/// Prepare the instance and the guest token: the command entering the shell.
+async fn enter(args: &GuestShellArgs, pane: &str) -> Result<Command, String> {
+    {
+        let args = args.clone();
+        tokio::task::spawn_blocking(move || prepare(&args))
+            .await
+            .map_err(|e| e.to_string())??;
+    }
+    let bridge = bridge(&args.instance).await?;
+    // In a file, not arguments, which other users see in process lists.
+    write_in(
+        &args.instance,
+        GUEST_TOKEN,
+        stdin_of(bridge.token.as_bytes())?,
+    )?;
+    let mut command = multipass()?;
+    command.args(["exec", &args.instance]);
+    match &args.cwd {
+        Some(cwd) => command.args(["-d", cwd]),
+        None => command.arg("-n"),
+    };
+    command.args(["--", "env"]);
+    for var in [
+        "TERM",
+        "COLORTERM",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "LANG",
+    ] {
+        if let Ok(value) = std::env::var(var) {
+            command.arg(format!("{var}={value}"));
+        }
+    }
+    command.args([
+        format!("BTMUX_PANE_ID={pane}"),
+        format!("BTMUX_API_URL={}", bridge.url),
+        format!(
+            "BTMUX_OTEL_ENDPOINT={}/api/panes/{pane}/telemetry",
+            bridge.url
+        ),
+        format!("BTMUX_BIN={GUEST_BIN}"),
+    ]);
+    command.args([
+        "sh",
+        "-c",
+        &format!(
+            r#"BTMUX_AUTH_TOKEN=$(cat ~/{GUEST_TOKEN}) && export BTMUX_AUTH_TOKEN && exec "$@""#
+        ),
+        "sh",
+        args.shell.name(),
+        "-l",
+    ]);
+    Ok(command)
+}
+
+/// Run the guest's shell to its end: its exit status.
+#[cfg(unix)]
+fn run_shell(mut command: Command) -> Result<i32, String> {
+    use std::os::unix::process::ExitStatusExt;
+    // SAFETY: tcgetattr/tcsetattr and signal take no pointers we keep.
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    let saved = unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut termios) } == 0;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    // The terminal's signals are the guest's while it runs.
+    let ignored = [libc::SIGINT, libc::SIGQUIT, libc::SIGTSTP];
+    let previous: Vec<_> = ignored
+        .iter()
+        .map(|&signal| unsafe { libc::signal(signal, libc::SIG_IGN) })
+        .collect();
+    let status = child.wait();
+    for (&signal, handler) in ignored.iter().zip(previous) {
+        unsafe { libc::signal(signal, handler) };
+    }
+    if saved {
+        unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) };
+    }
+    let status = status.map_err(|e| e.to_string())?;
+    Ok(status
+        .code()
+        .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
+}
+
+#[cfg(not(unix))]
+fn run_shell(_: Command) -> Result<i32, String> {
+    Err("sandboxed sessions need a Unix host".into())
+}
+
+/// Why the shell ended with the instance, and how to bring it back; `None`
+/// while the instance still answers.
+fn instance_gone(instance: &str) -> Option<(String, &'static str)> {
+    if run(&["exec", instance, "-n", "--", "true"]).is_ok() {
+        return None;
+    }
+    // Let a stop or delete finish.
+    std::thread::sleep(Duration::from_secs(1));
+    Some(match info(instance) {
+        Ok(Some(info)) if info.state != "Deleted" => (
+            format!("{instance} is {}", info.state.to_lowercase()),
+            "start",
+        ),
+        Ok(_) => (format!("{instance} was deleted"), "create"),
+        Err(error) => (error, "start"),
+    })
+}
+
+/// Show the error until a key is pressed, then exit, closing the pane.
+fn fail(error: &str) -> i32 {
+    eprintln!("\x1b[31mbtmux: {error}\x1b[0m\r\nPress Enter to close this pane.");
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    1
+}
+
+/// The instance, for the status bar.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct InstanceStatus {
+    pub instance: String,
+    /// Multipass's state (`Running`, `Stopped`, …); `None` until created.
+    pub state: Option<String>,
+    pub release: Option<String>,
+    pub cpus: Option<u32>,
+    pub memory: Option<crate::system_info::Usage>,
+    pub disk: Option<crate::system_info::Usage>,
+    /// Sandboxed panes with a shell, which stopping it interrupts.
+    pub panes: usize,
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum InstanceAction {
+    Start,
+    Stop,
+    Restart,
+    /// `delete --purge`.
+    Delete,
+}
+
+fn instance_status(instance: String, panes: usize) -> Result<InstanceStatus, String> {
+    let info = info(&instance)?;
+    Ok(InstanceStatus {
+        state: info.as_ref().map(|info| info.state.clone()),
+        release: info
+            .as_ref()
+            .and_then(|info| info.image_release.clone())
+            .filter(|release| !release.is_empty()),
+        cpus: info
+            .as_ref()
+            .and_then(|info| number(&info.cpu_count))
+            .and_then(|n| n.try_into().ok()),
+        memory: info.as_ref().and_then(|info| info.memory.usage()),
+        disk: info.as_ref().and_then(|info| {
+            let disks: Vec<_> = info.disks.values().filter_map(SizeInfo::usage).collect();
+            (!disks.is_empty()).then(|| crate::system_info::Usage {
+                used: disks.iter().map(|d| d.used).sum(),
+                total: disks.iter().map(|d| d.total).sum(),
+            })
+        }),
+        instance,
+        panes,
+    })
+}
+
+/// `GET /api/multipass`.
+pub async fn api_status(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+) -> axum::response::Response {
+    let (instance, panes) = {
+        let mgr = state.read().await;
+        (
+            instance_name(&mgr.config().multipass_config),
+            mgr.guest_shells(),
+        )
+    };
+    respond(tokio::task::spawn_blocking(move || instance_status(instance, panes)).await)
+}
+
+/// `POST /api/multipass/{action}`. Sandboxed panes offer to start or create
+/// the instance again when it goes away.
+pub async fn api_action(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+    axum::extract::Path(action): axum::extract::Path<InstanceAction>,
+) -> axum::response::Response {
+    let instance = instance_name(&state.read().await.config().multipass_config);
+    let done = {
+        let instance = instance.clone();
+        tokio::task::spawn_blocking(move || {
+            // Not while a pane sets it up.
+            let _lock = try_lock(&instance)?
+                .ok_or_else(|| format!("a sandboxed pane is setting up {instance}"))?;
+            let args: &[&str] = match action {
+                InstanceAction::Start => &["start", &instance],
+                InstanceAction::Stop => &["stop", &instance],
+                InstanceAction::Restart => &["restart", &instance],
+                InstanceAction::Delete => &["delete", "--purge", &instance],
+            };
+            run(args).map(drop)
+        })
+        .await
+    };
+    match done {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return (StatusCode::CONFLICT, error).into_response(),
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+        }
+    }
+    let panes = state.read().await.guest_shells();
+    respond(tokio::task::spawn_blocking(move || instance_status(instance, panes)).await)
+}
+
+fn respond(
+    result: Result<Result<InstanceStatus, String>, tokio::task::JoinError>,
+) -> axum::response::Response {
+    match result {
+        Ok(Ok(status)) => Json(status).into_response(),
+        Ok(Err(error)) => (StatusCode::BAD_GATEWAY, error).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// The server's half: a listener on each bridge address guests asked for.
+struct Bridge {
+    auth: std::sync::Arc<crate::auth::Auth>,
+    port: u16,
+    /// The main listener's address.
+    main: Option<IpAddr>,
+    /// The main listener takes every address.
+    unspecified: bool,
+    app: Mutex<Option<axum::Router>>,
+    /// Held across binding, so concurrent requests bind once.
+    bound: tokio::sync::Mutex<HashSet<IpAddr>>,
+}
+
+static BRIDGE: OnceLock<Bridge> = OnceLock::new();
+
+pub fn configure_bridge(auth: std::sync::Arc<crate::auth::Auth>, host: &str, port: u16) {
+    let main = match host.trim_matches(['[', ']']) {
+        "localhost" => Some(IpAddr::from([127, 0, 0, 1])),
+        host => host.parse::<IpAddr>().ok(),
+    };
+    let _ = BRIDGE.set(Bridge {
+        auth,
+        port,
+        main,
+        unspecified: main.is_some_and(|ip| ip.is_unspecified()),
+        app: Mutex::new(None),
+        bound: Default::default(),
+    });
+}
+
+/// The app the bridge listeners serve, with its auth layer.
+pub fn set_app(app: axum::Router) {
+    if let Some(bridge) = BRIDGE.get() {
+        *bridge.app.lock().unwrap() = Some(app);
+    }
+}
+
+/// Listen on `address`, a private address of this host, for guests.
+async fn listen(address: IpAddr) -> Result<String, String> {
+    let bridge = BRIDGE.get().ok_or("the bridge isn't configured")?;
+    // The main listener may already serve it (tests' loopback guests).
+    let served = bridge.unspecified || bridge.main == Some(address);
+    let private = match address {
+        IpAddr::V4(ip) => ip.is_private() || ip.is_link_local(),
+        IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local(),
+    };
+    if !served && !private {
+        return Err(format!("{address} isn't a private address"));
+    }
+    let authority = match address {
+        IpAddr::V4(ip) => format!("{ip}:{}", bridge.port),
+        IpAddr::V6(ip) => format!("[{ip}]:{}", bridge.port),
+    };
+    let url = format!("http://{authority}");
+    bridge.auth.allow(&url)?;
+    if served {
+        return Ok(url);
+    }
+    let mut bound = bridge.bound.lock().await;
+    if bound.contains(&address) {
+        return Ok(url);
+    }
+    let app = bridge
+        .app
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("the server is starting")?;
+    let listener = match tokio::net::TcpListener::bind(&authority).await {
+        Ok(listener) => listener,
+        Err(e) => return Err(format!("cannot listen on {authority}: {e}")),
+    };
+    bound.insert(address);
+    tracing::info!("listening for Multipass guests on {authority}");
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            tracing::warn!("guest listener on {authority} stopped: {error}");
+        }
+    });
+    Ok(url)
+}
+
+/// `POST /api/multipass/bridge`, from `btmux guest-shell` with the host token.
+pub async fn api_bridge(Json(request): Json<BridgeRequest>) -> axum::response::Response {
+    let Some(token) = crate::auth::guest_token() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no guest token").into_response();
+    };
+    match listen(request.address).await {
+        Ok(url) => Json(BridgeResponse {
+            url,
+            token: token.to_string(),
+        })
+        .into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
+    }
+}
+
+/// Listen again for running guests after a restart or upgrade, whose shells
+/// keep the address they were given.
+pub fn restore_bridge(instance: String) {
+    tokio::spawn(async move {
+        let address = tokio::task::spawn_blocking(move || {
+            let running = info(&instance).ok().flatten()?.state == "Running";
+            running.then(|| gateway(&instance).ok()).flatten()
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(address) = address {
+            if let Err(error) = listen(address).await {
+                tracing::warn!("cannot listen for Multipass guests: {error}");
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn guest(mounts: &[&str]) -> Guest {
+        Guest {
+            instance: "btmux-sandbox".into(),
+            mounts: std::sync::RwLock::new(mounts.iter().map(|m| m.to_string()).collect()),
+            shell: GuestShell::Fish,
+            config: MultipassConfig::default(),
+        }
+    }
+
+    #[test]
+    fn reads_cloud_init_status() {
+        // `--wait` prints dots before it.
+        assert_eq!(
+            parse_cloud_init_status("....\nstatus: done\n").as_deref(),
+            Some("done")
+        );
+        assert_eq!(
+            parse_cloud_init_status("...status: error").as_deref(),
+            Some("error")
+        );
+        assert_eq!(
+            parse_cloud_init_status("status: running").as_deref(),
+            Some("running")
+        );
+        assert_eq!(parse_cloud_init_status(""), None);
+    }
+
+    #[test]
+    fn cleans_log_lines() {
+        assert_eq!(
+            clean_log_line("Get:1 x [10 kB]").as_deref(),
+            Some("Get:1 x [10 kB]")
+        );
+        assert_eq!(
+            clean_log_line("10%\r50%\r100% done").as_deref(),
+            Some("100% done")
+        );
+        assert_eq!(
+            clean_log_line("\x1b[1;32mok\x1b[0m\x07").as_deref(),
+            Some("ok")
+        );
+        assert_eq!(clean_log_line("  \t"), None);
+    }
+
+    #[test]
+    fn names_guest_shells() {
+        assert_eq!(GuestShell::of("/usr/bin/fish"), Some(GuestShell::Fish));
+        assert_eq!(GuestShell::of("/bin/zsh"), Some(GuestShell::Zsh));
+        assert_eq!(GuestShell::of("/bin/bash"), Some(GuestShell::Bash));
+        assert_eq!(GuestShell::of("nu"), None);
+    }
+
+    #[test]
+    fn maps_guest_cwds_under_mounts() {
+        let guest = guest(&["/src/app"]);
+        assert!(guest.is_host("btmux-sandbox"));
+        assert!(guest.is_host("BTMUX-SANDBOX.localdomain"));
+        assert!(!guest.is_host("elsewhere"));
+        assert!(guest.mounted("/src/app/lib"));
+        assert!(!guest.mounted("/src/application"));
+        assert!(!guest.mounted("/home/ubuntu"));
+    }
+
+    #[test]
+    fn wrapper_starts_in_a_mount() {
+        let guest = guest(&["/src/app"]);
+        let args = guest.wrapper_args(Some("/src/app/lib"));
+        assert!(args.ends_with(&["--cwd".into(), "/src/app/lib".into()]));
+        let args = guest.wrapper_args(Some("/etc"));
+        assert!(args.ends_with(&["--cwd".into(), "/src/app".into()]));
+        assert!(args.windows(2).any(|w| w == ["--shell", "fish"]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mounts_the_repository_a_linked_worktree_needs() {
+        let parent = std::env::temp_dir().join(format!("btmux-mounts-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&parent).unwrap();
+        let parent = parent.canonicalize().unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let status = Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=btmux",
+                    "-c",
+                    "user.email=btmux@example.invalid",
+                ])
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        let repo = parent.join("repo");
+        let feat = parent.join("repo-feat");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat",
+                feat.to_str().unwrap(),
+            ],
+        );
+        let path = |p: &Path| p.to_string_lossy().into_owned();
+
+        assert_eq!(
+            mounts(&[path(&feat)]).unwrap(),
+            [path(&feat), path(&repo.join(".git"))]
+        );
+        // The main worktree, a repository already mounted, and a subdirectory
+        // (whose repository lies outside it either way) need nothing more.
+        assert_eq!(mounts(&[path(&repo)]).unwrap(), [path(&repo)]);
+        assert_eq!(
+            mounts(&[path(&feat), path(&repo)]).unwrap(),
+            [path(&feat), path(&repo)]
+        );
+        std::fs::create_dir(feat.join("sub")).unwrap();
+        assert_eq!(
+            mounts(&[path(&feat.join("sub"))]).unwrap(),
+            [path(&feat.join("sub"))]
+        );
+        assert!(mounts(&[]).is_err());
+
+        // A worktree made from a sandboxed session.
+        let other = parent.join("repo-other");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "other",
+                other.to_str().unwrap(),
+            ],
+        );
+        let sandbox = mounts(&[path(&feat)]).unwrap();
+        assert_eq!(with_mount(&sandbox, &feat.join("sub")).unwrap(), None);
+        assert_eq!(
+            with_mount(&sandbox, &other).unwrap().unwrap(),
+            [path(&feat), path(&repo.join(".git")), path(&other)]
+        );
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copies_home_files_following_links() {
+        let root = std::env::temp_dir().join(format!("btmux-copy-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let store = root.join("store");
+        std::fs::create_dir_all(home.join(".config/fish")).unwrap();
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(home.join(".config/fish/config.fish"), "set -g x 1\n").unwrap();
+        std::fs::write(store.join("starship.toml"), "format = '$all'\n").unwrap();
+        std::os::unix::fs::symlink(
+            store.join("starship.toml"),
+            home.join(".config/starship.toml"),
+        )
+        .unwrap();
+        let entries = [
+            "~/.config/fish".to_string(),
+            home.join(".config/starship.toml")
+                .to_string_lossy()
+                .into_owned(),
+            "~/.config/fish".into(),
+            "~/missing".into(),
+            "/etc/hosts".into(),
+            "~/../escape".into(),
+        ];
+        let paths = home_paths(&home, &entries);
+        assert_eq!(paths, [".config/fish", ".config/starship.toml"]);
+
+        let archive = home_archive(&home, &paths).unwrap();
+        assert_eq!(archive, home_archive(&home, &paths).unwrap(), "stable");
+        let out = root.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let mut tar = Command::new("tar")
+            .args(["-x", "-f", "-", "-C"])
+            .arg(&out)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        tar.stdin.take().unwrap().write_all(&archive).unwrap();
+        assert!(tar.wait().unwrap().success());
+        assert_eq!(
+            std::fs::read_to_string(out.join(".config/fish/config.fish")).unwrap(),
+            "set -g x 1\n"
+        );
+        let link = out.join(".config/starship.toml");
+        assert!(!link.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(std::fs::read_to_string(link).unwrap(), "format = '$all'\n");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_home_and_its_ancestors() {
+        let home = dirs::home_dir().unwrap();
+        assert!(check_mount(&home.to_string_lossy()).is_err());
+        assert!(check_mount("~").is_err());
+        assert!(check_mount("/").is_err());
+        assert!(check_mount("relative").is_err());
+        let dir = std::env::temp_dir().join(format!("btmux-mount-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        assert!(check_mount(&dir.to_string_lossy()).is_ok());
+        std::fs::remove_dir(dir).unwrap();
+    }
+}

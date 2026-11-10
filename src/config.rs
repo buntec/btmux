@@ -477,6 +477,9 @@ pub enum SubCommand {
     /// Print the in-place upgrade format this binary accepts, and its version.
     #[command(hide = true)]
     HandoffVersion,
+    /// A sandboxed pane's shell: set up the Multipass instance, then enter it.
+    #[command(hide = true)]
+    GuestShell(crate::multipass::GuestShellArgs),
 }
 
 /// The btmux version, taken from `Cargo.toml` at compile time. Shown by the
@@ -587,6 +590,41 @@ pub struct VscodeConfig {
     pub keybindings: Option<String>,
     /// Extension folders, or folders of them, to use instead of desktop VS Code's.
     pub extensions: Option<Vec<String>>,
+}
+
+/// `[multipass]`: the shared Multipass instance sandboxed sessions run in.
+/// Read when the instance is created, except `shell` and `copy`.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct MultipassConfig {
+    /// Defaults to `btmux-sandbox`, suffixed with the profile.
+    pub instance: Option<String>,
+    pub image: String,
+    pub cpus: u32,
+    pub memory: String,
+    pub disk: String,
+    /// The shell new sandboxed sessions offer first.
+    pub shell: Option<crate::multipass::GuestShell>,
+    /// A cloud-init file to create the instance with instead of btmux's.
+    pub cloud_init: Option<String>,
+    /// Files and directories in your home copied to the guest's home when a
+    /// sandboxed pane starts, if changed. Copied, never mounted.
+    pub copy: Vec<String>,
+}
+
+impl Default for MultipassConfig {
+    fn default() -> Self {
+        Self {
+            instance: None,
+            image: "26.04".into(),
+            cpus: 4,
+            memory: "8G".into(),
+            disk: "40G".into(),
+            shell: None,
+            cloud_init: None,
+            copy: Vec::new(),
+        }
+    }
 }
 
 /// `[browser]`: the browser surface.
@@ -780,6 +818,8 @@ pub struct FileConfig {
     pub vscode: VscodeConfig,
     /// The browser surface.
     pub browser: BrowserConfig,
+    /// The Multipass instance for sandboxed sessions.
+    pub multipass: MultipassConfig,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -846,6 +886,7 @@ impl Default for FileConfig {
             editor: None,
             vscode: VscodeConfig::default(),
             browser: BrowserConfig::default(),
+            multipass: MultipassConfig::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -1282,6 +1323,14 @@ pub struct ClientConfig {
     pub browser: bool,
     /// Where the browser's address bar searches; `%s` is the text.
     pub browser_search_url: Option<String>,
+    /// Whether the server found Multipass for sandboxed sessions.
+    pub multipass: bool,
+    /// The shell new sandboxed sessions offer first.
+    pub multipass_shell: crate::multipass::GuestShell,
+    /// The Multipass instance's settings; used by the backend only.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub multipass_config: MultipassConfig,
     /// VS Code's server and sharing; used by the backend only.
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
@@ -1395,15 +1444,19 @@ fn is_color_scheme_path(value: &str) -> bool {
     std::path::Path::new(value).is_absolute() || value.starts_with("~/")
 }
 
-/// Expand an explicit local color scheme path. If HOME is unavailable, retain
-/// the original `~/` path so the read below emits a useful warning.
-fn expand_color_scheme_path(value: &str) -> PathBuf {
-    if let Some(relative) = value.strip_prefix("~/") {
-        dirs::home_dir()
-            .map(|home| home.join(relative))
-            .unwrap_or_else(|| PathBuf::from(value))
-    } else {
-        PathBuf::from(value)
+/// `value` with a leading `~` or `~/` expanded; unchanged without a home.
+pub fn expand_home(value: &str) -> PathBuf {
+    let rest = match value.strip_prefix('~') {
+        Some("") => "",
+        Some(rest) => match rest.strip_prefix('/') {
+            Some(rest) => rest,
+            None => return PathBuf::from(value),
+        },
+        None => return PathBuf::from(value),
+    };
+    match dirs::home_dir() {
+        Some(home) => home.join(rest),
+        None => PathBuf::from(value),
     }
 }
 
@@ -1449,7 +1502,7 @@ pub fn default_theme() -> Theme {
 /// `None` if the file doesn't exist or doesn't contain the required keys.
 pub fn load_color_scheme(name: &str) -> Option<BaseTheme> {
     let path = if is_color_scheme_path(name) {
-        expand_color_scheme_path(name)
+        expand_home(name)
     } else {
         let found = colors_dir().and_then(|dir| {
             ["yaml", "yml"]
@@ -1822,6 +1875,18 @@ pub fn generate_config_toml() -> String {
 # block-ads = true        # don't resolve known ad servers
 # block-autoplay = true   # keep media from playing until you click or press a key
 
+# The shared Multipass instance sandboxed sessions run in. Its settings apply
+# when btmux creates it.
+# [multipass]
+# instance = "btmux-sandbox"   # default; other profiles append "-<profile>"
+# image = "26.04"
+# cpus = 4
+# memory = "8G"
+# disk = "40G"
+# shell = "bash"   # "bash", "zsh", or "fish"; the one new sandboxed sessions offer first (default: yours, if one of these)
+# cloud-init = "~/btmux-cloud-init.yaml"   # instead of btmux's (packages, Claude Code, Codex)
+# copy = ["~/.config/fish/config.fish", "~/.config/starship.toml"]   # into the guest's home when a pane starts, if changed
+
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.
 # [notifications]
@@ -2107,6 +2172,13 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .collect(),
         browser: crate::browser::available(),
         browser_search_url: file.browser.search_url.clone(),
+        multipass: crate::multipass::available(),
+        multipass_shell: file
+            .multipass
+            .shell
+            .or_else(|| crate::multipass::GuestShell::of(&resolve_shell(file.shell.as_deref())))
+            .unwrap_or_default(),
+        multipass_config: file.multipass.clone(),
         vscode: file.vscode.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),

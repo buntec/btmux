@@ -26,6 +26,7 @@ mod handoff;
 mod handoff;
 mod health;
 mod mcp;
+mod multipass;
 mod pane_git;
 mod paste_image;
 mod persistence;
@@ -126,6 +127,9 @@ async fn main() {
         }
         Some(config::SubCommand::Pick(args)) => std::process::exit(widget::pick(args).await),
         Some(config::SubCommand::Fzf { args }) => std::process::exit(fzf::run(args).await),
+        Some(config::SubCommand::GuestShell(args)) => {
+            std::process::exit(multipass::guest_shell(args.clone()).await)
+        }
         Some(config::SubCommand::Confirm {
             message,
             default_yes,
@@ -295,6 +299,7 @@ async fn main() {
     });
     // Before an upgrade can replace the binary on disk.
     pty::server_exe();
+    multipass::set_profile(args.profile.clone());
     #[cfg(unix)]
     process::raise_fd_limit();
 
@@ -387,6 +392,11 @@ async fn main() {
             std::process::exit(2);
         });
     let auth = Arc::new(auth);
+    auth::load_guest_token(state_file.as_deref()).unwrap_or_else(|error| {
+        eprintln!("btmux: {error}");
+        std::process::exit(2);
+    });
+    multipass::configure_bridge(auth.clone(), &args.host, args.port);
     if let Some(dir) = state_file.as_ref().and_then(|p| p.parent()) {
         vscode::set_data_dir(dir.join("vscode"));
         browser::set_data_dir(dir.join("browser"));
@@ -461,6 +471,10 @@ async fn main() {
             auth.clone(),
             auth::protect,
         ));
+    multipass::set_app(app.clone());
+    if let Some(instance) = state.read().await.guest_instance() {
+        multipass::restore_bridge(instance);
+    }
     let upgraded = inherited_listener.is_some();
     let listener = match inherited_listener {
         Some(listener) => listener

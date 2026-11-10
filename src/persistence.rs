@@ -135,6 +135,7 @@ mod agent_status_tests {
         let snapshots = vec![SessionSnapshot {
             id: Uuid::new_v4(),
             name: "test".to_string(),
+            runtime: Default::default(),
             windows: vec![WindowSnapshot {
                 id: Uuid::new_v4(),
                 name: "shell".to_string(),

@@ -35,7 +35,9 @@ followed by upgrade, Astryx interaction, theme, Git, and mobile (WebKit) checks
 run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
-repo state don't affect it; failures keep the stack logs. Async page predicates must
+repo state don't affect it; failures keep the stack logs. Stacks put a fake
+`multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
+to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
 returned Promise as truthy and doesn't wait.
 `just test-browser-surface`, also on demand, covers the browser surface and needs Chrome or Chromium.
@@ -217,7 +219,7 @@ server's arguments, which the exec passes on. It refuses
 while the built-in Neovim has unsaved changes. The server holds the state
 lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
 output stays in the kernel), and writes session snapshots, replay
-journals, title/cwd, program-set colors, kitty keyboard flags, agent telemetry, any partly read escape sequence, and
+journals, title/cwd, program-set colors, kitty keyboard flags, OSC 133 prompt state, agent telemetry, any partly read escape sequence, and
 accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
@@ -521,6 +523,52 @@ ignore application-scoped keys. On each start, `link_extensions` registers
 shared extension folders in `extensions.json` by absolute location, reading a
 source's own `extensions.json` (minus `.obsolete`) when it has one, and
 replaces those `<state dir>/vscode/linked-extensions.json` lists.
+
+### Sandboxed sessions (Multipass)
+
+A session's `Runtime` (`session/mod.rs`, persisted) is `Local` or `Multipass {
+mounts, shell }`. Sandboxed sessions share one instance (`[multipass]`,
+`multipass::instance_name`: `btmux-sandbox`, `-<profile>` appended). Mounts are
+host directories mounted at the same path (`check_mount` refuses home and its
+ancestors), so cwds mean the same on both sides; `mounts` adds the git dir a
+worktree root's `.git` file names (a linked worktree's repository), without
+which Git in the guest finds no repository. Worktrees made or opened in a
+sandboxed session are added to its mounts (`with_mount`); validation reads
+the filesystem, so it runs off the lock. A guest pane's PTY runs the
+hidden `btmux guest-shell` (`multipass.rs`), which under a file lock creates
+(cloud-init: packages, shells, Claude Code, Codex) or starts the instance,
+mounts, installs this version's Linux binary at `GUEST_BIN` (copied from a Linux
+host if the copy runs there, else the matching release, or the latest, recorded
+in `INSTALLED_FOR` so it isn't fetched again) with agent hooks, writes the bash/zsh/fish
+integration (OSC 7 with the guest hostname, OSC 133), printing progress in the
+pane, then execs `multipass exec … <shell> -l`, which reads the guest token
+from a guest file (`GUEST_TOKEN`), never arguments, which process lists show.
+Until the first OSC 133 mark the pane counts as running a program. On failure
+it waits for Enter. A shell that exits nonzero while the instance no longer
+answers (stopped, deleted) gets an offer to start or create it again, so
+sessions survive; the wrapper ignores the terminal's job-control signals while
+the shell runs. `[multipass] copy` lists home files sent as a ustar archive
+(symlinks followed) on each start, skipped when its hash matches the guest's
+`COPIED`. `GET /api/multipass` (`InstanceStatus`) and `POST
+/api/multipass/{start,stop,restart,delete}` back the status bar's
+`MultipassButton`; actions refuse while a pane holds the setup lock. Files reach Multipass on stdin (`--cloud-init -`,
+`write_in`), never by host path: snap Multipass can't read the host's `/tmp`
+or hidden directories.
+
+Guests reach the server through `POST /api/multipass/bridge`, which the wrapper
+calls with the host token and the instance's default gateway: the server binds
+a second listener there (unless it listens on all addresses), allows that
+authority, and returns it with the guest token (`state.guest-token`, kept so
+shells survive restarts; `restore_bridge` rebinds at startup). `auth::protect`
+lets the guest token reach only `guest_route`s (pane notify, agent status,
+telemetry, widgets, `/api/notify`), drops `X-Btmux-Agent-Pid` (guest pids name
+no host process), sets no cookie, and `server::guest_scope` checks the pane is a
+guest's. Never widen this without considering that the guest is untrusted.
+Guest panes use the Posix dialect, OSC 7 under a mount from the guest host is
+local (`Guest::mounted`), the `/proc` cwd fallback is off, and the foreground
+group comes from OSC 133 marks (unix `Probe`), as for WSL. Host-typed
+editor opens pass `--kind pane`, and the CLI takes a 403 as `$EDITOR`. Pasted
+images and captures are copied into the guest's `/tmp`.
 
 ### Browser surface
 

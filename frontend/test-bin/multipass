@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# A fake `multipass` for browser tests: instances are directories under
+# $BTMUX_FAKE_MULTIPASS, every call is logged (tab-separated) to its `log`, and
+# `exec` runs on this machine, minus anything privileged, with the guest's home
+# and files under $BTMUX_FAKE_MULTIPASS. So no test can start a real VM.
+set -euo pipefail
+state="${BTMUX_FAKE_MULTIPASS:?BTMUX_FAKE_MULTIPASS is unset}"
+mkdir -p "$state"
+(IFS=$'\t'; printf '%s\n' "$*") >> "$state/log"
+
+command="${1:-}"
+shift || true
+# Ends the guest shells, as stopping an instance does.
+end_shells() {
+  [ -f "$1/pids" ] || return 0
+  while read -r pid; do kill -HUP "$pid" 2>/dev/null || true; done < "$1/pids"
+  rm -f "$1/pids"
+}
+case "$command" in
+  --version)
+    echo "multipass   0.0.0+fake"
+    ;;
+  info)
+    instance="$1"
+    if [ ! -d "$state/instances/$instance" ]; then
+      echo "info failed: instance \"$instance\" does not exist" >&2
+      exit 2
+    fi
+    mounts=""
+    if [ -f "$state/instances/$instance/mounts" ]; then
+      while IFS= read -r mount; do
+        mounts="$mounts${mounts:+,}\"$mount\": {\"source_path\": \"$mount\"}"
+      done < "$state/instances/$instance/mounts"
+    fi
+    if [ -f "$state/instances/$instance/stopped" ]; then
+      printf '{"errors": [], "info": {"%s": {"state": "Stopped", "image_release": "", "cpu_count": "", "memory": {}, "disks": {}, "mounts": {%s}}}}\n' "$instance" "$mounts"
+    else
+      printf '{"errors": [], "info": {"%s": {"state": "Running", "image_release": "26.04 LTS", "cpu_count": "4", "memory": {"total": 8589934592, "used": 1073741824}, "disks": {"sda1": {"total": "42949672960", "used": "5368709120"}}, "mounts": {%s}}}}\n' "$instance" "$mounts"
+    fi
+    ;;
+  launch)
+    instance=""
+    while [ $# -gt 0 ]; do
+      [ "$1" = --name ] && instance="$2"
+      [ "$1" = --cloud-init ] && [ "$2" = - ] && cat > "$state/cloud-init.yaml"
+      shift
+    done
+    mkdir -p "$state/instances/$instance"
+    echo "Creating $instance"
+    echo "Waiting for initialization to complete"
+    sleep 2
+    echo "Launched: $instance"
+    ;;
+  start | restart)
+    end_shells "$state/instances/$1"
+    rm -f "$state/instances/$1/stopped"
+    ;;
+  stop)
+    end_shells "$state/instances/$1"
+    touch "$state/instances/$1/stopped"
+    ;;
+  delete)
+    instance="${*: -1}"
+    end_shells "$state/instances/$instance"
+    rm -rf "$state/instances/$instance"
+    ;;
+  mount)
+    target="${2#*:}"
+    echo "$target" >> "$state/instances/${2%%:*}/mounts"
+    ;;
+  exec)
+    instance="$1"
+    shift
+    if [ ! -d "$state/instances/$instance" ] || [ -f "$state/instances/$instance/stopped" ]; then
+      echo "exec failed: $instance is not running" >&2
+      exit 2
+    fi
+    dir=""
+    while [ "$1" != -- ]; do
+      [ "$1" = -d ] && { dir="$2"; shift; }
+      shift
+    done
+    shift
+    case "$1" in
+      ip) echo "default via 127.0.0.1 dev lo" ;;
+      /usr/local/bin/btmux) shift; exec "$BTMUX_BIN" "$@" ;;
+      sh)
+        case "$3" in
+          # The cloud-init log while launch waits.
+          *"tail -F"*)
+            printf 'fake cloud-init: step %s\n' 1 2 3
+            sleep 5
+            ;;
+          # A copy into the guest: absolute paths under guest/, others home/.
+          *'cat > "$1"'*)
+            case "$5" in
+              /*) target="$state/guest$5" ;;
+              *) target="$state/home/$5" ;;
+            esac
+            mkdir -p "$(dirname "$target")"
+            cat > "$target"
+            ;;
+          *'tar -x'*)
+            mkdir -p "$state/home"
+            tar -x -m -f - -C "$state/home"
+            ;;
+        esac
+        ;;
+      cloud-init) echo "status: done" ;;
+      true | sudo) ;;
+      env)
+        # The guest's shell: bash reporting the instance as its host.
+        [ -n "$dir" ] && cd "$dir"
+        args=()
+        while [ $# -gt 2 ]; do
+          args+=("$1")
+          shift
+        done
+        export FAKE_GUEST_HOST="$instance" HOME="$state/home"
+        export PROMPT_COMMAND='printf "\033]7;file://%s%s\007\033]133;A\007" "$FAKE_GUEST_HOST" "$PWD"'
+        export PS0=$'\e]133;C\a'
+        echo $$ >> "$state/instances/$instance/pids"
+        exec "${args[@]}" bash --noprofile --norc -i
+        ;;
+      *)
+        echo "fake multipass: unexpected exec $*" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    echo "fake multipass: unexpected command $command" >&2
+    exit 1
+    ;;
+esac

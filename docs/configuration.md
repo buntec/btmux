@@ -145,6 +145,9 @@ Option+Left/Right and Option+Backspace move and delete by word without it. Set
 The `browser` action (`<prefix> + b`) toggles a browser over the active pane; see
 [Browser](browser.md).
 
+`[multipass]` sets up the VM sandboxed sessions run in; see
+[Sandboxed sessions](sandbox.md).
+
 ## LaTeX overlay
 
 btmux scans the visible part of each pane for LaTeX: `$$…$$`, `\[…\]`,

@@ -69,7 +69,8 @@ pub async fn run(file: Option<&str>, line: Option<u32>, kind: Option<Editor>) ->
 
 /// Ask the server owning this pane to open its editor (`kind`, else the
 /// `editor` setting). `Ok(false)` means use `$EDITOR`: outside a btmux pane,
-/// `editor = "pane"`, or no server (or an older one) to ask.
+/// `editor = "pane"`, no server (or an older one) to ask, or a sandbox's
+/// token, which may not ask.
 async fn open_in_server(
     file: Option<&str>,
     line: Option<u32>,
@@ -101,7 +102,10 @@ async fn open_in_server(
         Err(e) => return Err(e.to_string()),
     };
     let status = response.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
+    if matches!(
+        status,
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::FORBIDDEN
+    ) {
         return Ok(false);
     }
     let body = response.text().await.map_err(|e| e.to_string())?;

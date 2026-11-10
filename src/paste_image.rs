@@ -70,12 +70,15 @@ pub async fn api_paste_image(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let dialect = {
+    let (dialect, guest) = {
         let mgr = state.read().await;
         let Some(pane) = mgr.find_pane(pane_id) else {
             return StatusCode::NOT_FOUND.into_response();
         };
-        pane.pty.dialect()
+        (
+            pane.pty.dialect(),
+            pane.pty.guest_instance().map(str::to_string),
+        )
     };
     let content_type = headers
         .get(header::CONTENT_TYPE)
@@ -91,9 +94,24 @@ pub async fn api_paste_image(
     if body.is_empty() {
         return (StatusCode::BAD_REQUEST, "empty image").into_response();
     }
-    match tokio::task::spawn_blocking(move || save(ext, &body)).await {
+    let saved = tokio::task::spawn_blocking(move || {
+        let path = save(ext, &body)?;
+        let Some(instance) = guest else {
+            return Ok(path.to_string_lossy().into_owned());
+        };
+        // The guest can't see the host's temp dir.
+        let name = path.file_name().unwrap().to_string_lossy();
+        let guest_path = format!("/tmp/btmux-{name}");
+        let copied = crate::multipass::copy_in(&instance, &path, &guest_path);
+        let _ = std::fs::remove_file(&path);
+        copied
+            .map(|()| guest_path)
+            .map_err(|e| format!("cannot copy the image into {instance}: {e}"))
+    })
+    .await;
+    match saved {
         Ok(Ok(path)) => {
-            let path = pasted_path(dialect, &path.to_string_lossy());
+            let path = pasted_path(dialect, &path);
             Json(serde_json::json!({ "path": path })).into_response()
         }
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),

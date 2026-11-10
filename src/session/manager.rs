@@ -7,14 +7,15 @@ use uuid::Uuid;
 use super::{
     agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority, ToolCall},
     layout::{Layout, LayoutPreset},
-    AgentPane, AgentState, AgentStatus, Pane, PaneInfo, PaneSnapshot, Session, SessionSummary,
-    Window,
+    AgentPane, AgentState, AgentStatus, Pane, PaneInfo, PaneSnapshot, Runtime, Session,
+    SessionSummary, Window,
 };
 use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
 use crate::pane_git::GitTracker;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
+use std::sync::Arc;
 
 /// The detector scans every 300 ms; much longer means it stopped.
 const DETECTION_STALE: Duration = Duration::from_secs(3);
@@ -66,6 +67,8 @@ pub struct SessionManager {
 pub struct SessionSnapshot {
     pub id: Uuid,
     pub name: String,
+    #[serde(default)]
+    pub runtime: Runtime,
     pub windows: Vec<WindowSnapshot>,
     pub active_window: usize,
 }
@@ -610,6 +613,99 @@ impl SessionManager {
             .unwrap_or(crate::config::DEFAULT_SCROLLBACK_LINES)
     }
 
+    fn guest(&self, runtime: &Runtime) -> Option<Arc<crate::multipass::Guest>> {
+        let Runtime::Multipass { mounts, shell } = runtime else {
+            return None;
+        };
+        let config = &self.config.multipass_config;
+        Some(Arc::new(crate::multipass::Guest {
+            instance: crate::multipass::instance_name(config),
+            mounts: std::sync::RwLock::new(mounts.clone()),
+            shell: *shell,
+            config: config.clone(),
+        }))
+    }
+
+    fn new_pty(
+        &self,
+        pane_id: Uuid,
+        cwd: Option<std::path::PathBuf>,
+        runtime: &Runtime,
+    ) -> PtyHandle {
+        PtyHandle::new_with_cwd(
+            &self.shell,
+            pane_id,
+            &self.pty_env,
+            cwd,
+            self.scrollback_lines(),
+        )
+        .with_guest(self.guest(runtime))
+    }
+
+    fn runtime_shell_name(&self, runtime: &Runtime) -> String {
+        match runtime {
+            Runtime::Local => shell_name(&self.shell),
+            Runtime::Multipass { shell, .. } => shell.name().to_string(),
+        }
+    }
+
+    pub fn session_runtime(&self, session_id: Uuid) -> Option<&Runtime> {
+        self.sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .map(|s| &s.runtime)
+    }
+
+    /// Add checked mounts to a sandboxed session and its panes.
+    pub fn add_sandbox_mounts(&mut self, session_id: Uuid, added: Vec<String>) {
+        if let Some(Session {
+            runtime: Runtime::Multipass { mounts, .. },
+            windows,
+            ..
+        }) = self.session_mut(session_id)
+        {
+            for mount in &added {
+                if !mounts.contains(mount) {
+                    mounts.push(mount.clone());
+                }
+            }
+            for pane in windows.iter().flat_map(|w| &w.panes) {
+                pane.pty.add_guest_mounts(&added);
+            }
+        }
+    }
+
+    fn pane_runtime(&self, pane_id: Uuid) -> Runtime {
+        self.session_of_pane(pane_id)
+            .and_then(|id| self.sessions.iter().find(|s| s.id == id))
+            .map(|s| s.runtime.clone())
+            .unwrap_or_default()
+    }
+
+    /// The shared instance, while a session uses it.
+    pub fn guest_instance(&self) -> Option<String> {
+        self.sessions
+            .iter()
+            .any(|s| matches!(s.runtime, Runtime::Multipass { .. }))
+            .then(|| crate::multipass::instance_name(&self.config.multipass_config))
+    }
+
+    /// Panes whose shell runs, or is starting, in the guest.
+    pub fn guest_shells(&self) -> usize {
+        self.sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter(|p| p.pty.is_guest() && p.pty.is_spawned())
+            .count()
+    }
+
+    /// Whether the pane's shell runs in the guest.
+    pub fn is_guest_pane(&self, pane_id: Uuid) -> bool {
+        self.find_pane(pane_id)
+            .is_some_and(|pane| pane.pty.is_guest())
+    }
+
     pub async fn create_session(&mut self, name: Option<String>) -> Uuid {
         self.create_session_with_cwd(name, None).await
     }
@@ -629,19 +725,29 @@ impl SessionManager {
         cwd: Option<std::path::PathBuf>,
         window_name: Option<String>,
     ) -> Uuid {
+        self.create_session_in(name, cwd, window_name, Runtime::Local)
+            .await
+    }
+
+    /// A session whose shells run in `runtime`, which `Runtime::validate` checked.
+    pub async fn create_session_in(
+        &mut self,
+        name: Option<String>,
+        cwd: Option<std::path::PathBuf>,
+        window_name: Option<String>,
+        runtime: Runtime,
+    ) -> Uuid {
         let session_id = Uuid::new_v4();
         let pane_id = Uuid::new_v4();
-        let pty = PtyHandle::new_with_cwd(
-            &self.shell,
-            pane_id,
-            &self.pty_env,
-            cwd,
-            self.scrollback_lines(),
-        );
+        let cwd = cwd.or_else(|| match &runtime {
+            Runtime::Multipass { mounts, .. } => mounts.first().map(std::path::PathBuf::from),
+            Runtime::Local => None,
+        });
+        let pty = self.new_pty(pane_id, cwd, &runtime);
 
         let pane = Pane::new(pane_id, pty);
         let wname = window_name
-            .unwrap_or_else(|| self.unique_window_name_in(&[], &shell_name(&self.shell)));
+            .unwrap_or_else(|| self.unique_window_name_in(&[], &self.runtime_shell_name(&runtime)));
         let window = Window {
             id: Uuid::new_v4(),
             name: wname,
@@ -658,6 +764,7 @@ impl SessionManager {
         let session = Session {
             id: session_id,
             name: sname,
+            runtime,
             windows: vec![window],
             active_window: 0,
             prev_window: None,
@@ -789,13 +896,7 @@ impl SessionManager {
                 .map(std::path::PathBuf::from)
                 .filter(|path| path.is_dir())
         });
-        let pty = PtyHandle::new_with_cwd(
-            &self.shell,
-            new_pane_id,
-            &self.pty_env,
-            cwd,
-            self.scrollback_lines(),
-        );
+        let pty = self.new_pty(new_pane_id, cwd, &self.pane_runtime(pane_id));
         let new_pane = Pane::new(new_pane_id, pty);
 
         let window = self
@@ -824,18 +925,17 @@ impl SessionManager {
             if window.panes.len() <= 1 || !window.panes.iter().any(|pane| pane.id == pane_id) {
                 return;
             }
-            window.remove_pane(pane_id);
-            true
+            window.remove_pane(pane_id)
         };
-        if removed {
-            self.forget_pane(pane_id);
+        if let Some(pane) = removed {
+            self.forget_pane(&pane);
         }
     }
 
     /// Runtime state of a pane that just left the tree.
-    fn forget_pane(&mut self, pane_id: Uuid) {
-        self.agents.remove(&pane_id);
-        self.telemetry.pane_closed(pane_id);
+    fn forget_pane(&mut self, pane: &Pane) {
+        self.agents.remove(&pane.id);
+        self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
     }
 
     pub async fn handle_pane_exit(&mut self, pane_id: Uuid) {
@@ -848,10 +948,10 @@ impl SessionManager {
             return;
         };
 
-        self.forget_pane(pane_id);
-        let window = &mut self.sessions[si].windows[wi];
-        window.remove_pane(pane_id);
-        if !window.panes.is_empty() {
+        if let Some(pane) = self.sessions[si].windows[wi].remove_pane(pane_id) {
+            self.forget_pane(&pane);
+        }
+        if !self.sessions[si].windows[wi].panes.is_empty() {
             return;
         }
 
@@ -1013,15 +1113,15 @@ impl SessionManager {
         select: bool,
     ) -> Option<Uuid> {
         let pane_id = Uuid::new_v4();
-        let pty = PtyHandle::new_with_cwd(
-            &self.shell,
-            pane_id,
-            &self.pty_env,
-            cwd,
-            self.scrollback_lines(),
-        );
+        let runtime = self
+            .sessions
+            .iter()
+            .find(|s| s.id == session_id)?
+            .runtime
+            .clone();
+        let pty = self.new_pty(pane_id, cwd, &runtime);
         let pane = Pane::new(pane_id, pty);
-        let base = name.unwrap_or_else(|| shell_name(&self.shell));
+        let base = name.unwrap_or_else(|| self.runtime_shell_name(&runtime));
 
         let session = self.session_mut(session_id)?;
         let existing: Vec<_> = session.windows.iter().map(|w| w.name.as_str()).collect();
@@ -1074,6 +1174,26 @@ impl SessionManager {
         let path = std::env::temp_dir().join(format!("btmux-capture-{pane_id}-{stamp}.txt"));
         if let Err(e) = std::fs::write(&path, content.as_bytes()) {
             tracing::warn!("failed to write capture file {}: {}", path.display(), e);
+            return;
+        }
+
+        // The guest can't see the host's temp dir.
+        if let Some(instance) = pane.pty.guest_instance().map(str::to_string) {
+            let input = pane.pty.input_tx.clone();
+            std::thread::spawn(move || {
+                let guest_path = format!("/tmp/btmux-capture-{pane_id}-{stamp}.txt");
+                match crate::multipass::copy_in(&instance, &path, &guest_path) {
+                    Ok(()) => {
+                        let line = crate::shell::Dialect::Posix
+                            .edit(crate::shell::LINUX_EDITOR, &guest_path);
+                        let _ = input.send(line.into_bytes());
+                    }
+                    Err(error) => {
+                        tracing::warn!("cannot copy the capture into {instance}: {error}")
+                    }
+                }
+                let _ = std::fs::remove_file(&path);
+            });
             return;
         }
 
@@ -1188,15 +1308,15 @@ impl SessionManager {
             .unwrap();
         if window.panes.len() > 1 {
             let window_id = window.id;
-            if let Some(window) = self
+            if let Some(pane) = self
                 .sessions
                 .iter_mut()
                 .flat_map(|s| s.windows.iter_mut())
                 .find(|w| w.id == window_id)
+                .and_then(|window| window.remove_pane(pane_id))
             {
-                window.remove_pane(pane_id);
+                self.forget_pane(&pane);
             }
-            self.forget_pane(pane_id);
         } else if session.windows.len() > 1 {
             self.kill_window(window.id);
         } else if self.sessions.len() > 1 {
@@ -1219,14 +1339,10 @@ impl SessionManager {
             if session.active_window >= session.windows.len() {
                 session.active_window = session.windows.len() - 1;
             }
-            removed
-                .panes
-                .into_iter()
-                .map(|pane| pane.id)
-                .collect::<Vec<_>>()
+            removed.panes
         };
-        for pane_id in removed_panes {
-            self.forget_pane(pane_id);
+        for pane in &removed_panes {
+            self.forget_pane(pane);
         }
     }
 
@@ -1287,8 +1403,8 @@ impl SessionManager {
         }
         if let Some(idx) = self.sessions.iter().position(|s| s.id == id) {
             let removed = self.sessions.remove(idx);
-            for pane in removed.windows.into_iter().flat_map(|window| window.panes) {
-                self.forget_pane(pane.id);
+            for pane in removed.windows.iter().flat_map(|window| &window.panes) {
+                self.forget_pane(pane);
             }
         }
     }
@@ -1301,7 +1417,7 @@ impl SessionManager {
     pub async fn clear_sessions(&mut self) {
         for session in std::mem::take(&mut self.sessions) {
             for pane in session.windows.into_iter().flat_map(|window| window.panes) {
-                self.telemetry.pane_closed(pane.id);
+                self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
             }
         }
         self.agents.clear();
@@ -1389,7 +1505,7 @@ impl SessionManager {
                 }
                 let removed = session.windows.remove(wi);
                 for pane in removed.panes {
-                    self.telemetry.pane_closed(pane.id);
+                    self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
                     self.agents.remove(&pane.id);
                 }
                 if wi < session.active_window {
@@ -1408,6 +1524,7 @@ impl SessionManager {
             .map(|s| SessionSummary {
                 id: s.id,
                 name: s.name.clone(),
+                runtime: s.runtime.clone(),
             })
             .collect()
     }
@@ -1471,7 +1588,7 @@ impl SessionManager {
         let windows: Vec<Window> = snap
             .windows
             .into_iter()
-            .filter_map(|w| self.build_window(shell, w))
+            .filter_map(|w| self.build_window(shell, w, &snap.runtime))
             .collect();
         if windows.is_empty() {
             return None;
@@ -1480,13 +1597,14 @@ impl SessionManager {
         Some(Session {
             id: snap.id,
             name: snap.name,
+            runtime: snap.runtime,
             windows,
             active_window,
             prev_window: None,
         })
     }
 
-    fn build_window(&self, shell: &str, snap: WindowSnapshot) -> Option<Window> {
+    fn build_window(&self, shell: &str, snap: WindowSnapshot, runtime: &Runtime) -> Option<Window> {
         let panes: Vec<Pane> = snap
             .panes
             .into_iter()
@@ -1503,7 +1621,8 @@ impl SessionManager {
                     &self.pty_env,
                     cwd,
                     self.scrollback_lines(),
-                );
+                )
+                .with_guest(self.guest(runtime));
                 Pane::new(p.id, pty)
             })
             .collect();
@@ -1641,6 +1760,7 @@ impl SessionManager {
         SessionSnapshot {
             id: session.id,
             name: session.name.clone(),
+            runtime: session.runtime.clone(),
             windows: session
                 .windows
                 .iter()
@@ -1941,6 +2061,29 @@ mod kill_cascade_tests {
             8044,
             None,
         )
+    }
+
+    #[tokio::test]
+    async fn added_sandbox_mounts_reach_existing_panes() {
+        let mut mgr = manager().await;
+        let runtime = Runtime::Multipass {
+            mounts: vec!["/src/app".into()],
+            shell: crate::multipass::GuestShell::Bash,
+        };
+        let session = mgr.create_session_in(None, None, None, runtime).await;
+        let pane = &mgr.sessions.last().unwrap().windows[0].panes[0];
+        assert!(!pane.pty.guest().unwrap().mounted("/src/app-feat/lib"));
+
+        mgr.add_sandbox_mounts(session, vec!["/src/app".into(), "/src/app-feat".into()]);
+        let pane = &mgr.sessions.last().unwrap().windows[0].panes[0];
+        assert!(pane.pty.guest().unwrap().mounted("/src/app-feat/lib"));
+        assert_eq!(
+            mgr.session_runtime(session),
+            Some(&Runtime::Multipass {
+                mounts: vec!["/src/app".into(), "/src/app-feat".into()],
+                shell: crate::multipass::GuestShell::Bash,
+            })
+        );
     }
 
     #[tokio::test]

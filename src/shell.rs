@@ -121,9 +121,16 @@ impl Dialect {
     }
 
     /// Text that opens `path` (at `line`) with `btmux open-editor` through
-    /// `bin` (`btmux`), which resolves the editor's arguments. The leading
-    /// space keeps it out of history in shells that honor it.
-    pub fn open_editor(self, bin: &str, path: Option<&str>, line: Option<u32>) -> String {
+    /// `bin` (`btmux`), which resolves the editor's arguments; `local` skips
+    /// the server for `$EDITOR`. The leading space keeps it out of history in
+    /// shells that honor it.
+    pub fn open_editor(
+        self,
+        bin: &str,
+        local: bool,
+        path: Option<&str>,
+        line: Option<u32>,
+    ) -> String {
         let line = line.filter(|&l| l >= 1);
         let path = path.map(|path| self.quote(&self.path(path)));
         let words: Vec<String> = if self == Self::Wsl {
@@ -139,6 +146,7 @@ impl Dialect {
         } else {
             [
                 Some(format!("{bin} open-editor")),
+                local.then(|| "--kind pane".into()),
                 path,
                 line.map(|l| l.to_string()),
             ]
@@ -162,7 +170,7 @@ impl Dialect {
 }
 
 /// The Linux `$VISUAL`/`$EDITOR`, through `sh` as fish lacks `${…:-…}`.
-const LINUX_EDITOR: &str = r#"sh -c '${VISUAL:-${EDITOR:-vi}} "$@"' sh"#;
+pub const LINUX_EDITOR: &str = r#"sh -c '${VISUAL:-${EDITOR:-vi}} "$@"' sh"#;
 
 /// An installed shell offered in settings.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -404,7 +412,7 @@ mod tests {
     fn open_editor_per_dialect() {
         let bin = Dialect::PowerShell.btmux(None);
         assert_eq!(
-            Dialect::PowerShell.open_editor(&bin, Some(r"C:\a.rs"), Some(3)),
+            Dialect::PowerShell.open_editor(&bin, false, Some(r"C:\a.rs"), Some(3)),
             format!(r" & $env:BTMUX_BIN open-editor 'C:\a.rs' 3{ENTER}")
         );
         assert_eq!(
@@ -413,15 +421,19 @@ mod tests {
         );
         let bin = Dialect::Posix.btmux(None);
         assert_eq!(
-            Dialect::Posix.open_editor(&bin, None, None),
+            Dialect::Posix.open_editor(&bin, false, None, None),
             format!(" \"$BTMUX_BIN\" open-editor{ENTER}")
         );
         assert_eq!(
-            Dialect::Wsl.open_editor("", Some(r"C:\a.rs"), Some(3)),
+            Dialect::Posix.open_editor(&bin, true, Some("/a.rs"), Some(3)),
+            format!(" \"$BTMUX_BIN\" open-editor --kind pane '/a.rs' 3{ENTER}")
+        );
+        assert_eq!(
+            Dialect::Wsl.open_editor("", false, Some(r"C:\a.rs"), Some(3)),
             format!(" {LINUX_EDITOR} +3 '/mnt/c/a.rs'{ENTER}")
         );
         assert_eq!(
-            Dialect::Cmd.open_editor(&Dialect::Cmd.btmux(None), Some(r"C:\a.rs"), None),
+            Dialect::Cmd.open_editor(&Dialect::Cmd.btmux(None), false, Some(r"C:\a.rs"), None),
             format!(" \"%BTMUX_BIN%\" open-editor \"C:\\a.rs\"{ENTER}")
         );
     }

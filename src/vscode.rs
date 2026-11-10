@@ -126,7 +126,7 @@ struct Shared {
 impl Shared {
     fn new(config: &VscodeConfig) -> Self {
         let explicit = |value: &String| Source {
-            path: expand_home(value),
+            path: crate::config::expand_home(value),
             explicit: true,
         };
         let desktop = |path: Option<PathBuf>| {
@@ -155,13 +155,6 @@ impl Shared {
                     .collect(),
             },
         }
-    }
-}
-
-fn expand_home(value: &str) -> PathBuf {
-    match (value.strip_prefix("~/"), dirs::home_dir()) {
-        (Some(rest), Some(home)) => home.join(rest),
-        _ => PathBuf::from(value),
     }
 }
 

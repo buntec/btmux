@@ -498,6 +498,7 @@ export function SessionSwitcher({ send }: Props) {
                   }
                   endContent={
                     <HStack gap={1} vAlign="center">
+                      {sess.runtime.type === 'multipass' && <Token label="sandbox" size="sm" color="purple" />}
                       {sess.id === activeSession?.id && <Token label="attached" size="sm" color="blue" />}
                       <Badge variant="neutral" label={sess.windows.length} />
                     </HStack>

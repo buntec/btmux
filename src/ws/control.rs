@@ -232,6 +232,15 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             .map_err(|e| e.to_string());
     }
 
+    // Validation reads the filesystem, so not under the lock.
+    if let ClientMessage::CreateSession { name, runtime } = cmd {
+        let runtime = runtime.unwrap_or_default().validated().await?;
+        let mut mgr = state.write().await;
+        mgr.create_session_in(name, None, None, runtime).await;
+        broadcast_state(&mgr);
+        return Ok(());
+    }
+
     if let ClientMessage::WritePaneInput { pane_id, text, .. } = &cmd {
         let mgr = state.read().await;
         let result = if let Some(pane) = mgr.find_pane(*pane_id) {
@@ -287,10 +296,13 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         let Some(pane) = mgr.find_pane(*pane_id) else {
             return Err("Pane no longer exists".into());
         };
-        let text = pane
-            .pty
-            .dialect()
-            .open_editor(&pane.pty.shell_bin(), path.as_deref(), *line);
+        // A guest's token can't ask the server to open its editors.
+        let text = pane.pty.dialect().open_editor(
+            &pane.pty.shell_bin(),
+            pane.pty.is_guest(),
+            path.as_deref(),
+            *line,
+        );
         return pane.pty.send_shell_command(text.into_bytes()).await;
     }
 
@@ -393,9 +405,6 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         ClientMessage::CyclePane { session_id, delta } => mgr.cycle_pane(session_id, delta),
         ClientMessage::SwapPane { session_id, delta } => mgr.swap_pane(session_id, delta),
         ClientMessage::NextLayout { session_id } => mgr.next_layout(session_id),
-        ClientMessage::CreateSession { name } => {
-            mgr.create_session(name).await;
-        }
         ClientMessage::RenameSession { session_id, name } => mgr.rename_session(session_id, name),
         ClientMessage::KillSession { id } => mgr.kill_session(id),
         ClientMessage::ResizeSplit {
@@ -421,7 +430,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::FocusClient
         | ClientMessage::SystemColorMode { .. }
         | ClientMessage::WidgetShown { .. }
-        | ClientMessage::WidgetAnswer { .. } => unreachable!(),
+        | ClientMessage::WidgetAnswer { .. }
+        | ClientMessage::CreateSession { .. } => unreachable!(),
     }
 
     broadcast_state(&mgr);
@@ -925,6 +935,9 @@ pub(crate) enum ClientMessage {
     },
     CreateSession {
         name: Option<String>,
+        /// Local when absent.
+        #[serde(default)]
+        runtime: Option<crate::session::Runtime>,
     },
     RenameSession {
         session_id: Uuid,

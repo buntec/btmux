@@ -53,6 +53,7 @@ interface AgentPaneEntry {
   paneIndex: number;
   paneTitle: string | null;
   agentStatus: AgentStatus;
+  agentId: number | null;
 }
 
 function buildEntries(
@@ -73,6 +74,7 @@ function buildEntries(
           paneIndex,
           paneTitle: pane.title,
           agentStatus: pane.agent_status,
+          agentId: pane.agent_id,
         });
       });
     });
@@ -307,19 +309,20 @@ export function AgentGrid({ send }: Props) {
   };
 
   const confirmKill = (entry: AgentPaneEntry | undefined) => {
-    if (entry) setKilling(entry);
+    if (entry?.agentId != null) setKilling(entry);
   };
 
-  // Two Ctrl-Cs, apart so the agent sees two presses: Claude Code and Codex exit.
-  const kill = (entry: AgentPaneEntry) => {
-    const interrupt = () =>
-      send({ type: 'write_pane_input', session_id: entry.sessionId, pane_id: entry.paneId, text: '\x03' });
-    interrupt();
-    window.setTimeout(interrupt, KILL_PRESS_GAP_MS);
-  };
+  // The agent the confirmation names, while it still runs.
+  const killTarget =
+    open && killing ? entries.find((e) => e.paneId === killing.paneId && e.agentId === killing.agentId) : undefined;
+  useEffect(() => {
+    if (killing && !killTarget) setKilling(null);
+  }, [killing, killTarget]);
 
   const closeKill = (confirmed: boolean) => {
-    if (confirmed && killing) kill(killing);
+    // The server sends both Ctrl-Cs, only to this agent instance.
+    if (confirmed && killTarget?.agentId != null)
+      send({ type: 'kill_agent', pane_id: killTarget.paneId, agent_id: killTarget.agentId });
     setKilling(null);
     // After the alert returns focus to its trigger, so the grid keeps its keys.
     requestAnimationFrame(() => dialogRef.current?.focus());
@@ -622,14 +625,14 @@ export function AgentGrid({ send }: Props) {
       }}
     >
       <AlertDialog
-        isOpen={killing !== null}
+        isOpen={killTarget !== undefined}
         onOpenChange={(value) => {
           if (!value) closeKill(false);
         }}
         title="Kill agent session?"
         description={
-          killing
-            ? `Sends Ctrl-C twice to ${killing.sessionName} › ${killing.windowName} › ${paneLabel(killing)}, which exits Claude Code and Codex.`
+          killTarget
+            ? `Sends Ctrl-C twice to ${killTarget.sessionName} › ${killTarget.windowName} › ${paneLabel(killTarget)}, which exits Claude Code and Codex.`
             : ''
         }
         actionLabel="Kill session"
@@ -718,8 +721,6 @@ export function AgentGrid({ send }: Props) {
     </Dialog>
   );
 }
-
-const KILL_PRESS_GAP_MS = 150;
 
 const HINTS: [string[], string][] = [
   [['tab'], 'next tab'],

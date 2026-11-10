@@ -191,6 +191,14 @@ impl SessionManager {
             .map(|agent| &agent.status)
     }
 
+    /// Identifies the pane's active agent instance, including explicitly reported ones.
+    pub fn agent_id(&self, pane_id: Uuid) -> Option<u64> {
+        self.agents
+            .get(&pane_id)
+            .filter(|agent| agent.is_active())
+            .map(AgentLifecycle::incarnation)
+    }
+
     /// Identifies the pane's running agent instance; explicit reports name none.
     pub fn agent_incarnation(&self, pane_id: Uuid) -> Option<u64> {
         self.agents
@@ -1647,6 +1655,7 @@ impl SessionManager {
                             title: p.pty.title.lock().unwrap().clone(),
                             cwd: p.pty.effective_cwd(),
                             agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
+                            agent_id: self.agent_id(p.id),
                             unread: p.unread.clone(),
                             git: p.pty.local_cwd().and_then(|cwd| self.git.lookup(&cwd)),
                         })

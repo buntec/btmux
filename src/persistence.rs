@@ -149,6 +149,7 @@ mod agent_status_tests {
                         message: Some("private prompt".to_string()),
                         background: None,
                     },
+                    agent_id: None,
                     unread: Some(PaneAlert {
                         level: NotificationLevel::Attention,
                         title: Some("Done".to_string()),

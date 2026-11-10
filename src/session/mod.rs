@@ -186,6 +186,10 @@ pub struct PaneSnapshot {
     pub cwd: Option<String>,
     #[serde(default)]
     pub agent_status: AgentStatus,
+    /// Names the running agent instance, so a client can target it.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "number | null"))]
+    pub agent_id: Option<u64>,
     #[serde(default)]
     pub unread: Option<PaneAlert>,
     #[serde(default)]

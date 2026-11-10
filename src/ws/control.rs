@@ -226,6 +226,12 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             .map_err(|e| e.to_string());
     }
 
+    if let ClientMessage::KillAgent { pane_id, agent_id } = &cmd {
+        return crate::automation::kill_agent(state, *pane_id, *agent_id)
+            .await
+            .map_err(|e| e.to_string());
+    }
+
     if let ClientMessage::WritePaneInput { pane_id, text, .. } = &cmd {
         let mgr = state.read().await;
         let result = if let Some(pane) = mgr.find_pane(*pane_id) {
@@ -407,6 +413,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::UpdateConfig { .. }
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
+        | ClientMessage::KillAgent { .. }
         | ClientMessage::OpenFile { .. }
         | ClientMessage::ChangeDirectory { .. }
         | ClientMessage::NvimOpen { .. }
@@ -938,6 +945,12 @@ pub(crate) enum ClientMessage {
     CapturePane {
         pane_id: Uuid,
         content: String,
+    },
+    /// Exits the agent with two Ctrl-Cs, unless `agent_id` no longer runs in the pane.
+    KillAgent {
+        pane_id: Uuid,
+        #[cfg_attr(test, ts(type = "number"))]
+        agent_id: u64,
     },
     WritePaneInput {
         #[allow(dead_code)]

@@ -25,6 +25,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(15);
 /// A pause in output that ends the agent's final redraw.
 const OUTPUT_QUIET: Duration = Duration::from_millis(200);
 const OUTPUT_SETTLE: Duration = Duration::from_secs(1);
+/// Apart, so the agent sees two presses.
+const INTERRUPT_GAP: Duration = Duration::from_millis(150);
 
 #[derive(Debug)]
 pub enum Error {
@@ -57,6 +59,31 @@ impl From<&str> for Error {
     fn from(message: &str) -> Self {
         Self::Failed(message.into())
     }
+}
+
+/// Two Ctrl-Cs exit Claude Code and Codex. Each goes only to the agent
+/// instance the caller saw, never to whatever replaced it.
+pub async fn kill_agent(state: &AppState, pane_id: Uuid, agent_id: u64) -> Result<(), Error> {
+    for press in 0..2 {
+        if press > 0 {
+            tokio::time::sleep(INTERRUPT_GAP).await;
+        }
+        let input = {
+            let mgr = state.read().await;
+            let pane = mgr.find_pane(pane_id).ok_or(Error::PaneNotFound(pane_id))?;
+            if mgr.agent_id(pane_id) != Some(agent_id) {
+                // After the first press, the agent may have exited already.
+                return if press == 0 {
+                    Err(Error::Conflict("the agent has already exited".into()))
+                } else {
+                    Ok(())
+                };
+            }
+            pane.pty.input_tx.clone()
+        };
+        input.send_wait(b"\x03".to_vec()).await?;
+    }
+    Ok(())
 }
 
 pub fn wait_duration(timeout_ms: Option<u64>) -> Duration {

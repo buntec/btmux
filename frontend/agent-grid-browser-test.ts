@@ -507,16 +507,59 @@ try {
   await Bun.sleep(500);
   assert.equal(await interrupts(), 2);
 
-  // A notification's View pane leaves the grid for that pane.
-  const notified = await fetch(`${url}/api/panes/${closedAgent.id}/notify`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ hook_event_name: 'Stop', session_id: 'agent-closed' }),
+  // A confirmation for an agent that exits is dismissed.
+  const agentId = () =>
+    page.evaluate(async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const panes = useStore.getState().allSessions.flatMap((s: any) => s.windows.flatMap((w: any) => w.panes));
+      return panes.find((p: any) => p.id === pane)?.agent_id as number | null;
+    }, victim.id);
+  const exited = await agentId();
+  assert(exited != null);
+  const notify = (pane: string, event: string, session: string) =>
+    fetch(`${url}/api/panes/${pane}/notify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ hook_event_name: event, session_id: session }),
+    }).then((res) => assert(res.ok));
+  await killButton.click();
+  await alert.waitFor({ timeout: 5000 });
+  await notify(victim.id, 'SessionEnd', 'agent-kill');
+  await alert.waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'an exited agent must not close the grid');
+  await page.keyboard.press('y');
+  // The server sends nothing for that agent, even to one replacing it.
+  await notify(victim.id, 'UserPromptSubmit', 'agent-kill-2');
+  await waitForAsync(page, async (pane) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return useStore.getState().agentPanes.has(pane);
+  }, victim.id);
+  assert.notEqual(await agentId(), exited);
+  const control = new (WebSocket as any)(`${backend.replace('http', 'ws')}/ws/control`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }) as WebSocket;
+  const result = new Promise<any>((resolve) => {
+    control.onmessage = (event) => {
+      const msg = JSON.parse(event.data as string);
+      if (msg.type === 'command_result' && msg.request_id === 'stale-kill') resolve(msg);
+    };
   });
-  assert(notified.ok);
+  await new Promise((resolve) => (control.onopen = resolve));
+  control.send(JSON.stringify({ type: 'kill_agent', pane_id: victim.id, agent_id: exited, request_id: 'stale-kill' }));
+  assert.match((await result).error ?? '', /already exited/);
+  control.close();
+  await Bun.sleep(400);
+  assert.equal(await interrupts(), 2, 'a stale kill sends nothing');
+
+  // A notification's View pane leaves the grid for that pane, closing a confirmation.
+  await killButton.click();
+  await alert.waitFor({ timeout: 5000 });
+  await notify(closedAgent.id, 'Stop', 'agent-closed');
   await page.getByRole('button', { name: 'View pane', exact: true }).click({ timeout: 5000 });
   await page.waitForURL(/\/s\/agent-closed\b/, { timeout: 5000 });
   await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 });
+  assert.equal(await page.evaluate(() => document.querySelectorAll(':modal').length), 0, 'no modal is left');
+  await page.locator(`[data-pane-id="${closedAgent.id}"]`).click({ timeout: 5000 });
 
   assert.deepEqual(errors, []);
 } finally {

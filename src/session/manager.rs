@@ -620,7 +620,7 @@ impl SessionManager {
         let config = &self.config.multipass_config;
         Some(Arc::new(crate::multipass::Guest {
             instance: crate::multipass::instance_name(config),
-            mounts: mounts.clone(),
+            mounts: std::sync::RwLock::new(mounts.clone()),
             shell: *shell,
             config: config.clone(),
         }))
@@ -656,17 +656,21 @@ impl SessionManager {
             .map(|s| &s.runtime)
     }
 
-    /// Add checked mounts to a sandboxed session, for panes created from now on.
+    /// Add checked mounts to a sandboxed session and its panes.
     pub fn add_sandbox_mounts(&mut self, session_id: Uuid, added: Vec<String>) {
         if let Some(Session {
             runtime: Runtime::Multipass { mounts, .. },
+            windows,
             ..
         }) = self.session_mut(session_id)
         {
-            for mount in added {
-                if !mounts.contains(&mount) {
-                    mounts.push(mount);
+            for mount in &added {
+                if !mounts.contains(mount) {
+                    mounts.push(mount.clone());
                 }
+            }
+            for pane in windows.iter().flat_map(|w| &w.panes) {
+                pane.pty.add_guest_mounts(&added);
             }
         }
     }
@@ -921,18 +925,17 @@ impl SessionManager {
             if window.panes.len() <= 1 || !window.panes.iter().any(|pane| pane.id == pane_id) {
                 return;
             }
-            window.remove_pane(pane_id);
-            true
+            window.remove_pane(pane_id)
         };
-        if removed {
-            self.forget_pane(pane_id);
+        if let Some(pane) = removed {
+            self.forget_pane(&pane);
         }
     }
 
     /// Runtime state of a pane that just left the tree.
-    fn forget_pane(&mut self, pane_id: Uuid) {
-        self.agents.remove(&pane_id);
-        self.telemetry.pane_closed(pane_id);
+    fn forget_pane(&mut self, pane: &Pane) {
+        self.agents.remove(&pane.id);
+        self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
     }
 
     pub async fn handle_pane_exit(&mut self, pane_id: Uuid) {
@@ -945,10 +948,10 @@ impl SessionManager {
             return;
         };
 
-        self.forget_pane(pane_id);
-        let window = &mut self.sessions[si].windows[wi];
-        window.remove_pane(pane_id);
-        if !window.panes.is_empty() {
+        if let Some(pane) = self.sessions[si].windows[wi].remove_pane(pane_id) {
+            self.forget_pane(&pane);
+        }
+        if !self.sessions[si].windows[wi].panes.is_empty() {
             return;
         }
 
@@ -1305,15 +1308,15 @@ impl SessionManager {
             .unwrap();
         if window.panes.len() > 1 {
             let window_id = window.id;
-            if let Some(window) = self
+            if let Some(pane) = self
                 .sessions
                 .iter_mut()
                 .flat_map(|s| s.windows.iter_mut())
                 .find(|w| w.id == window_id)
+                .and_then(|window| window.remove_pane(pane_id))
             {
-                window.remove_pane(pane_id);
+                self.forget_pane(&pane);
             }
-            self.forget_pane(pane_id);
         } else if session.windows.len() > 1 {
             self.kill_window(window.id);
         } else if self.sessions.len() > 1 {
@@ -1336,14 +1339,10 @@ impl SessionManager {
             if session.active_window >= session.windows.len() {
                 session.active_window = session.windows.len() - 1;
             }
-            removed
-                .panes
-                .into_iter()
-                .map(|pane| pane.id)
-                .collect::<Vec<_>>()
+            removed.panes
         };
-        for pane_id in removed_panes {
-            self.forget_pane(pane_id);
+        for pane in &removed_panes {
+            self.forget_pane(pane);
         }
     }
 
@@ -1404,8 +1403,8 @@ impl SessionManager {
         }
         if let Some(idx) = self.sessions.iter().position(|s| s.id == id) {
             let removed = self.sessions.remove(idx);
-            for pane in removed.windows.into_iter().flat_map(|window| window.panes) {
-                self.forget_pane(pane.id);
+            for pane in removed.windows.iter().flat_map(|window| &window.panes) {
+                self.forget_pane(pane);
             }
         }
     }
@@ -1418,7 +1417,7 @@ impl SessionManager {
     pub async fn clear_sessions(&mut self) {
         for session in std::mem::take(&mut self.sessions) {
             for pane in session.windows.into_iter().flat_map(|window| window.panes) {
-                self.telemetry.pane_closed(pane.id);
+                self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
             }
         }
         self.agents.clear();
@@ -1506,7 +1505,7 @@ impl SessionManager {
                 }
                 let removed = session.windows.remove(wi);
                 for pane in removed.panes {
-                    self.telemetry.pane_closed(pane.id);
+                    self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
                     self.agents.remove(&pane.id);
                 }
                 if wi < session.active_window {
@@ -2062,6 +2061,29 @@ mod kill_cascade_tests {
             8044,
             None,
         )
+    }
+
+    #[tokio::test]
+    async fn added_sandbox_mounts_reach_existing_panes() {
+        let mut mgr = manager().await;
+        let runtime = Runtime::Multipass {
+            mounts: vec!["/src/app".into()],
+            shell: crate::multipass::GuestShell::Bash,
+        };
+        let session = mgr.create_session_in(None, None, None, runtime).await;
+        let pane = &mgr.sessions.last().unwrap().windows[0].panes[0];
+        assert!(!pane.pty.guest().unwrap().mounted("/src/app-feat/lib"));
+
+        mgr.add_sandbox_mounts(session, vec!["/src/app".into(), "/src/app-feat".into()]);
+        let pane = &mgr.sessions.last().unwrap().windows[0].panes[0];
+        assert!(pane.pty.guest().unwrap().mounted("/src/app-feat/lib"));
+        assert_eq!(
+            mgr.session_runtime(session),
+            Some(&Runtime::Multipass {
+                mounts: vec!["/src/app".into(), "/src/app-feat".into()],
+                shell: crate::multipass::GuestShell::Bash,
+            })
+        );
     }
 
     #[tokio::test]

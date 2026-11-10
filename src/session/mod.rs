@@ -45,16 +45,20 @@ impl Window {
     /// removed; `prev_pane` is cleared if its target is gone.
     ///
     /// May leave `panes` empty — the caller decides whether to drop the window.
-    pub fn remove_pane(&mut self, pane_id: Uuid) {
+    pub fn remove_pane(&mut self, pane_id: Uuid) -> Option<Pane> {
         let active_id = self.panes.get(self.active_pane).map(|p| p.id);
         let prev_id = self.prev_pane.and_then(|i| self.panes.get(i)).map(|p| p.id);
 
         if let Some(new_layout) = self.layout.remove_pane(pane_id) {
             self.layout = new_layout;
         }
-        self.panes.retain(|p| p.id != pane_id);
+        let removed = self
+            .panes
+            .iter()
+            .position(|p| p.id == pane_id)
+            .map(|i| self.panes.remove(i));
         if self.panes.is_empty() {
-            return;
+            return removed;
         }
 
         self.active_pane = active_id
@@ -67,6 +71,7 @@ impl Window {
         // The collapsed tree no longer matches the preset, so `next-layout`
         // should start its cycle fresh rather than from a stale position.
         self.last_preset = None;
+        removed
     }
 }
 

@@ -1,4 +1,4 @@
-// handoff version 13
+// handoff version 14
 type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, panes: Array<PaneHeader>, telemetry: TelemetryStore, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
@@ -23,7 +23,7 @@ type AgentState = "unknown" | "idle" | "working" | "blocked" | "done";
 type NotificationLevel = "info" | "attention" | "success" | "error";
 type Layout = { "type": "leaf", pane_id: string, } | { "type": "v_split", id: string, ratio: number, left: Layout, right: Layout, } | { "type": "h_split", id: string, ratio: number, top: Layout, bottom: Layout, };
 type TelemetryStore = { panes: { [key in string]: PaneTelemetry },
-closed: Array<string>, };
+closed: Array<ClosedPane>, };
 type PaneTelemetry = { series: Array<ModelSeries>, updated_at: bigint, seen_order: Array<bigint>, };
 type ModelSeries = { agent: string, model: string | null, buckets: { [key in bigint]: AgentUsage }, };
 type AgentUsage = {

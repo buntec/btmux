@@ -167,14 +167,18 @@ pub fn create_app(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Guest-token requests reach only the panes of sandboxed sessions.
+/// Guest-token requests reach only the panes of sandboxed sessions, and
+/// telemetry also those recently closed, whose last exports may be late.
 async fn guest_scope(
     State(state): State<AppState>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
     if let Some(crate::auth::GuestRequest(Some(pane))) = request.extensions().get().copied() {
-        if !state.read().await.is_guest_pane(pane) {
+        // `guest_route` limited the path to the pane's own routes.
+        let telemetry = request.uri().path().contains("/telemetry/v1/");
+        let mgr = state.read().await;
+        if !mgr.is_guest_pane(pane) && !(telemetry && mgr.telemetry.closed_guest(pane)) {
             return StatusCode::FORBIDDEN.into_response();
         }
     }

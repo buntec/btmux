@@ -171,10 +171,11 @@ fn external_git_dir(dir: &Path) -> Option<String> {
 }
 
 /// A pane's guest.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Guest {
     pub instance: String,
-    pub mounts: Vec<String>,
+    /// Grows as worktrees are added to the session.
+    pub mounts: std::sync::RwLock<Vec<String>>,
     pub shell: GuestShell,
     pub config: MultipassConfig,
 }
@@ -196,8 +197,19 @@ impl Guest {
     /// Whether a guest path is a mounted host path.
     pub fn mounted(&self, path: &str) -> bool {
         self.mounts
+            .read()
+            .unwrap()
             .iter()
             .any(|mount| Path::new(path).starts_with(mount))
+    }
+
+    pub fn add_mounts(&self, added: &[String]) {
+        let mut mounts = self.mounts.write().unwrap();
+        for mount in added {
+            if !mounts.contains(mount) {
+                mounts.push(mount.clone());
+            }
+        }
     }
 
     /// `btmux guest-shell` arguments for a shell in `cwd`.
@@ -220,7 +232,8 @@ impl Guest {
         if let Some(cloud_init) = &self.config.cloud_init {
             args.extend(["--cloud-init".into(), cloud_init.clone()]);
         }
-        for mount in &self.mounts {
+        let mounts = self.mounts.read().unwrap();
+        for mount in mounts.iter() {
             args.extend(["--mount".into(), mount.clone()]);
         }
         for path in &self.config.copy {
@@ -228,7 +241,7 @@ impl Guest {
         }
         let cwd = cwd
             .filter(|cwd| self.mounted(cwd))
-            .or(self.mounts.first().map(String::as_str));
+            .or(mounts.first().map(String::as_str));
         if let Some(cwd) = cwd {
             args.extend(["--cwd".into(), cwd.to_string()]);
         }
@@ -283,8 +296,10 @@ write_files:
       set -o pipefail
       retry() { for _ in 1 2 3 4 5 6; do "$@" && return; sleep 10; done; return 1; }
       # A hung installer would hold up initialization until launch times out.
-      retry timeout 600 su - ubuntu -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'
-      retry timeout 600 npm install -g @openai/codex
+      status=0
+      retry timeout 600 su - ubuntu -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' || status=1
+      retry timeout 600 npm install -g @openai/codex || status=1
+      exit $status
 runcmd:
   - bash /usr/local/lib/btmux/install-agents.sh
 "#;
@@ -1519,7 +1534,7 @@ mod tests {
     fn guest(mounts: &[&str]) -> Guest {
         Guest {
             instance: "btmux-sandbox".into(),
-            mounts: mounts.iter().map(|m| m.to_string()).collect(),
+            mounts: std::sync::RwLock::new(mounts.iter().map(|m| m.to_string()).collect()),
             shell: GuestShell::Fish,
             config: MultipassConfig::default(),
         }
@@ -1589,6 +1604,7 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--shell", "fish"]));
     }
 
+    #[cfg(unix)]
     #[test]
     fn mounts_the_repository_a_linked_worktree_needs() {
         let parent = std::env::temp_dir().join(format!("btmux-mounts-{}", uuid::Uuid::new_v4()));
@@ -1721,6 +1737,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn refuses_home_and_its_ancestors() {
         let home = dirs::home_dir().unwrap();

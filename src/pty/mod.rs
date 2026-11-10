@@ -264,6 +264,18 @@ impl PtyHandle {
         self.guest.is_some()
     }
 
+    /// Shared with the OSC parser, so its cwds under them become local.
+    pub fn add_guest_mounts(&self, added: &[String]) {
+        if let Some(guest) = &self.guest {
+            guest.add_mounts(added);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn guest(&self) -> Option<&crate::multipass::Guest> {
+        self.guest.as_deref()
+    }
+
     /// The Multipass instance the shell runs in.
     pub fn guest_instance(&self) -> Option<&str> {
         self.guest.as_deref().map(|guest| guest.instance.as_str())

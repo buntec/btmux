@@ -119,6 +119,11 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/nvim/file", axum::routing::get(api_nvim_file))
         .route("/api/vscode", get(crate::vscode::status))
+        .route("/api/multipass", get(crate::multipass::api_status))
+        .route(
+            "/api/multipass/{action}",
+            axum::routing::post(crate::multipass::api_action),
+        )
         .route("/api/update", get(crate::update_check::status))
         .route("/api/system", get(crate::system_info::handle))
         .route("/api/health", get(crate::health::handle))

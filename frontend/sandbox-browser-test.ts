@@ -191,6 +191,23 @@ try {
   assert(calls().some((args) => args[0] === 'mount' && args[1] === other));
   console.log('PASS a worktree made from a sandboxed session is mounted there');
 
+  await page.getByRole('button', { name: 'Multipass sandbox' }).click();
+  const popover = page.getByRole('dialog', { name: 'Multipass sandbox' });
+  await popover.getByText('Ubuntu 26.04 LTS · 4 CPUs · memory 1.0G of 8.0G · disk 5.0G of 40.0G').waitFor();
+  await popover.getByRole('button', { name: 'Delete' }).click();
+  const confirm = page.getByRole('alertdialog');
+  await confirm.getByText(/3 sandboxed panes offer to create it again/).waitFor();
+  await confirm.getByRole('button', { name: 'Confirm' }).click();
+  const paneScreen = async () => (await api(`/api/panes/${paneId}/capture`)).text();
+  await until('the offer to create it again', async () =>
+    /btmux-sandbox was deleted\. Press Enter to create it again/.test(await paneScreen()),
+  );
+  assert((await sessions()).some((s) => s.name === 'sandboxed'), 'the session survives');
+  await api(`/api/panes/${paneId}/input`, { method: 'POST', body: JSON.stringify({ keys: ['Enter'] }) });
+  await until('the shell in a new instance', async () => shellExecs().length === 4, 30_000);
+  assert.equal(calls().filter((args) => args[0] === 'launch').length, 2);
+  console.log('PASS the status bar deletes the instance, and panes create it again');
+
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();

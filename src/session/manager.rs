@@ -686,6 +686,16 @@ impl SessionManager {
             .then(|| crate::multipass::instance_name(&self.config.multipass_config))
     }
 
+    /// Panes whose shell runs, or is starting, in the guest.
+    pub fn guest_shells(&self) -> usize {
+        self.sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter(|p| p.pty.is_guest() && p.pty.is_spawned())
+            .count()
+    }
+
     /// Whether the pane's shell runs in the guest.
     pub fn is_guest_pane(&self, pane_id: Uuid) -> bool {
         self.find_pane(pane_id)

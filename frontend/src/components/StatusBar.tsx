@@ -18,6 +18,7 @@ import { SysStatBar } from './SysStatBar';
 import { editorButton, toolbarEditors } from './EditorIcon';
 import { runAction } from '../hooks/useKeybindings';
 import { TailscaleButton } from './TailscaleButton';
+import { MultipassButton } from './MultipassButton';
 
 let mruVersion = 0;
 window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
@@ -165,6 +166,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
           }}
         />
       )}
+      <MultipassButton />
       <IconButton
         label="File browser"
         tooltip="File browser"

@@ -112,6 +112,17 @@ export type GuestShell = "bash" | "zsh" | "fish";
 export type Runtime = { "type": "local" } | { "type": "multipass", mounts: Array<string>, shell: GuestShell, };
 
 // prettier-ignore
+export type InstanceStatus = { instance: string,
+/**
+ * Multipass's state (`Running`, `Stopped`, …); `None` until created.
+ */
+state: string | null, release: string | null, cpus: number | null, memory: Usage | null, disk: Usage | null,
+/**
+ * Sandboxed panes with a shell, which stopping it interrupts.
+ */
+panes: number, };
+
+// prettier-ignore
 export type SessionSnapshot = { id: string, name: string, runtime: Runtime, windows: Array<WindowSnapshot>, active_window: number, };
 
 // prettier-ignore

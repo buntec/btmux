@@ -31,6 +31,7 @@ fn generated_protocol_is_current() {
         WindowSnapshot::decl(&config),
         crate::multipass::GuestShell::decl(&config),
         crate::session::Runtime::decl(&config),
+        crate::multipass::InstanceStatus::decl(&config),
         SessionSnapshot::decl(&config),
         SessionSummary::decl(&config),
         SessionSort::decl(&config),

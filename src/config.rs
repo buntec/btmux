@@ -593,7 +593,7 @@ pub struct VscodeConfig {
 }
 
 /// `[multipass]`: the shared Multipass instance sandboxed sessions run in.
-/// Read when the instance is created, except `shell`.
+/// Read when the instance is created, except `shell` and `copy`.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MultipassConfig {
@@ -607,6 +607,9 @@ pub struct MultipassConfig {
     pub shell: Option<crate::multipass::GuestShell>,
     /// A cloud-init file to create the instance with instead of btmux's.
     pub cloud_init: Option<String>,
+    /// Files and directories in your home copied to the guest's home when a
+    /// sandboxed pane starts, if changed. Copied, never mounted.
+    pub copy: Vec<String>,
 }
 
 impl Default for MultipassConfig {
@@ -619,6 +622,7 @@ impl Default for MultipassConfig {
             disk: "40G".into(),
             shell: None,
             cloud_init: None,
+            copy: Vec::new(),
         }
     }
 }
@@ -1881,6 +1885,7 @@ pub fn generate_config_toml() -> String {
 # disk = "40G"
 # shell = "bash"   # "bash", "zsh", or "fish"; the one new sandboxed sessions offer first (default: yours, if one of these)
 # cloud-init = "~/btmux-cloud-init.yaml"   # instead of btmux's (packages, Claude Code, Codex)
+# copy = ["~/.config/fish/config.fish", "~/.config/starship.toml"]   # into the guest's home when a pane starts, if changed
 
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.

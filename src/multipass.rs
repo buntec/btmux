@@ -223,6 +223,9 @@ impl Guest {
         for mount in &self.mounts {
             args.extend(["--mount".into(), mount.clone()]);
         }
+        for path in &self.config.copy {
+            args.extend(["--copy".into(), path.clone()]);
+        }
         let cwd = cwd
             .filter(|cwd| self.mounted(cwd))
             .or(self.mounts.first().map(String::as_str));
@@ -253,6 +256,8 @@ pub struct GuestShellArgs {
     disk: String,
     #[arg(long)]
     cloud_init: Option<String>,
+    #[arg(long = "copy")]
+    copies: Vec<String>,
 }
 
 /// The default cloud-init: tools agents expect, the shells, and the agents.
@@ -690,6 +695,40 @@ struct InstanceInfo {
     state: String,
     #[serde(default)]
     mounts: std::collections::HashMap<String, MountInfo>,
+    #[serde(default)]
+    image_release: Option<String>,
+    /// Numbers, or strings of them, or empty while stopped.
+    #[serde(default)]
+    cpu_count: serde_json::Value,
+    #[serde(default)]
+    memory: SizeInfo,
+    #[serde(default)]
+    disks: std::collections::HashMap<String, SizeInfo>,
+}
+
+#[derive(Deserialize, Default)]
+struct SizeInfo {
+    #[serde(default)]
+    used: serde_json::Value,
+    #[serde(default)]
+    total: serde_json::Value,
+}
+
+impl SizeInfo {
+    fn usage(&self) -> Option<crate::system_info::Usage> {
+        Some(crate::system_info::Usage {
+            used: number(&self.used)?,
+            total: number(&self.total)?,
+        })
+    }
+}
+
+fn number(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
 }
 
 #[derive(Deserialize)]
@@ -729,19 +768,32 @@ fn gateway(instance: &str) -> Result<IpAddr, String> {
         .ok_or_else(|| format!("no default route in {instance}: {}", route.trim()))
 }
 
-/// Serializes setup across panes starting at once.
-fn lock(instance: &str) -> Result<std::fs::File, String> {
+fn lock_file(instance: &str) -> Result<std::fs::File, String> {
     let dir = dirs::cache_dir()
         .ok_or("cannot resolve the cache directory")?
         .join("btmux");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let file = std::fs::File::create(dir.join(format!("multipass-{instance}.lock")))
-        .map_err(|e| e.to_string())?;
+    std::fs::File::create(dir.join(format!("multipass-{instance}.lock"))).map_err(|e| e.to_string())
+}
+
+/// Serializes setup across panes starting at once, and instance actions.
+fn lock(instance: &str) -> Result<std::fs::File, String> {
+    let file = lock_file(instance)?;
     if file.try_lock().is_err() {
         say(&format!("waiting for another pane to set up {instance}"));
         file.lock().map_err(|e| e.to_string())?;
     }
     Ok(file)
+}
+
+/// [`lock`], unless it's held.
+fn try_lock(instance: &str) -> Result<Option<std::fs::File>, String> {
+    let file = lock_file(instance)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.to_string()),
+    }
 }
 
 fn say(message: &str) {
@@ -799,6 +851,10 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
             info(instance)?.ok_or("the new instance is missing")?
         }
     };
+    if current.state == "Deleted" {
+        say(&format!("recovering {instance}, which was deleted"));
+        run(&["recover", instance])?;
+    }
     if current.state != "Running" {
         say(&format!("starting {instance}"));
         run_visible(&["start", instance])?;
@@ -845,10 +901,134 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
     if !status.success() {
         return Err(format!("setting up {instance} failed ({status})"));
     }
+    if !args.copies.is_empty() {
+        if let Some(home) = dirs::home_dir() {
+            if let Err(error) = copy_home_files(instance, &home, &args.copies) {
+                say(&format!("cannot copy your files: {error}"));
+            }
+        }
+    }
     if created {
         say("log in to Claude Code or Codex once in a sandboxed pane; the login stays in the instance");
     }
     Ok(())
+}
+
+/// `copy` entries as paths relative to `home`, skipping (and reporting) any
+/// outside it or missing.
+fn home_paths(home: &Path, entries: &[String]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for entry in entries {
+        let relative = match entry.strip_prefix("~/") {
+            Some(rest) => Some(PathBuf::from(rest)),
+            None => Path::new(entry)
+                .strip_prefix(home)
+                .ok()
+                .map(Path::to_path_buf),
+        };
+        let relative = relative.filter(|path| {
+            !path.as_os_str().is_empty()
+                && path
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)))
+        });
+        let Some(relative) = relative else {
+            say(&format!(
+                "not copying {entry}: it isn't in your home directory"
+            ));
+            continue;
+        };
+        if !home.join(&relative).exists() {
+            say(&format!("not copying {entry}: it doesn't exist"));
+            continue;
+        }
+        let relative = relative.to_string_lossy().into_owned();
+        if !paths.contains(&relative) {
+            paths.push(relative);
+        }
+    }
+    paths
+}
+
+/// The most `copy` sends.
+const MAX_COPY_BYTES: usize = 64 << 20;
+
+/// A tar of `paths` in `home`, following symlinks (dotfile managers link
+/// into a store). ustar has no access times, so unchanged files give the
+/// same bytes.
+fn home_archive(home: &Path, paths: &[String]) -> Result<Vec<u8>, String> {
+    let output = Command::new("tar")
+        .args(["-c", "-h", "--format=ustar", "-f", "-", "-C"])
+        .arg(home)
+        .arg("--")
+        .args(paths)
+        // No AppleDouble files from macOS's tar.
+        .env("COPYFILE_DISABLE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run tar: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tar: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    if output.stdout.len() > MAX_COPY_BYTES {
+        return Err(format!("they take more than {} MiB", MAX_COPY_BYTES >> 20));
+    }
+    Ok(output.stdout)
+}
+
+/// Where the guest records the last copy's hash.
+const COPIED: &str = ".cache/btmux/copied";
+
+/// Copy `entries` from `home` to the guest's home, unless unchanged since
+/// the last copy.
+fn copy_home_files(instance: &str, home: &Path, entries: &[String]) -> Result<(), String> {
+    let paths = home_paths(home, entries);
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let archive = home_archive(home, &paths)?;
+    let hash = git2::Oid::hash_object(git2::ObjectType::Blob, &archive)
+        .map_err(|e| e.to_string())?
+        .to_string();
+    let copied = run(&[
+        "exec",
+        instance,
+        "-n",
+        "--",
+        "sh",
+        "-c",
+        &format!("cat ~/{COPIED} 2>/dev/null; true"),
+    ])?;
+    if copied.trim() == hash {
+        return Ok(());
+    }
+    say(&format!("copying {}", paths.join(", ")));
+    // Writable, since store files are read-only and the next copy replaces them.
+    let script = format!(
+        r#"cd && tar -x -m -f - && chmod -R u+w -- "$@" && mkdir -p "$(dirname {COPIED})" && echo {hash} > {COPIED}"#
+    );
+    let mut child = multipass()?
+        .args(["exec", instance, "-n", "--", "sh", "-c", &script, "sh"])
+        .args(&paths)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || {
+        use std::io::Write;
+        stdin.write_all(&archive)
+    });
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let written = writer.join().unwrap_or(Ok(()));
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    written.map_err(|e| e.to_string())
 }
 
 /// Records the host version a guest binary was installed for, which differs
@@ -954,35 +1134,61 @@ async fn bridge(instance: &str) -> Result<BridgeResponse, String> {
 /// The guest token's file, in the guest's home.
 const GUEST_TOKEN: &str = ".config/btmux/guest-token";
 
-/// `btmux guest-shell`: prepare the instance, then become the guest's shell.
+/// `btmux guest-shell`: prepare the instance, then run the guest's shell,
+/// again after the instance stops or is deleted, so sessions survive that.
 pub async fn guest_shell(args: GuestShellArgs) -> i32 {
-    let prepared = {
-        let args = args.clone();
-        tokio::task::spawn_blocking(move || prepare(&args))
-            .await
-            .unwrap_or_else(|e| Err(e.to_string()))
-    };
-    let result = match prepared {
-        Ok(()) => bridge(&args.instance).await,
-        Err(error) => Err(error),
-    };
-    let bridge = match result {
-        Ok(bridge) => bridge,
-        Err(error) => return fail(&error),
-    };
     let Ok(pane) = std::env::var("BTMUX_PANE_ID") else {
         return fail("BTMUX_PANE_ID is unset");
     };
-    // In a file, not arguments, which other users see in process lists.
-    let written = stdin_of(bridge.token.as_bytes())
-        .and_then(|token| write_in(&args.instance, GUEST_TOKEN, token));
-    if let Err(error) = written {
-        return fail(&error);
+    loop {
+        let command = match enter(&args, &pane).await {
+            Ok(command) => command,
+            Err(error) => return fail(&error),
+        };
+        let code = match run_shell(command) {
+            Ok(code) => code,
+            Err(error) => return fail(&error),
+        };
+        // A shell that exits cleanly closes the pane without the check.
+        if code == 0 {
+            return 0;
+        }
+        let instance = args.instance.clone();
+        let gone = tokio::task::spawn_blocking(move || instance_gone(&instance))
+            .await
+            .ok()
+            .flatten();
+        let Some((why, verb)) = gone else {
+            return code;
+        };
+        // Modes the shell's programs may have left on.
+        eprint!(
+            "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+        );
+        eprint!("\r\n\x1b[33mbtmux: {why}.\x1b[0m Press Enter to {verb} it again.\r\n");
+        let mut line = String::new();
+        if !matches!(std::io::stdin().read_line(&mut line), Ok(1..)) {
+            return code;
+        }
     }
-    let mut command = match multipass() {
-        Ok(command) => command,
-        Err(error) => return fail(&error),
-    };
+}
+
+/// Prepare the instance and the guest token: the command entering the shell.
+async fn enter(args: &GuestShellArgs, pane: &str) -> Result<Command, String> {
+    {
+        let args = args.clone();
+        tokio::task::spawn_blocking(move || prepare(&args))
+            .await
+            .map_err(|e| e.to_string())??;
+    }
+    let bridge = bridge(&args.instance).await?;
+    // In a file, not arguments, which other users see in process lists.
+    write_in(
+        &args.instance,
+        GUEST_TOKEN,
+        stdin_of(bridge.token.as_bytes())?,
+    )?;
+    let mut command = multipass()?;
     command.args(["exec", &args.instance]);
     match &args.cwd {
         Some(cwd) => command.args(["-d", cwd]),
@@ -1019,14 +1225,59 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
         args.shell.name(),
         "-l",
     ]);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let error = command.exec();
-        fail(&format!("cannot run multipass: {error}"))
+    Ok(command)
+}
+
+/// Run the guest's shell to its end: its exit status.
+#[cfg(unix)]
+fn run_shell(mut command: Command) -> Result<i32, String> {
+    use std::os::unix::process::ExitStatusExt;
+    // SAFETY: tcgetattr/tcsetattr and signal take no pointers we keep.
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    let saved = unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut termios) } == 0;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    // The terminal's signals are the guest's while it runs.
+    let ignored = [libc::SIGINT, libc::SIGQUIT, libc::SIGTSTP];
+    let previous: Vec<_> = ignored
+        .iter()
+        .map(|&signal| unsafe { libc::signal(signal, libc::SIG_IGN) })
+        .collect();
+    let status = child.wait();
+    for (&signal, handler) in ignored.iter().zip(previous) {
+        unsafe { libc::signal(signal, handler) };
     }
-    #[cfg(not(unix))]
-    fail("sandboxed sessions need a Unix host")
+    if saved {
+        unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) };
+    }
+    let status = status.map_err(|e| e.to_string())?;
+    Ok(status
+        .code()
+        .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
+}
+
+#[cfg(not(unix))]
+fn run_shell(_: Command) -> Result<i32, String> {
+    Err("sandboxed sessions need a Unix host".into())
+}
+
+/// Why the shell ended with the instance, and how to bring it back; `None`
+/// while the instance still answers.
+fn instance_gone(instance: &str) -> Option<(String, &'static str)> {
+    if run(&["exec", instance, "-n", "--", "true"]).is_ok() {
+        return None;
+    }
+    // Let a stop or delete finish.
+    std::thread::sleep(Duration::from_secs(1));
+    Some(match info(instance) {
+        Ok(Some(info)) if info.state != "Deleted" => (
+            format!("{instance} is {}", info.state.to_lowercase()),
+            "start",
+        ),
+        Ok(_) => (format!("{instance} was deleted"), "create"),
+        Err(error) => (error, "start"),
+    })
 }
 
 /// Show the error until a key is pressed, then exit, closing the pane.
@@ -1035,6 +1286,114 @@ fn fail(error: &str) -> i32 {
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     1
+}
+
+/// The instance, for the status bar.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct InstanceStatus {
+    pub instance: String,
+    /// Multipass's state (`Running`, `Stopped`, …); `None` until created.
+    pub state: Option<String>,
+    pub release: Option<String>,
+    pub cpus: Option<u32>,
+    pub memory: Option<crate::system_info::Usage>,
+    pub disk: Option<crate::system_info::Usage>,
+    /// Sandboxed panes with a shell, which stopping it interrupts.
+    pub panes: usize,
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum InstanceAction {
+    Start,
+    Stop,
+    Restart,
+    /// `delete --purge`.
+    Delete,
+}
+
+fn instance_status(instance: String, panes: usize) -> Result<InstanceStatus, String> {
+    let info = info(&instance)?;
+    Ok(InstanceStatus {
+        state: info.as_ref().map(|info| info.state.clone()),
+        release: info
+            .as_ref()
+            .and_then(|info| info.image_release.clone())
+            .filter(|release| !release.is_empty()),
+        cpus: info
+            .as_ref()
+            .and_then(|info| number(&info.cpu_count))
+            .and_then(|n| n.try_into().ok()),
+        memory: info.as_ref().and_then(|info| info.memory.usage()),
+        disk: info.as_ref().and_then(|info| {
+            let disks: Vec<_> = info.disks.values().filter_map(SizeInfo::usage).collect();
+            (!disks.is_empty()).then(|| crate::system_info::Usage {
+                used: disks.iter().map(|d| d.used).sum(),
+                total: disks.iter().map(|d| d.total).sum(),
+            })
+        }),
+        instance,
+        panes,
+    })
+}
+
+/// `GET /api/multipass`.
+pub async fn api_status(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+) -> axum::response::Response {
+    let (instance, panes) = {
+        let mgr = state.read().await;
+        (
+            instance_name(&mgr.config().multipass_config),
+            mgr.guest_shells(),
+        )
+    };
+    respond(tokio::task::spawn_blocking(move || instance_status(instance, panes)).await)
+}
+
+/// `POST /api/multipass/{action}`. Sandboxed panes offer to start or create
+/// the instance again when it goes away.
+pub async fn api_action(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+    axum::extract::Path(action): axum::extract::Path<InstanceAction>,
+) -> axum::response::Response {
+    let instance = instance_name(&state.read().await.config().multipass_config);
+    let done = {
+        let instance = instance.clone();
+        tokio::task::spawn_blocking(move || {
+            // Not while a pane sets it up.
+            let _lock = try_lock(&instance)?
+                .ok_or_else(|| format!("a sandboxed pane is setting up {instance}"))?;
+            let args: &[&str] = match action {
+                InstanceAction::Start => &["start", &instance],
+                InstanceAction::Stop => &["stop", &instance],
+                InstanceAction::Restart => &["restart", &instance],
+                InstanceAction::Delete => &["delete", "--purge", &instance],
+            };
+            run(args).map(drop)
+        })
+        .await
+    };
+    match done {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return (StatusCode::CONFLICT, error).into_response(),
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+        }
+    }
+    let panes = state.read().await.guest_shells();
+    respond(tokio::task::spawn_blocking(move || instance_status(instance, panes)).await)
+}
+
+fn respond(
+    result: Result<Result<InstanceStatus, String>, tokio::task::JoinError>,
+) -> axum::response::Response {
+    match result {
+        Ok(Ok(status)) => Json(status).into_response(),
+        Ok(Err(error)) => (StatusCode::BAD_GATEWAY, error).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
 }
 
 /// The server's half: a listener on each bridge address guests asked for.
@@ -1309,6 +1668,57 @@ mod tests {
             [path(&feat), path(&repo.join(".git")), path(&other)]
         );
         std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copies_home_files_following_links() {
+        let root = std::env::temp_dir().join(format!("btmux-copy-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let store = root.join("store");
+        std::fs::create_dir_all(home.join(".config/fish")).unwrap();
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(home.join(".config/fish/config.fish"), "set -g x 1\n").unwrap();
+        std::fs::write(store.join("starship.toml"), "format = '$all'\n").unwrap();
+        std::os::unix::fs::symlink(
+            store.join("starship.toml"),
+            home.join(".config/starship.toml"),
+        )
+        .unwrap();
+        let entries = [
+            "~/.config/fish".to_string(),
+            home.join(".config/starship.toml")
+                .to_string_lossy()
+                .into_owned(),
+            "~/.config/fish".into(),
+            "~/missing".into(),
+            "/etc/hosts".into(),
+            "~/../escape".into(),
+        ];
+        let paths = home_paths(&home, &entries);
+        assert_eq!(paths, [".config/fish", ".config/starship.toml"]);
+
+        let archive = home_archive(&home, &paths).unwrap();
+        assert_eq!(archive, home_archive(&home, &paths).unwrap(), "stable");
+        let out = root.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let mut tar = Command::new("tar")
+            .args(["-x", "-f", "-", "-C"])
+            .arg(&out)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        tar.stdin.take().unwrap().write_all(&archive).unwrap();
+        assert!(tar.wait().unwrap().success());
+        assert_eq!(
+            std::fs::read_to_string(out.join(".config/fish/config.fish")).unwrap(),
+            "set -g x 1\n"
+        );
+        let link = out.join(".config/starship.toml");
+        assert!(!link.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(std::fs::read_to_string(link).unwrap(), "format = '$all'\n");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

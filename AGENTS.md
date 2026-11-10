@@ -544,7 +544,14 @@ integration (OSC 7 with the guest hostname, OSC 133), printing progress in the
 pane, then execs `multipass exec … <shell> -l`, which reads the guest token
 from a guest file (`GUEST_TOKEN`), never arguments, which process lists show.
 Until the first OSC 133 mark the pane counts as running a program. On failure
-it waits for Enter. Files reach Multipass on stdin (`--cloud-init -`,
+it waits for Enter. A shell that exits nonzero while the instance no longer
+answers (stopped, deleted) gets an offer to start or create it again, so
+sessions survive; the wrapper ignores the terminal's job-control signals while
+the shell runs. `[multipass] copy` lists home files sent as a ustar archive
+(symlinks followed) on each start, skipped when its hash matches the guest's
+`COPIED`. `GET /api/multipass` (`InstanceStatus`) and `POST
+/api/multipass/{start,stop,restart,delete}` back the status bar's
+`MultipassButton`; actions refuse while a pane holds the setup lock. Files reach Multipass on stdin (`--cloud-init -`,
 `write_in`), never by host path: snap Multipass can't read the host's `/tmp`
 or hidden directories.
 

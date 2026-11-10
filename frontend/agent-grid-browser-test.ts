@@ -478,12 +478,27 @@ try {
     .locator('button[aria-label="Kill agent session"]');
   await killButton.hover();
   await page.getByRole('tooltip').filter({ hasText: 'Kill agent session (x)' }).waitFor({ timeout: 5000 });
-  await killButton.click();
   const interrupts = async () => {
     const output = await (await fetch(`${url}/api/panes/${victim.id}/output`, { headers })).text();
     // The echoed command has `int-\$n`; an interrupt may flush the last count.
     return Math.max(0, ...[...output.matchAll(/int-(\d+)/g)].map((match) => Number(match[1])));
   };
+  // It asks first; Escape and `n` cancel, leaving the grid open with its keys.
+  const alert = page.getByRole('alertdialog');
+  for (const cancelKey of ['Escape', 'n']) {
+    await killButton.click();
+    await alert.waitFor({ timeout: 5000 });
+    assert.match(await alert.innerText(), /agent-kill/);
+    await page.keyboard.press(cancelKey);
+    await alert.waitFor({ state: 'hidden', timeout: 5000 });
+    assert.equal(await page.locator('dialog[open]').count(), 1, `${cancelKey} must not close the grid`);
+    await waitForAsync(page, () => document.activeElement === document.querySelector('dialog[open]'));
+  }
+  await page.waitForTimeout(400);
+  assert.equal(await interrupts(), 0, 'a canceled kill sends nothing');
+  await killButton.click();
+  await alert.getByRole('button', { name: 'Kill session', exact: true }).click();
+  await alert.waitFor({ state: 'hidden', timeout: 5000 });
   const killDeadline = Date.now() + 5000;
   while ((await interrupts()) < 2) {
     assert(Date.now() < killDeadline, `kill sent ${await interrupts()} interrupts`);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import {
   Layout,
   LayoutContent,
@@ -262,6 +263,7 @@ export function AgentGrid({ send }: Props) {
     [area, shown, naturals, timedOutPanes],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [killing, setKilling] = useState<AgentPaneEntry | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   // A synthetic Tab moves no focus, so hints must reach the dialog's handler.
   const focusDialog = useCallback(() => dialogRef.current?.focus(), []);
@@ -304,13 +306,23 @@ export function AgentGrid({ send }: Props) {
     if (entry) send({ type: 'reset_agent', pane_id: entry.paneId });
   };
 
+  const confirmKill = (entry: AgentPaneEntry | undefined) => {
+    if (entry) setKilling(entry);
+  };
+
   // Two Ctrl-Cs, apart so the agent sees two presses: Claude Code and Codex exit.
-  const kill = (entry: AgentPaneEntry | undefined) => {
-    if (!entry) return;
+  const kill = (entry: AgentPaneEntry) => {
     const interrupt = () =>
       send({ type: 'write_pane_input', session_id: entry.sessionId, pane_id: entry.paneId, text: '\x03' });
     interrupt();
     window.setTimeout(interrupt, KILL_PRESS_GAP_MS);
+  };
+
+  const closeKill = (confirmed: boolean) => {
+    if (confirmed && killing) kill(killing);
+    setKilling(null);
+    // After the alert returns focus to its trigger, so the grid keeps its keys.
+    requestAnimationFrame(() => dialogRef.current?.focus());
   };
 
   const toggleMinimized = (entry: AgentPaneEntry) => {
@@ -386,7 +398,7 @@ export function AgentGrid({ send }: Props) {
       return;
     }
     if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-      const action = { r: reset, m: toggleMinimized, o: toggleOnly, x: kill }[e.key];
+      const action = { r: reset, m: toggleMinimized, o: toggleOnly, x: confirmKill }[e.key];
       if (action) {
         e.preventDefault();
         action(selected);
@@ -562,8 +574,7 @@ export function AgentGrid({ send }: Props) {
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          kill(entry);
-                          dialogRef.current?.focus();
+                          confirmKill(entry);
                         }}
                       />
                     </HStack>
@@ -610,6 +621,28 @@ export function AgentGrid({ send }: Props) {
         if ((e.target as Element).closest('[data-agent-mirror]')) dialogRef.current?.focus();
       }}
     >
+      <AlertDialog
+        isOpen={killing !== null}
+        onOpenChange={(value) => {
+          if (!value) closeKill(false);
+        }}
+        title="Kill agent session?"
+        description={
+          killing
+            ? `Sends Ctrl-C twice to ${killing.sessionName} › ${killing.windowName} › ${paneLabel(killing)}, which exits Claude Code and Codex.`
+            : ''
+        }
+        actionLabel="Kill session"
+        onAction={() => closeKill(true)}
+        onKeyDown={(e) => {
+          // React bubbles portal events to the grid's handler.
+          e.stopPropagation();
+          if (e.key === 'y' || e.key === 'n') {
+            e.preventDefault();
+            closeKill(e.key === 'y');
+          }
+        }}
+      />
       <Layout
         header={
           <>

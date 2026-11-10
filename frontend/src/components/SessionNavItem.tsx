@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { SideNavItem } from '@astryxdesign/core/SideNav';
+import { SideNavItem, useSideNavCollapse } from '@astryxdesign/core/SideNav';
 import { Badge } from '@astryxdesign/core/Badge';
 import type { SessionState } from '../state/types';
 import { SessionIcon } from './SessionIcon';
@@ -18,6 +18,8 @@ export function SessionNavItem({
   children: ReactNode;
 }) {
   const [folded, setFolded] = useState(false);
+  // False in the mobile drawer, which renders items expanded.
+  const { isCollapsed: rail } = useSideNavCollapse();
   // No tooltip: the collapsed rail's flyout already names the session.
   return (
     <SideNavItem
@@ -28,6 +30,8 @@ export function SessionNavItem({
       isSelected={isSelected && (collapsed || folded)}
       endContent={<Badge variant="neutral" label={session.windows.length} />}
       onClick={onClick}
+      // The rail's flyout trigger drops `onClick` but gets the rest props.
+      onClickCapture={rail ? onClick : undefined}
     >
       {children}
     </SideNavItem>

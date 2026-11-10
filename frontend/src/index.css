@@ -332,7 +332,7 @@
 
 /* Session icon (SessionIcon.tsx): the gradient flows while an agent works. */
 .btm-session-flow[data-agent-animate] {
-  animation: btm-session-flow 4s linear infinite;
+  animation: btm-session-flow 2s linear infinite;
 }
 @keyframes btm-session-flow {
   to {

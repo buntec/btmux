@@ -649,6 +649,28 @@ impl SessionManager {
         }
     }
 
+    pub fn session_runtime(&self, session_id: Uuid) -> Option<&Runtime> {
+        self.sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .map(|s| &s.runtime)
+    }
+
+    /// Add checked mounts to a sandboxed session, for panes created from now on.
+    pub fn add_sandbox_mounts(&mut self, session_id: Uuid, added: Vec<String>) {
+        if let Some(Session {
+            runtime: Runtime::Multipass { mounts, .. },
+            ..
+        }) = self.session_mut(session_id)
+        {
+            for mount in added {
+                if !mounts.contains(&mount) {
+                    mounts.push(mount);
+                }
+            }
+        }
+    }
+
     fn pane_runtime(&self, pane_id: Uuid) -> Runtime {
         self.session_of_pane(pane_id)
             .and_then(|id| self.sessions.iter().find(|s| s.id == id))
@@ -666,7 +688,8 @@ impl SessionManager {
 
     /// Whether the pane's shell runs in the guest.
     pub fn is_guest_pane(&self, pane_id: Uuid) -> bool {
-        matches!(self.pane_runtime(pane_id), Runtime::Multipass { .. })
+        self.find_pane(pane_id)
+            .is_some_and(|pane| pane.pty.is_guest())
     }
 
     pub async fn create_session(&mut self, name: Option<String>) -> Uuid {

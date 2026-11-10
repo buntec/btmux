@@ -234,6 +234,13 @@ pub enum Runtime {
 }
 
 impl Runtime {
+    /// [`Self::validate`] off the async runtime; it reads the filesystem.
+    pub async fn validated(self) -> Result<Self, String> {
+        tokio::task::spawn_blocking(move || self.validate())
+            .await
+            .map_err(|e| e.to_string())?
+    }
+
     /// With canonical mounts, at least one, and the git dirs they need.
     pub fn validate(self) -> Result<Self, String> {
         match self {

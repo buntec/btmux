@@ -185,12 +185,11 @@ impl BtmuxMcpServer {
         }): Parameters<CreateSessionParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let cwd = cwd.map(std::path::PathBuf::from);
-        let mut mgr = self.state.write().await;
         let runtime = match sandbox_mounts {
             None => crate::session::Runtime::Local,
             Some(mounts) => {
                 let shell = match sandbox_shell.as_deref() {
-                    None => mgr.config().multipass_shell,
+                    None => self.state.read().await.config().multipass_shell,
                     Some(shell) => match crate::multipass::GuestShell::of(shell) {
                         Some(shell) => shell,
                         None => return tool_error(format!("unknown sandbox shell {shell:?}")),
@@ -199,10 +198,12 @@ impl BtmuxMcpServer {
                 crate::session::Runtime::Multipass { mounts, shell }
             }
         };
-        let runtime = match runtime.validate() {
+        // Validation reads the filesystem, so not under the lock.
+        let runtime = match runtime.validated().await {
             Ok(runtime) => runtime,
             Err(error) => return tool_error(error),
         };
+        let mut mgr = self.state.write().await;
         let id = mgr.create_session_in(name, cwd, window_name, runtime).await;
         let session = mgr.sessions.iter().find(|s| s.id == id).unwrap();
         let name = session.name.clone();

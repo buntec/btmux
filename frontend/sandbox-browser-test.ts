@@ -97,7 +97,8 @@ try {
   const [shell] = await until('the guest shell', async () => shellExecs().length > 0 && shellExecs());
   const launches = calls().filter((args) => args[0] === 'launch');
   assert.equal(launches.length, 1);
-  assert(launches[0].includes('--cloud-init'));
+  assert.equal(launches[0][launches[0].indexOf('--cloud-init') + 1], '-', 'cloud-init comes on stdin');
+  assert.match(readFileSync(path.join(fake, 'cloud-init.yaml'), 'utf8'), /^#cloud-config/);
   for (const mount of [feat, path.join(repo, '.git')]) {
     assert(
       calls().some((args) => args[0] === 'mount' && args[1] === mount && args[2] === `btmux-sandbox:${mount}`),
@@ -114,7 +115,9 @@ try {
   assert.equal(env.BTMUX_API_URL, backendUrl);
   assert.equal(env.BTMUX_OTEL_ENDPOINT, `${backendUrl}/api/panes/${paneId}/telemetry`);
   assert.equal(env.BTMUX_BIN, '/usr/local/bin/btmux');
-  assert(env.BTMUX_AUTH_TOKEN && env.BTMUX_AUTH_TOKEN !== token, 'the guest gets its own token');
+  const guestToken = readFileSync(path.join(fake, 'home/.config/btmux/guest-token'), 'utf8');
+  assert(guestToken && guestToken !== token, 'the guest gets its own token');
+  assert(!calls().some((args) => args.some((arg) => arg.includes(guestToken))), 'in a file, not arguments');
   const screen = await (await api(`/api/panes/${paneId}/capture?scrollback=true`)).text();
   assert.match(screen, /creating the Multipass instance btmux-sandbox/);
   assert.match(screen, /btmux-sandbox is ready after \d+s/);
@@ -142,7 +145,7 @@ try {
   const guest = (route: string, method = 'POST', extra: Record<string, string> = {}) =>
     fetch(`${env.BTMUX_API_URL}${route}`, {
       method,
-      headers: { Authorization: `Bearer ${env.BTMUX_AUTH_TOKEN}`, 'Content-Type': 'application/json', ...extra },
+      headers: { Authorization: `Bearer ${guestToken}`, 'Content-Type': 'application/json', ...extra },
       body: method === 'GET' ? undefined : JSON.stringify({ hook_event_name: 'Notification', message: 'from the guest' }),
     }).then((response) => response.status);
   const localPane = (await snapshot(local.id)).windows[0].panes[0].id;
@@ -163,9 +166,11 @@ try {
     })
   ).json();
   assert.match(pasted.path, /^\/tmp\/btmux-paste-[0-9a-f]+\.png$/);
-  const transfer = calls().find((args) => args[0] === 'transfer' && args[2] === `btmux-sandbox:${pasted.path}`);
-  assert(transfer, 'transfers the image into the instance');
-  assert(!existsSync(transfer[1]), 'removes the host copy');
+  assert.deepEqual([...readFileSync(path.join(fake, 'guest', pasted.path))], [0x89, 0x50, 0x4e, 0x47]);
+  assert(
+    calls().some((args) => args[0] === 'exec' && args.at(-1) === pasted.path),
+    'streams the image into the instance',
+  );
   console.log("PASS a pasted image is copied into the guest, and its guest path pasted");
 
   await api(`/api/panes/${paneId}/split`, { method: 'POST', body: JSON.stringify({ direction: 'right' }) });
@@ -173,6 +178,18 @@ try {
   assert.equal(calls().filter((args) => args[0] === 'launch').length, 1);
   assert.equal(shellExecs()[1][3], feat, 'the split starts in its source pane directory');
   console.log('PASS a second pane reuses the instance and its mounts');
+
+  const other = path.join(parent, 'proj-other');
+  const created = await (
+    await api(`/api/panes/${paneId}/worktree`, { method: 'POST', body: JSON.stringify({ branch: 'other', select: false }) })
+  ).json();
+  assert.equal(created.path, other);
+  assert.deepEqual((await sessions()).find((s) => s.name === 'sandboxed')?.runtime.mounts, [feat, path.join(repo, '.git'), other]);
+  await page.goto(`${url}/s/sandboxed/w/other`);
+  await until('the worktree window shell', async () => shellExecs().length === 3);
+  assert.equal(shellExecs()[2][3], other, 'starts in the new worktree');
+  assert(calls().some((args) => args[0] === 'mount' && args[1] === other));
+  console.log('PASS a worktree made from a sandboxed session is mounted there');
 
   assert.deepEqual(errors, []);
 } finally {

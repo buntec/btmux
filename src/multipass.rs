@@ -98,7 +98,7 @@ pub fn instance_name(config: &MultipassConfig) -> String {
 /// A directory to mount, canonical. Refuses the home directory and its
 /// ancestors, which would hand the guest everything isolation hides.
 pub fn check_mount(path: &str) -> Result<String, String> {
-    let expanded = expand_tilde(path);
+    let expanded = crate::config::expand_home(path);
     if !expanded.is_absolute() {
         return Err(format!("{path}: use an absolute path"));
     }
@@ -147,6 +147,20 @@ pub fn mounts(requested: &[String]) -> Result<Vec<String>, String> {
     Ok(mounts)
 }
 
+/// `mounts` plus `dir`, with the git dir it needs, unless a mount has it.
+pub fn with_mount(mounts: &[String], dir: &Path) -> Result<Option<Vec<String>>, String> {
+    let dir = check_mount(&dir.to_string_lossy())?;
+    if mounts
+        .iter()
+        .any(|mount| Path::new(&dir).starts_with(mount))
+    {
+        return Ok(None);
+    }
+    let mut requested = mounts.to_vec();
+    requested.push(dir);
+    self::mounts(&requested).map(Some)
+}
+
 /// The git dir a worktree root at `dir` names in its `.git` file.
 fn external_git_dir(dir: &Path) -> Option<String> {
     if !dir.join(".git").is_file() {
@@ -154,15 +168,6 @@ fn external_git_dir(dir: &Path) -> Option<String> {
     }
     let (git, _) = crate::pane_git::worktree_of(dir)?;
     (Path::new(&git.worktree_root) == dir).then_some(git.repo_id)
-}
-
-fn expand_tilde(path: &str) -> PathBuf {
-    match (path.strip_prefix('~'), dirs::home_dir()) {
-        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
-            home.join(rest.trim_start_matches('/'))
-        }
-        _ => PathBuf::from(path),
-    }
 }
 
 /// A pane's guest.
@@ -396,24 +401,49 @@ fn parse_cloud_init_status(output: &str) -> Option<String> {
         .map(|status| status.trim().to_string())
 }
 
-/// Copy a host file into the instance.
+/// Copy a host file into the instance, owner-only. Streamed, since snap
+/// Multipass can't read the host's /tmp or hidden directories.
 pub fn copy_in(instance: &str, host: &Path, guest: &str) -> Result<(), String> {
-    run(&[
-        "transfer",
-        &host.to_string_lossy(),
-        &format!("{instance}:{guest}"),
-    ])
-    .map(drop)
+    let file = std::fs::File::open(host).map_err(|e| format!("{}: {e}", host.display()))?;
+    write_in(instance, guest, file.into())
+}
+
+/// Write `input` to the guest file `path` (a relative one in the guest's
+/// home), owner-only.
+fn write_in(instance: &str, path: &str, input: Stdio) -> Result<(), String> {
+    const SCRIPT: &str = r#"umask 077 && cd && mkdir -p "$(dirname "$1")" && cat > "$1""#;
+    let output = multipass()?
+        .args(["exec", instance, "-n", "--", "sh", "-c", SCRIPT, "sh", path])
+        .stdin(input)
+        .output()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "cannot write {path} in {instance}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// `bytes` as a child's stdin.
+fn stdin_of(bytes: &[u8]) -> Result<Stdio, String> {
+    use std::io::Write;
+    // Small enough for the pipe's buffer.
+    let (reader, mut writer) = std::io::pipe().map_err(|e| e.to_string())?;
+    writer.write_all(bytes).map_err(|e| e.to_string())?;
+    Ok(reader.into())
 }
 
 /// `multipass launch`, showing its progress until it waits for cloud-init, then
 /// cloud-init's log, where the minutes go.
-fn launch(instance: &str, args: &[&str]) -> Result<(), String> {
+fn launch(instance: &str, args: &[&str], input: Stdio) -> Result<(), String> {
     use std::io::{Read, Write};
     let started = Instant::now();
     let mut child = multipass()?
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(input)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -707,16 +737,9 @@ fn lock(instance: &str) -> Result<std::fs::File, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = std::fs::File::create(dir.join(format!("multipass-{instance}.lock")))
         .map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        let fd = file.as_raw_fd();
-        if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            say(&format!("waiting for another pane to set up {instance}"));
-            if unsafe { libc::flock(fd, libc::LOCK_EX) } != 0 {
-                return Err(std::io::Error::last_os_error().to_string());
-            }
-        }
+    if file.try_lock().is_err() {
+        say(&format!("waiting for another pane to set up {instance}"));
+        file.lock().map_err(|e| e.to_string())?;
     }
     Ok(file)
 }
@@ -737,16 +760,20 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
             say(&format!(
                 "creating the Multipass instance {instance}; the first one downloads an image and takes a few minutes"
             ));
-            let cloud_init = match &args.cloud_init {
-                Some(path) => expand_tilde(path),
-                None => {
-                    let path =
-                        std::env::temp_dir().join(format!("btmux-{instance}-cloud-init.yaml"));
-                    std::fs::write(&path, CLOUD_INIT).map_err(|e| e.to_string())?;
-                    path
+            // On stdin: snap Multipass can't read the host's /tmp or hidden
+            // directories.
+            let (cloud_init, input) = match args.cloud_init.as_deref() {
+                Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
+                    (url, Stdio::null())
                 }
+                Some(path) => {
+                    let path = crate::config::expand_home(path);
+                    let file = std::fs::File::open(&path)
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                    ("-", file.into())
+                }
+                None => ("-", stdin_of(CLOUD_INIT.as_bytes())?),
             };
-            let cloud_init = cloud_init.to_string_lossy().into_owned();
             let cpus = args.cpus.to_string();
             launch(
                 instance,
@@ -762,10 +789,11 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
                     "--disk",
                     &args.disk,
                     "--cloud-init",
-                    &cloud_init,
+                    cloud_init,
                     "--timeout",
                     "1800",
                 ],
+                input,
             )?;
             created = true;
             info(instance)?.ok_or("the new instance is missing")?
@@ -823,10 +851,17 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Records the host version a guest binary was installed for, which differs
+/// from its own when no release matched.
+const INSTALLED_FOR: &str = "/usr/local/lib/btmux/installed-for";
+
 /// Put this btmux version at `GUEST_BIN`, then install its agent hooks.
 fn install_btmux(instance: &str) -> Result<(), String> {
     let version = run(&["exec", instance, "-n", "--", GUEST_BIN, "version"]).unwrap_or_default();
-    if version.split_whitespace().last() == Some(crate::config::VERSION) {
+    let installed_for = || run(&["exec", instance, "-n", "--", "cat", INSTALLED_FOR]);
+    if version.split_whitespace().last() == Some(crate::config::VERSION)
+        || installed_for().is_ok_and(|v| v.trim() == crate::config::VERSION)
+    {
         return Ok(());
     }
     let arch = match std::env::consts::ARCH {
@@ -834,9 +869,10 @@ fn install_btmux(instance: &str) -> Result<(), String> {
         "x86_64" => "x86_64",
         arch => return Err(format!("no btmux release for {arch} guests")),
     };
-    let staged = "/tmp/btmux-install";
+    // In the guest's home, where `write_in` puts it.
+    let staged = ".cache/btmux-install";
     let runs = || {
-        let script = format!("chmod +x {staged} && {staged} version");
+        let script = format!("cd && chmod +x {staged} && ./{staged} version");
         run(&["exec", instance, "-n", "--", "sh", "-c", &script])
             .is_ok_and(|v| v.split_whitespace().last() == Some(crate::config::VERSION))
     };
@@ -851,7 +887,7 @@ fn install_btmux(instance: &str) -> Result<(), String> {
             "copying btmux {} into {instance}",
             crate::config::VERSION
         ));
-        let ok = run(&["transfer", &exe, &format!("{instance}:{staged}")]).is_ok() && runs();
+        let ok = copy_in(instance, Path::new(&exe), staged).is_ok() && runs();
         if !ok {
             say("the copy doesn't run there");
         }
@@ -865,16 +901,20 @@ fn install_btmux(instance: &str) -> Result<(), String> {
         let asset = format!("btmux-{arch}-unknown-linux-gnu");
         let base = "https://github.com/buntec/btmux/releases";
         let script = format!(
-            "curl -fsSL -o {staged} {base}/download/v{version}/{asset} \\
+            "cd && mkdir -p .cache && {{ curl -fsSL -o {staged} {base}/download/v{version}/{asset} \\
              || {{ echo 'btmux: no release for this version; using the latest' >&2; \\
-             curl -fsSL -o {staged} {base}/latest/download/{asset}; }}",
+             curl -fsSL -o {staged} {base}/latest/download/{asset}; }}; }}",
             version = crate::config::VERSION
         );
         run(&["exec", instance, "-n", "--", "sh", "-c", &script])?;
     }
-    run(&[
-        "exec", instance, "-n", "--", "sudo", "install", "-m", "755", staged, GUEST_BIN,
-    ])?;
+    let script = format!(
+        "cd && sudo install -m 755 {staged} {GUEST_BIN} && rm {staged} \\
+         && sudo mkdir -p {dir} && echo {version} | sudo tee {INSTALLED_FOR} >/dev/null",
+        dir = Path::new(INSTALLED_FOR).parent().unwrap().display(),
+        version = crate::config::VERSION
+    );
+    run(&["exec", instance, "-n", "--", "sh", "-c", &script])?;
     let hooks = format!(
         "{GUEST_BIN} install-claude-code-hooks >/dev/null; {GUEST_BIN} install-codex-hooks >/dev/null; \
          command -v fish >/dev/null && {GUEST_BIN} install-fish-integration >/dev/null; true"
@@ -911,6 +951,9 @@ async fn bridge(instance: &str) -> Result<BridgeResponse, String> {
     serde_json::from_str(&body).map_err(|e| e.to_string())
 }
 
+/// The guest token's file, in the guest's home.
+const GUEST_TOKEN: &str = ".config/btmux/guest-token";
+
 /// `btmux guest-shell`: prepare the instance, then become the guest's shell.
 pub async fn guest_shell(args: GuestShellArgs) -> i32 {
     let prepared = {
@@ -930,6 +973,12 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
     let Ok(pane) = std::env::var("BTMUX_PANE_ID") else {
         return fail("BTMUX_PANE_ID is unset");
     };
+    // In a file, not arguments, which other users see in process lists.
+    let written = stdin_of(bridge.token.as_bytes())
+        .and_then(|token| write_in(&args.instance, GUEST_TOKEN, token));
+    if let Err(error) = written {
+        return fail(&error);
+    }
     let mut command = match multipass() {
         Ok(command) => command,
         Err(error) => return fail(&error),
@@ -954,14 +1003,22 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
     command.args([
         format!("BTMUX_PANE_ID={pane}"),
         format!("BTMUX_API_URL={}", bridge.url),
-        format!("BTMUX_AUTH_TOKEN={}", bridge.token),
         format!(
             "BTMUX_OTEL_ENDPOINT={}/api/panes/{pane}/telemetry",
             bridge.url
         ),
         format!("BTMUX_BIN={GUEST_BIN}"),
     ]);
-    command.args([args.shell.name(), "-l"]);
+    command.args([
+        "sh",
+        "-c",
+        &format!(
+            r#"BTMUX_AUTH_TOKEN=$(cat ~/{GUEST_TOKEN}) && export BTMUX_AUTH_TOKEN && exec "$@""#
+        ),
+        "sh",
+        args.shell.name(),
+        "-l",
+    ]);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -989,7 +1046,8 @@ struct Bridge {
     /// The main listener takes every address.
     unspecified: bool,
     app: Mutex<Option<axum::Router>>,
-    bound: Mutex<HashSet<IpAddr>>,
+    /// Held across binding, so concurrent requests bind once.
+    bound: tokio::sync::Mutex<HashSet<IpAddr>>,
 }
 
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
@@ -1005,7 +1063,7 @@ pub fn configure_bridge(auth: std::sync::Arc<crate::auth::Auth>, host: &str, por
         main,
         unspecified: main.is_some_and(|ip| ip.is_unspecified()),
         app: Mutex::new(None),
-        bound: Mutex::default(),
+        bound: Default::default(),
     });
 }
 
@@ -1034,7 +1092,11 @@ async fn listen(address: IpAddr) -> Result<String, String> {
     };
     let url = format!("http://{authority}");
     bridge.auth.allow(&url)?;
-    if served || bridge.bound.lock().unwrap().contains(&address) {
+    if served {
+        return Ok(url);
+    }
+    let mut bound = bridge.bound.lock().await;
+    if bound.contains(&address) {
         return Ok(url);
     }
     let app = bridge
@@ -1047,9 +1109,7 @@ async fn listen(address: IpAddr) -> Result<String, String> {
         Ok(listener) => listener,
         Err(e) => return Err(format!("cannot listen on {authority}: {e}")),
     };
-    if !bridge.bound.lock().unwrap().insert(address) {
-        return Ok(url);
-    }
+    bound.insert(address);
     tracing::info!("listening for Multipass guests on {authority}");
     tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, app).await {
@@ -1228,6 +1288,26 @@ mod tests {
             [path(&feat.join("sub"))]
         );
         assert!(mounts(&[]).is_err());
+
+        // A worktree made from a sandboxed session.
+        let other = parent.join("repo-other");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "other",
+                other.to_str().unwrap(),
+            ],
+        );
+        let sandbox = mounts(&[path(&feat)]).unwrap();
+        assert_eq!(with_mount(&sandbox, &feat.join("sub")).unwrap(), None);
+        assert_eq!(
+            with_mount(&sandbox, &other).unwrap().unwrap(),
+            [path(&feat), path(&repo.join(".git")), path(&other)]
+        );
         std::fs::remove_dir_all(parent).unwrap();
     }
 

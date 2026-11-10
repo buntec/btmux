@@ -1440,15 +1440,19 @@ fn is_color_scheme_path(value: &str) -> bool {
     std::path::Path::new(value).is_absolute() || value.starts_with("~/")
 }
 
-/// Expand an explicit local color scheme path. If HOME is unavailable, retain
-/// the original `~/` path so the read below emits a useful warning.
-fn expand_color_scheme_path(value: &str) -> PathBuf {
-    if let Some(relative) = value.strip_prefix("~/") {
-        dirs::home_dir()
-            .map(|home| home.join(relative))
-            .unwrap_or_else(|| PathBuf::from(value))
-    } else {
-        PathBuf::from(value)
+/// `value` with a leading `~` or `~/` expanded; unchanged without a home.
+pub fn expand_home(value: &str) -> PathBuf {
+    let rest = match value.strip_prefix('~') {
+        Some("") => "",
+        Some(rest) => match rest.strip_prefix('/') {
+            Some(rest) => rest,
+            None => return PathBuf::from(value),
+        },
+        None => return PathBuf::from(value),
+    };
+    match dirs::home_dir() {
+        Some(home) => home.join(rest),
+        None => PathBuf::from(value),
     }
 }
 
@@ -1494,7 +1498,7 @@ pub fn default_theme() -> Theme {
 /// `None` if the file doesn't exist or doesn't contain the required keys.
 pub fn load_color_scheme(name: &str) -> Option<BaseTheme> {
     let path = if is_color_scheme_path(name) {
-        expand_color_scheme_path(name)
+        expand_home(name)
     } else {
         let found = colors_dir().and_then(|dir| {
             ["yaml", "yml"]

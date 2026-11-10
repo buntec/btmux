@@ -21,7 +21,8 @@ pub struct Probe {
 pub fn foreground(probe: &Probe) -> Option<Pid> {
     if let Some(prompt) = &probe.prompt {
         return match prompt.load(Ordering::Relaxed) {
-            0 => None,
+            // `btmux guest-shell` still sets up: not the shell yet.
+            0 => Some(-1),
             // A pseudo group per command.
             state if state % 2 == 0 => Some(-(state as Pid)),
             _ => Some(probe.shell),

@@ -18,7 +18,8 @@ a second or two, and a stopped instance is started again.
 
 The mounted directory appears at the **same path** in the instance, so the
 file browser, Git mode, and the editors work on a sandboxed pane's directory as
-on a local one. A pane `cd`'d outside the mount shows as remote. If the mount
+on a local one. A pane `cd`'d outside the mount shows as remote. A worktree
+made from a sandboxed session (`<prefix> + W`) is mounted too. If the mount
 says "Permission denied" in the instance, Multipass can't read the directory:
 on macOS, give `multipassd` Full Disk Access for folders like `~/Documents`, and
 avoid directories inside ones only you can open, such as a per-user temp dir.
@@ -34,9 +35,14 @@ the instance, so every sandboxed session uses it.
 
 ## What the sandbox doesn't cover
 
-- The mount is read-write. A linked Git worktree also gets its repository's
-  `.git` directory mounted, which Git needs there; a hook written in it runs
-  the next time you use Git on the host.
+- The mount is read-write, and what the instance writes there runs on the
+  host when you use it: build scripts, `.envrc`, editor settings, and Git's
+  hooks and config (`core.fsmonitor`, `core.hooksPath`, filters) in the
+  repository's `.git`, which a mounted repository includes and a linked
+  worktree gets mounted too, since Git needs it there. Review changes before
+  building them or running Git on the host, or run Git in a sandboxed pane.
+  The status and diffs btmux shows run none of them; Git mode's actions,
+  like pull and push, run `git`.
 - The process viewer doesn't count programs in the instance.
 - Shells run over Multipass's SSH connection: if the host sleeps or Multipass
   restarts, sandboxed panes close.

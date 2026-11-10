@@ -233,7 +233,7 @@ async fn api_create_session(
     Json(body): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
     let cwd = body.cwd.map(std::path::PathBuf::from);
-    let runtime = match body.runtime.validate() {
+    let runtime = match body.runtime.validated().await {
         Ok(runtime) => runtime,
         Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
     };

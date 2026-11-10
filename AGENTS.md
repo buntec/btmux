@@ -532,13 +532,21 @@ mounts, shell }`. Sandboxed sessions share one instance (`[multipass]`,
 host directories mounted at the same path (`check_mount` refuses home and its
 ancestors), so cwds mean the same on both sides; `mounts` adds the git dir a
 worktree root's `.git` file names (a linked worktree's repository), without
-which Git in the guest finds no repository. A guest pane's PTY runs the
+which Git in the guest finds no repository. Worktrees made or opened in a
+sandboxed session are added to its mounts (`with_mount`); validation reads
+the filesystem, so it runs off the lock. A guest pane's PTY runs the
 hidden `btmux guest-shell` (`multipass.rs`), which under a file lock creates
 (cloud-init: packages, shells, Claude Code, Codex) or starts the instance,
 mounts, installs this version's Linux binary at `GUEST_BIN` (copied from a Linux
-host if the copy runs there, else the matching release) with agent hooks, writes the bash/zsh/fish
+host if the copy runs there, else the matching release, or the latest, recorded
+in `INSTALLED_FOR` so it isn't fetched again) with agent hooks, writes the bash/zsh/fish
 integration (OSC 7 with the guest hostname, OSC 133), printing progress in the
-pane, then execs `multipass exec … <shell> -l`. On failure it waits for Enter.
+pane, then execs `multipass exec … <shell> -l`, which reads the guest token
+from a guest file (`GUEST_TOKEN`), never arguments, which process lists show.
+Until the first OSC 133 mark the pane counts as running a program. On failure
+it waits for Enter. Files reach Multipass on stdin (`--cloud-init -`,
+`write_in`), never by host path: snap Multipass can't read the host's `/tmp`
+or hidden directories.
 
 Guests reach the server through `POST /api/multipass/bridge`, which the wrapper
 calls with the host token and the instance's default gateway: the server binds

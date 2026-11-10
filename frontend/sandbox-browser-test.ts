@@ -117,6 +117,12 @@ try {
   assert(env.BTMUX_AUTH_TOKEN && env.BTMUX_AUTH_TOKEN !== token, 'the guest gets its own token');
   const screen = await (await api(`/api/panes/${paneId}/capture?scrollback=true`)).text();
   assert.match(screen, /creating the Multipass instance btmux-sandbox/);
+  assert.match(screen, /btmux-sandbox is ready after \d+s/);
+  assert.doesNotMatch(screen, /fake cloud-init|Waiting for initialization/, 'the log window clears');
+  assert(
+    calls().some((args) => args[0] === 'exec' && args.at(-1)?.includes('tail -F -n +1 /var/log/cloud-init-output.log')),
+    'reads the cloud-init log while launch waits',
+  );
   console.log('PASS the pane creates the instance, mounts, and enters it with the guest token');
 
   const pane = async () => (await snapshot(sandboxed.id)).windows[0].panes[0];

@@ -34,8 +34,11 @@ case "$command" in
       [ "$1" = --name ] && instance="$2"
       shift
     done
-    echo "Launched: $instance"
     mkdir -p "$state/instances/$instance"
+    echo "Creating $instance"
+    echo "Waiting for initialization to complete"
+    sleep 2
+    echo "Launched: $instance"
     ;;
   start)
     ;;
@@ -59,7 +62,16 @@ case "$command" in
     case "$1" in
       ip) echo "default via 127.0.0.1 dev lo" ;;
       /usr/local/bin/btmux) shift; exec "$BTMUX_BIN" "$@" ;;
-      true | cloud-init | sudo | sh) ;;
+      sh)
+        # The cloud-init log while launch waits.
+        case "$3" in
+          *"tail -F"*)
+            printf 'fake cloud-init: step %s\n' 1 2 3
+            sleep 5
+            ;;
+        esac
+        ;;
+      true | cloud-init | sudo) ;;
       env)
         # The guest's shell: bash reporting the instance as its host.
         [ -n "$dir" ] && cd "$dir"

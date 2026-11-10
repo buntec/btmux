@@ -10,7 +10,11 @@ use std::{
     net::IpAddr,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
+    time::{Duration, Instant},
 };
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
@@ -264,15 +268,15 @@ packages:
 write_files:
   # DNS can fail early in the first boot, so retry.
   - path: /usr/local/lib/btmux/install-agents.sh
-    permissions: "0755"
     content: |
       #!/bin/bash
       set -o pipefail
       retry() { for _ in 1 2 3 4 5 6; do "$@" && return; sleep 10; done; return 1; }
-      retry su - ubuntu -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'
-      retry npm install -g @openai/codex
+      # A hung installer would hold up initialization until launch times out.
+      retry timeout 600 su - ubuntu -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'
+      retry timeout 600 npm install -g @openai/codex
 runcmd:
-  - /usr/local/lib/btmux/install-agents.sh
+  - bash /usr/local/lib/btmux/install-agents.sh
 "#;
 
 /// Shell integration: OSC 7 with the guest's hostname, which the server maps
@@ -375,6 +379,237 @@ pub fn copy_in(instance: &str, host: &Path, guest: &str) -> Result<(), String> {
     .map(drop)
 }
 
+/// `multipass launch`, showing its progress until it waits for cloud-init, then
+/// cloud-init's log, where the minutes go.
+fn launch(instance: &str, args: &[&str]) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let started = Instant::now();
+    let mut child = multipass()?
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    let waiting = Arc::new(AtomicBool::new(false));
+    let mut stdout = child.stdout.take().unwrap();
+    let forward = {
+        let waiting = waiting.clone();
+        std::thread::spawn(move || {
+            const MARKER: &[u8] = b"Waiting for initialization";
+            let mut recent = Vec::new();
+            let mut buf = [0; 4096];
+            while let Ok(n @ 1..) = stdout.read(&mut buf) {
+                if waiting.load(Ordering::Relaxed) {
+                    continue;
+                }
+                recent.extend_from_slice(&buf[..n]);
+                if recent.windows(MARKER.len()).any(|w| w == MARKER) {
+                    // Clear its spinner's line; the log takes over.
+                    eprint!("\r\x1b[2K");
+                    waiting.store(true, Ordering::Relaxed);
+                    continue;
+                }
+                recent.drain(..recent.len().saturating_sub(MARKER.len()));
+                let _ = std::io::stderr().write_all(&buf[..n]);
+            }
+        })
+    };
+    let mut stderr = child.stderr.take().unwrap();
+    let errors = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.read_to_string(&mut text);
+        text
+    });
+    let tail = LogTail::start(instance, waiting);
+    let status = child.wait().map_err(|e| e.to_string())?;
+    tail.stop(!status.success());
+    let _ = forward.join();
+    let errors = errors.join().unwrap_or_default();
+    if !status.success() {
+        let error = errors.trim();
+        return Err(if error.is_empty() {
+            format!("multipass launch failed ({status})")
+        } else {
+            format!("multipass launch: {error}")
+        });
+    }
+    say(&format!(
+        "{instance} is ready after {}s",
+        started.elapsed().as_secs()
+    ));
+    Ok(())
+}
+
+/// The cloud-init log's last lines, redrawn in place below the cursor.
+struct LogTail {
+    /// Set when stopping, with whether to keep the lines shown.
+    stop: Arc<Mutex<Option<bool>>>,
+    tail: Arc<Mutex<Option<std::process::Child>>>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+const LOG_LINES: usize = 10;
+const CLOUD_INIT_LOG: &str = "/var/log/cloud-init-output.log";
+
+impl LogTail {
+    /// Starts showing once `ready` is set.
+    fn start(instance: &str, ready: Arc<AtomicBool>) -> Self {
+        let stop = Arc::new(Mutex::new(None));
+        let tail: Arc<Mutex<Option<std::process::Child>>> = Arc::default();
+        let instance = instance.to_string();
+        let thread = {
+            let (stop, tail) = (stop.clone(), tail.clone());
+            std::thread::spawn(move || {
+                let mut window = LogWindow::default();
+                let mut seen = 0;
+                // Exec fails until the instance is up, and its log may not exist yet.
+                while stop.lock().unwrap().is_none() {
+                    if ready.load(Ordering::Relaxed) {
+                        seen += follow(&instance, seen, &stop, &tail, &mut window);
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                if *stop.lock().unwrap() == Some(false) {
+                    window.clear();
+                }
+            })
+        };
+        Self { stop, tail, thread }
+    }
+
+    fn stop(self, keep: bool) {
+        *self.stop.lock().unwrap() = Some(keep);
+        if let Some(mut tail) = self.tail.lock().unwrap().take() {
+            let _ = tail.kill();
+        }
+        let _ = self.thread.join();
+    }
+}
+
+/// Show the log from line `seen + 1` until cloud-init finishes or `stop` is
+/// set; returns the lines read.
+fn follow(
+    instance: &str,
+    seen: usize,
+    stop: &Mutex<Option<bool>>,
+    tail: &Mutex<Option<std::process::Child>>,
+    window: &mut LogWindow,
+) -> usize {
+    use std::io::BufRead;
+    let Ok(command) = multipass() else {
+        return 0;
+    };
+    // The guest's tail outlives a killed exec, so it ends with cloud-init.
+    let script = format!(
+        "tail -F -n +{} {CLOUD_INIT_LOG} 2>/dev/null & t=$!; \
+         cloud-init status --wait >/dev/null 2>&1; sleep 1; kill $t",
+        seen + 1
+    );
+    let Ok(mut child) = { command }
+        .args(["exec", instance, "-n", "--", "sh", "-c", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return 0;
+    };
+    let stdout = child.stdout.take().unwrap();
+    *tail.lock().unwrap() = Some(child);
+    // `stop` takes the child after setting the flag, so one of us kills it.
+    if stop.lock().unwrap().is_some() {
+        if let Some(mut child) = tail.lock().unwrap().take() {
+            let _ = child.kill();
+        }
+    }
+    let mut read = 0;
+    for line in std::io::BufReader::new(stdout).split(b'\n') {
+        let Ok(line) = line else { break };
+        read += 1;
+        window.push(&String::from_utf8_lossy(&line));
+    }
+    if let Some(mut child) = tail.lock().unwrap().take() {
+        let _ = child.wait();
+    }
+    read
+}
+
+/// A log line as shown: what a CR-redrawn progress bar ended with, without
+/// CSI sequences or control characters; `None` if blank.
+fn clean_log_line(line: &str) -> Option<String> {
+    let line = line.rsplit('\r').next().unwrap_or_default();
+    let mut clean = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            // Parameters and intermediates, then a final byte in @..~.
+            while chars.next().is_some_and(|c| !('@'..='~').contains(&c)) {}
+        } else if !c.is_control() {
+            clean.push(c);
+        }
+    }
+    (!clean.trim().is_empty()).then_some(clean)
+}
+
+#[derive(Default)]
+struct LogWindow {
+    lines: std::collections::VecDeque<String>,
+    shown: usize,
+}
+
+impl LogWindow {
+    fn push(&mut self, line: &str) {
+        let Some(line) = clean_log_line(line) else {
+            return;
+        };
+        let (columns, rows) = size();
+        // Cursor-up stops at the top, so the window must fit.
+        let height = LOG_LINES.min(rows.saturating_sub(3)).max(1);
+        self.lines.push_back(line);
+        while self.lines.len() > height {
+            self.lines.pop_front();
+        }
+        let width = columns.saturating_sub(4).max(10);
+        let mut out = self.rewind();
+        for line in &self.lines {
+            let line: String = line.chars().take(width).collect();
+            out.push_str(&format!("\x1b[2K\x1b[2m  │ {line}\x1b[0m\n"));
+        }
+        self.shown = self.lines.len();
+        eprint!("{out}");
+    }
+
+    fn clear(&mut self) {
+        eprint!("{}\x1b[J", self.rewind());
+        self.shown = 0;
+    }
+
+    /// Back to the first line shown.
+    fn rewind(&self) -> String {
+        match self.shown {
+            0 => String::new(),
+            n => format!("\x1b[{n}F"),
+        }
+    }
+}
+
+/// The pane's columns and rows.
+fn size() -> (usize, usize) {
+    #[cfg(unix)]
+    {
+        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+        if unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) } == 0
+            && size.ws_col > 0
+            && size.ws_row > 0
+        {
+            return (size.ws_col.into(), size.ws_row.into());
+        }
+    }
+    (80, 24)
+}
+
 /// Run with the pane's terminal, so progress shows.
 fn run_visible(args: &[&str]) -> Result<(), String> {
     let status = multipass()?
@@ -448,8 +683,12 @@ fn lock(instance: &str) -> Result<std::fs::File, String> {
     #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(std::io::Error::last_os_error().to_string());
+        let fd = file.as_raw_fd();
+        if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            say(&format!("waiting for another pane to set up {instance}"));
+            if unsafe { libc::flock(fd, libc::LOCK_EX) } != 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
         }
     }
     Ok(file)
@@ -482,22 +721,25 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
             };
             let cloud_init = cloud_init.to_string_lossy().into_owned();
             let cpus = args.cpus.to_string();
-            run_visible(&[
-                "launch",
-                &args.image,
-                "--name",
+            launch(
                 instance,
-                "--cpus",
-                &cpus,
-                "--memory",
-                &args.memory,
-                "--disk",
-                &args.disk,
-                "--cloud-init",
-                &cloud_init,
-                "--timeout",
-                "1800",
-            ])?;
+                &[
+                    "launch",
+                    &args.image,
+                    "--name",
+                    instance,
+                    "--cpus",
+                    &cpus,
+                    "--memory",
+                    &args.memory,
+                    "--disk",
+                    &args.disk,
+                    "--cloud-init",
+                    &cloud_init,
+                    "--timeout",
+                    "1800",
+                ],
+            )?;
             created = true;
             info(instance)?.ok_or("the new instance is missing")?
         }
@@ -514,18 +756,25 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
             Err(_) => std::thread::sleep(std::time::Duration::from_secs(2)),
         }
     }
-    if created {
-        say("waiting for cloud-init to install packages and agents");
-    }
-    if let Err(error) = run(&[
-        "exec",
-        instance,
-        "-n",
-        "--",
-        "cloud-init",
-        "status",
-        "--wait",
-    ]) {
+    // Still initializing when another server or a timed-out launch left it.
+    let status = run(&["exec", instance, "-n", "--", "cloud-init", "status"]).unwrap_or_default();
+    let waited = if created || status.contains("done") {
+        Ok(String::new())
+    } else {
+        let tail = LogTail::start(instance, Arc::new(AtomicBool::new(true)));
+        let waited = run(&[
+            "exec",
+            instance,
+            "-n",
+            "--",
+            "cloud-init",
+            "status",
+            "--wait",
+        ]);
+        tail.stop(waited.is_err());
+        waited
+    };
+    if let Err(error) = waited {
         say(&format!(
             "cloud-init reported a problem; see /var/log/cloud-init-output.log in {instance} ({error})"
         ));
@@ -827,6 +1076,23 @@ mod tests {
             shell: GuestShell::Fish,
             config: MultipassConfig::default(),
         }
+    }
+
+    #[test]
+    fn cleans_log_lines() {
+        assert_eq!(
+            clean_log_line("Get:1 x [10 kB]").as_deref(),
+            Some("Get:1 x [10 kB]")
+        );
+        assert_eq!(
+            clean_log_line("10%\r50%\r100% done").as_deref(),
+            Some("100% done")
+        );
+        assert_eq!(
+            clean_log_line("\x1b[1;32mok\x1b[0m\x07").as_deref(),
+            Some("ok")
+        );
+        assert_eq!(clean_log_line("  \t"), None);
     }
 
     #[test]

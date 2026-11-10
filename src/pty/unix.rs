@@ -58,6 +58,8 @@ pub struct Handoff {
     pub bin: Option<std::path::PathBuf>,
     /// The shell's program name, which `exec` may since have replaced.
     pub shell_name: Option<String>,
+    /// The OSC 133 mark count (`PtyHandle::prompt`).
+    pub prompt: u32,
 }
 
 /// What a reader stopped for a handoff leaves behind.
@@ -316,6 +318,7 @@ impl PtyHandle {
         self.cwd_remote.store(handoff.cwd_remote, Ordering::Relaxed);
         self.spawn_cwd = handoff.spawn_cwd;
         self.bin = handoff.bin;
+        self.prompt.store(handoff.prompt, Ordering::Relaxed);
         self.color_reports
             .store(handoff.color_reports, Ordering::Relaxed);
         let mut interceptor = vt_query::VtQueryInterceptor::with_colors(
@@ -398,6 +401,7 @@ impl PtyHandle {
                 input,
                 bin: self.bin.clone(),
                 shell_name: self.shell_name.clone(),
+                prompt: self.prompt.load(Ordering::Relaxed),
             },
         )))
     }

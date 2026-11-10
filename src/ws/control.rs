@@ -287,10 +287,13 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         let Some(pane) = mgr.find_pane(*pane_id) else {
             return Err("Pane no longer exists".into());
         };
-        let text = pane
-            .pty
-            .dialect()
-            .open_editor(&pane.pty.shell_bin(), path.as_deref(), *line);
+        // A guest's token can't ask the server to open its editors.
+        let text = pane.pty.dialect().open_editor(
+            &pane.pty.shell_bin(),
+            pane.pty.is_guest(),
+            path.as_deref(),
+            *line,
+        );
         return pane.pty.send_shell_command(text.into_bytes()).await;
     }
 

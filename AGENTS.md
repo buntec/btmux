@@ -219,7 +219,7 @@ server's arguments, which the exec passes on. It refuses
 while the built-in Neovim has unsaved changes. The server holds the state
 lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
 output stays in the kernel), and writes session snapshots, replay
-journals, title/cwd, program-set colors, kitty keyboard flags, agent telemetry, any partly read escape sequence, and
+journals, title/cwd, program-set colors, kitty keyboard flags, OSC 133 prompt state, agent telemetry, any partly read escape sequence, and
 accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
@@ -536,7 +536,7 @@ which Git in the guest finds no repository. A guest pane's PTY runs the
 hidden `btmux guest-shell` (`multipass.rs`), which under a file lock creates
 (cloud-init: packages, shells, Claude Code, Codex) or starts the instance,
 mounts, installs this version's Linux binary at `GUEST_BIN` (copied from a Linux
-host, else the matching release) with agent hooks, writes the bash/zsh/fish
+host if the copy runs there, else the matching release) with agent hooks, writes the bash/zsh/fish
 integration (OSC 7 with the guest hostname, OSC 133), printing progress in the
 pane, then execs `multipass exec … <shell> -l`. On failure it waits for Enter.
 
@@ -551,7 +551,9 @@ no host process), sets no cookie, and `server::guest_scope` checks the pane is a
 guest's. Never widen this without considering that the guest is untrusted.
 Guest panes use the Posix dialect, OSC 7 under a mount from the guest host is
 local (`Guest::mounted`), the `/proc` cwd fallback is off, and the foreground
-group comes from OSC 133 marks (unix `Probe`), as for WSL.
+group comes from OSC 133 marks (unix `Probe`), as for WSL. Host-typed
+editor opens pass `--kind pane`, and the CLI takes a 403 as `$EDITOR`. Pasted
+images and captures are copied into the guest's `/tmp`.
 
 ### Browser surface
 

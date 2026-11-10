@@ -1,9 +1,9 @@
-// handoff version 12
+// handoff version 13
 type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, panes: Array<PaneHeader>, telemetry: TelemetryStore, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
 pending: number,
-input: number, bin: string | null, shell_name: string | null, };
+input: number, bin: string | null, shell_name: string | null, prompt: number, };
 type Event = { "Data": number } | { "Size": [number, number] };
 type KittyKeyboard = {
 stacks: [[number, number, number, number, number, number, number, number], [number, number, number, number, number, number, number, number]], alternate: boolean,

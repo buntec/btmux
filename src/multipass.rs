@@ -835,18 +835,29 @@ fn install_btmux(instance: &str) -> Result<(), String> {
         arch => return Err(format!("no btmux release for {arch} guests")),
     };
     let staged = "/tmp/btmux-install";
-    // Guests share the host's architecture, so a Linux host's binary runs there.
+    let runs = || {
+        let script = format!("chmod +x {staged} && {staged} version");
+        run(&["exec", instance, "-n", "--", "sh", "-c", &script])
+            .is_ok_and(|v| v.split_whitespace().last() == Some(crate::config::VERSION))
+    };
+    // Guests share the host's architecture, so a Linux host's binary may run
+    // there, unless it links against the host's libraries (Nix).
     let local = cfg!(target_os = "linux")
         .then(crate::pty::server_exe)
         .flatten()
         .map(|exe| exe.to_string_lossy().into_owned());
-    if let Some(exe) = local {
+    let copied = local.is_some_and(|exe| {
         say(&format!(
             "copying btmux {} into {instance}",
             crate::config::VERSION
         ));
-        run(&["transfer", &exe, &format!("{instance}:{staged}")])?;
-    } else {
+        let ok = run(&["transfer", &exe, &format!("{instance}:{staged}")]).is_ok() && runs();
+        if !ok {
+            say("the copy doesn't run there");
+        }
+        ok
+    });
+    if !copied {
         say(&format!(
             "downloading btmux {} into {instance}",
             crate::config::VERSION
@@ -854,8 +865,8 @@ fn install_btmux(instance: &str) -> Result<(), String> {
         let asset = format!("btmux-{arch}-unknown-linux-gnu");
         let base = "https://github.com/buntec/btmux/releases";
         let script = format!(
-            "curl -fsSL -o {staged} {base}/download/v{version}/{asset} \
-             || {{ echo 'btmux: no release for this version; using the latest' >&2; \
+            "curl -fsSL -o {staged} {base}/download/v{version}/{asset} \\
+             || {{ echo 'btmux: no release for this version; using the latest' >&2; \\
              curl -fsSL -o {staged} {base}/latest/download/{asset}; }}",
             version = crate::config::VERSION
         );

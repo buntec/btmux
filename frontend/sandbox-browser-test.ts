@@ -155,6 +155,19 @@ try {
   assert.equal(await guest('/ws/control', 'GET'), 403);
   console.log("PASS the guest token reaches only its panes' reports");
 
+  const pasted = await (
+    await api(`/api/panes/${paneId}/paste-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png' },
+      body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    })
+  ).json();
+  assert.match(pasted.path, /^\/tmp\/btmux-paste-[0-9a-f]+\.png$/);
+  const transfer = calls().find((args) => args[0] === 'transfer' && args[2] === `btmux-sandbox:${pasted.path}`);
+  assert(transfer, 'transfers the image into the instance');
+  assert(!existsSync(transfer[1]), 'removes the host copy');
+  console.log("PASS a pasted image is copied into the guest, and its guest path pasted");
+
   await api(`/api/panes/${paneId}/split`, { method: 'POST', body: JSON.stringify({ direction: 'right' }) });
   await until('the second guest shell', async () => shellExecs().length === 2);
   assert.equal(calls().filter((args) => args[0] === 'launch').length, 1);

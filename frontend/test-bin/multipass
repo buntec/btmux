@@ -71,7 +71,8 @@ case "$command" in
             ;;
         esac
         ;;
-      true | cloud-init | sudo) ;;
+      cloud-init) echo "status: done" ;;
+      true | sudo) ;;
       env)
         # The guest's shell: bash reporting the instance as its host.
         [ -n "$dir" ] && cd "$dir"

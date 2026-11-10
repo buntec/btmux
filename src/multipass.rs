@@ -365,8 +365,35 @@ fn run(args: &[&str]) -> Result<String, String> {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("multipass {}: {}", args[0], stderr.trim()))
+        let error = match stderr.trim() {
+            "" => output.status.to_string(),
+            stderr => stderr.to_string(),
+        };
+        Err(format!("multipass {}: {error}", args[0]))
     }
+}
+
+/// cloud-init's status (`done`, `running`, `error`, …), read from its output:
+/// it exits 2 when done with warnings.
+fn cloud_init_status(instance: &str, wait: bool) -> Option<String> {
+    let mut args = vec!["exec", instance, "-n", "--", "cloud-init", "status"];
+    if wait {
+        args.push("--wait");
+    }
+    let output = multipass()
+        .ok()?
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    parse_cloud_init_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_cloud_init_status(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find_map(|line| line.trim_start_matches('.').strip_prefix("status:"))
+        .map(|status| status.trim().to_string())
 }
 
 /// Copy a host file into the instance.
@@ -757,26 +784,16 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
         }
     }
     // Still initializing when another server or a timed-out launch left it.
-    let status = run(&["exec", instance, "-n", "--", "cloud-init", "status"]).unwrap_or_default();
-    let waited = if created || status.contains("done") {
-        Ok(String::new())
-    } else {
+    let mut status = cloud_init_status(instance, false);
+    if !created && status.as_deref() != Some("done") {
         let tail = LogTail::start(instance, Arc::new(AtomicBool::new(true)));
-        let waited = run(&[
-            "exec",
-            instance,
-            "-n",
-            "--",
-            "cloud-init",
-            "status",
-            "--wait",
-        ]);
-        tail.stop(waited.is_err());
-        waited
-    };
-    if let Err(error) = waited {
+        status = cloud_init_status(instance, true);
+        tail.stop(status.as_deref() != Some("done"));
+    }
+    if status.as_deref() != Some("done") {
         say(&format!(
-            "cloud-init reported a problem; see /var/log/cloud-init-output.log in {instance} ({error})"
+            "cloud-init ended with status {}; see {CLOUD_INIT_LOG} in {instance}",
+            status.as_deref().unwrap_or("unknown")
         ));
     }
     let mounted: HashSet<(&str, &str)> = current
@@ -1076,6 +1093,24 @@ mod tests {
             shell: GuestShell::Fish,
             config: MultipassConfig::default(),
         }
+    }
+
+    #[test]
+    fn reads_cloud_init_status() {
+        // `--wait` prints dots before it.
+        assert_eq!(
+            parse_cloud_init_status("....\nstatus: done\n").as_deref(),
+            Some("done")
+        );
+        assert_eq!(
+            parse_cloud_init_status("...status: error").as_deref(),
+            Some("error")
+        );
+        assert_eq!(
+            parse_cloud_init_status("status: running").as_deref(),
+            Some("running")
+        );
+        assert_eq!(parse_cloud_init_status(""), None);
     }
 
     #[test]

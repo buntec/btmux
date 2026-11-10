@@ -119,6 +119,7 @@ try {
   assert.match(screen, /creating the Multipass instance btmux-sandbox/);
   assert.match(screen, /btmux-sandbox is ready after \d+s/);
   assert.doesNotMatch(screen, /fake cloud-init|Waiting for initialization/, 'the log window clears');
+  assert.doesNotMatch(screen, /cloud-init ended/);
   assert(
     calls().some((args) => args[0] === 'exec' && args.at(-1)?.includes('tail -F -n +1 /var/log/cloud-init-output.log')),
     'reads the cloud-init log while launch waits',

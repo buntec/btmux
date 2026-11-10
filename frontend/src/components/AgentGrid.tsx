@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import {
   Layout,
   LayoutContent,
@@ -20,7 +21,7 @@ import { Kbd } from '@astryxdesign/core/Kbd';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Bot, Eye, EyeOff, Minus, RotateCcw } from 'lucide-react';
+import { Bot, Eye, EyeOff, Minus, RotateCcw, X } from 'lucide-react';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import type { AgentStatus } from '../state/types';
@@ -52,6 +53,7 @@ interface AgentPaneEntry {
   paneIndex: number;
   paneTitle: string | null;
   agentStatus: AgentStatus;
+  agentId: number | null;
 }
 
 function buildEntries(
@@ -72,6 +74,7 @@ function buildEntries(
           paneIndex,
           paneTitle: pane.title,
           agentStatus: pane.agent_status,
+          agentId: pane.agent_id,
         });
       });
     });
@@ -262,6 +265,7 @@ export function AgentGrid({ send }: Props) {
     [area, shown, naturals, timedOutPanes],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [killing, setKilling] = useState<AgentPaneEntry | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   // A synthetic Tab moves no focus, so hints must reach the dialog's handler.
   const focusDialog = useCallback(() => dialogRef.current?.focus(), []);
@@ -302,6 +306,26 @@ export function AgentGrid({ send }: Props) {
 
   const reset = (entry: AgentPaneEntry | undefined) => {
     if (entry) send({ type: 'reset_agent', pane_id: entry.paneId });
+  };
+
+  const confirmKill = (entry: AgentPaneEntry | undefined) => {
+    if (entry?.agentId != null) setKilling(entry);
+  };
+
+  // The agent the confirmation names, while it still runs.
+  const killTarget =
+    open && killing ? entries.find((e) => e.paneId === killing.paneId && e.agentId === killing.agentId) : undefined;
+  useEffect(() => {
+    if (killing && !killTarget) setKilling(null);
+  }, [killing, killTarget]);
+
+  const closeKill = (confirmed: boolean) => {
+    // The server sends both Ctrl-Cs, only to this agent instance.
+    if (confirmed && killTarget?.agentId != null)
+      send({ type: 'kill_agent', pane_id: killTarget.paneId, agent_id: killTarget.agentId });
+    setKilling(null);
+    // After the alert returns focus to its trigger, so the grid keeps its keys.
+    requestAnimationFrame(() => dialogRef.current?.focus());
   };
 
   const toggleMinimized = (entry: AgentPaneEntry) => {
@@ -377,7 +401,7 @@ export function AgentGrid({ send }: Props) {
       return;
     }
     if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-      const action = { r: reset, m: toggleMinimized, o: toggleOnly }[e.key];
+      const action = { r: reset, m: toggleMinimized, o: toggleOnly, x: confirmKill }[e.key];
       if (action) {
         e.preventDefault();
         action(selected);
@@ -519,6 +543,7 @@ export function AgentGrid({ send }: Props) {
                       <AgentStatusBadge status={entry.agentStatus} />
                       <IconButton
                         label="Reset agent state"
+                        tooltip="Reset agent state (r)"
                         icon={<RotateCcw />}
                         variant="ghost"
                         size="sm"
@@ -532,6 +557,7 @@ export function AgentGrid({ send }: Props) {
                       />
                       <IconButton
                         label="Minimize"
+                        tooltip="Minimize (m)"
                         icon={<Minus />}
                         variant="ghost"
                         size="sm"
@@ -540,6 +566,18 @@ export function AgentGrid({ send }: Props) {
                           e.stopPropagation();
                           toggleMinimized(entry);
                           dialogRef.current?.focus();
+                        }}
+                      />
+                      <IconButton
+                        label="Kill agent session"
+                        tooltip="Kill agent session (x)"
+                        icon={<X />}
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          confirmKill(entry);
                         }}
                       />
                     </HStack>
@@ -586,6 +624,28 @@ export function AgentGrid({ send }: Props) {
         if ((e.target as Element).closest('[data-agent-mirror]')) dialogRef.current?.focus();
       }}
     >
+      <AlertDialog
+        isOpen={killTarget !== undefined}
+        onOpenChange={(value) => {
+          if (!value) closeKill(false);
+        }}
+        title="Kill agent session?"
+        description={
+          killTarget
+            ? `Sends Ctrl-C twice to ${killTarget.sessionName} › ${killTarget.windowName} › ${paneLabel(killTarget)}, which exits Claude Code and Codex.`
+            : ''
+        }
+        actionLabel="Kill session"
+        onAction={() => closeKill(true)}
+        onKeyDown={(e) => {
+          // React bubbles portal events to the grid's handler.
+          e.stopPropagation();
+          if (e.key === 'y' || e.key === 'n') {
+            e.preventDefault();
+            closeKill(e.key === 'y');
+          }
+        }}
+      />
       <Layout
         header={
           <>
@@ -670,6 +730,7 @@ const HINTS: [string[], string][] = [
   [['m'], 'minimize'],
   [['o'], 'only'],
   [['r'], 'reset agent state'],
+  [['x'], 'kill agent session'],
   [['esc'], 'close'],
 ];
 

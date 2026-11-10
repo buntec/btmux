@@ -64,6 +64,7 @@ const startAgent = async (
   cols: number,
   rows: number,
   beforeAnnounce?: (pane: string) => Promise<unknown>,
+  program = 'sleep 99999',
 ): Promise<Owner> => {
   const created = await fetch(`${url}/api/sessions`, { method: 'POST', headers, body: JSON.stringify({ name }) });
   assert(created.ok);
@@ -79,7 +80,7 @@ const startAgent = async (
   for (const [i, [c, r]] of sizes.entries()) await burst(id, c, r, i);
   const ws = await attach(id, cols, rows);
   // Hook-only agents end at a shell prompt.
-  ws.send(encoder.encode('clear; sleep 99999\n'));
+  ws.send(encoder.encode(`clear; ${program}\n`));
   await Bun.sleep(200);
   await beforeAnnounce?.(id);
   const hook = await fetch(`${url}/api/panes/${id}/notify`, {
@@ -437,7 +438,8 @@ try {
   // An agent that starts while the view is closed appears on reopening, at its own size.
   await setOpen(page, false);
   await page.waitForTimeout(200);
-  agents.push(await startAgent('agent-closed', 130, 35));
+  const closedAgent = await startAgent('agent-closed', 130, 35);
+  agents.push(closedAgent);
   // Past the size deadline, which must not expire while closed.
   await page.waitForTimeout(2500);
   await setOpen(page, true);
@@ -459,16 +461,105 @@ try {
   const ratio = (await tileWidthPerColumn('agent-closed', 130)) / (await tileWidthPerColumn('agent-a', 200));
   assert(ratio > 0.9 && ratio < 1.1, `closed-start agent's size: ${ratio}`);
 
-  // A notification's View pane leaves the grid for that pane.
-  const notified = await fetch(`${url}/api/panes/${agents.at(-1)!.id}/notify`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ hook_event_name: 'Stop', session_id: 'agent-closed' }),
+  // The kill button sends two separate Ctrl-Cs.
+  const victim = await startAgent(
+    'agent-kill',
+    100,
+    30,
+    undefined,
+    // Its own process group, so the agent doesn't end at a prompt.
+    "sh -c 'trap \"n=\\$((n+1)); echo int-\\$n\" INT; while :; do sleep 1; done'",
+  );
+  agents.push(victim);
+  await replaysShown(page, 9);
+  const killButton = page
+    .locator('[data-agent-tiles] > div', { hasText: 'agent-kill' })
+    // The card's role makes its buttons presentational.
+    .locator('button[aria-label="Kill agent session"]');
+  await killButton.hover();
+  await page.getByRole('tooltip').filter({ hasText: 'Kill agent session (x)' }).waitFor({ timeout: 5000 });
+  const interrupts = async () => {
+    const output = await (await fetch(`${url}/api/panes/${victim.id}/output`, { headers })).text();
+    // The echoed command has `int-\$n`; an interrupt may flush the last count.
+    return Math.max(0, ...[...output.matchAll(/int-(\d+)/g)].map((match) => Number(match[1])));
+  };
+  // It asks first; Escape and `n` cancel, leaving the grid open with its keys.
+  const alert = page.getByRole('alertdialog');
+  for (const cancelKey of ['Escape', 'n']) {
+    await killButton.click();
+    await alert.waitFor({ timeout: 5000 });
+    assert.match(await alert.innerText(), /agent-kill/);
+    await page.keyboard.press(cancelKey);
+    await alert.waitFor({ state: 'hidden', timeout: 5000 });
+    assert.equal(await page.locator('dialog[open]').count(), 1, `${cancelKey} must not close the grid`);
+    await waitForAsync(page, () => document.activeElement === document.querySelector('dialog[open]'));
+  }
+  await page.waitForTimeout(400);
+  assert.equal(await interrupts(), 0, 'a canceled kill sends nothing');
+  await killButton.click();
+  await alert.getByRole('button', { name: 'Kill session', exact: true }).click();
+  await alert.waitFor({ state: 'hidden', timeout: 5000 });
+  const killDeadline = Date.now() + 5000;
+  while ((await interrupts()) < 2) {
+    assert(Date.now() < killDeadline, `kill sent ${await interrupts()} interrupts`);
+    await Bun.sleep(50);
+  }
+  await Bun.sleep(500);
+  assert.equal(await interrupts(), 2);
+
+  // A confirmation for an agent that exits is dismissed.
+  const agentId = () =>
+    page.evaluate(async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const panes = useStore.getState().allSessions.flatMap((s: any) => s.windows.flatMap((w: any) => w.panes));
+      return panes.find((p: any) => p.id === pane)?.agent_id as number | null;
+    }, victim.id);
+  const exited = await agentId();
+  assert(exited != null);
+  const notify = (pane: string, event: string, session: string) =>
+    fetch(`${url}/api/panes/${pane}/notify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ hook_event_name: event, session_id: session }),
+    }).then((res) => assert(res.ok));
+  await killButton.click();
+  await alert.waitFor({ timeout: 5000 });
+  await notify(victim.id, 'SessionEnd', 'agent-kill');
+  await alert.waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'an exited agent must not close the grid');
+  await page.keyboard.press('y');
+  // The server sends nothing for that agent, even to one replacing it.
+  await notify(victim.id, 'UserPromptSubmit', 'agent-kill-2');
+  await waitForAsync(page, async (pane) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    return useStore.getState().agentPanes.has(pane);
+  }, victim.id);
+  assert.notEqual(await agentId(), exited);
+  const control = new (WebSocket as any)(`${backend.replace('http', 'ws')}/ws/control`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }) as WebSocket;
+  const result = new Promise<any>((resolve) => {
+    control.onmessage = (event) => {
+      const msg = JSON.parse(event.data as string);
+      if (msg.type === 'command_result' && msg.request_id === 'stale-kill') resolve(msg);
+    };
   });
-  assert(notified.ok);
+  await new Promise((resolve) => (control.onopen = resolve));
+  control.send(JSON.stringify({ type: 'kill_agent', pane_id: victim.id, agent_id: exited, request_id: 'stale-kill' }));
+  assert.match((await result).error ?? '', /already exited/);
+  control.close();
+  await Bun.sleep(400);
+  assert.equal(await interrupts(), 2, 'a stale kill sends nothing');
+
+  // A notification's View pane leaves the grid for that pane, closing a confirmation.
+  await killButton.click();
+  await alert.waitFor({ timeout: 5000 });
+  await notify(closedAgent.id, 'Stop', 'agent-closed');
   await page.getByRole('button', { name: 'View pane', exact: true }).click({ timeout: 5000 });
   await page.waitForURL(/\/s\/agent-closed\b/, { timeout: 5000 });
   await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 });
+  assert.equal(await page.evaluate(() => document.querySelectorAll(':modal').length), 0, 'no modal is left');
+  await page.locator(`[data-pane-id="${closedAgent.id}"]`).click({ timeout: 5000 });
 
   assert.deepEqual(errors, []);
 } finally {

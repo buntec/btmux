@@ -234,7 +234,7 @@ pub enum Runtime {
 }
 
 impl Runtime {
-    /// With canonical mounts, at least one.
+    /// With canonical mounts, at least one, and the git dirs they need.
     pub fn validate(self) -> Result<Self, String> {
         match self {
             Self::Local => Ok(Self::Local),
@@ -242,18 +242,8 @@ impl Runtime {
                 if !crate::multipass::available() {
                     return Err("Multipass is not installed (https://multipass.run)".into());
                 }
-                let mut checked: Vec<String> = Vec::new();
-                for mount in mounts {
-                    let mount = crate::multipass::check_mount(mount.trim())?;
-                    if !checked.contains(&mount) {
-                        checked.push(mount);
-                    }
-                }
-                if checked.is_empty() {
-                    return Err("choose a directory to mount".into());
-                }
                 Ok(Self::Multipass {
-                    mounts: checked,
+                    mounts: crate::multipass::mounts(&mounts)?,
                     shell,
                 })
             }

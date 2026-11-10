@@ -415,7 +415,7 @@ export function Overlay({ sessionId, send, config }: Props) {
                   <>
                     <TextInput
                       label="Mount"
-                      description="Mounted read-write at the same path. Not your home directory."
+                      description="Mounted read-write at the same path, with a linked worktree's repository .git. Not your home directory."
                       value={sandbox.mount}
                       onChange={(mount) => setSandbox({ mount })}
                       onEnter={submit}

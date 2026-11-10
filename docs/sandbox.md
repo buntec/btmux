@@ -34,9 +34,9 @@ the instance, so every sandboxed session uses it.
 
 ## What the sandbox doesn't cover
 
-- The mount is read-write. A Git worktree also needs its repository's `.git`
-  directory, which then is writable too; a hook written there runs the next
-  time you use Git on the host.
+- The mount is read-write. A linked Git worktree also gets its repository's
+  `.git` directory mounted, which Git needs there; a hook written in it runs
+  the next time you use Git on the host.
 - The process viewer doesn't count programs in the instance.
 - Shells run over Multipass's SSH connection: if the host sleeps or Multipass
   restarts, sandboxed panes close.

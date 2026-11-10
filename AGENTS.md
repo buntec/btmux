@@ -35,7 +35,9 @@ followed by upgrade, Astryx interaction, theme, Git, and mobile (WebKit) checks
 run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
-repo state don't affect it; failures keep the stack logs. Async page predicates must
+repo state don't affect it; failures keep the stack logs. Stacks put a fake
+`multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
+to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
 returned Promise as truthy and doesn't wait.
 `just test-browser-surface`, also on demand, covers the browser surface and needs Chrome or Chromium.
@@ -528,7 +530,9 @@ A session's `Runtime` (`session/mod.rs`, persisted) is `Local` or `Multipass {
 mounts, shell }`. Sandboxed sessions share one instance (`[multipass]`,
 `multipass::instance_name`: `btmux-sandbox`, `-<profile>` appended). Mounts are
 host directories mounted at the same path (`check_mount` refuses home and its
-ancestors), so cwds mean the same on both sides. A guest pane's PTY runs the
+ancestors), so cwds mean the same on both sides; `mounts` adds the git dir a
+worktree root's `.git` file names (a linked worktree's repository), without
+which Git in the guest finds no repository. A guest pane's PTY runs the
 hidden `btmux guest-shell` (`multipass.rs`), which under a file lock creates
 (cloud-init: packages, shells, Claude Code, Codex) or starts the instance,
 mounts, installs this version's Linux binary at `GUEST_BIN` (copied from a Linux

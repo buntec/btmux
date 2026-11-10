@@ -118,6 +118,40 @@ pub fn check_mount(path: &str) -> Result<String, String> {
     Ok(canonical)
 }
 
+/// Checked, deduplicated mounts, plus the git dir each worktree root keeps
+/// outside its mount (a linked worktree's repository, a submodule's), without
+/// which Git in the guest finds no repository.
+pub fn mounts(requested: &[String]) -> Result<Vec<String>, String> {
+    let mut mounts: Vec<String> = Vec::new();
+    for mount in requested {
+        let mount = check_mount(mount.trim())?;
+        if !mounts.contains(&mount) {
+            mounts.push(mount);
+        }
+    }
+    if mounts.is_empty() {
+        return Err("choose a directory to mount".into());
+    }
+    for mount in mounts.clone() {
+        let Some(git_dir) = external_git_dir(Path::new(&mount)) else {
+            continue;
+        };
+        if !mounts.iter().any(|m| Path::new(&git_dir).starts_with(m)) {
+            mounts.push(check_mount(&git_dir)?);
+        }
+    }
+    Ok(mounts)
+}
+
+/// The git dir a worktree root at `dir` names in its `.git` file.
+fn external_git_dir(dir: &Path) -> Option<String> {
+    if !dir.join(".git").is_file() {
+        return None;
+    }
+    let (git, _) = crate::pane_git::worktree_of(dir)?;
+    (Path::new(&git.worktree_root) == dir).then_some(git.repo_id)
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     match (path.strip_prefix('~'), dirs::home_dir()) {
         (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
@@ -673,6 +707,8 @@ fn fail(error: &str) -> i32 {
 struct Bridge {
     auth: std::sync::Arc<crate::auth::Auth>,
     port: u16,
+    /// The main listener's address.
+    main: Option<IpAddr>,
     /// The main listener takes every address.
     unspecified: bool,
     app: Mutex<Option<axum::Router>>,
@@ -682,14 +718,15 @@ struct Bridge {
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
 
 pub fn configure_bridge(auth: std::sync::Arc<crate::auth::Auth>, host: &str, port: u16) {
-    let unspecified = host
-        .trim_matches(['[', ']'])
-        .parse::<IpAddr>()
-        .is_ok_and(|ip| ip.is_unspecified());
+    let main = match host.trim_matches(['[', ']']) {
+        "localhost" => Some(IpAddr::from([127, 0, 0, 1])),
+        host => host.parse::<IpAddr>().ok(),
+    };
     let _ = BRIDGE.set(Bridge {
         auth,
         port,
-        unspecified,
+        main,
+        unspecified: main.is_some_and(|ip| ip.is_unspecified()),
         app: Mutex::new(None),
         bound: Mutex::default(),
     });
@@ -705,11 +742,13 @@ pub fn set_app(app: axum::Router) {
 /// Listen on `address`, a private address of this host, for guests.
 async fn listen(address: IpAddr) -> Result<String, String> {
     let bridge = BRIDGE.get().ok_or("the bridge isn't configured")?;
+    // The main listener may already serve it (tests' loopback guests).
+    let served = bridge.unspecified || bridge.main == Some(address);
     let private = match address {
         IpAddr::V4(ip) => ip.is_private() || ip.is_link_local(),
         IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local(),
     };
-    if !private {
+    if !served && !private {
         return Err(format!("{address} isn't a private address"));
     }
     let authority = match address {
@@ -718,7 +757,7 @@ async fn listen(address: IpAddr) -> Result<String, String> {
     };
     let url = format!("http://{authority}");
     bridge.auth.allow(&url)?;
-    if bridge.unspecified || bridge.bound.lock().unwrap().contains(&address) {
+    if served || bridge.bound.lock().unwrap().contains(&address) {
         return Ok(url);
     }
     let app = bridge
@@ -817,6 +856,67 @@ mod tests {
         let args = guest.wrapper_args(Some("/etc"));
         assert!(args.ends_with(&["--cwd".into(), "/src/app".into()]));
         assert!(args.windows(2).any(|w| w == ["--shell", "fish"]));
+    }
+
+    #[test]
+    fn mounts_the_repository_a_linked_worktree_needs() {
+        let parent = std::env::temp_dir().join(format!("btmux-mounts-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&parent).unwrap();
+        let parent = parent.canonicalize().unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let status = Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=btmux",
+                    "-c",
+                    "user.email=btmux@example.invalid",
+                ])
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        let repo = parent.join("repo");
+        let feat = parent.join("repo-feat");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat",
+                feat.to_str().unwrap(),
+            ],
+        );
+        let path = |p: &Path| p.to_string_lossy().into_owned();
+
+        assert_eq!(
+            mounts(&[path(&feat)]).unwrap(),
+            [path(&feat), path(&repo.join(".git"))]
+        );
+        // The main worktree, a repository already mounted, and a subdirectory
+        // (whose repository lies outside it either way) need nothing more.
+        assert_eq!(mounts(&[path(&repo)]).unwrap(), [path(&repo)]);
+        assert_eq!(
+            mounts(&[path(&feat), path(&repo)]).unwrap(),
+            [path(&feat), path(&repo)]
+        );
+        std::fs::create_dir(feat.join("sub")).unwrap();
+        assert_eq!(
+            mounts(&[path(&feat.join("sub"))]).unwrap(),
+            [path(&feat.join("sub"))]
+        );
+        assert!(mounts(&[]).is_err());
+        std::fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]

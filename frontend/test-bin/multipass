@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# A fake `multipass` for browser tests: instances are directories under
+# $BTMUX_FAKE_MULTIPASS, every call is logged (tab-separated) to its `log`, and
+# `exec` runs on this machine, minus anything privileged. So no test can start
+# a real VM.
+set -euo pipefail
+state="${BTMUX_FAKE_MULTIPASS:?BTMUX_FAKE_MULTIPASS is unset}"
+mkdir -p "$state"
+(IFS=$'\t'; printf '%s\n' "$*") >> "$state/log"
+
+command="${1:-}"
+shift || true
+case "$command" in
+  --version)
+    echo "multipass   0.0.0+fake"
+    ;;
+  info)
+    instance="$1"
+    if [ ! -d "$state/instances/$instance" ]; then
+      echo "info failed: instance \"$instance\" does not exist" >&2
+      exit 2
+    fi
+    mounts=""
+    if [ -f "$state/instances/$instance/mounts" ]; then
+      while IFS= read -r mount; do
+        mounts="$mounts${mounts:+,}\"$mount\": {\"source_path\": \"$mount\"}"
+      done < "$state/instances/$instance/mounts"
+    fi
+    printf '{"errors": [], "info": {"%s": {"state": "Running", "mounts": {%s}}}}\n' "$instance" "$mounts"
+    ;;
+  launch)
+    instance=""
+    while [ $# -gt 0 ]; do
+      [ "$1" = --name ] && instance="$2"
+      shift
+    done
+    echo "Launched: $instance"
+    mkdir -p "$state/instances/$instance"
+    ;;
+  start)
+    ;;
+  mount)
+    target="${2#*:}"
+    echo "$target" >> "$state/instances/${2%%:*}/mounts"
+    ;;
+  transfer)
+    mkdir -p "$state/transfers"
+    cp "$1" "$state/transfers/$(basename "${2#*:}")"
+    ;;
+  exec)
+    instance="$1"
+    shift
+    dir=""
+    while [ "$1" != -- ]; do
+      [ "$1" = -d ] && { dir="$2"; shift; }
+      shift
+    done
+    shift
+    case "$1" in
+      ip) echo "default via 127.0.0.1 dev lo" ;;
+      /usr/local/bin/btmux) shift; exec "$BTMUX_BIN" "$@" ;;
+      true | cloud-init | sudo | sh) ;;
+      env)
+        # The guest's shell: bash reporting the instance as its host.
+        [ -n "$dir" ] && cd "$dir"
+        args=()
+        while [ $# -gt 2 ]; do
+          args+=("$1")
+          shift
+        done
+        export FAKE_GUEST_HOST="$instance"
+        export PROMPT_COMMAND='printf "\033]7;file://%s%s\007\033]133;A\007" "$FAKE_GUEST_HOST" "$PWD"'
+        export PS0=$'\e]133;C\a'
+        exec "${args[@]}" bash --noprofile --norc -i
+        ;;
+      *)
+        echo "fake multipass: unexpected exec $*" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    echo "fake multipass: unexpected command $command" >&2
+    exit 1
+    ;;
+esac

@@ -64,6 +64,7 @@ const startAgent = async (
   cols: number,
   rows: number,
   beforeAnnounce?: (pane: string) => Promise<unknown>,
+  program = 'sleep 99999',
 ): Promise<Owner> => {
   const created = await fetch(`${url}/api/sessions`, { method: 'POST', headers, body: JSON.stringify({ name }) });
   assert(created.ok);
@@ -79,7 +80,7 @@ const startAgent = async (
   for (const [i, [c, r]] of sizes.entries()) await burst(id, c, r, i);
   const ws = await attach(id, cols, rows);
   // Hook-only agents end at a shell prompt.
-  ws.send(encoder.encode('clear; sleep 99999\n'));
+  ws.send(encoder.encode(`clear; ${program}\n`));
   await Bun.sleep(200);
   await beforeAnnounce?.(id);
   const hook = await fetch(`${url}/api/panes/${id}/notify`, {
@@ -437,7 +438,8 @@ try {
   // An agent that starts while the view is closed appears on reopening, at its own size.
   await setOpen(page, false);
   await page.waitForTimeout(200);
-  agents.push(await startAgent('agent-closed', 130, 35));
+  const closedAgent = await startAgent('agent-closed', 130, 35);
+  agents.push(closedAgent);
   // Past the size deadline, which must not expire while closed.
   await page.waitForTimeout(2500);
   await setOpen(page, true);
@@ -459,8 +461,39 @@ try {
   const ratio = (await tileWidthPerColumn('agent-closed', 130)) / (await tileWidthPerColumn('agent-a', 200));
   assert(ratio > 0.9 && ratio < 1.1, `closed-start agent's size: ${ratio}`);
 
+  // The kill button sends two separate Ctrl-Cs.
+  const victim = await startAgent(
+    'agent-kill',
+    100,
+    30,
+    undefined,
+    // Its own process group, so the agent doesn't end at a prompt.
+    "sh -c 'trap \"n=\\$((n+1)); echo int-\\$n\" INT; while :; do sleep 1; done'",
+  );
+  agents.push(victim);
+  await replaysShown(page, 9);
+  const killButton = page
+    .locator('[data-agent-tiles] > div', { hasText: 'agent-kill' })
+    // The card's role makes its buttons presentational.
+    .locator('button[aria-label="Kill agent session"]');
+  await killButton.hover();
+  await page.getByRole('tooltip').filter({ hasText: 'Kill agent session (x)' }).waitFor({ timeout: 5000 });
+  await killButton.click();
+  const interrupts = async () => {
+    const output = await (await fetch(`${url}/api/panes/${victim.id}/output`, { headers })).text();
+    // The echoed command has `int-\$n`; an interrupt may flush the last count.
+    return Math.max(0, ...[...output.matchAll(/int-(\d+)/g)].map((match) => Number(match[1])));
+  };
+  const killDeadline = Date.now() + 5000;
+  while ((await interrupts()) < 2) {
+    assert(Date.now() < killDeadline, `kill sent ${await interrupts()} interrupts`);
+    await Bun.sleep(50);
+  }
+  await Bun.sleep(500);
+  assert.equal(await interrupts(), 2);
+
   // A notification's View pane leaves the grid for that pane.
-  const notified = await fetch(`${url}/api/panes/${agents.at(-1)!.id}/notify`, {
+  const notified = await fetch(`${url}/api/panes/${closedAgent.id}/notify`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ hook_event_name: 'Stop', session_id: 'agent-closed' }),

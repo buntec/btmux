@@ -20,7 +20,7 @@ import { Kbd } from '@astryxdesign/core/Kbd';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Bot, Eye, EyeOff, Minus, RotateCcw } from 'lucide-react';
+import { Bot, Eye, EyeOff, Minus, RotateCcw, X } from 'lucide-react';
 import { useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
 import type { AgentStatus } from '../state/types';
@@ -304,6 +304,15 @@ export function AgentGrid({ send }: Props) {
     if (entry) send({ type: 'reset_agent', pane_id: entry.paneId });
   };
 
+  // Two Ctrl-Cs, apart so the agent sees two presses: Claude Code and Codex exit.
+  const kill = (entry: AgentPaneEntry | undefined) => {
+    if (!entry) return;
+    const interrupt = () =>
+      send({ type: 'write_pane_input', session_id: entry.sessionId, pane_id: entry.paneId, text: '\x03' });
+    interrupt();
+    window.setTimeout(interrupt, KILL_PRESS_GAP_MS);
+  };
+
   const toggleMinimized = (entry: AgentPaneEntry) => {
     const next = new Set(minimized);
     if (!next.delete(entry.paneId)) next.add(entry.paneId);
@@ -377,7 +386,7 @@ export function AgentGrid({ send }: Props) {
       return;
     }
     if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-      const action = { r: reset, m: toggleMinimized, o: toggleOnly }[e.key];
+      const action = { r: reset, m: toggleMinimized, o: toggleOnly, x: kill }[e.key];
       if (action) {
         e.preventDefault();
         action(selected);
@@ -519,6 +528,7 @@ export function AgentGrid({ send }: Props) {
                       <AgentStatusBadge status={entry.agentStatus} />
                       <IconButton
                         label="Reset agent state"
+                        tooltip="Reset agent state (r)"
                         icon={<RotateCcw />}
                         variant="ghost"
                         size="sm"
@@ -532,6 +542,7 @@ export function AgentGrid({ send }: Props) {
                       />
                       <IconButton
                         label="Minimize"
+                        tooltip="Minimize (m)"
                         icon={<Minus />}
                         variant="ghost"
                         size="sm"
@@ -539,6 +550,19 @@ export function AgentGrid({ send }: Props) {
                           e.preventDefault();
                           e.stopPropagation();
                           toggleMinimized(entry);
+                          dialogRef.current?.focus();
+                        }}
+                      />
+                      <IconButton
+                        label="Kill agent session"
+                        tooltip="Kill agent session (x)"
+                        icon={<X />}
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          kill(entry);
                           dialogRef.current?.focus();
                         }}
                       />
@@ -662,6 +686,8 @@ export function AgentGrid({ send }: Props) {
   );
 }
 
+const KILL_PRESS_GAP_MS = 150;
+
 const HINTS: [string[], string][] = [
   [['tab'], 'next tab'],
   [['up', 'down', 'left', 'right'], 'navigate'],
@@ -670,6 +696,7 @@ const HINTS: [string[], string][] = [
   [['m'], 'minimize'],
   [['o'], 'only'],
   [['r'], 'reset agent state'],
+  [['x'], 'kill agent session'],
   [['esc'], 'close'],
 ];
 

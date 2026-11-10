@@ -13,6 +13,7 @@ use layout::{Layout, LayoutPreset};
 pub struct Session {
     pub id: Uuid,
     pub name: String,
+    pub runtime: Runtime,
     pub windows: Vec<Window>,
     pub active_window: usize,
     pub prev_window: Option<usize>,
@@ -214,6 +215,50 @@ pub struct AgentPane {
 pub struct SessionSummary {
     pub id: Uuid,
     pub name: String,
+    pub runtime: Runtime,
+}
+
+/// Where a session's shells run.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum Runtime {
+    #[default]
+    Local,
+    /// The shared Multipass instance, with these host directories mounted
+    /// at the same paths.
+    Multipass {
+        mounts: Vec<String>,
+        shell: crate::multipass::GuestShell,
+    },
+}
+
+impl Runtime {
+    /// With canonical mounts, at least one.
+    pub fn validate(self) -> Result<Self, String> {
+        match self {
+            Self::Local => Ok(Self::Local),
+            Self::Multipass { mounts, shell } => {
+                if !crate::multipass::available() {
+                    return Err("Multipass is not installed (https://multipass.run)".into());
+                }
+                let mut checked: Vec<String> = Vec::new();
+                for mount in mounts {
+                    let mount = crate::multipass::check_mount(mount.trim())?;
+                    if !checked.contains(&mount) {
+                        checked.push(mount);
+                    }
+                }
+                if checked.is_empty() {
+                    return Err("choose a directory to mount".into());
+                }
+                Ok(Self::Multipass {
+                    mounts: checked,
+                    shell,
+                })
+            }
+        }
+    }
 }
 
 /// One pane with its window and session, for `GET /api/panes` and the tmux-style

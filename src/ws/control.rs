@@ -393,8 +393,9 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         ClientMessage::CyclePane { session_id, delta } => mgr.cycle_pane(session_id, delta),
         ClientMessage::SwapPane { session_id, delta } => mgr.swap_pane(session_id, delta),
         ClientMessage::NextLayout { session_id } => mgr.next_layout(session_id),
-        ClientMessage::CreateSession { name } => {
-            mgr.create_session(name).await;
+        ClientMessage::CreateSession { name, runtime } => {
+            let runtime = runtime.unwrap_or_default().validate()?;
+            mgr.create_session_in(name, None, None, runtime).await;
         }
         ClientMessage::RenameSession { session_id, name } => mgr.rename_session(session_id, name),
         ClientMessage::KillSession { id } => mgr.kill_session(id),
@@ -925,6 +926,9 @@ pub(crate) enum ClientMessage {
     },
     CreateSession {
         name: Option<String>,
+        /// Local when absent.
+        #[serde(default)]
+        runtime: Option<crate::session::Runtime>,
     },
     RenameSession {
         session_id: Uuid,

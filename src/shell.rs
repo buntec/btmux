@@ -162,7 +162,7 @@ impl Dialect {
 }
 
 /// The Linux `$VISUAL`/`$EDITOR`, through `sh` as fish lacks `${…:-…}`.
-const LINUX_EDITOR: &str = r#"sh -c '${VISUAL:-${EDITOR:-vi}} "$@"' sh"#;
+pub const LINUX_EDITOR: &str = r#"sh -c '${VISUAL:-${EDITOR:-vi}} "$@"' sh"#;
 
 /// An installed shell offered in settings.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]

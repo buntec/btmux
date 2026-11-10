@@ -9,11 +9,25 @@ use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::time::Instant;
 
 pub type Master = OwnedFd;
-/// The master fd, for tcgetpgrp.
-pub type Probe = RawFd;
 
-pub fn foreground(fd: &Probe) -> Option<Pid> {
-    match unsafe { libc::tcgetpgrp(*fd) } {
+/// Finds the foreground process group: the master's (tcgetpgrp), or for a
+/// guest's shell, whose programs aren't host processes, from OSC 133 marks.
+pub struct Probe {
+    fd: RawFd,
+    shell: Pid,
+    prompt: Option<Arc<AtomicU32>>,
+}
+
+pub fn foreground(probe: &Probe) -> Option<Pid> {
+    if let Some(prompt) = &probe.prompt {
+        return match prompt.load(Ordering::Relaxed) {
+            0 => None,
+            // A pseudo group per command.
+            state if state % 2 == 0 => Some(-(state as Pid)),
+            _ => Some(probe.shell),
+        };
+    }
+    match unsafe { libc::tcgetpgrp(probe.fd) } {
         pgrp if pgrp > 0 => Some(pgrp),
         _ => None,
     }
@@ -488,7 +502,11 @@ impl PtyHandle {
         });
 
         // Store the master fd for foreground-process-group checks.
-        *self.probe.lock().unwrap() = Some(master.as_raw_fd());
+        *self.probe.lock().unwrap() = Some(Probe {
+            fd: master.as_raw_fd(),
+            shell: pid,
+            prompt: self.is_guest().then(|| self.prompt.clone()),
+        });
         self.master = Some(master);
         *self.scrollback.lock().unwrap() = replay;
         self.run_io(io, interceptor, pending, input);
@@ -666,7 +684,8 @@ impl OutputPipeline {
     /// until the shell reports it with OSC 7. Other programs (`make -C`)
     /// don't move it.
     pub(super) fn poll_cwd(&mut self) {
-        if self.osc_parser.reported_cwd {
+        // A guest's cwd isn't the host process's.
+        if self.osc_parser.reported_cwd || self.osc_parser.guest.is_some() {
             return;
         }
         let Some(pgrp) = self.probe.lock().unwrap().as_ref().and_then(foreground) else {
@@ -727,8 +746,8 @@ impl Drop for PtyHandle {
     fn drop(&mut self) {
         // Invalidate the borrowed descriptor before `master` closes it and the
         // OS can reuse its number.
-        if let Some(fd) = self.probe.lock().unwrap().take() {
-            let pgrp = unsafe { libc::tcgetpgrp(fd) };
+        if let Some(probe) = self.probe.lock().unwrap().take() {
+            let pgrp = unsafe { libc::tcgetpgrp(probe.fd) };
             if pgrp > 0 {
                 unsafe {
                     libc::kill(-pgrp, libc::SIGHUP);

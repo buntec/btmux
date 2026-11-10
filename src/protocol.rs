@@ -29,6 +29,8 @@ fn generated_protocol_is_current() {
         crate::pane_git::PaneGit::decl(&config),
         PaneSnapshot::decl(&config),
         WindowSnapshot::decl(&config),
+        crate::multipass::GuestShell::decl(&config),
+        crate::session::Runtime::decl(&config),
         SessionSnapshot::decl(&config),
         SessionSummary::decl(&config),
         SessionSort::decl(&config),

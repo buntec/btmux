@@ -202,6 +202,17 @@ impl Auth {
     }
 }
 
+fn is_guest(headers: &HeaderMap) -> bool {
+    let Some(token) = guest_token() else {
+        return false;
+    };
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .is_some_and(|bearer| constant_time_eq(bearer.as_bytes(), token.as_bytes()))
+}
+
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -215,6 +226,16 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
     }
     if request.method() == Method::GET && request.uri().path() == "/pair" {
         return pair(&auth, &request);
+    }
+    if is_guest(request.headers()) {
+        let Some(pane) = guest_route(request.method(), request.uri().path()) else {
+            return StatusCode::FORBIDDEN.into_response();
+        };
+        let mut request = request;
+        // Guest pids name no host process.
+        request.headers_mut().remove("x-btmux-agent-pid");
+        request.extensions_mut().insert(GuestRequest(pane));
+        return next.run(request).await;
     }
     if !auth.authenticated(request.headers()) {
         let mut response = (StatusCode::UNAUTHORIZED, "Use your btmux access token as the password. The token file location is printed when the server starts.").into_response();
@@ -285,59 +306,108 @@ pub fn routes(auth: Arc<Auth>) -> Router {
 /// Persist a per-profile random credential with owner-only permissions. Never
 /// print the credential or put it in URLs, browser history, or access logs.
 pub fn load_token(state_path: Option<&Path>) -> Result<String, String> {
-    use std::io::Write;
     let token = if let Ok(token) = std::env::var("BTMUX_AUTH_TOKEN") {
         token
     } else {
         let path = state_path
             .ok_or("set BTMUX_AUTH_TOKEN when no state directory is available")?
             .with_extension("token");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        match crate::discovery::create_private_file(&path) {
-            Ok(mut file) => {
-                let token = format!(
-                    "{}{}",
-                    uuid::Uuid::new_v4().simple(),
-                    uuid::Uuid::new_v4().simple()
-                );
-                file.write_all(token.as_bytes())
-                    .map_err(|e| e.to_string())?;
-                file.sync_all().map_err(|e| e.to_string())?;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e.to_string()),
-        }
-        let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        let private = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o077 == 0;
-        #[cfg(windows)]
-        let private =
-            std::fs::File::open(&path).is_ok_and(|file| crate::discovery::acl::is_private(&file));
-        if !metadata.is_file() || !private {
-            return Err(format!(
-                "{} must be a regular owner-only file ({})",
-                path.display(),
-                if cfg!(windows) {
-                    "readable only by you, SYSTEM, and Administrators"
-                } else {
-                    "chmod 600"
-                }
-            ));
-        }
+        let token = read_secret(&path)?;
         eprintln!(
             "btmux access token: {} (browser username: btmux; password: file contents)",
             path.display()
         );
-        std::fs::read_to_string(&path)
-            .map_err(|e| e.to_string())?
-            .trim()
-            .to_string()
+        token
     };
     let _ = TOKEN.set(token.clone());
     Ok(token)
 }
+
+static GUEST_TOKEN: OnceLock<String> = OnceLock::new();
+
+/// The token sandboxed guests get, which only reaches their panes' routes.
+pub fn guest_token() -> Option<&'static str> {
+    GUEST_TOKEN.get().map(String::as_str)
+}
+
+/// Kept beside the state file, as guests' shells outlive a restart.
+pub fn load_guest_token(state_path: Option<&Path>) -> Result<(), String> {
+    let token = match state_path {
+        Some(path) => read_secret(&path.with_extension("guest-token"))?,
+        None => random_token(),
+    };
+    let _ = GUEST_TOKEN.set(token);
+    Ok(())
+}
+
+fn random_token() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+/// An owner-only file's token, created if missing.
+fn read_secret(path: &Path) -> Result<String, String> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    match crate::discovery::create_private_file(path) {
+        Ok(mut file) => {
+            file.write_all(random_token().as_bytes())
+                .map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e.to_string()),
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    let private = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o077 == 0;
+    #[cfg(windows)]
+    let private =
+        std::fs::File::open(path).is_ok_and(|file| crate::discovery::acl::is_private(&file));
+    if !metadata.is_file() || !private {
+        return Err(format!(
+            "{} must be a regular owner-only file ({})",
+            path.display(),
+            if cfg!(windows) {
+                "readable only by you, SYSTEM, and Administrators"
+            } else {
+                "chmod 600"
+            }
+        ));
+    }
+    Ok(std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())?
+        .trim()
+        .to_string())
+}
+
+/// What a guest-token request may reach: `Some(pane)` for a route of that
+/// pane (which `server::guest_scope` checks is a guest's), `Some(None)` for
+/// one of no pane.
+pub fn guest_route(method: &Method, path: &str) -> Option<Option<uuid::Uuid>> {
+    if path == "/api/notify" && method == Method::POST {
+        return Some(None);
+    }
+    let rest = path.strip_prefix("/api/panes/")?;
+    let (pane, route) = rest.split_once('/')?;
+    let pane = pane.parse().ok()?;
+    let allowed = match route {
+        "notify" => matches!(*method, Method::POST | Method::DELETE),
+        "agent-status" => matches!(*method, Method::GET | Method::POST | Method::DELETE),
+        "telemetry/v1/logs" | "telemetry/v1/metrics" | "widget" => method == Method::POST,
+        _ => false,
+    };
+    allowed.then_some(Some(pane))
+}
+
+/// Marks a request made with the guest token, and the pane it names.
+#[derive(Clone, Copy)]
+pub struct GuestRequest(pub Option<uuid::Uuid>);
 
 #[cfg(test)]
 mod tests {
@@ -518,5 +588,44 @@ mod middleware_tests {
         let code = auth.pairing_code();
         auth.pairing_codes.lock().unwrap().last_mut().unwrap().1 = Instant::now();
         assert!(!auth.redeem_pairing_code(&code));
+    }
+    #[test]
+    fn guest_tokens_reach_only_pane_routes() {
+        let pane = uuid::Uuid::new_v4();
+        let route = |method: Method, path: String| guest_route(&method, &path);
+        assert_eq!(route(Method::POST, "/api/notify".into()), Some(None));
+        for path in [
+            "notify",
+            "telemetry/v1/logs",
+            "telemetry/v1/metrics",
+            "widget",
+        ] {
+            assert_eq!(
+                route(Method::POST, format!("/api/panes/{pane}/{path}")),
+                Some(Some(pane))
+            );
+        }
+        assert_eq!(
+            route(Method::DELETE, format!("/api/panes/{pane}/agent-status")),
+            Some(Some(pane))
+        );
+        for path in ["input", "prompt", "output", "open-editor", "split", "focus"] {
+            assert_eq!(
+                route(Method::POST, format!("/api/panes/{pane}/{path}")),
+                None
+            );
+        }
+        assert_eq!(
+            route(Method::GET, format!("/api/panes/{pane}/notify")),
+            None
+        );
+        assert_eq!(
+            route(Method::POST, "/api/panes/not-a-uuid/notify".into()),
+            None
+        );
+        assert_eq!(route(Method::GET, "/api/sessions".into()), None);
+        assert_eq!(route(Method::POST, "/api/multipass/bridge".into()), None);
+        assert_eq!(route(Method::GET, "/ws/control".into()), None);
+        assert_eq!(route(Method::POST, "/mcp".into()), None);
     }
 }

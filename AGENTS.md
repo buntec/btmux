@@ -522,6 +522,33 @@ shared extension folders in `extensions.json` by absolute location, reading a
 source's own `extensions.json` (minus `.obsolete`) when it has one, and
 replaces those `<state dir>/vscode/linked-extensions.json` lists.
 
+### Sandboxed sessions (Multipass)
+
+A session's `Runtime` (`session/mod.rs`, persisted) is `Local` or `Multipass {
+mounts, shell }`. Sandboxed sessions share one instance (`[multipass]`,
+`multipass::instance_name`: `btmux-sandbox`, `-<profile>` appended). Mounts are
+host directories mounted at the same path (`check_mount` refuses home and its
+ancestors), so cwds mean the same on both sides. A guest pane's PTY runs the
+hidden `btmux guest-shell` (`multipass.rs`), which under a file lock creates
+(cloud-init: packages, shells, Claude Code, Codex) or starts the instance,
+mounts, installs this version's Linux binary at `GUEST_BIN` (copied from a Linux
+host, else the matching release) with agent hooks, writes the bash/zsh/fish
+integration (OSC 7 with the guest hostname, OSC 133), printing progress in the
+pane, then execs `multipass exec … <shell> -l`. On failure it waits for Enter.
+
+Guests reach the server through `POST /api/multipass/bridge`, which the wrapper
+calls with the host token and the instance's default gateway: the server binds
+a second listener there (unless it listens on all addresses), allows that
+authority, and returns it with the guest token (`state.guest-token`, kept so
+shells survive restarts; `restore_bridge` rebinds at startup). `auth::protect`
+lets the guest token reach only `guest_route`s (pane notify, agent status,
+telemetry, widgets, `/api/notify`), drops `X-Btmux-Agent-Pid` (guest pids name
+no host process), sets no cookie, and `server::guest_scope` checks the pane is a
+guest's. Never widen this without considering that the guest is untrusted.
+Guest panes use the Posix dialect, OSC 7 under a mount from the guest host is
+local (`Guest::mounted`), the `/proc` cwd fallback is off, and the foreground
+group comes from OSC 133 marks (unix `Probe`), as for WSL.
+
 ### Browser surface
 
 `prefix + b` (`browser` action) toggles a browser over the active pane

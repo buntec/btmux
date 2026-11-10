@@ -445,7 +445,19 @@ async fn report(state: &AppState) -> HealthReport {
         VscodeServer::Code => "VS Code",
         VscodeServer::OpenvscodeServer => "openvscode-server",
     };
-    let (shell, nvim, vscode, browser, (claude, codex), rg, fd_probe, fzf, git, tailscale) = tokio::join!(
+    let (
+        shell,
+        nvim,
+        vscode,
+        browser,
+        (claude, codex),
+        rg,
+        fd_probe,
+        fzf,
+        git,
+        tailscale,
+        multipass,
+    ) = tokio::join!(
         shell_check(shell.clone()),
         version_of(locate("nvim")),
         version_of(crate::vscode::program(vscode_kind)),
@@ -462,6 +474,7 @@ async fn report(state: &AppState) -> HealthReport {
             &["version"],
             PROBE_TIMEOUT
         ),
+        version_of(crate::multipass::program()),
     );
 
     let mut tools = vec![
@@ -482,6 +495,12 @@ async fn report(state: &AppState) -> HealthReport {
         ),
     ];
     if cfg!(unix) {
+        tools.push(program(
+            "Multipass",
+            "Sandboxed sessions, in a Multipass VM.",
+            multipass,
+            (HealthStatus::Missing, None),
+        ));
         tools.push(present(
             "lsof",
             "Finding a pane's foreground Neovim to open files in.",

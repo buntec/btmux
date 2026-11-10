@@ -194,6 +194,8 @@ pub struct PtyHandle {
     palette: colors::SharedPalette,
     /// Mode 2031, set by the program in the PTY.
     color_reports: Arc<AtomicBool>,
+    /// The Multipass guest the shell runs in, through `btmux guest-shell`.
+    guest: Option<Arc<crate::multipass::Guest>>,
 }
 
 impl PtyHandle {
@@ -245,7 +247,26 @@ impl PtyHandle {
             scrollback_bytes: scrollback_lines as usize * 1000,
             palette: env.palette.clone(),
             color_reports: Arc::default(),
+            guest: None,
         }
+    }
+
+    /// Run the shell in a Multipass guest instead.
+    pub fn with_guest(mut self, guest: Option<Arc<crate::multipass::Guest>>) -> Self {
+        if guest.is_some() {
+            self.dialect = crate::shell::Dialect::Posix;
+        }
+        self.guest = guest;
+        self
+    }
+
+    pub fn is_guest(&self) -> bool {
+        self.guest.is_some()
+    }
+
+    /// The Multipass instance the shell runs in.
+    pub fn guest_instance(&self) -> Option<&str> {
+        self.guest.as_deref().map(|guest| guest.instance.as_str())
     }
 
     /// Best-known working directory for snapshots: the live OSC 7 cwd if the
@@ -265,6 +286,10 @@ impl PtyHandle {
     /// The name of a program in the foreground instead of the shell.
     pub fn foreground_program(&self) -> Option<String> {
         let foreground = self.foreground_pgrp()?;
+        // Guest programs are no host processes; OSC 133 marks tell them apart.
+        if self.guest.is_some() {
+            return (Some(foreground) != self.shell_pid).then(|| "a program".into());
+        }
         let name = crate::process::name(foreground);
         let shell = Some(foreground) == self.shell_pid;
         // The shell can exec another program in its group (`exec nvim`).
@@ -320,7 +345,16 @@ impl PtyHandle {
 
         // Prepare all fallible resources before starting worker threads. The PTY
         // kernel buffer retains initial shell output until the reader starts.
-        let argv = crate::shell::argv(&self.shell);
+        let argv = match &self.guest {
+            Some(guest) => {
+                let exe = server_exe().ok_or("cannot find the btmux executable")?;
+                let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
+                std::iter::once(exe.to_string_lossy().into_owned())
+                    .chain(guest.wrapper_args(cwd))
+                    .collect()
+            }
+            None => crate::shell::argv(&self.shell),
+        };
         let (program, args) = argv.split_first().ok_or("no shell configured")?;
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
@@ -356,7 +390,7 @@ impl PtyHandle {
         if std::env::var_os("LANG").is_none() {
             cmd.env("LANG", "en_US.UTF-8");
         }
-        if let Some(ref dir) = self.spawn_cwd {
+        if let Some(dir) = self.spawn_cwd.as_ref().filter(|dir| dir.is_dir()) {
             cmd.cwd(dir);
         }
         #[cfg(windows)]
@@ -368,7 +402,8 @@ impl PtyHandle {
     /// The program that runs `btmux` subcommands in this pane's shell: its
     /// `$BTMUX_BIN`, unless an upgrade replaced that binary.
     pub fn shell_bin(&self) -> String {
-        let exe = server_exe().filter(|exe| self.bin.as_deref() != Some(*exe));
+        let exe =
+            server_exe().filter(|exe| self.guest.is_none() && self.bin.as_deref() != Some(*exe));
         self.dialect
             .btmux(exe.map(|exe| exe.to_string_lossy()).as_deref())
     }
@@ -380,7 +415,7 @@ impl PtyHandle {
     /// Git Bash starts programs from short-lived forks, and WSL's are Linux
     /// processes, so neither descends from the Windows shell process.
     pub fn programs_are_descendants(&self) -> bool {
-        !cfg!(windows)
+        self.guest.is_none() && !cfg!(windows)
             || !matches!(
                 self.dialect,
                 crate::shell::Dialect::Posix | crate::shell::Dialect::Wsl
@@ -605,7 +640,8 @@ impl PtyHandle {
                 self.meta_tx.clone(),
                 self.prompt.clone(),
                 self.cwd_remote.clone(),
-            ),
+            )
+            .with_guest(self.guest.clone()),
             response_tx,
             pending_cpr_pgrps: self.pending_cpr_pgrps.clone(),
             probe: self.probe.clone(),
@@ -753,9 +789,16 @@ struct OscParser {
     meta_tx: mpsc::UnboundedSender<()>,
     prompt: Arc<AtomicU32>,
     cwd_remote: Arc<AtomicBool>,
+    /// Its OSC 7s name guest paths, local under its mounts.
+    guest: Option<Arc<crate::multipass::Guest>>,
 }
 
 impl OscParser {
+    fn with_guest(mut self, guest: Option<Arc<crate::multipass::Guest>>) -> Self {
+        self.guest = guest;
+        self
+    }
+
     fn new(
         meta_tx: mpsc::UnboundedSender<()>,
         prompt: Arc<AtomicU32>,
@@ -768,6 +811,7 @@ impl OscParser {
             meta_tx,
             prompt,
             cwd_remote,
+            guest: None,
         }
     }
 
@@ -854,9 +898,12 @@ impl OscParser {
                     _ => path,
                 };
                 if !path.is_empty() {
+                    let local = match &self.guest {
+                        Some(guest) => guest.is_host(host) && guest.mounted(&path),
+                        None => is_local_host(host),
+                    };
                     *cwd.lock().unwrap() = Some(path);
-                    self.cwd_remote
-                        .store(!is_local_host(host), Ordering::Relaxed);
+                    self.cwd_remote.store(!local, Ordering::Relaxed);
                     self.reported_cwd = true;
                     true
                 } else {

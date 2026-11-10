@@ -82,6 +82,10 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_create_window),
         )
         .route("/api/notify", axum::routing::post(api_notify))
+        .route(
+            "/api/multipass/bridge",
+            axum::routing::post(crate::multipass::api_bridge),
+        )
         .route("/api/server/upgrade", axum::routing::post(api_upgrade))
         .route("/api/server/shutdown", axum::routing::post(api_shutdown))
         .route(
@@ -151,7 +155,25 @@ pub fn create_app(state: AppState) -> Router {
             "/{*path}",
             get(|Path(path): Path<String>| async move { serve(&path) }),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guest_scope,
+        ))
         .with_state(state)
+}
+
+/// Guest-token requests reach only the panes of sandboxed sessions.
+async fn guest_scope(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Some(crate::auth::GuestRequest(Some(pane))) = request.extensions().get().copied() {
+        if !state.read().await.is_guest_pane(pane) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+    next.run(request).await
 }
 
 #[derive(Deserialize)]
@@ -190,6 +212,8 @@ struct CreateSessionRequest {
     name: Option<String>,
     cwd: Option<String>,
     window_name: Option<String>,
+    #[serde(default)]
+    runtime: crate::session::Runtime,
 }
 
 #[derive(Serialize)]
@@ -209,9 +233,13 @@ async fn api_create_session(
     Json(body): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
     let cwd = body.cwd.map(std::path::PathBuf::from);
+    let runtime = match body.runtime.validate() {
+        Ok(runtime) => runtime,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
     let mut mgr = state.write().await;
     let id = mgr
-        .create_session_with_cwd_and_window(body.name, cwd, body.window_name)
+        .create_session_in(body.name, cwd, body.window_name, runtime)
         .await;
     let session = mgr.sessions.iter().find(|s| s.id == id).unwrap();
     let name = session.name.clone();
@@ -219,7 +247,7 @@ async fn api_create_session(
 
     ws::control::broadcast_state(&mgr);
 
-    Json(CreateSessionResponse { id, name, pane_id })
+    Json(CreateSessionResponse { id, name, pane_id }).into_response()
 }
 
 /// Kill every session and reset to a single fresh default session. Destructive;

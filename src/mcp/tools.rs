@@ -53,6 +53,11 @@ struct CreateSessionParams {
     name: Option<String>,
     cwd: Option<String>,
     window_name: Option<String>,
+    /// Host directories to mount at the same paths; run the session's shells
+    /// sandboxed in the shared Multipass instance.
+    sandbox_mounts: Option<Vec<String>>,
+    /// The sandbox's shell: "bash", "zsh", or "fish".
+    sandbox_shell: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -167,7 +172,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "Create a new session, optionally with a name, starting cwd, and initial window name."
+        description = "Create a new session, optionally with a name, starting cwd, and initial window name. With sandbox_mounts, its shells run in the shared Multipass instance, which sees only those host directories (at the same paths); the first pane sets the instance up."
     )]
     async fn create_session(
         &self,
@@ -175,13 +180,30 @@ impl BtmuxMcpServer {
             name,
             cwd,
             window_name,
+            sandbox_mounts,
+            sandbox_shell,
         }): Parameters<CreateSessionParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let cwd = cwd.map(std::path::PathBuf::from);
         let mut mgr = self.state.write().await;
-        let id = mgr
-            .create_session_with_cwd_and_window(name, cwd, window_name)
-            .await;
+        let runtime = match sandbox_mounts {
+            None => crate::session::Runtime::Local,
+            Some(mounts) => {
+                let shell = match sandbox_shell.as_deref() {
+                    None => mgr.config().multipass_shell,
+                    Some(shell) => match crate::multipass::GuestShell::of(shell) {
+                        Some(shell) => shell,
+                        None => return tool_error(format!("unknown sandbox shell {shell:?}")),
+                    },
+                };
+                crate::session::Runtime::Multipass { mounts, shell }
+            }
+        };
+        let runtime = match runtime.validate() {
+            Ok(runtime) => runtime,
+            Err(error) => return tool_error(error),
+        };
+        let id = mgr.create_session_in(name, cwd, window_name, runtime).await;
         let session = mgr.sessions.iter().find(|s| s.id == id).unwrap();
         let name = session.name.clone();
         let pane_id = session.windows[0].panes[0].id;

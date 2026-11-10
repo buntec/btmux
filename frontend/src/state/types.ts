@@ -1,5 +1,5 @@
 // Shared wire types are generated from Rust by `just protocol`.
-import type { Bind, Command } from '../generated/protocol';
+import type { Bind, Command, GuestShell } from '../generated/protocol';
 export type {
   PaneSnapshot as PaneState,
   PaneGit,
@@ -20,6 +20,8 @@ export type {
   AgentStatus,
   FontEntry,
   ClientConfig,
+  GuestShell,
+  Runtime,
 } from '../generated/protocol';
 
 /**
@@ -71,6 +73,8 @@ export type Overlay =
       targetSessionId?: string;
       /** The pane `new-worktree` branches from. */
       targetPaneId?: string;
+      /** `new-session` in the Multipass sandbox, once chosen. */
+      sandbox?: NewSessionSandbox;
     }
   | { mode: 'keys'; title: string; binds: Bind[] }
   | { mode: 'command'; title: string; commands: Command[] }
@@ -86,6 +90,12 @@ export type Overlay =
       items: PickerItem[];
       onSelect: (id: string) => void;
     };
+
+export interface NewSessionSandbox {
+  enabled: boolean;
+  mount: string;
+  shell: GuestShell;
+}
 
 export type PromptAction = 'rename-window' | 'rename-session' | 'new-session' | 'new-worktree';
 

@@ -106,10 +106,16 @@ agent_id: number | null, unread: PaneAlert | null, git: PaneGit | null, };
 export type WindowSnapshot = { id: string, name: string, panes: Array<PaneSnapshot>, active_pane: number, layout: Layout, zoomed_pane: string | null, };
 
 // prettier-ignore
-export type SessionSnapshot = { id: string, name: string, windows: Array<WindowSnapshot>, active_window: number, };
+export type GuestShell = "bash" | "zsh" | "fish";
 
 // prettier-ignore
-export type SessionSummary = { id: string, name: string, };
+export type Runtime = { "type": "local" } | { "type": "multipass", mounts: Array<string>, shell: GuestShell, };
+
+// prettier-ignore
+export type SessionSnapshot = { id: string, name: string, runtime: Runtime, windows: Array<WindowSnapshot>, active_window: number, };
+
+// prettier-ignore
+export type SessionSummary = { id: string, name: string, runtime: Runtime, };
 
 // prettier-ignore
 export type SessionSort = "created" | "mru" | "alphabetical";
@@ -371,6 +377,14 @@ browser: boolean,
  */
 browser_search_url: string | null,
 /**
+ * Whether the server found Multipass for sandboxed sessions.
+ */
+multipass: boolean,
+/**
+ * The shell new sandboxed sessions offer first.
+ */
+multipass_shell: GuestShell,
+/**
  * How many recently-viewed windows the window-grid (`prefix + w`) shows.
  */
 window_grid_count: number,
@@ -540,7 +554,11 @@ export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?:
 pane_switch_border?: string, pane_switch_border_speed?: number, };
 
 // prettier-ignore
-export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_pane", pane_id: string, } | { "type": "reset_agent", pane_id: string, } | { "type": "focus_client" } | { "type": "system_color_mode", mode: ColorMode, } | { "type": "widget_shown", id: string, } | { "type": "widget_answer", id: string, answer: WidgetAnswer | null, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
+export type ClientMessage = { "type": "split", session_id: string, pane_id: string, direction: string, } | { "type": "kill_pane", session_id: string, pane_id: string, } | { "type": "navigate", session_id: string, direction: string, } | { "type": "create_window", session_id: string, } | { "type": "switch_window", session_id: string, index: number, } | { "type": "rename_window", session_id: string, name: string, } | { "type": "close_window", session_id: string, } | { "type": "kill_window", window_id: string, } | { "type": "zoom_pane", session_id: string, pane_id: string, } | { "type": "last_window", session_id: string, } | { "type": "last_pane", session_id: string, } | { "type": "select_pane", session_id: string, pane_id: string, } | { "type": "acknowledge_pane", pane_id: string, } | { "type": "reset_agent", pane_id: string, } | { "type": "focus_client" } | { "type": "system_color_mode", mode: ColorMode, } | { "type": "widget_shown", id: string, } | { "type": "widget_answer", id: string, answer: WidgetAnswer | null, } | { "type": "cycle_pane", session_id: string, delta: number, } | { "type": "swap_pane", session_id: string, delta: number, } | { "type": "next_layout", session_id: string, } | { "type": "create_session", name: string | null,
+/**
+ * Local when absent.
+ */
+runtime: Runtime | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
 export type ServerMessage = { "type": "agent_telemetry", panes: Array<AgentTelemetry>, removed_panes: Array<string>, replace: boolean, } | { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: NotificationLevel, } | { "type": "pane_notification", pane_id: string, event: string, level: NotificationLevel, title: string | null, body: string | null,

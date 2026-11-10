@@ -10,6 +10,7 @@ For macOS, Linux and Windows. Powered by [wterm](https://github.com/vercel-labs/
 - Tailscale integration: serve over HTTPS on your tailnet; log in from a phone/tablet by scanning a QR code
 - Batteries included: file browser, Git GUI, process viewer, browser, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
+- Sandboxed sessions in a Multipass VM that sees only the directory you mount
 - LaTeX rendering overlay
 - Single self-contained binary (~20 MB)
 - Interactive, composable shader wallpapers
@@ -96,6 +97,7 @@ Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
 - [Neovim GUI](docs/neovim.md): the Neovim GUI, its plugin, and config tips
 - [VS Code](docs/vscode.md): VS Code over a pane, its server, and sharing desktop settings and extensions
 - [Browser](docs/browser.md): a server-side Chrome or Chromium over a pane
+- [Sandboxed sessions](docs/sandbox.md): shells and agents in a shared Multipass VM
 - [Automation and AI agents](docs/automation.md): tmux-style commands, agent skill, REST API, MCP, and agent notifications
 - [Development](docs/development.md): building and running btmux from a checkout
 

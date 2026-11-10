@@ -477,6 +477,9 @@ pub enum SubCommand {
     /// Print the in-place upgrade format this binary accepts, and its version.
     #[command(hide = true)]
     HandoffVersion,
+    /// A sandboxed pane's shell: set up the Multipass instance, then enter it.
+    #[command(hide = true)]
+    GuestShell(crate::multipass::GuestShellArgs),
 }
 
 /// The btmux version, taken from `Cargo.toml` at compile time. Shown by the
@@ -587,6 +590,37 @@ pub struct VscodeConfig {
     pub keybindings: Option<String>,
     /// Extension folders, or folders of them, to use instead of desktop VS Code's.
     pub extensions: Option<Vec<String>>,
+}
+
+/// `[multipass]`: the shared Multipass instance sandboxed sessions run in.
+/// Read when the instance is created, except `shell`.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct MultipassConfig {
+    /// Defaults to `btmux-sandbox`, suffixed with the profile.
+    pub instance: Option<String>,
+    pub image: String,
+    pub cpus: u32,
+    pub memory: String,
+    pub disk: String,
+    /// The shell new sandboxed sessions offer first.
+    pub shell: Option<crate::multipass::GuestShell>,
+    /// A cloud-init file to create the instance with instead of btmux's.
+    pub cloud_init: Option<String>,
+}
+
+impl Default for MultipassConfig {
+    fn default() -> Self {
+        Self {
+            instance: None,
+            image: "26.04".into(),
+            cpus: 4,
+            memory: "8G".into(),
+            disk: "40G".into(),
+            shell: None,
+            cloud_init: None,
+        }
+    }
 }
 
 /// `[browser]`: the browser surface.
@@ -780,6 +814,8 @@ pub struct FileConfig {
     pub vscode: VscodeConfig,
     /// The browser surface.
     pub browser: BrowserConfig,
+    /// The Multipass instance for sandboxed sessions.
+    pub multipass: MultipassConfig,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -846,6 +882,7 @@ impl Default for FileConfig {
             editor: None,
             vscode: VscodeConfig::default(),
             browser: BrowserConfig::default(),
+            multipass: MultipassConfig::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -1282,6 +1319,14 @@ pub struct ClientConfig {
     pub browser: bool,
     /// Where the browser's address bar searches; `%s` is the text.
     pub browser_search_url: Option<String>,
+    /// Whether the server found Multipass for sandboxed sessions.
+    pub multipass: bool,
+    /// The shell new sandboxed sessions offer first.
+    pub multipass_shell: crate::multipass::GuestShell,
+    /// The Multipass instance's settings; used by the backend only.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub multipass_config: MultipassConfig,
     /// VS Code's server and sharing; used by the backend only.
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
@@ -1822,6 +1867,17 @@ pub fn generate_config_toml() -> String {
 # block-ads = true        # don't resolve known ad servers
 # block-autoplay = true   # keep media from playing until you click or press a key
 
+# The shared Multipass instance sandboxed sessions run in. Its settings apply
+# when btmux creates it.
+# [multipass]
+# instance = "btmux-sandbox"   # default; other profiles append "-<profile>"
+# image = "26.04"
+# cpus = 4
+# memory = "8G"
+# disk = "40G"
+# shell = "bash"   # "bash", "zsh", or "fish"; the one new sandboxed sessions offer first (default: yours, if one of these)
+# cloud-init = "~/btmux-cloud-init.yaml"   # instead of btmux's (packages, Claude Code, Codex)
+
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.
 # [notifications]
@@ -2107,6 +2163,13 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .collect(),
         browser: crate::browser::available(),
         browser_search_url: file.browser.search_url.clone(),
+        multipass: crate::multipass::available(),
+        multipass_shell: file
+            .multipass
+            .shell
+            .or_else(|| crate::multipass::GuestShell::of(&resolve_shell(file.shell.as_deref())))
+            .unwrap_or_default(),
+        multipass_config: file.multipass.clone(),
         vscode: file.vscode.clone(),
         window_grid_count: file.window_grid_count.unwrap_or(DEFAULT_WINDOW_GRID_COUNT),
         version: VERSION.to_string(),

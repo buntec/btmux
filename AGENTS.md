@@ -212,7 +212,8 @@ as conf.d runs before config.fish, so it changes nothing when off.
   ref moves (a push or fetch), which also refreshes at once. Errors back off 5
   minutes; a second in a row, or `gh` going missing, drops the status. `ServerMessage::Github` carries
   every status on change and on connect; `GithubBadge` shows it in
-  `PaneCorner` (and the title bar), opening the PR or branch on click. The
+  `PaneCorner` (and the title bar) for every branch on GitHub, with or
+  without a PR or checks, opening the PR or branch on click. The
   browser tests' fake `gh` (`frontend/test-bin`) answers from the stack's `gh`
   directory.
 - **Windows shells** (`shell.rs`): `shell` is a command line (`wsl.exe -d Ubuntu`)

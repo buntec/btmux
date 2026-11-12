@@ -499,7 +499,11 @@ fn parse_branch(repository: &Value, i: usize, key: &Key, target: &Target) -> Git
                 .and_then(parse_checks),
         ),
         None => (
-            format!("{repo_url}/tree/{}", encode_path(&target.head_ref)),
+            format!(
+                "{}/tree/{}",
+                head_url(repo_url, target),
+                encode_path(&target.head_ref)
+            ),
             None,
             repository
                 .pointer(&format!("/c{i}/target/statusCheckRollup"))
@@ -513,6 +517,15 @@ fn parse_branch(repository: &Value, i: usize, key: &Key, target: &Target) -> Git
         pr,
         checks,
     }
+}
+
+/// The push repository's URL, beside the queried one's.
+fn head_url(repo_url: &str, target: &Target) -> String {
+    if target.head == target.base {
+        return repo_url.to_string();
+    }
+    let site = repo_url.rsplitn(3, '/').last().unwrap_or_default();
+    format!("{site}/{}/{}", target.head.owner, target.head.name)
 }
 
 fn parse_pr(pr: &Value) -> PullRequest {
@@ -1258,6 +1271,21 @@ mod tests {
 
         let repository = json!({"url": "https://github.com/o/r", "b0": {"nodes": []}, "c0": null});
         let status = parse_branch(&repository, 0, &key, &target);
+        assert_eq!((status.pr, status.checks), (None, None));
+    }
+
+    #[test]
+    fn fork_branches_without_a_pull_request_link_to_the_fork() {
+        let target = Target {
+            base: repo("upstream", "r"),
+            head: repo("me", "r"),
+            head_ref: "feat/a b".into(),
+            pushed: None,
+        };
+        let repository = json!({"url": "https://github.com/Upstream/r", "b0": {"nodes": []}});
+        let key = ("/r/.git".to_string(), "feat".to_string());
+        let status = parse_branch(&repository, 0, &key, &target);
+        assert_eq!(status.url, "https://github.com/me/r/tree/feat/a%20b");
         assert_eq!((status.pr, status.checks), (None, None));
     }
 

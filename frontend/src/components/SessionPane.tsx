@@ -7,7 +7,7 @@ import { ProcessOverlay } from './ProcessOverlay';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
-import { useStore } from '../state/store';
+import { githubKey, useStore } from '../state/store';
 import { useFileStore } from '../state/fileStore';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
@@ -308,6 +308,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
                 title={pane.title}
                 cwd={pane.cwd}
                 agentStatus={pane.agent_status}
+                githubKey={pane.git?.branch ? githubKey(pane.git.repo_id, pane.git.branch) : undefined}
                 paneIndex={paneNumberById.get(pane.id) ?? 0}
                 visible={visible}
                 isZoomed={isZoomed}

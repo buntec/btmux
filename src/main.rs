@@ -19,6 +19,7 @@ mod fish_integration;
 mod fs_ops;
 mod fzf;
 mod git;
+mod github;
 #[cfg(unix)]
 mod handoff;
 #[cfg(windows)]
@@ -422,6 +423,7 @@ async fn main() {
     spawn_agent_reaper(state.clone(), agent_manifest_dir());
     spawn_meta_change_handler(meta_rx, state.clone());
     update_check::spawn(state.clone());
+    github::spawn(state.clone());
 
     // Persist the session tree to disk on every state change (debounced).
     if let Some(path) = &state_file {

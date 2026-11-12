@@ -5,10 +5,10 @@
 //! push or fetch moves the branch's remote-tracking ref.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -21,6 +21,8 @@ const POLL: Duration = Duration::from_secs(60);
 /// While checks are pending, and for `AFTER_PUSH` after a push.
 const POLL_FAST: Duration = Duration::from_secs(15);
 const AFTER_PUSH: Duration = Duration::from_secs(120);
+/// Pending checks poll fast this long, as a required one may never report.
+const PENDING_FAST_FOR: Duration = Duration::from_secs(1800);
 const AFTER_FAILURE: Duration = Duration::from_secs(300);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(20);
 /// Pull requests per branch, newest first, before filtering out forks'.
@@ -137,6 +139,9 @@ struct Entry {
     status: Option<GithubStatus>,
     next_poll: Instant,
     fast_until: Option<Instant>,
+    pending_since: Option<Instant>,
+    /// The last poll failed; a second failure drops the status.
+    failing: bool,
 }
 
 #[derive(Default)]
@@ -145,6 +150,15 @@ struct Poller {
     /// The last error per repo, logged once.
     errors: HashMap<Repo, String>,
     missing_gh_logged: bool,
+    files: GitFiles,
+}
+
+/// One repo's query.
+struct Job {
+    repo: Repo,
+    keys: Vec<Key>,
+    targets: Vec<Target>,
+    query: Query,
 }
 
 impl Poller {
@@ -174,20 +188,27 @@ impl Poller {
                 status: None,
                 next_poll: now,
                 fast_until: None,
+                pending_since: None,
+                failing: false,
             });
         }
         let keys: Vec<Key> = self.entries.keys().cloned().collect();
         let hosts = config.hosts;
-        let targets = tokio::task::spawn_blocking(move || {
-            keys.into_iter()
+        let mut files = std::mem::take(&mut self.files);
+        let (targets, files) = tokio::task::spawn_blocking(move || {
+            let targets = keys
+                .into_iter()
                 .map(|key| {
-                    let target = resolve(Path::new(&key.0), &key.1, &hosts);
+                    let target = resolve(&mut files, Path::new(&key.0), &key.1, &hosts);
                     (key, target)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            files.retain(targets.iter().map(|(key, _)| Path::new(&key.0)));
+            (targets, files)
         })
         .await
         .unwrap_or_default();
+        self.files = files;
         for (key, target) in targets {
             let Some(entry) = self.entries.get_mut(&key) else {
                 continue;
@@ -196,6 +217,7 @@ impl Poller {
                 let pushed = |t: &Option<Target>| t.as_ref().and_then(|t| t.pushed.clone());
                 if entry.target.is_some() && pushed(&entry.target) != pushed(&target) {
                     entry.fast_until = Some(now + AFTER_PUSH);
+                    entry.pending_since = None;
                 }
                 if target.is_none() {
                     entry.status = None;
@@ -218,34 +240,67 @@ impl Poller {
             match gh(&shell).await {
                 Some(gh) => {
                     self.missing_gh_logged = false;
-                    for (repo, keys) in due {
-                        self.poll(&gh, repo, keys).await;
+                    let jobs: Vec<Job> = due
+                        .into_iter()
+                        .map(|(repo, keys)| self.job(repo, keys))
+                        .collect();
+                    // Together, so a slow host doesn't hold back the others.
+                    let replies = futures_util::future::join_all(
+                        jobs.iter()
+                            .map(|job| run_gh(&gh, &job.repo.host, &job.query)),
+                    )
+                    .await;
+                    for (job, reply) in jobs.into_iter().zip(replies) {
+                        self.apply(job, reply);
                     }
                 }
-                None if !self.missing_gh_logged => {
-                    self.missing_gh_logged = true;
-                    tracing::info!("github status: gh not found");
+                None => {
+                    if !self.missing_gh_logged {
+                        self.missing_gh_logged = true;
+                        tracing::info!("github status: gh not found");
+                    }
+                    for entry in self.entries.values_mut() {
+                        entry.status = None;
+                    }
                 }
-                None => {}
             }
         }
         self.publish(state).await;
     }
 
-    async fn poll(&mut self, gh: &Gh, repo: Repo, mut keys: Vec<Key>) {
+    fn job(&self, repo: Repo, mut keys: Vec<Key>) -> Job {
         keys.sort();
-        let branches: Vec<(&Key, &Target)> = keys
-            .iter()
-            .filter_map(|key| Some((key, self.entries[key].target.as_ref()?)))
-            .collect();
-        let query = build_query(&repo, branches.iter().map(|(_, target)| *target));
-        let result = run_gh(gh, &repo.host, &query).await.and_then(|reply| {
+        let (keys, targets): (Vec<Key>, Vec<Target>) = keys
+            .into_iter()
+            .filter_map(|key| {
+                let target = self.entries[&key].target.clone()?;
+                Some((key, target))
+            })
+            .unzip();
+        let query = build_query(&repo, targets.iter());
+        Job {
+            repo,
+            keys,
+            targets,
+            query,
+        }
+    }
+
+    fn apply(&mut self, job: Job, reply: Result<Value, String>) {
+        let Job {
+            repo,
+            keys,
+            targets,
+            ..
+        } = job;
+        let result = reply.and_then(|reply| {
             let repository = reply
                 .pointer("/data/repository")
                 .filter(|repo| !repo.is_null())
                 .ok_or_else(|| graphql_error(&reply))?;
-            Ok(branches
+            Ok(keys
                 .iter()
+                .zip(&targets)
                 .enumerate()
                 .map(|(i, (key, target))| parse_branch(repository, i, key, target))
                 .collect::<Vec<_>>())
@@ -262,9 +317,14 @@ impl Poller {
                         .checks
                         .as_ref()
                         .is_some_and(|checks| checks.state == CheckState::Pending);
-                    let fast = pending || entry.fast_until.is_some_and(|until| now < until);
+                    entry.pending_since = pending.then(|| entry.pending_since.unwrap_or(now));
+                    let fast = entry
+                        .pending_since
+                        .is_some_and(|since| now.duration_since(since) < PENDING_FAST_FOR)
+                        || entry.fast_until.is_some_and(|until| now < until);
                     entry.next_poll = now + if fast { POLL_FAST } else { POLL };
                     entry.status = Some(status);
+                    entry.failing = false;
                 }
             }
             Err(error) => {
@@ -273,7 +333,13 @@ impl Poller {
                     self.errors.insert(repo, error);
                 }
                 for key in &keys {
-                    self.entries.get_mut(key).unwrap().next_poll = now + AFTER_FAILURE;
+                    let entry = self.entries.get_mut(key).unwrap();
+                    entry.next_poll = now + AFTER_FAILURE;
+                    // Kept through one failure, which may be a network blip.
+                    if entry.failing {
+                        entry.status = None;
+                    }
+                    entry.failing = true;
                 }
             }
         }
@@ -307,7 +373,9 @@ struct Gh {
 }
 
 async fn gh(shell: &str) -> Option<Gh> {
-    let [path] = crate::agent_limits::programs_paths(shell, [OsString::from("gh")]).await;
+    use crate::agent_limits::{programs_paths, AskShell};
+    // Polling never starts a shell after the first time; the Health tab can.
+    let [path] = programs_paths(shell, [OsString::from("gh")], AskShell::Once).await;
     let search = path.clone().or_else(|| std::env::var_os("PATH"))?;
     let program = crate::agent_limits::find_in("gh".as_ref(), &search)?;
     Some(Gh {
@@ -534,11 +602,14 @@ fn parse_checks(rollup: &Value) -> Option<Checks> {
     Some(checks)
 }
 
-/// A check run's status or, once completed, its conclusion (`CheckRunState`).
+/// A check run's status or, once completed, its conclusion (`CheckRunState`),
+/// grouped as `gh pr checks` does and the rollup counts them.
 fn check_run_outcome(state: &str) -> Option<CheckState> {
     match state {
-        "SUCCESS" | "NEUTRAL" | "SKIPPED" | "CANCELLED" | "STALE" | "COMPLETED" => None,
-        "QUEUED" | "IN_PROGRESS" | "PENDING" | "WAITING" | "REQUESTED" => Some(CheckState::Pending),
+        "SUCCESS" | "NEUTRAL" | "SKIPPED" | "COMPLETED" => None,
+        "QUEUED" | "IN_PROGRESS" | "PENDING" | "WAITING" | "REQUESTED" | "EXPECTED" | "STALE" => {
+            Some(CheckState::Pending)
+        }
         _ => Some(CheckState::Failure),
     }
 }
@@ -565,22 +636,105 @@ fn encode_path(branch: &str) -> String {
     out
 }
 
+/// Git files read each tick, reparsed only when their size or mtime changes.
+#[derive(Default)]
+struct GitFiles {
+    configs: HashMap<PathBuf, Cached<GitConfig>>,
+    packed_refs: HashMap<PathBuf, Cached<HashMap<String, String>>>,
+}
+
+struct Cached<T> {
+    stamp: (SystemTime, u64),
+    value: T,
+}
+
+impl GitFiles {
+    /// Keeps the user's config and the files of `dirs`.
+    fn retain<'a>(&mut self, dirs: impl Iterator<Item = &'a Path>) {
+        let mut keep: HashSet<PathBuf> = dirs.map(Path::to_path_buf).collect();
+        keep.extend(
+            global_configs()
+                .into_iter()
+                .filter_map(|path| Some(path.parent()?.into())),
+        );
+        let kept = |path: &PathBuf| path.parent().is_some_and(|dir| keep.contains(dir));
+        self.configs.retain(|path, _| kept(path));
+        self.packed_refs.retain(|path, _| kept(path));
+    }
+}
+
+fn cached<T>(
+    cache: &mut HashMap<PathBuf, Cached<T>>,
+    path: PathBuf,
+    parse: fn(&str) -> T,
+) -> Option<&T> {
+    let Ok(meta) = std::fs::metadata(&path) else {
+        cache.remove(&path);
+        return None;
+    };
+    let stamp = (meta.modified().ok()?, meta.len());
+    if cache.get(&path).is_none_or(|cached| cached.stamp != stamp) {
+        let value = parse(&std::fs::read_to_string(&path).ok()?);
+        cache.insert(path.clone(), Cached { stamp, value });
+    }
+    cache.get(&path).map(|cached| &cached.value)
+}
+
+/// The user's git config files, the one git reads last first.
+fn global_configs() -> Vec<PathBuf> {
+    let home = dirs::home_dir();
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| home.as_ref().map(|home| home.join(".config")));
+    [
+        home.map(|home| home.join(".gitconfig")),
+        xdg.map(|dir| dir.join("git/config")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 /// The GitHub target of `branch` in the repo whose common git dir is `common_dir`.
-fn resolve(common_dir: &Path, branch: &str, hosts: &[String]) -> Option<Target> {
-    let config = GitConfig::parse(&std::fs::read_to_string(common_dir.join("config")).ok()?);
-    let mut target = target(&config, branch, hosts)?;
-    target.pushed = read_ref(
-        common_dir,
-        &format!(
-            "refs/remotes/{}/{}",
-            config.push_remote(branch)?,
-            target.head_ref
-        ),
+fn resolve(
+    files: &mut GitFiles,
+    common_dir: &Path,
+    branch: &str,
+    hosts: &[String],
+) -> Option<Target> {
+    let mut push_default = None;
+    for path in global_configs() {
+        if push_default.is_none() {
+            push_default = cached(&mut files.configs, path, GitConfig::parse)
+                .and_then(|config| config.get("push", None, "default"))
+                .map(str::to_owned);
+        }
+    }
+    let config = cached(
+        &mut files.configs,
+        common_dir.join("config"),
+        GitConfig::parse,
+    )?;
+    let push_default = config
+        .get("push", None, "default")
+        .or(push_default.as_deref());
+    let mut target = target(config, push_default, branch, hosts)?;
+    let name = format!(
+        "refs/remotes/{}/{}",
+        config.push_remote(branch)?,
+        target.head_ref
     );
+    target.pushed = read_ref(&mut files.packed_refs, common_dir, &name);
     Some(target)
 }
 
-fn target(config: &GitConfig, branch: &str, hosts: &[String]) -> Option<Target> {
+fn target(
+    config: &GitConfig,
+    push_default: Option<&str>,
+    branch: &str,
+    hosts: &[String],
+) -> Option<Target> {
     let push_remote = config.push_remote(branch)?;
     let url = |remote: &str| config.get("remote", Some(remote), "url");
     let push_url = config
@@ -598,10 +752,13 @@ fn target(config: &GitConfig, branch: &str, hosts: &[String]) -> Option<Target> 
         .and_then(|url| parse_remote_url(url, hosts))
         .filter(|base| base.host == head.host)
         .unwrap_or_else(|| head.clone());
-    let tracks_push_remote = config.get("branch", Some(branch), "remote") == Some(&push_remote);
+    // `git push` sends a branch to its upstream's name only with `upstream`;
+    // `simple` refuses a different name, and `current` uses the branch's.
+    let to_upstream = matches!(push_default, Some("upstream" | "tracking"))
+        && config.get("branch", Some(branch), "remote") == Some(&push_remote);
     let head_ref = config
         .get("branch", Some(branch), "merge")
-        .filter(|_| tracks_push_remote)
+        .filter(|_| to_upstream)
         .and_then(|merge| merge.strip_prefix("refs/heads/"))
         .unwrap_or(branch)
         .to_string();
@@ -614,15 +771,27 @@ fn target(config: &GitConfig, branch: &str, hosts: &[String]) -> Option<Target> 
 }
 
 /// A ref's commit, loose or packed.
-fn read_ref(common_dir: &Path, name: &str) -> Option<String> {
+fn read_ref(
+    packed: &mut HashMap<PathBuf, Cached<HashMap<String, String>>>,
+    common_dir: &Path,
+    name: &str,
+) -> Option<String> {
     if let Ok(oid) = std::fs::read_to_string(common_dir.join(name)) {
         return Some(oid.trim().to_string());
     }
-    let packed = std::fs::read_to_string(common_dir.join("packed-refs")).ok()?;
-    packed.lines().find_map(|line| {
-        let (oid, r) = line.split_once(' ')?;
-        (r == name).then(|| oid.to_string())
-    })
+    cached(packed, common_dir.join("packed-refs"), parse_packed_refs)?
+        .get(name)
+        .cloned()
+}
+
+fn parse_packed_refs(text: &str) -> HashMap<String, String> {
+    text.lines()
+        .filter(|line| !line.starts_with(['#', '^']))
+        .filter_map(|line| {
+            let (oid, name) = line.split_once(' ')?;
+            Some((name.to_string(), oid.to_string()))
+        })
+        .collect()
 }
 
 /// `owner/name` on a GitHub host, from any URL form git accepts.
@@ -651,10 +820,11 @@ fn parse_remote_url(url: &str, hosts: &[String]) -> Option<Repo> {
     if owner.is_empty() || name.is_empty() || name.contains('/') {
         return None;
     }
+    // Lowercased, as GitHub ignores case, so remotes differing only in it match.
     Some(Repo {
         host,
-        owner: owner.to_string(),
-        name: name.to_string(),
+        owner: owner.to_ascii_lowercase(),
+        name: name.to_ascii_lowercase(),
     })
 }
 
@@ -878,12 +1048,20 @@ mod tests {
 	merge = refs/heads/main
 "#,
         );
-        let feat = target(&config, "feat", &[]).unwrap();
+        let feat = target(&config, None, "feat", &[]).unwrap();
         assert_eq!(feat.head, repo("me", "r"));
         assert_eq!(feat.base, repo("them", "r"));
-        assert_eq!(feat.head_ref, "feature");
+        // `simple` and `current` push under the branch's own name, as after
+        // `git switch -c feat origin/main`.
+        assert_eq!(feat.head_ref, "feat");
+        assert_eq!(
+            target(&config, Some("upstream"), "feat", &[])
+                .unwrap()
+                .head_ref,
+            "feature"
+        );
         // Tracking a local branch: pushed to origin under its own name.
-        let local = target(&config, "local", &[]).unwrap();
+        let local = target(&config, Some("upstream"), "local", &[]).unwrap();
         assert_eq!(local.head, repo("me", "r"));
         assert_eq!(local.head_ref, "local");
 
@@ -901,9 +1079,12 @@ mod tests {
 	pushRemote = mirror
 "#,
         );
-        assert_eq!(target(&config, "x", &[]).unwrap().base, repo("me", "r"));
-        assert_eq!(target(&config, "m", &[]), None);
-        assert_eq!(target(&GitConfig::parse(""), "x", &[]), None);
+        assert_eq!(
+            target(&config, None, "x", &[]).unwrap().base,
+            repo("me", "r")
+        );
+        assert_eq!(target(&config, None, "m", &[]), None);
+        assert_eq!(target(&GitConfig::parse(""), None, "x", &[]), None);
 
         // A `pushurl` fork: pushed there, PRs opened against the fetch URL.
         let config = GitConfig::parse(
@@ -913,9 +1094,24 @@ mod tests {
 	pushurl = git@github.com:me/r.git
 "#,
         );
-        let fork = target(&config, "feat", &[]).unwrap();
+        let fork = target(&config, None, "feat", &[]).unwrap();
         assert_eq!(fork.head, repo("me", "r"));
         assert_eq!(fork.base, repo("them", "r"));
+
+        // GitHub ignores case, so these are one repo with branch checks.
+        let config = GitConfig::parse(
+            r#"
+[remote "origin"]
+	url = git@github.com:Me/R.git
+[remote "upstream"]
+	url = https://github.com/me/r.git
+"#,
+        );
+        let feat = target(&config, None, "feat", &[]).unwrap();
+        assert_eq!(feat.head, feat.base);
+        assert!(build_query(&feat.base, [&feat].into_iter())
+            .text
+            .contains("c0: ref"));
     }
 
     #[test]
@@ -928,15 +1124,18 @@ mod tests {
             "# pack-refs with: peeled\nbbb refs/remotes/origin/b/c\n",
         )
         .unwrap();
-        assert_eq!(
-            read_ref(&dir, "refs/remotes/origin/a").as_deref(),
-            Some("aaa")
-        );
-        assert_eq!(
-            read_ref(&dir, "refs/remotes/origin/b/c").as_deref(),
-            Some("bbb")
-        );
-        assert_eq!(read_ref(&dir, "refs/remotes/origin/d"), None);
+        let mut packed = HashMap::new();
+        let mut read = |name: &str| read_ref(&mut packed, &dir, name);
+        assert_eq!(read("refs/remotes/origin/a").as_deref(), Some("aaa"));
+        assert_eq!(read("refs/remotes/origin/b/c").as_deref(), Some("bbb"));
+        assert_eq!(read("refs/remotes/origin/d"), None);
+        // Reparsed when it changes.
+        std::fs::write(
+            dir.join("packed-refs"),
+            "# pack-refs with: peeled\ncccc refs/remotes/origin/b/c\n^dddd\n",
+        )
+        .unwrap();
+        assert_eq!(read("refs/remotes/origin/b/c").as_deref(), Some("cccc"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1084,6 +1283,28 @@ mod tests {
         .unwrap();
         assert_eq!((checks.total, checks.failed, checks.pending), (103, 2, 1));
         assert!(checks.failed_names.is_empty() && checks.pending_names.is_empty());
+    }
+
+    #[test]
+    fn cancelled_runs_fail_as_in_the_rollup() {
+        let checks = parse_checks(&json!({
+            "state": "FAILURE",
+            "contexts": {
+                "totalCount": 2,
+                "checkRunCountsByState": [
+                    {"state": "CANCELLED", "count": 1},
+                    {"state": "STALE", "count": 1},
+                ],
+                "nodes": [
+                    check_run("build", "COMPLETED", Some("CANCELLED")),
+                    check_run("old", "COMPLETED", Some("STALE")),
+                ],
+            },
+        }))
+        .unwrap();
+        assert_eq!((checks.failed, checks.pending), (1, 1));
+        assert_eq!(checks.failed_names, ["build"]);
+        assert_eq!(checks.pending_names, ["old"]);
     }
 
     #[test]

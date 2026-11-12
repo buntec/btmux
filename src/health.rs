@@ -235,7 +235,12 @@ async fn agent_versions(shell: &str) -> (Probe, Probe) {
 
 /// Found as GitHub status runs it.
 async fn gh_version(shell: &str) -> Probe {
-    let [path] = crate::agent_limits::programs_paths(shell, [OsString::from("gh")]).await;
+    let [path] = crate::agent_limits::programs_paths(
+        shell,
+        [OsString::from("gh")],
+        crate::agent_limits::AskShell::Retry,
+    )
+    .await;
     agent_version("gh", path).await
 }
 

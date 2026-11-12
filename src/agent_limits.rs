@@ -162,24 +162,44 @@ fn now_seconds() -> f64 {
 
 /// The `PATH` the Claude and Codex CLIs run with, `None` for the server's own.
 pub(crate) async fn agent_paths(shell: &str) -> [Option<OsString>; 2] {
-    programs_paths(shell, [Agent::Claude, Agent::Codex].map(agent_program)).await
+    programs_paths(
+        shell,
+        [Agent::Claude, Agent::Codex].map(agent_program),
+        AskShell::Retry,
+    )
+    .await
+}
+
+/// When a program missing from both `PATH`s starts the shell.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum AskShell {
+    /// Every `SHELL_PATH_RETRY`, for requests a person made.
+    Retry,
+    /// Only if it was never asked, for background polling.
+    Once,
 }
 
 /// The `PATH` each program runs with, `None` for the server's own.
 pub(crate) async fn programs_paths<const N: usize>(
     shell: &str,
     programs: [OsString; N],
+    ask: AskShell,
 ) -> [Option<OsString>; N] {
     let server = std::env::var_os("PATH");
     let mut shell_path = SHELL_PATH.lock().await;
     let shell_path = shell_path
-        .refresh(shell, &programs, server.as_deref(), Instant::now())
+        .refresh(shell, &programs, server.as_deref(), Instant::now(), ask)
         .await;
     programs.map(|program| agent_path(&program, server.as_deref(), shell_path))
 }
 
-/// `program` in `path`, as exec would find it.
+/// `program` in `path`, as exec would find it (on Windows, with `.exe`,
+/// `.cmd`, or `.bat` when it has no extension).
 pub(crate) fn find_in(program: &OsStr, path: &OsStr) -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    if Path::new(program).extension().is_none() {
+        return agent_launch::windows_program(program.to_str()?, path);
+    }
     std::env::split_paths(path)
         .map(|dir| dir.join(program))
         .find(|file| is_executable(file))
@@ -232,6 +252,7 @@ impl ShellPath {
         programs: &[OsString],
         server: Option<&OsStr>,
         now: Instant,
+        ask: AskShell,
     ) -> Option<&OsStr> {
         let found = programs.iter().all(|program| {
             [server, self.value.as_deref()]
@@ -241,7 +262,7 @@ impl ShellPath {
         });
         let due = self
             .asked_at
-            .is_none_or(|at| now.duration_since(at) >= SHELL_PATH_RETRY);
+            .is_none_or(|at| ask == AskShell::Retry && now.duration_since(at) >= SHELL_PATH_RETRY);
         if !found && due {
             self.asked_at = Some(now);
             match shell_path(shell, SHELL_PATH_TIMEOUT).await {
@@ -977,17 +998,37 @@ mod tests {
             let mut path = ShellPath::default();
             let programs = [OsString::from("claude")];
             // A shell that can't start leaves nothing, and isn't run again before the retry.
-            path.refresh("btmux-no-such-shell", &programs, Some(empty), start)
-                .await;
+            path.refresh(
+                "btmux-no-such-shell",
+                &programs,
+                Some(empty),
+                start,
+                AskShell::Retry,
+            )
+            .await;
             let asked = path.asked_at;
             assert_eq!(asked, Some(start));
-            path.refresh("sh", &programs, Some(empty), start + Duration::from_secs(1))
-                .await;
+            path.refresh(
+                "sh",
+                &programs,
+                Some(empty),
+                start + Duration::from_secs(1),
+                AskShell::Retry,
+            )
+            .await;
             assert_eq!(path.asked_at, asked);
             assert_eq!(path.value, None);
             let later = start + SHELL_PATH_RETRY;
+            // Background polling never asks again.
+            let mut once = ShellPath {
+                asked_at: asked,
+                ..ShellPath::default()
+            };
+            once.refresh("sh", &programs, Some(empty), later, AskShell::Once)
+                .await;
+            assert_eq!(once.asked_at, asked);
             assert!(path
-                .refresh("sh", &programs, Some(empty), later)
+                .refresh("sh", &programs, Some(empty), later, AskShell::Retry)
                 .await
                 .is_some());
             assert_eq!(path.asked_at, Some(later));

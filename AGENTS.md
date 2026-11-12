@@ -196,16 +196,21 @@ as conf.d runs before config.fish, so it changes nothing when off.
   new-worktree`/`remove-worktree`; it runs the `git` CLI off the lock.
 - **GitHub status** (`github.rs`): the pull request and CI checks of each pane
   branch, from `gh api graphql` (`[github] enabled`, default on), so btmux
-  never reads a credential; `gh` is found as plan limits find agent CLIs. Only
+  never reads a credential; `gh` is found as plan limits find agent CLIs, but
+  polling starts the shell for its `PATH` only once. Only
   github.com and `[github] hosts` are asked, always with `--hostname` (gh sends
   `GH_ENTERPRISE_TOKEN` to any host, and follows `GH_HOST`). The repo's git
   config on disk gives the GitHub repo: gh's default (`gh-resolved = base`),
   else `upstream`, else the push remote; a PR's head owner must match the push
-  remote's `pushurl`, else its `url`. Check counts come from the rollup's
-  `*CountsByState`, names from its first 100 contexts. One query per repo covers its branches, polled every 60 s while a
-  control socket is connected, every 15 s while checks are pending or for 2
-  minutes after the remote-tracking ref moves (a push or fetch), which also
-  refreshes at once. Errors back off 5 minutes. `ServerMessage::Github` carries
+  remote's `pushurl`, else its `url`. The branch's name there is its upstream's
+  only with `push.default = upstream`, as in `git push`. Git config and
+  `packed-refs` are reparsed only when their size or mtime changes. Check counts
+  come from the rollup's `*CountsByState`, grouped as `gh pr checks` does, names
+  from its first 100 contexts. One query per repo covers its branches, all repos
+  at once, polled every 60 s while a control socket is connected, every 15 s for
+  30 minutes while checks are pending or for 2 minutes after the remote-tracking
+  ref moves (a push or fetch), which also refreshes at once. Errors back off 5
+  minutes; a second in a row, or `gh` going missing, drops the status. `ServerMessage::Github` carries
   every status on change and on connect; `GithubBadge` shows it in
   `PaneCorner` (and the title bar), opening the PR or branch on click. The
   browser tests' fake `gh` (`frontend/test-bin`) answers from the stack's `gh`

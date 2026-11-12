@@ -3,6 +3,9 @@ import { LinkProvider } from '@astryxdesign/core/Link';
 import { Token, type TokenProps } from '@astryxdesign/core/Token';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { Icon, type IconType } from '@astryxdesign/core/Icon';
+import { HStack } from '@astryxdesign/core/HStack';
+import { VStack } from '@astryxdesign/core/VStack';
+import { Text } from '@astryxdesign/core/Text';
 import {
   Check,
   CircleDashed,
@@ -45,9 +48,12 @@ function color(status: GithubStatus): TokenProps['color'] {
   return state === 'draft' ? 'gray' : 'blue';
 }
 
+/** The rollup's state can count checks its contexts don't list, like a required one never reported. */
 function checksSummary(checks: Checks): string {
-  if (checks.state === 'failure') return `${checks.failed} of ${checks.total} checks failed`;
-  if (checks.state === 'pending') return `${checks.pending} of ${checks.total} checks pending`;
+  if (checks.state === 'failure')
+    return checks.failed ? `${checks.failed} of ${checks.total} checks failed` : 'Checks failed';
+  if (checks.state === 'pending')
+    return checks.pending ? `${checks.pending} of ${checks.total} checks pending` : 'Waiting for required checks';
   return `${checks.total} checks passed`;
 }
 
@@ -68,43 +74,51 @@ export function githubLabel(status: GithubStatus): string {
 }
 
 function ChecksMark({ checks }: { checks: Checks }) {
-  const [icon, count]: [IconType, number | null] =
+  const [icon, count]: [IconType, number] =
     checks.state === 'failure'
       ? [X, checks.failed]
       : checks.state === 'pending'
         ? [CircleDashed, checks.pending]
-        : [Check, null];
+        : [Check, 0];
   return (
-    <span className="inline-flex items-center gap-0.5">
+    <HStack gap={0.5} vAlign="center">
       <Icon icon={icon} size="xsm" />
-      {count !== null && <span className="tabular-nums">{count}</span>}
-    </span>
+      {count > 0 && (
+        <Text type="inherit" color="inherit" hasTabularNumbers>
+          {count}
+        </Text>
+      )}
+    </HStack>
   );
 }
 
-/** Plain elements: the tooltip sets the text color. */
+/** A line in the tooltip, which sets the text color. */
+function Line({ children, isTitle = false }: { children: ReactNode; isTitle?: boolean }) {
+  return (
+    <Text type="inherit" color="inherit" display="block" weight={isTitle ? 'semibold' : undefined}>
+      {children}
+    </Text>
+  );
+}
+
 function details(status: GithubStatus): ReactNode {
   const { pr, checks } = status;
   return (
-    <div className="flex flex-col gap-1">
+    <VStack gap={1}>
       {pr ? (
         <>
-          <div className="font-semibold">
+          <Line isTitle>
             #{pr.number} {pr.title}
-          </div>
-          <div>{[PR_STATES[pr.state], pr.review && REVIEWS[pr.review]].filter(Boolean).join(' · ')}</div>
+          </Line>
+          <Line>{[PR_STATES[pr.state], pr.review && REVIEWS[pr.review]].filter(Boolean).join(' · ')}</Line>
         </>
       ) : (
-        <div>No pull request for {status.branch}</div>
+        <Line>No pull request for {status.branch}</Line>
       )}
-      {checks && <div>{checksSummary(checks)}</div>}
-      {checks && checks.failed > 0 && (
-        <div className="opacity-80">Failed: {names(checks.failed_names, checks.failed)}</div>
-      )}
-      {checks && checks.pending > 0 && (
-        <div className="opacity-80">Pending: {names(checks.pending_names, checks.pending)}</div>
-      )}
-    </div>
+      {checks && <Line>{checksSummary(checks)}</Line>}
+      {checks && checks.failed > 0 && <Line>Failed: {names(checks.failed_names, checks.failed)}</Line>}
+      {checks && checks.pending > 0 && <Line>Pending: {names(checks.pending_names, checks.pending)}</Line>}
+    </VStack>
   );
 }
 

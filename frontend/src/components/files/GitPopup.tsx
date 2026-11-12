@@ -7,11 +7,13 @@ import { Layout, LayoutContent, LayoutFooter, HStack, Section, VStack } from '@a
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { Spinner } from '../Spinner';
 import { clsx } from 'clsx';
 import { useStore } from '@/state/store';
 import { KeyCap, KeyHint, type Hint } from '../KeyHint';
 import { usePressHint } from '@/hooks/usePressHint';
+import { NARROW_QUERY } from '@/lib/touch';
 import type { GitBranchInfo, GitOp, GitRefsResult, GitWorktreeInfo, WorktreeOp } from '@/protocol/file-messages';
 
 export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash' | 'worktree';
@@ -133,7 +135,7 @@ function stashOptions(refs: GitRefsResult): PromptOption[] {
 
 interface ListContext {
   selected?: GitBranchInfo;
-  remoteView: boolean;
+  remoteFocused: boolean;
   worktree?: GitWorktreeInfo;
   /** Pane IDs in each worktree, by path, the browser's session first. */
   worktreePanes: Map<string, string[]>;
@@ -162,7 +164,7 @@ function buildActions(
   kind: GitPopupKind,
   refs: GitRefsResult,
   flags: Set<string>,
-  { selected, remoteView, worktree, worktreePanes, hostWorktree, visitPane }: ListContext,
+  { selected, remoteFocused, worktree, worktreePanes, hostWorktree, visitPane }: ListContext,
 ): Action[] {
   const on = (flag: string) => flags.has(flag);
   const branch = refs.branch;
@@ -211,7 +213,7 @@ function buildActions(
         {
           key: 'm',
           label: 'Rename',
-          isDisabled: remoteView || !selected,
+          isDisabled: remoteFocused || !selected,
           next: () => ({
             title: `Rename ${selected!.name}`,
             label: 'New name',
@@ -223,13 +225,13 @@ function buildActions(
         {
           key: 'd',
           label: 'Delete',
-          isDisabled: remoteView || !selected || selected.is_head,
+          isDisabled: remoteFocused || !selected || selected.is_head,
           next: () => ({ kind: 'delete_branch', name: selected!.name }),
         },
         {
           key: 'D',
           label: 'Force delete',
-          isDisabled: remoteView || !selected || selected.is_head,
+          isDisabled: remoteFocused || !selected || selected.is_head,
           next: () => ({
             title: `Force delete ${selected!.name}?`,
             description: 'This deletes the local branch even if its commits have not been merged.',
@@ -557,8 +559,9 @@ function GitPopupDialog({
   const [dashPending, setDashPending] = useState(false);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [remoteView, setRemoteView] = useState(false);
-  const [branchIndex, setBranchIndex] = useState(0);
+  const [remoteFocused, setRemoteFocused] = useState(false);
+  const [localIndex, setLocalIndex] = useState(0);
+  const [remoteIndex, setRemoteIndex] = useState(0);
   const [worktreeIndex, setWorktreeIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [optionIndex, setOptionIndex] = useState(0);
@@ -577,10 +580,12 @@ function GitPopupDialog({
       (result) => {
         if (cancelled) return;
         setRefs(result);
-        setBranchIndex(
+        const head = result.local_branches.find((branch) => branch.is_head);
+        setLocalIndex(head ? result.local_branches.indexOf(head) : 0);
+        setRemoteIndex(
           Math.max(
             0,
-            result.local_branches.findIndex((branch) => branch.is_head),
+            result.remote_branches.findIndex((branch) => branch.name === head?.upstream),
           ),
         );
         setWorktreeIndex(
@@ -612,7 +617,7 @@ function GitPopupDialog({
     contentRef.current
       ?.querySelector('[aria-selected="true"], [aria-current="true"]')
       ?.scrollIntoView({ block: 'nearest' });
-  }, [optionIndex, branchIndex, worktreeIndex, remoteView, refs, prompt, running]);
+  }, [optionIndex, localIndex, remoteIndex, worktreeIndex, remoteFocused, refs, prompt, running]);
 
   const allSessions = useStore((s) => s.allSessions);
   const { worktreePanes, hostWorktree } = useMemo(() => {
@@ -634,15 +639,22 @@ function GitPopupDialog({
   };
 
   const switches = SWITCHES[kind];
-  const branches = (remoteView ? refs?.remote_branches : refs?.local_branches) ?? [];
-  const selected = branches[Math.min(branchIndex, Math.max(0, branches.length - 1))];
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const localBranches = refs?.local_branches ?? [];
+  const remoteBranches = refs?.remote_branches ?? [];
+  const localSelected = localBranches[Math.min(localIndex, Math.max(0, localBranches.length - 1))];
+  const remoteSelected = remoteBranches[Math.min(remoteIndex, Math.max(0, remoteBranches.length - 1))];
+  const branches = remoteFocused ? remoteBranches : localBranches;
+  const branchIndex = remoteFocused ? remoteIndex : localIndex;
+  const setBranchIndex = remoteFocused ? setRemoteIndex : setLocalIndex;
+  const selected = remoteFocused ? remoteSelected : localSelected;
   const worktrees = refs?.worktrees ?? [];
   const worktree = worktrees[Math.min(worktreeIndex, Math.max(0, worktrees.length - 1))];
   const listLength = kind === 'worktree' ? worktrees.length : branches.length;
   const listIndex = kind === 'worktree' ? worktreeIndex : branchIndex;
   const setListIndex = kind === 'worktree' ? setWorktreeIndex : setBranchIndex;
   const actions = refs
-    ? buildActions(kind, refs, flags, { selected, remoteView, worktree, worktreePanes, hostWorktree, visitPane })
+    ? buildActions(kind, refs, flags, { selected, remoteFocused, worktree, worktreePanes, hostWorktree, visitPane })
     : [];
   const options = prompt?.options ? filterOptions(prompt.options, query) : [];
 
@@ -689,7 +701,7 @@ function GitPopupDialog({
           const last = nextRefs.worktrees.length - 1;
           setWorktreeIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(worktreeIndex, last)));
         } else {
-          const nextBranches = remoteView ? nextRefs.remote_branches : nextRefs.local_branches;
+          const nextBranches = remoteFocused ? nextRefs.remote_branches : nextRefs.local_branches;
           const nextName = op.kind === 'rename_branch' ? op.to : selected?.name;
           const nextIndex = nextBranches.findIndex((branch) => branch.name === nextName);
           setBranchIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(branchIndex, nextBranches.length - 1)));
@@ -810,7 +822,7 @@ function GitPopupDialog({
         if (listLength) setListIndex((listIndex + direction + listLength) % listLength);
         return;
       }
-      if (kind === 'branch' && event.key === 'r') {
+      if (kind === 'branch' && event.key === 'Tab') {
         event.preventDefault();
         toggleBranchView();
         return;
@@ -850,9 +862,70 @@ function GitPopupDialog({
   };
 
   const toggleBranchView = () => {
-    setRemoteView(!remoteView);
-    setBranchIndex(remoteView ? Math.max(0, refs?.local_branches.findIndex((branch) => branch.is_head) ?? 0) : 0);
+    setRemoteFocused(!remoteFocused);
     setError(null);
+  };
+
+  // The selected branch's counterpart in the other list.
+  const linked = (branch: GitBranchInfo, remote: boolean) =>
+    remote
+      ? !remoteFocused && branch.name === localSelected?.upstream
+      : remoteFocused && !!remoteSelected && branch.upstream === remoteSelected.name;
+  const branchPane = (remote: boolean) => {
+    const list = remote ? remoteBranches : localBranches;
+    const focused = remote === remoteFocused;
+    const current = remote ? remoteSelected : localSelected;
+    const name = remote ? 'Remote branches' : 'Local branches';
+    return (
+      <VStack
+        gap={2}
+        className={clsx(
+          'min-w-0 flex-1 basis-0',
+          remote && !narrow && 'border-l border-border pl-4',
+          narrow && !focused && 'hidden',
+        )}
+        onMouseDown={() => setRemoteFocused(remote)}
+      >
+        <Heading level={3} color={focused ? 'accent' : 'secondary'}>
+          {remote ? 'Remote' : 'Local'}
+        </Heading>
+        {list.length ? (
+          <div className="max-h-[50dvh] overflow-y-auto">
+            <List density="compact" className="btm-mono" aria-label={name}>
+              {list.map((branch, index) => {
+                const notes = [
+                  ...(branch.is_head ? ['current'] : []),
+                  ...(linked(branch, remote) ? [remote ? 'upstream' : 'tracking'] : []),
+                ];
+                return (
+                  <ListItem
+                    key={branch.name}
+                    label={branch.name}
+                    description={branchDescription(branch)}
+                    startContent={
+                      <Text type="code" color={branch.is_head ? 'accent' : 'secondary'}>
+                        {branch.is_head ? '*' : '·'}
+                      </Text>
+                    }
+                    endContent={
+                      notes.length ? (
+                        <Text size="sm" color={linked(branch, remote) ? 'accent' : 'secondary'}>
+                          {notes.join(', ')}
+                        </Text>
+                      ) : undefined
+                    }
+                    isSelected={focused && branch.name === current?.name}
+                    onClick={() => (remote ? setRemoteIndex : setLocalIndex)(index)}
+                  />
+                );
+              })}
+            </List>
+          </div>
+        ) : (
+          <Text color="secondary">No {remote ? 'remote' : 'local'} branches</Text>
+        )}
+      </VStack>
+    );
   };
 
   return (
@@ -860,7 +933,7 @@ function GitPopupDialog({
       ref={dialogRef}
       isOpen
       onOpenChange={(open) => !open && close()}
-      width={isListKind(kind) ? 760 : 520}
+      width={kind === 'branch' ? 1040 : isListKind(kind) ? 760 : 520}
       onMouseDown={(event) => event.stopPropagation()}
       onKeyDown={onKeyDown}
     >
@@ -870,11 +943,7 @@ function GitPopupDialog({
             title={
               confirmation?.title ??
               prompt?.title ??
-              (kind === 'branch'
-                ? `${remoteView ? 'Remote' : 'Local'} branches`
-                : kind === 'worktree'
-                  ? 'Worktrees'
-                  : TITLES[kind])
+              (kind === 'branch' ? 'Branches' : kind === 'worktree' ? 'Worktrees' : TITLES[kind])
             }
             subtitle={refs ? (refs.branch ?? 'detached HEAD') : undefined}
             hasDivider
@@ -955,36 +1024,11 @@ function GitPopupDialog({
                     />
                   ))}
                 </List>
-              ) : kind === 'branch' && !branches.length ? (
-                <Text color="secondary">No {remoteView ? 'remote' : 'local'} branches</Text>
               ) : kind === 'branch' ? (
-                <List
-                  density="compact"
-                  className="btm-mono"
-                  aria-label={remoteView ? 'Remote branches' : 'Local branches'}
-                >
-                  {branches.map((branch) => (
-                    <ListItem
-                      key={branch.name}
-                      label={branch.name}
-                      description={branchDescription(branch)}
-                      startContent={
-                        <Text type="code" color={branch.is_head ? 'accent' : 'secondary'}>
-                          {branch.is_head ? '*' : '·'}
-                        </Text>
-                      }
-                      endContent={
-                        branch.is_head ? (
-                          <Text size="sm" color="secondary">
-                            current
-                          </Text>
-                        ) : undefined
-                      }
-                      isSelected={branch.name === selected?.name}
-                      onClick={() => setBranchIndex(branches.indexOf(branch))}
-                    />
-                  ))}
-                </List>
+                <HStack gap={4} vAlign="start">
+                  {branchPane(false)}
+                  {branchPane(true)}
+                </HStack>
               ) : (
                 <VStack gap={2}>
                   {switches.length > 0 && (
@@ -1076,7 +1120,7 @@ function GitPopupDialog({
                   </HStack>
                 ))}
                 {kind === 'branch' && (
-                  <KeyHint keys={['r']} label={remoteView ? 'local' : 'remote'} onPress={pressHint} />
+                  <KeyHint keys={['tab']} label={remoteFocused ? 'local' : 'remote'} onPress={pressHint} />
                 )}
                 <KeyHint keys={['j', 'k', 'down', 'up']} label="select" onPress={pressHint} />
                 <KeyHint keys={['esc', 'q']} label="close" onPress={pressHint} />

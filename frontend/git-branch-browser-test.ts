@@ -63,8 +63,9 @@ try {
     .getByRole('button', { name: 'Close file browser' })
     .evaluate((button) => (button.closest('[tabindex="-1"]') as HTMLElement).focus());
   await page.keyboard.press('b');
-  const branches = page.getByRole('dialog', { name: 'Local branches', exact: true });
+  const branches = page.getByRole('dialog', { name: 'Branches', exact: true });
   const localList = branches.getByRole('list', { name: 'Local branches', exact: true });
+  const remoteList = branches.getByRole('list', { name: 'Remote branches', exact: true });
   await localList.getByText('main', { exact: true }).waitFor();
   assert.equal(await localList.getByRole('listitem').count(), 3);
   assert.match(await localList.innerText(), /\[origin\/main\] Initial/);
@@ -95,19 +96,30 @@ try {
   assert(await branches.isVisible());
   assert.equal(git('branch', '--show-current').toString().trim(), 'main');
 
-  await page.keyboard.press('r');
-  const remoteBranches = page.getByRole('dialog', { name: 'Remote branches', exact: true });
-  const remoteList = remoteBranches.getByRole('list', { name: 'Remote branches', exact: true });
+  // Both lists show at once; only the focused one shows its selection.
   await remoteList.getByText('origin/topic', { exact: true }).waitFor();
   assert.equal(await remoteList.getByRole('listitem').count(), 2, 'symbolic origin/HEAD is excluded');
   assert.match(await remoteList.innerText(), /Initial/);
+  assert.equal(await remoteList.locator('[aria-current="true"]').count(), 0);
+  assert.match(await remoteList.innerText(), /origin\/main[\s\S]*upstream/);
+  const selectedRemote = () => remoteList.locator('[aria-current="true"]').innerText();
+  await page.keyboard.press('Tab');
+  assert.match(await selectedRemote(), /origin\/main/, "remote selection starts at HEAD's upstream");
+  assert.equal(await localList.locator('[aria-current="true"]').count(), 0);
+  assert.match(await localList.innerText(), /main[\s\S]*current, tracking/);
+  await page.keyboard.press('j');
+  assert.match(await selectedRemote(), /origin\/topic/);
   await page.keyboard.press('d');
   await page.keyboard.press('D');
-  assert(await remoteBranches.isVisible());
-  await page.keyboard.press('r');
-  await localList.waitFor();
+  assert(await branches.isVisible());
+  await page.keyboard.press('Shift+Tab');
+  assert.match(await selectedBranch(), /main/, 'each list keeps its selection');
+  await page.keyboard.press('Tab');
+  assert.match(await selectedRemote(), /origin\/topic/);
+  await branches.getByRole('button', { name: 'tab: local', exact: true }).click();
+  assert.match(await selectedBranch(), /main/);
 
-  console.log('PASS local/remote toggle and branch navigation');
+  console.log('PASS side-by-side lists, tab focus and branch navigation');
   await localList.getByText('alpha', { exact: true }).click();
   await page.keyboard.press('d');
   await localList.getByText('alpha', { exact: true }).waitFor({ state: 'detached' });
@@ -157,11 +169,18 @@ try {
   const branchBounds = await branches.boundingBox();
   assert(branchBounds && branchBounds.x >= 0 && branchBounds.width <= 390);
   assert(await branches.locator('.astryx-layout-footer').getByText('force delete', { exact: true }).isVisible());
+  // Narrow screens show one list at a time.
+  await remoteList.waitFor({ state: 'hidden' });
+  assert(await localList.isVisible());
+  await page.keyboard.press('Tab');
+  await localList.waitFor({ state: 'hidden' });
+  assert(await remoteList.isVisible());
+  await page.keyboard.press('Tab');
+  await remoteList.waitFor({ state: 'hidden' });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.keyboard.press('r');
   await remoteList.getByText('origin/topic', { exact: true }).click();
   await page.keyboard.press('Enter');
-  await remoteBranches.waitFor({ state: 'hidden' });
+  await branches.waitFor({ state: 'hidden' });
   assert.equal(git('branch', '--show-current').toString().trim(), 'topic');
   assert.equal(git('rev-parse', '--abbrev-ref', '@{upstream}').toString().trim(), 'origin/topic');
   await page.keyboard.press('b');
@@ -182,14 +201,13 @@ try {
   git('remote', 'remove', 'origin');
   await page.keyboard.press('b');
   await localList.waitFor();
-  await page.keyboard.press('r');
-  await remoteBranches.getByText('No remote branches', { exact: true }).waitFor();
+  await branches.getByText('No remote branches', { exact: true }).waitFor();
+  await page.keyboard.press('Tab');
   await page.keyboard.press('Enter');
-  assert(await remoteBranches.isVisible());
+  assert(await branches.isVisible());
   await page.keyboard.press('j');
   await page.keyboard.press('k');
-  await page.keyboard.press('r');
-  await localList.waitFor();
+  await page.keyboard.press('Tab');
   await page.keyboard.press('c');
   await page.getByRole('textbox', { name: 'Branch name', exact: true }).fill('created');
   await page.keyboard.press('Enter');

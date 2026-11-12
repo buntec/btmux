@@ -120,6 +120,32 @@ try {
   assert.match(await selectedBranch(), /main/);
 
   console.log('PASS side-by-side lists, tab focus and branch navigation');
+
+  // A click without mousedown (assistive tech) activates the row's list too.
+  await localList.getByText('main', { exact: true }).click();
+  await remoteList
+    .getByRole('listitem')
+    .filter({ hasText: 'origin/topic' })
+    .locator('button')
+    .evaluate((button: HTMLElement) => {
+      button.focus();
+      button.click();
+    });
+  assert.match(await selectedRemote(), /origin\/topic/);
+  assert.equal(await localList.locator('[aria-current="true"]').count(), 0);
+  // Refreshed refs keep both selections on their branches.
+  await page.keyboard.press('n');
+  await page.getByRole('textbox', { name: 'Branch name', exact: true }).fill('aardvark');
+  await page.keyboard.press('Enter');
+  await localList.getByText('aardvark', { exact: true }).waitFor();
+  assert.match(await selectedRemote(), /origin\/topic/);
+  await page.keyboard.press('Tab');
+  assert.match(await selectedBranch(), /^\*\s+main/, 'a branch created before it keeps the selection');
+  await localList.getByText('aardvark', { exact: true }).click();
+  await page.keyboard.press('d');
+  await localList.getByText('aardvark', { exact: true }).waitFor({ state: 'detached' });
+  console.log('PASS non-mouse row activation and selections across refreshes');
+
   await localList.getByText('alpha', { exact: true }).click();
   await page.keyboard.press('d');
   await localList.getByText('alpha', { exact: true }).waitFor({ state: 'detached' });
@@ -177,6 +203,29 @@ try {
   assert(await remoteList.isVisible());
   await page.keyboard.press('Tab');
   await remoteList.waitFor({ state: 'hidden' });
+  // Focus stays in the dialog when a focused row's list hides.
+  const nextFrames = () =>
+    page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const focusInDialog = () => branches.evaluate((dialog) => dialog.contains(document.activeElement));
+  await localList.getByText('renamed', { exact: true }).click();
+  await page.keyboard.press('Tab');
+  await localList.waitFor({ state: 'hidden' });
+  await nextFrames();
+  assert(await focusInDialog());
+  await page.keyboard.press('k');
+  assert.match(await selectedRemote(), /origin\/main/);
+  await page.keyboard.press('Tab');
+  await remoteList.waitFor({ state: 'hidden' });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await localList.getByText('renamed', { exact: true }).click();
+  await page.keyboard.press('Tab');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await localList.waitFor({ state: 'hidden' });
+  await nextFrames();
+  assert(await focusInDialog());
+  await page.keyboard.press('j');
+  assert.match(await selectedRemote(), /origin\/topic/);
+  await page.keyboard.press('Tab');
   await page.setViewportSize({ width: 1440, height: 900 });
   await remoteList.getByText('origin/topic', { exact: true }).click();
   await page.keyboard.press('Enter');

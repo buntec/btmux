@@ -701,10 +701,15 @@ function GitPopupDialog({
           const last = nextRefs.worktrees.length - 1;
           setWorktreeIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(worktreeIndex, last)));
         } else {
-          const nextBranches = remoteFocused ? nextRefs.remote_branches : nextRefs.local_branches;
-          const nextName = op.kind === 'rename_branch' ? op.to : selected?.name;
-          const nextIndex = nextBranches.findIndex((branch) => branch.name === nextName);
-          setBranchIndex(nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(branchIndex, nextBranches.length - 1)));
+          // Keep both selections on the same branches, as rows may move.
+          const restore = (next: GitBranchInfo[], name: string | undefined, index: number) => {
+            const found = next.findIndex((branch) => branch.name === name);
+            return found >= 0 ? found : Math.max(0, Math.min(index, next.length - 1));
+          };
+          const localName =
+            op.kind === 'rename_branch' && localSelected?.name === op.from ? op.to : localSelected?.name;
+          setLocalIndex(restore(nextRefs.local_branches, localName, localIndex));
+          setRemoteIndex(restore(nextRefs.remote_branches, remoteSelected?.name, remoteIndex));
         }
         setRunning(null);
       } else if (kind === 'worktree') {
@@ -866,6 +871,13 @@ function GitPopupDialog({
     setError(null);
   };
 
+  // A row focused in the inactive list would keep keys away from it, and lose focus once hidden.
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    const pane = active?.closest<HTMLElement>('[data-branch-pane]')?.dataset.branchPane;
+    if (pane && pane !== (remoteFocused ? 'remote' : 'local')) contentRef.current?.focus();
+  }, [remoteFocused, narrow]);
+
   // The selected branch's counterpart in the other list.
   const linked = (branch: GitBranchInfo, remote: boolean) =>
     remote
@@ -884,7 +896,9 @@ function GitPopupDialog({
           remote && !narrow && 'border-l border-border pl-4',
           narrow && !focused && 'hidden',
         )}
+        data-branch-pane={remote ? 'remote' : 'local'}
         onMouseDown={() => setRemoteFocused(remote)}
+        onFocus={() => setRemoteFocused(remote)}
       >
         <Heading level={3} color={focused ? 'accent' : 'secondary'}>
           {remote ? 'Remote' : 'Local'}
@@ -915,7 +929,10 @@ function GitPopupDialog({
                       ) : undefined
                     }
                     isSelected={focused && branch.name === current?.name}
-                    onClick={() => (remote ? setRemoteIndex : setLocalIndex)(index)}
+                    onClick={() => {
+                      setRemoteFocused(remote);
+                      (remote ? setRemoteIndex : setLocalIndex)(index);
+                    }}
                   />
                 );
               })}

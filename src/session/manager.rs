@@ -510,8 +510,8 @@ impl SessionManager {
         &self.shell
     }
 
-    pub fn github_enabled(&self) -> bool {
-        self.file_config.github.enabled
+    pub fn github_config(&self) -> &crate::config::GithubConfig {
+        &self.file_config.github
     }
 
     /// Connected control sockets.

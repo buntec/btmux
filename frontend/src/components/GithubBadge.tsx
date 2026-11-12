@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
+import { LinkProvider } from '@astryxdesign/core/Link';
 import { Token, type TokenProps } from '@astryxdesign/core/Token';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { Icon, type IconType } from '@astryxdesign/core/Icon';
@@ -50,8 +51,11 @@ function checksSummary(checks: Checks): string {
   return `${checks.total} checks passed`;
 }
 
+/** Counts cover every check, names only the first page. */
 function names(list: string[], count: number): string {
-  return list.join(', ') + (count > list.length ? `, +${count - list.length}` : '');
+  const more = count - list.length;
+  if (more <= 0) return list.join(', ');
+  return list.length ? `${list.join(', ')}, +${more}` : `${more} not listed`;
 }
 
 /** Short enough for the pane corner; the tooltip has the rest. */
@@ -104,12 +108,18 @@ function details(status: GithubStatus): ReactNode {
   );
 }
 
-/** A pane branch's pull request and CI status; opens it on GitHub. */
+/** Token has no `target`; the desktop app opens new windows in the default browser. */
+function NewTabLink(props: ComponentProps<'a'>) {
+  return <a {...props} target="_blank" rel="noopener noreferrer" />;
+}
+
+/** A pane branch's pull request and CI status; links to it on GitHub. */
 export function GithubBadge({ status, size = 'md' }: { status: GithubStatus; size?: TokenProps['size'] }) {
   const icon = status.pr ? PR_ICONS[status.pr.state] : GitBranch;
+  // The link is the tooltip's first child, so focus shows it and describes the link.
   return (
-    <Tooltip content={details(status)}>
-      <span className="pointer-events-auto inline-flex" onMouseDown={(e) => e.preventDefault()}>
+    <LinkProvider component={NewTabLink}>
+      <Tooltip content={details(status)}>
         <Token
           size={size}
           color={color(status)}
@@ -119,9 +129,11 @@ export function GithubBadge({ status, size = 'md' }: { status: GithubStatus; siz
             .filter(Boolean)
             .join(', ')}
           endContent={status.checks && <ChecksMark checks={status.checks} />}
-          onClick={() => window.open(status.url, '_blank', 'noopener,noreferrer')}
+          href={status.url}
+          className="pointer-events-auto"
+          onMouseDown={(e) => e.preventDefault()}
         />
-      </span>
-    </Tooltip>
+      </Tooltip>
+    </LinkProvider>
   );
 }

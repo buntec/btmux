@@ -633,11 +633,17 @@ impl Default for MultipassConfig {
 pub struct GithubConfig {
     /// Ask the `gh` CLI for the status of branches panes are on.
     pub enabled: bool,
+    /// GitHub Enterprise hosts to ask, besides github.com. Others are never
+    /// asked, so a remote can't send gh's credentials to its host.
+    pub hosts: Vec<String>,
 }
 
 impl Default for GithubConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            hosts: Vec::new(),
+        }
     }
 }
 
@@ -1908,6 +1914,7 @@ pub fn generate_config_toml() -> String {
 # the GitHub CLI (`gh`, logged in with `gh auth login`).
 # [github]
 # enabled = true
+# hosts = ["github.example.com"]   # GitHub Enterprise hosts to ask too; others never are
 
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.

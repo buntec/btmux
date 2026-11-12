@@ -196,10 +196,13 @@ as conf.d runs before config.fish, so it changes nothing when off.
   new-worktree`/`remove-worktree`; it runs the `git` CLI off the lock.
 - **GitHub status** (`github.rs`): the pull request and CI checks of each pane
   branch, from `gh api graphql` (`[github] enabled`, default on), so btmux
-  never reads a credential; `gh` is found as plan limits find agent CLIs. The
-  repo's git config on disk gives the GitHub repo: gh's default (`gh-resolved
-  = base`), else `upstream`, else the push remote, whose owner a PR's head must
-  match. One query per repo covers its branches, polled every 60 s while a
+  never reads a credential; `gh` is found as plan limits find agent CLIs. Only
+  github.com and `[github] hosts` are asked, always with `--hostname` (gh sends
+  `GH_ENTERPRISE_TOKEN` to any host, and follows `GH_HOST`). The repo's git
+  config on disk gives the GitHub repo: gh's default (`gh-resolved = base`),
+  else `upstream`, else the push remote; a PR's head owner must match the push
+  remote's `pushurl`, else its `url`. Check counts come from the rollup's
+  `*CountsByState`, names from its first 100 contexts. One query per repo covers its branches, polled every 60 s while a
   control socket is connected, every 15 s while checks are pending or for 2
   minutes after the remote-tracking ref moves (a push or fetch), which also
   refreshes at once. Errors back off 5 minutes. `ServerMessage::Github` carries

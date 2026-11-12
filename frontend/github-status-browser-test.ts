@@ -29,6 +29,14 @@ git('config', 'branch.feat.merge', 'refs/heads/feat');
 git('update-ref', 'refs/remotes/origin/feat', 'HEAD');
 
 type Run = { name: string; status: string; conclusion: string | null };
+const countsByState = (runs: Run[]) => {
+  const counts = new Map<string, number>();
+  for (const run of runs) {
+    const state = run.status === 'COMPLETED' ? run.conclusion! : run.status;
+    counts.set(state, (counts.get(state) ?? 0) + 1);
+  }
+  return [...counts].map(([state, count]) => ({ state, count }));
+};
 const reply = (rollup: string, runs: Run[], review: string | null = null) =>
   writeFileSync(
     path.join(ghDir, 'reply.json'),
@@ -54,6 +62,8 @@ const reply = (rollup: string, runs: Run[], review: string | null = null) =>
                           state: rollup,
                           contexts: {
                             totalCount: runs.length,
+                            checkRunCountsByState: countsByState(runs),
+                            statusContextCountsByState: [],
                             nodes: runs.map((run) => ({ __typename: 'CheckRun', ...run })),
                           },
                         },
@@ -101,7 +111,7 @@ try {
   assert.equal(await badge.getAttribute('data-color'), 'yellow');
   assert.equal(await badge.getAttribute('aria-description'), 'Open, 1 of 2 checks pending');
   const log = readFileSync(path.join(ghDir, 'log'), 'utf8');
-  assert.match(log, /^api graphql /m);
+  assert.match(log, /^api graphql --hostname github\.com /m);
   assert.match(log, / -f owner=btmux-test /);
   assert.match(log, / -f h0=feat /);
   console.log('PASS the pane corner shows the branch PR and pending checks');
@@ -137,18 +147,26 @@ try {
   await page.screenshot({ path: path.join(tmpdir(), 'btmux-github-status.png') });
   console.log('PASS a push refreshes it, and the tooltip lists failed checks');
 
-  await page.evaluate(() => {
-    (window as unknown as { opened: string[] }).opened = [];
-    window.open = (url) => {
-      (window as unknown as { opened: string[] }).opened.push(String(url));
-      return null;
-    };
-  });
-  await failed.click();
-  assert.deepEqual(await page.evaluate(() => (window as unknown as { opened: string[] }).opened), [
-    'https://github.com/btmux-test/proj/pull/7',
-  ]);
-  console.log('PASS clicking opens the pull request');
+  assert.equal(await failed.getAttribute('href'), 'https://github.com/btmux-test/proj/pull/7');
+  assert.equal(await failed.getAttribute('target'), '_blank');
+  console.log('PASS it links to the pull request in a new tab');
+
+  // Keyboard focus shows the tooltip, which describes the link.
+  await page.mouse.move(0, 0);
+  await page.getByText('Failed: lint', { exact: true }).waitFor({ state: 'hidden' });
+  // After a key press, as from Tab, so the focus is `:focus-visible`.
+  await page.keyboard.press('Shift');
+  await failed.focus();
+  const tooltip = page.getByText('Failed: lint', { exact: true });
+  await tooltip.waitFor();
+  const describedBy = await failed.getAttribute('aria-describedby');
+  assert(describedBy);
+  assert.match(
+    await page.evaluate((id) => document.getElementById(id)?.textContent ?? '', describedBy),
+    /Failed: lint/,
+  );
+  assert.equal(await failed.getAttribute('aria-description'), 'Open, 1 of 2 checks failed');
+  console.log('PASS focusing it shows and links the tooltip');
 
   mkdirSync(path.join(configHome, 'btmux'), { recursive: true });
   writeFileSync(path.join(configHome, 'btmux', 'config.toml'), '[github]\nenabled = false\n');

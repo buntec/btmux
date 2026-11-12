@@ -149,16 +149,16 @@ struct Poller {
 
 impl Poller {
     async fn tick(&mut self, state: &AppState) {
-        let (enabled, clients, branches, shell) = {
+        let (config, clients, branches, shell) = {
             let mgr = state.read().await;
             (
-                mgr.github_enabled(),
+                mgr.github_config().clone(),
                 mgr.client_count(),
                 mgr.pane_branches(),
                 mgr.shell().to_owned(),
             )
         };
-        if !enabled {
+        if !config.enabled {
             self.entries.clear();
             self.publish(state).await;
             return;
@@ -177,10 +177,11 @@ impl Poller {
             });
         }
         let keys: Vec<Key> = self.entries.keys().cloned().collect();
+        let hosts = config.hosts;
         let targets = tokio::task::spawn_blocking(move || {
             keys.into_iter()
                 .map(|key| {
-                    let target = resolve(Path::new(&key.0), &key.1);
+                    let target = resolve(Path::new(&key.0), &key.1, &hosts);
                     (key, target)
                 })
                 .collect::<Vec<_>>()
@@ -349,8 +350,9 @@ fn build_query<'a>(repo: &Repo, targets: impl Iterator<Item = &'a Target>) -> Qu
          fragment pr on PullRequest {{ number title url state isDraft reviewDecision \
          headRepositoryOwner {{ login }} \
          commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ ...rollup }} }} }} }} }}\n\
-         fragment rollup on StatusCheckRollup {{ state contexts(first: 100) {{ totalCount nodes {{ \
-         __typename ... on CheckRun {{ name status conclusion }} \
+         fragment rollup on StatusCheckRollup {{ state contexts(first: 100) {{ totalCount \
+         checkRunCountsByState {{ state count }} statusContextCountsByState {{ state count }} \
+         nodes {{ __typename ... on CheckRun {{ name status conclusion }} \
          ... on StatusContext {{ context state }} }} }} }}",
         params.join(", "),
         fields.join(" "),
@@ -360,10 +362,8 @@ fn build_query<'a>(repo: &Repo, targets: impl Iterator<Item = &'a Target>) -> Qu
 
 async fn run_gh(gh: &Gh, host: &str, query: &Query) -> Result<Value, String> {
     let mut command = Command::new(&gh.program);
-    command.args(["api", "graphql"]);
-    if host != "github.com" {
-        command.args(["--hostname", host]);
-    }
+    // Even for github.com, or gh would follow an inherited `GH_HOST`.
+    command.args(["api", "graphql", "--hostname", host]);
     command.arg("-f").arg(format!("query={}", query.text));
     for (name, value) in &query.variables {
         command.arg("-f").arg(format!("{name}={value}"));
@@ -487,37 +487,69 @@ fn parse_checks(rollup: &Value) -> Option<Checks> {
         failed_names: Vec::new(),
         pending_names: Vec::new(),
     };
+    // Counts cover every context; names only the first page.
+    let counts = [
+        (
+            "checkRunCountsByState",
+            check_run_outcome as fn(&str) -> Option<CheckState>,
+        ),
+        ("statusContextCountsByState", status_outcome),
+    ];
+    for (field, outcome) in counts {
+        for count in contexts[field].as_array().into_iter().flatten() {
+            let n = count["count"].as_u64().unwrap_or_default() as u32;
+            match outcome(count["state"].as_str().unwrap_or_default()) {
+                Some(CheckState::Failure) => checks.failed += n,
+                Some(CheckState::Pending) => checks.pending += n,
+                _ => {}
+            }
+        }
+    }
     for node in contexts["nodes"].as_array().into_iter().flatten() {
         let (name, outcome) = if node["__typename"] == "CheckRun" {
-            let outcome = if node["status"] != "COMPLETED" {
-                Some(CheckState::Pending)
+            let state = if node["status"] == "COMPLETED" {
+                &node["conclusion"]
             } else {
-                match node["conclusion"].as_str() {
-                    Some("SUCCESS" | "NEUTRAL" | "SKIPPED" | "CANCELLED" | "STALE") => None,
-                    _ => Some(CheckState::Failure),
-                }
+                &node["status"]
             };
-            (&node["name"], outcome)
+            (
+                &node["name"],
+                check_run_outcome(state.as_str().unwrap_or_default()),
+            )
         } else {
-            let outcome = match node["state"].as_str() {
-                Some("SUCCESS") => None,
-                Some("PENDING" | "EXPECTED") => Some(CheckState::Pending),
-                _ => Some(CheckState::Failure),
-            };
-            (&node["context"], outcome)
+            (
+                &node["context"],
+                status_outcome(node["state"].as_str().unwrap_or_default()),
+            )
         };
-        let name = name.as_str().unwrap_or_default().to_string();
-        let (count, names) = match outcome {
-            Some(CheckState::Failure) => (&mut checks.failed, &mut checks.failed_names),
-            Some(CheckState::Pending) => (&mut checks.pending, &mut checks.pending_names),
+        let names = match outcome {
+            Some(CheckState::Failure) => &mut checks.failed_names,
+            Some(CheckState::Pending) => &mut checks.pending_names,
             _ => continue,
         };
-        *count += 1;
         if names.len() < MAX_NAMES {
-            names.push(name);
+            names.push(name.as_str().unwrap_or_default().to_string());
         }
     }
     Some(checks)
+}
+
+/// A check run's status or, once completed, its conclusion (`CheckRunState`).
+fn check_run_outcome(state: &str) -> Option<CheckState> {
+    match state {
+        "SUCCESS" | "NEUTRAL" | "SKIPPED" | "CANCELLED" | "STALE" | "COMPLETED" => None,
+        "QUEUED" | "IN_PROGRESS" | "PENDING" | "WAITING" | "REQUESTED" => Some(CheckState::Pending),
+        _ => Some(CheckState::Failure),
+    }
+}
+
+/// A commit status's state (`StatusState`).
+fn status_outcome(state: &str) -> Option<CheckState> {
+    match state {
+        "SUCCESS" => None,
+        "PENDING" | "EXPECTED" => Some(CheckState::Pending),
+        _ => Some(CheckState::Failure),
+    }
 }
 
 /// A branch name as a URL path, keeping its slashes.
@@ -534,9 +566,9 @@ fn encode_path(branch: &str) -> String {
 }
 
 /// The GitHub target of `branch` in the repo whose common git dir is `common_dir`.
-fn resolve(common_dir: &Path, branch: &str) -> Option<Target> {
+fn resolve(common_dir: &Path, branch: &str, hosts: &[String]) -> Option<Target> {
     let config = GitConfig::parse(&std::fs::read_to_string(common_dir.join("config")).ok()?);
-    let mut target = target(&config, branch)?;
+    let mut target = target(&config, branch, hosts)?;
     target.pushed = read_ref(
         common_dir,
         &format!(
@@ -548,19 +580,22 @@ fn resolve(common_dir: &Path, branch: &str) -> Option<Target> {
     Some(target)
 }
 
-fn target(config: &GitConfig, branch: &str) -> Option<Target> {
+fn target(config: &GitConfig, branch: &str, hosts: &[String]) -> Option<Target> {
     let push_remote = config.push_remote(branch)?;
-    let head = parse_remote_url(config.get("remote", Some(&push_remote), "url")?)?;
+    let url = |remote: &str| config.get("remote", Some(remote), "url");
+    let push_url = config
+        .get("remote", Some(&push_remote), "pushurl")
+        .or_else(|| url(&push_remote))?;
+    let head = parse_remote_url(push_url, hosts)?;
+    // The push remote's fetch URL, which differs from a `pushurl` fork.
     let base = config
         .subsections("remote")
         .into_iter()
         .find(|remote| config.get("remote", Some(remote), "gh-resolved") == Some("base"))
-        .or_else(|| {
-            config
-                .get("remote", Some("upstream"), "url")
-                .map(|_| "upstream".to_string())
-        })
-        .and_then(|remote| parse_remote_url(config.get("remote", Some(&remote), "url")?))
+        .or_else(|| url("upstream").map(|_| "upstream".to_string()))
+        .unwrap_or_else(|| push_remote.clone());
+    let base = url(&base)
+        .and_then(|url| parse_remote_url(url, hosts))
         .filter(|base| base.host == head.host)
         .unwrap_or_else(|| head.clone());
     let tracks_push_remote = config.get("branch", Some(branch), "remote") == Some(&push_remote);
@@ -591,7 +626,7 @@ fn read_ref(common_dir: &Path, name: &str) -> Option<String> {
 }
 
 /// `owner/name` on a GitHub host, from any URL form git accepts.
-fn parse_remote_url(url: &str) -> Option<Repo> {
+fn parse_remote_url(url: &str, hosts: &[String]) -> Option<Repo> {
     let url = url.trim();
     let (host, path) = if let Some((scheme, rest)) = url.split_once("://") {
         if !matches!(scheme, "https" | "http" | "ssh" | "git" | "git+ssh") {
@@ -609,7 +644,7 @@ fn parse_remote_url(url: &str) -> Option<Repo> {
         }
         (authority.rsplit('@').next()?, path)
     };
-    let host = github_host(&host.to_ascii_lowercase())?;
+    let host = github_host(&host.to_ascii_lowercase(), hosts)?;
     let path = path.trim_matches('/');
     let path = path.strip_suffix(".git").unwrap_or(path);
     let (owner, name) = path.split_once('/')?;
@@ -624,16 +659,16 @@ fn parse_remote_url(url: &str) -> Option<Repo> {
 }
 
 /// github.com, from its SSH hosts and aliases like `github.com-work`, or a
-/// GitHub Enterprise host.
-fn github_host(host: &str) -> Option<String> {
-    if host == "github.com"
-        || host.starts_with("github.com-")
-        || host.ends_with(".github.com")
-        || host == "www.github.com"
-    {
+/// configured GitHub Enterprise host. gh sends `GH_ENTERPRISE_TOKEN` to any
+/// other host, so one named by a remote alone is never asked.
+fn github_host(host: &str, hosts: &[String]) -> Option<String> {
+    if host == "github.com" || host.starts_with("github.com-") || host.ends_with(".github.com") {
         return Some("github.com".into());
     }
-    host.contains("github").then(|| host.to_string())
+    hosts
+        .iter()
+        .any(|trusted| trusted.eq_ignore_ascii_case(host))
+        .then(|| host.to_string())
 }
 
 /// The few git config entries a target needs. Section and key names are
@@ -765,13 +800,23 @@ mod tests {
             "ssh://git@ssh.github.com:443/o/r.git",
             "git@github.com-work:o/r.git",
         ] {
-            assert_eq!(parse_remote_url(url), Some(repo("o", "r")), "{url}");
+            assert_eq!(parse_remote_url(url, &[]), Some(repo("o", "r")), "{url}");
         }
+        // Enterprise hosts only when configured.
+        let hosts = ["GitHub.Example.com".to_string()];
         assert_eq!(
-            parse_remote_url("git@github.example.com:o/r.git")
+            parse_remote_url("git@github.example.com:o/r.git", &hosts)
                 .unwrap()
                 .host,
             "github.example.com"
+        );
+        assert_eq!(
+            parse_remote_url("git@github.example.com:o/r.git", &[]),
+            None
+        );
+        assert_eq!(
+            parse_remote_url("https://evilgithub.invalid/o/r", &hosts),
+            None
         );
         for url in [
             "git@gitlab.com:o/r.git",
@@ -781,7 +826,7 @@ mod tests {
             "file:///github/o/r",
             "https://github.com/o/r/tree/main",
         ] {
-            assert_eq!(parse_remote_url(url), None, "{url}");
+            assert_eq!(parse_remote_url(url, &hosts), None, "{url}");
         }
     }
 
@@ -833,12 +878,12 @@ mod tests {
 	merge = refs/heads/main
 "#,
         );
-        let feat = target(&config, "feat").unwrap();
+        let feat = target(&config, "feat", &[]).unwrap();
         assert_eq!(feat.head, repo("me", "r"));
         assert_eq!(feat.base, repo("them", "r"));
         assert_eq!(feat.head_ref, "feature");
         // Tracking a local branch: pushed to origin under its own name.
-        let local = target(&config, "local").unwrap();
+        let local = target(&config, "local", &[]).unwrap();
         assert_eq!(local.head, repo("me", "r"));
         assert_eq!(local.head_ref, "local");
 
@@ -856,9 +901,21 @@ mod tests {
 	pushRemote = mirror
 "#,
         );
-        assert_eq!(target(&config, "x").unwrap().base, repo("me", "r"));
-        assert_eq!(target(&config, "m"), None);
-        assert_eq!(target(&GitConfig::parse(""), "x"), None);
+        assert_eq!(target(&config, "x", &[]).unwrap().base, repo("me", "r"));
+        assert_eq!(target(&config, "m", &[]), None);
+        assert_eq!(target(&GitConfig::parse(""), "x", &[]), None);
+
+        // A `pushurl` fork: pushed there, PRs opened against the fetch URL.
+        let config = GitConfig::parse(
+            r#"
+[remote "origin"]
+	url = https://github.com/them/r.git
+	pushurl = git@github.com:me/r.git
+"#,
+        );
+        let fork = target(&config, "feat", &[]).unwrap();
+        assert_eq!(fork.head, repo("me", "r"));
+        assert_eq!(fork.base, repo("them", "r"));
     }
 
     #[test]
@@ -933,7 +990,14 @@ mod tests {
                 "headRepositoryOwner": {"login": owner},
                 "commits": {"nodes": [{"commit": {"statusCheckRollup": {
                     "state": "FAILURE",
-                    "contexts": {"totalCount": 4, "nodes": [
+                    "contexts": {"totalCount": 4,
+                        "checkRunCountsByState": [
+                            {"state": "SUCCESS", "count": 1},
+                            {"state": "FAILURE", "count": 1},
+                            {"state": "IN_PROGRESS", "count": 1},
+                        ],
+                        "statusContextCountsByState": [{"state": "ERROR", "count": 1}],
+                        "nodes": [
                         check_run("build", "COMPLETED", Some("SUCCESS")),
                         check_run("lint", "COMPLETED", Some("FAILURE")),
                         check_run("e2e", "IN_PROGRESS", None),
@@ -983,7 +1047,9 @@ mod tests {
             "url": "https://github.com/o/r",
             "b0": {"nodes": []},
             "c0": {"target": {"statusCheckRollup": {
-                "state": "PENDING", "contexts": {"totalCount": 1, "nodes": [check_run("ci", "QUEUED", None)]},
+                "state": "PENDING", "contexts": {"totalCount": 1,
+                    "checkRunCountsByState": [{"state": "QUEUED", "count": 1}],
+                    "nodes": [check_run("ci", "QUEUED", None)]},
             }}},
         });
         let key = ("/r/.git".to_string(), "x".to_string());
@@ -995,6 +1061,29 @@ mod tests {
         let repository = json!({"url": "https://github.com/o/r", "b0": {"nodes": []}, "c0": null});
         let status = parse_branch(&repository, 0, &key, &target);
         assert_eq!((status.pr, status.checks), (None, None));
+    }
+
+    #[test]
+    fn counts_checks_beyond_the_first_page() {
+        let nodes: Vec<Value> = (0..100)
+            .map(|i| check_run(&format!("ok{i}"), "COMPLETED", Some("SUCCESS")))
+            .collect();
+        let checks = parse_checks(&json!({
+            "state": "FAILURE",
+            "contexts": {
+                "totalCount": 103,
+                "checkRunCountsByState": [
+                    {"state": "SUCCESS", "count": 100},
+                    {"state": "TIMED_OUT", "count": 1},
+                    {"state": "WAITING", "count": 1},
+                ],
+                "statusContextCountsByState": [{"state": "FAILURE", "count": 1}],
+                "nodes": nodes,
+            },
+        }))
+        .unwrap();
+        assert_eq!((checks.total, checks.failed, checks.pending), (103, 2, 1));
+        assert!(checks.failed_names.is_empty() && checks.pending_names.is_empty());
     }
 
     #[test]

@@ -87,10 +87,9 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
+    // Sent when empty too, replacing what a tab kept from before.
     let statuses = crate::github::statuses();
-    if !statuses.is_empty() {
-        messages.push(serde_json::to_string(&ServerMessage::Github { statuses }).unwrap());
-    }
+    messages.push(serde_json::to_string(&ServerMessage::Github { statuses }).unwrap());
     // Sent when empty too, to close widgets a previous server had open.
     messages.push(
         serde_json::to_string(&ServerMessage::Widgets {
@@ -1223,9 +1222,14 @@ mod tests {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
         ));
         let state = std::sync::Arc::new(tokio::sync::RwLock::new(mgr));
-        let [config, snapshot, widgets] = &resynchronize(&mut events, &state).await[..] else {
-            panic!("expected config, state, and widgets");
+        let [config, snapshot, github, widgets] = &resynchronize(&mut events, &state).await[..]
+        else {
+            panic!("expected config, state, github, and widgets");
         };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(github).unwrap(),
+            serde_json::json!({"type": "github", "statuses": []})
+        );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(widgets).unwrap()["type"],
             "widgets"

@@ -3,6 +3,7 @@
   stdenv,
   fetchurl,
   autoPatchelfHook,
+  zlib,
 }:
 
 let
@@ -39,7 +40,10 @@ stdenv.mkDerivation {
   dontCheck = true;
 
   nativeBuildInputs = lib.optional stdenv.hostPlatform.isLinux autoPatchelfHook;
-  buildInputs = lib.optional stdenv.hostPlatform.isLinux stdenv.cc.cc.lib;
+  buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
+    stdenv.cc.cc.lib
+    zlib
+  ];
 
   installPhase = ''
     install -Dm755 "$src" "$out/bin/btmux"

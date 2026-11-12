@@ -87,6 +87,10 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
+    let statuses = crate::github::statuses();
+    if !statuses.is_empty() {
+        messages.push(serde_json::to_string(&ServerMessage::Github { statuses }).unwrap());
+    }
     // Sent when empty too, to close widgets a previous server had open.
     messages.push(
         serde_json::to_string(&ServerMessage::Widgets {
@@ -1082,6 +1086,10 @@ pub enum ServerMessage {
     /// All open pane widgets; sent on connect and on change.
     Widgets {
         widgets: Vec<crate::widget::WidgetSummary>,
+    },
+    /// Pull request and CI status of pane branches; sent on connect and on change.
+    Github {
+        statuses: Vec<crate::github::GithubStatus>,
     },
 }
 

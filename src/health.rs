@@ -233,6 +233,12 @@ async fn agent_versions(shell: &str) -> (Probe, Probe) {
     )
 }
 
+/// Found as GitHub status runs it.
+async fn gh_version(shell: &str) -> Probe {
+    let [path] = crate::agent_limits::programs_paths(shell, [OsString::from("gh")]).await;
+    agent_version("gh", path).await
+}
+
 fn check(name: &str, purpose: &str, status: HealthStatus, value: impl Into<String>) -> HealthCheck {
     HealthCheck {
         name: name.into(),
@@ -455,6 +461,7 @@ async fn report(state: &AppState) -> HealthReport {
         fd_probe,
         fzf,
         git,
+        gh,
         tailscale,
         multipass,
     ) = tokio::join!(
@@ -467,6 +474,7 @@ async fn report(state: &AppState) -> HealthReport {
         version_of(locate("fd").or_else(|| locate("fdfind"))),
         version_of(crate::fzf::real_fzf()),
         version_of(locate("git")),
+        gh_version(&shell),
         probe(
             crate::tailscale::PROGRAMS
                 .iter()
@@ -486,6 +494,12 @@ async fn report(state: &AppState) -> HealthReport {
                 HealthStatus::Warning,
                 Some("Git mode and worktrees won't work.".into()),
             ),
+        ),
+        program(
+            "GitHub CLI",
+            "Pull request and CI status on panes in GitHub repos.",
+            gh,
+            (HealthStatus::Missing, None),
         ),
         program(
             "Tailscale",

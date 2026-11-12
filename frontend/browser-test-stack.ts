@@ -3,7 +3,8 @@
  * backend and Vite on free ports, with a random token, `/bin/sh`, and
  * temporary XDG and Git config, so neither the user's config, profiles, shell,
  * nor a running `just dev` affects it. A fake `multipass` (`test-bin`) logs to
- * the stack's `multipass` directory. Usage: bun browser-test-stack.ts <test.ts>...
+ * the stack's `multipass` directory, and a fake `gh` answers from its `gh`
+ * directory. Usage: bun browser-test-stack.ts <test.ts>...
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -121,6 +122,7 @@ async function withStack(
         ...xdg,
         PATH: `${path.join(frontend, 'test-bin')}${path.delimiter}${process.env.PATH}`,
         BTMUX_FAKE_MULTIPASS: path.join(dir, 'multipass'),
+        BTMUX_FAKE_GH: path.join(dir, 'gh'),
         BTMUX_AUTH_TOKEN: token,
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_CONFIG_NOSYSTEM: '1',
@@ -175,6 +177,7 @@ for (const [index, test] of tests.entries()) {
           BTMUX_AUTH_TOKEN: token,
           BTMUX_TEST_CONFIG_HOME: configHome,
           BTMUX_TEST_MULTIPASS: path.join(dir, 'multipass'),
+          BTMUX_TEST_GH: path.join(dir, 'gh'),
         },
       });
       const code = await exited(child);

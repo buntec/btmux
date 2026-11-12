@@ -11,6 +11,8 @@ import { clsx } from 'clsx';
 import { useStore } from '../state/store';
 import { getAnimations } from '../state/configDefaults';
 import { AGENTS } from './AgentIcon';
+import { GithubBadge } from './GithubBadge';
+import type { GithubStatus } from '../generated/protocol';
 
 /** Collapse a home-directory prefix to `~` so cwds read like the shell prompt. */
 function shortCwd(cwd: string | null | undefined): string | null {
@@ -31,6 +33,7 @@ interface Props {
   title: string | null | undefined;
   cwd: string | null | undefined;
   agentStatus?: AgentStatus;
+  github?: GithubStatus;
   cols: number | null;
   rows: number | null;
   isActive: boolean;
@@ -52,6 +55,7 @@ export function PaneTitleBar({
   title,
   cwd,
   agentStatus,
+  github,
   cols,
   rows,
   isActive,
@@ -106,6 +110,7 @@ export function PaneTitleBar({
             {cols}×{rows}
           </Text>
         ) : null}
+        {github && <GithubBadge status={github} size="sm" />}
         <AgentStatusBadge status={agentStatus} className="min-w-0 shrink!" />
         <Token size="sm" color={isActive ? 'blue' : 'gray'} aria-label={`Pane ${index}`} label={String(index)} />
       </HStack>
@@ -117,12 +122,14 @@ export function PaneTitleBar({
 export function PaneCorner({
   index,
   status,
+  github,
   isActive,
   latexCount,
   onToggleLatex,
 }: {
   index: number;
   status?: AgentStatus;
+  github?: GithubStatus;
   isActive: boolean;
   latexCount: number;
   onToggleLatex: () => void;
@@ -140,6 +147,7 @@ export function PaneCorner({
           className="pointer-events-auto"
         />
       )}
+      {github && <GithubBadge status={github} />}
       <span className="pointer-events-auto">
         <AgentStatusBadge status={status} />
       </span>

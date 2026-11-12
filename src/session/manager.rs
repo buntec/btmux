@@ -58,6 +58,7 @@ pub struct SessionManager {
     /// Repo, worktree, and branch of pane working directories.
     git: GitTracker,
     next_client: u32,
+    clients: usize,
     /// The control client the user focused most recently; it alone shows OS notifications.
     alert_client: Option<u32>,
 }
@@ -121,6 +122,7 @@ impl SessionManager {
             detector: None,
             detection_tick: None,
             next_client: 0,
+            clients: 0,
             alert_client: None,
             widgets: Default::default(),
             git: GitTracker::new(pty_env.meta_tx.clone()),
@@ -479,6 +481,7 @@ impl SessionManager {
     }
 
     pub fn register_client(&mut self) -> u32 {
+        self.clients += 1;
         self.next_client = self.next_client.wrapping_add(1);
         self.next_client
     }
@@ -488,6 +491,7 @@ impl SessionManager {
     }
 
     pub fn release_client(&mut self, client: u32) {
+        self.clients = self.clients.saturating_sub(1);
         if self.alert_client == Some(client) {
             self.alert_client = None;
         }
@@ -504,6 +508,28 @@ impl SessionManager {
     /// The shell new panes run.
     pub fn shell(&self) -> &str {
         &self.shell
+    }
+
+    pub fn github_enabled(&self) -> bool {
+        self.file_config.github.enabled
+    }
+
+    /// Connected control sockets.
+    pub fn client_count(&self) -> usize {
+        self.clients
+    }
+
+    /// The repo and branch of every pane on a local branch.
+    pub fn pane_branches(&self) -> std::collections::HashSet<(String, String)> {
+        self.sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+            .filter_map(|pane| {
+                let git = self.git.lookup(&pane.pty.local_cwd()?)?;
+                Some((git.repo_id, git.branch?))
+            })
+            .collect()
     }
 
     pub fn check_for_updates(&self) -> bool {

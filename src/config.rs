@@ -627,6 +627,20 @@ impl Default for MultipassConfig {
     }
 }
 
+/// `[github]`: pull request and CI status on panes in GitHub repos.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GithubConfig {
+    /// Ask the `gh` CLI for the status of branches panes are on.
+    pub enabled: bool,
+}
+
+impl Default for GithubConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 /// `[browser]`: the browser surface.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
@@ -820,6 +834,8 @@ pub struct FileConfig {
     pub browser: BrowserConfig,
     /// The Multipass instance for sandboxed sessions.
     pub multipass: MultipassConfig,
+    /// Pull request and CI status on panes.
+    pub github: GithubConfig,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -887,6 +903,7 @@ impl Default for FileConfig {
             vscode: VscodeConfig::default(),
             browser: BrowserConfig::default(),
             multipass: MultipassConfig::default(),
+            github: GithubConfig::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             terminal: TerminalOptions::default(),
@@ -1886,6 +1903,11 @@ pub fn generate_config_toml() -> String {
 # shell = "bash"   # "bash", "zsh", or "fish"; the one new sandboxed sessions offer first (default: yours, if one of these)
 # cloud-init = "~/btmux-cloud-init.yaml"   # instead of btmux's (packages, Claude Code, Codex)
 # copy = ["~/.config/fish/config.fish", "~/.config/starship.toml"]   # into the guest's home when a pane starts, if changed
+
+# Pull request and CI status in the corner of panes on a GitHub branch, from
+# the GitHub CLI (`gh`, logged in with `gh auth login`).
+# [github]
+# enabled = true
 
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.

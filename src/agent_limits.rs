@@ -162,13 +162,20 @@ fn now_seconds() -> f64 {
 
 /// The `PATH` the Claude and Codex CLIs run with, `None` for the server's own.
 pub(crate) async fn agent_paths(shell: &str) -> [Option<OsString>; 2] {
+    programs_paths(shell, [Agent::Claude, Agent::Codex].map(agent_program)).await
+}
+
+/// The `PATH` each program runs with, `None` for the server's own.
+pub(crate) async fn programs_paths<const N: usize>(
+    shell: &str,
+    programs: [OsString; N],
+) -> [Option<OsString>; N] {
     let server = std::env::var_os("PATH");
     let mut shell_path = SHELL_PATH.lock().await;
     let shell_path = shell_path
-        .refresh(shell, server.as_deref(), Instant::now())
+        .refresh(shell, &programs, server.as_deref(), Instant::now())
         .await;
-    [Agent::Claude, Agent::Codex]
-        .map(|agent| agent_path(&agent_program(agent), server.as_deref(), shell_path))
+    programs.map(|program| agent_path(&program, server.as_deref(), shell_path))
 }
 
 /// `program` in `path`, as exec would find it.
@@ -218,19 +225,19 @@ struct ShellPath {
 }
 
 impl ShellPath {
-    /// Asks only while a CLI is on neither `PATH`, starting no shell when both are found.
+    /// Asks only while a program is on neither `PATH`, starting no shell when all are found.
     async fn refresh(
         &mut self,
         shell: &str,
+        programs: &[OsString],
         server: Option<&OsStr>,
         now: Instant,
     ) -> Option<&OsStr> {
-        let found = [Agent::Claude, Agent::Codex].into_iter().all(|agent| {
-            let program = agent_program(agent);
+        let found = programs.iter().all(|program| {
             [server, self.value.as_deref()]
                 .into_iter()
                 .flatten()
-                .any(|path| on_path(&program, path))
+                .any(|path| on_path(program, path))
         });
         let due = self
             .asked_at
@@ -239,7 +246,7 @@ impl ShellPath {
             self.asked_at = Some(now);
             match shell_path(shell, SHELL_PATH_TIMEOUT).await {
                 Ok(path) => self.value = Some(path),
-                Err(error) => tracing::warn!("agent limits: no PATH from {shell}: {error}"),
+                Err(error) => tracing::warn!("no PATH from {shell}: {error}"),
             }
         }
         self.value.as_deref()
@@ -968,17 +975,21 @@ mod tests {
             let start = Instant::now();
             let empty = OsStr::new("/btmux-no-such-dir");
             let mut path = ShellPath::default();
+            let programs = [OsString::from("claude")];
             // A shell that can't start leaves nothing, and isn't run again before the retry.
-            path.refresh("btmux-no-such-shell", Some(empty), start)
+            path.refresh("btmux-no-such-shell", &programs, Some(empty), start)
                 .await;
             let asked = path.asked_at;
             assert_eq!(asked, Some(start));
-            path.refresh("sh", Some(empty), start + Duration::from_secs(1))
+            path.refresh("sh", &programs, Some(empty), start + Duration::from_secs(1))
                 .await;
             assert_eq!(path.asked_at, asked);
             assert_eq!(path.value, None);
             let later = start + SHELL_PATH_RETRY;
-            assert!(path.refresh("sh", Some(empty), later).await.is_some());
+            assert!(path
+                .refresh("sh", &programs, Some(empty), later)
+                .await
+                .is_some());
             assert_eq!(path.asked_at, Some(later));
         }
     }

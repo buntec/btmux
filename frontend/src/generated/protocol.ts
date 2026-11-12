@@ -96,6 +96,36 @@ branch: string | null,
 main_worktree: boolean, };
 
 // prettier-ignore
+export type PrState = "open" | "draft" | "merged" | "closed";
+
+// prettier-ignore
+export type Review = "approved" | "changes_requested" | "required";
+
+// prettier-ignore
+export type PullRequest = { number: number, title: string, state: PrState, review: Review | null, };
+
+// prettier-ignore
+export type CheckState = "success" | "failure" | "pending";
+
+// prettier-ignore
+export type Checks = { state: CheckState, total: number, failed: number, pending: number,
+/**
+ * Up to `MAX_NAMES` each.
+ */
+failed_names: Array<string>, pending_names: Array<string>, };
+
+// prettier-ignore
+export type GithubStatus = { repo_id: string, branch: string,
+/**
+ * The pull request's page, else the branch's.
+ */
+url: string, pr: PullRequest | null,
+/**
+ * Of the pull request's head, else of the pushed branch.
+ */
+checks: Checks | null, };
+
+// prettier-ignore
 export type PaneSnapshot = { id: string, title: string | null, cwd: string | null, agent_status: AgentStatus,
 /**
  * Names the running agent instance, so a client can target it.
@@ -580,7 +610,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */
-os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, };
+os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

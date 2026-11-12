@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# A fake `gh` for browser tests: every call is logged to $BTMUX_FAKE_GH/log and
+# `api graphql` prints $BTMUX_FAKE_GH/reply.json, so no test reaches GitHub.
+set -euo pipefail
+state="${BTMUX_FAKE_GH:-}"
+if [ "${1:-}" = --version ]; then
+  echo "gh version 0.0.0-fake"
+  exit 0
+fi
+if [ -z "$state" ] || [ ! -f "$state/reply.json" ]; then
+  echo "To get started with GitHub CLI, please run:  gh auth login" >&2
+  exit 4
+fi
+printf '%s\n' "$*" >> "$state/log"
+if [ "${1:-} ${2:-}" = "api graphql" ]; then
+  cat "$state/reply.json"
+  exit 0
+fi
+echo "fake gh: unsupported: $*" >&2
+exit 1

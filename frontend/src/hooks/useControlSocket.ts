@@ -164,6 +164,8 @@ export function useControlSocket() {
           useStore.getState().setTailscale(msg.status);
         } else if (msg.type === 'widgets') {
           useStore.getState().setWidgets(msg.widgets);
+        } else if (msg.type === 'github') {
+          useStore.getState().setGithub(msg.statuses);
         }
       };
 

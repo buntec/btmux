@@ -4,9 +4,11 @@ import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
-import type { AgentTelemetry, TailscaleStatus, WidgetSummary } from '../generated/protocol';
+import type { AgentTelemetry, GithubStatus, TailscaleStatus, WidgetSummary } from '../generated/protocol';
 import { mergeTelemetry } from '../lib/agentUsage';
 import { cacheThemes } from './startupTheme';
+
+export const githubKey = (repoId: string, branch: string) => `${repoId}\n${branch}`;
 
 export type FileBrowserMode = 'files' | 'git' | 'process';
 
@@ -34,6 +36,9 @@ interface AppStore {
   agentPanes: Set<string>;
   /** Open `btmux pick`, `confirm`, and `input` widgets. */
   widgets: WidgetSummary[];
+  /** Pull request and CI status by `githubKey(repo_id, branch)`. */
+  github: Map<string, GithubStatus>;
+  setGithub: (statuses: GithubStatus[]) => void;
   agentTelemetry: Record<string, AgentTelemetry>;
   updateAgentTelemetry: (panes: AgentTelemetry[], replace?: boolean, removed?: string[]) => void;
   // The server's `--tailscale` status; null without it.
@@ -166,6 +171,8 @@ export const useStore = create<AppStore>((set, get) => ({
   agentGridMounted: false,
   agentPanes: new Set(),
   widgets: [],
+  github: new Map(),
+  setGithub: (statuses) => set({ github: new Map(statuses.map((s) => [githubKey(s.repo_id, s.branch), s])) }),
   agentTelemetry: {},
   updateAgentTelemetry: (panes, replace = false, removed = []) =>
     set((state) => {

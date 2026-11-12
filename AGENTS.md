@@ -194,6 +194,19 @@ as conf.d runs before config.fish, so it changes nothing when off.
   `../<repo>-<branch>`) with a window and removes one, closing its panes, for
   the control socket (`prefix + W`/`X`), REST, MCP, and `btmux
   new-worktree`/`remove-worktree`; it runs the `git` CLI off the lock.
+- **GitHub status** (`github.rs`): the pull request and CI checks of each pane
+  branch, from `gh api graphql` (`[github] enabled`, default on), so btmux
+  never reads a credential; `gh` is found as plan limits find agent CLIs. The
+  repo's git config on disk gives the GitHub repo: gh's default (`gh-resolved
+  = base`), else `upstream`, else the push remote, whose owner a PR's head must
+  match. One query per repo covers its branches, polled every 60 s while a
+  control socket is connected, every 15 s while checks are pending or for 2
+  minutes after the remote-tracking ref moves (a push or fetch), which also
+  refreshes at once. Errors back off 5 minutes. `ServerMessage::Github` carries
+  every status on change and on connect; `GithubBadge` shows it in
+  `PaneCorner` (and the title bar), opening the PR or branch on click. The
+  browser tests' fake `gh` (`frontend/test-bin`) answers from the stack's `gh`
+  directory.
 - **Windows shells** (`shell.rs`): `shell` is a command line (`wsl.exe -d Ubuntu`)
   whose program picks a `Dialect` (PowerShell, cmd, POSIX for Git Bash, WSL) for
   typed commands (`cd`, `open-editor`, capture-pane) and paths. `pty/windows.rs`

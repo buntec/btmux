@@ -39,6 +39,8 @@ interface Props {
   cwd?: string | null;
   /** Server-authoritative semantic status for an agent in this pane. */
   agentStatus?: AgentStatus;
+  /** `githubKey` of the pane's repo and branch, if on one. */
+  githubKey?: string;
   /** 0-based pane index within its window (layout order), shown as the badge. */
   paneIndex?: number;
   /**
@@ -109,6 +111,7 @@ export function TerminalPane({
   title,
   cwd,
   agentStatus,
+  githubKey,
   paneIndex,
   visible,
   isZoomed = false,
@@ -376,6 +379,7 @@ export function TerminalPane({
   const { matches: latexMatches, poke: latexPoke } = useLatexScan(term, rendering);
   latexPokeRef.current = latexPoke;
   const latexOpen = useStore((s) => s.latexPanes.has(paneId));
+  const github = useStore((s) => (githubKey ? s.github.get(githubKey) : undefined));
   const searchOpen = useStore((s) => s.searchPaneId === paneId);
   const widget = useStore((s) => s.widgets.find((widget) => widget.pane_id === paneId));
   const widgetId = widget?.id ?? null;
@@ -577,6 +581,7 @@ export function TerminalPane({
           title={title}
           cwd={cwd}
           agentStatus={agentStatus}
+          github={github}
           cols={dims?.cols ?? null}
           rows={dims?.rows ?? null}
           isActive={isActive}
@@ -590,6 +595,7 @@ export function TerminalPane({
         <PaneCorner
           index={paneIndex ?? 0}
           status={agentStatus}
+          github={github}
           isActive={isActive}
           latexCount={latexOpen ? 0 : latexMatches.length}
           onToggleLatex={toggleLatex}

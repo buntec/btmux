@@ -350,7 +350,6 @@ impl Poller {
             .entries
             .values()
             .filter_map(|entry| entry.status.clone())
-            .filter(|status| status.pr.is_some() || status.checks.is_some())
             .collect();
         statuses.sort_by(|a, b| (&a.repo_id, &a.branch).cmp(&(&b.repo_id, &b.branch)));
         {

@@ -168,9 +168,22 @@ try {
   assert.equal(await failed.getAttribute('aria-description'), 'Open, 1 of 2 checks failed');
   console.log('PASS focusing it shows and links the tooltip');
 
+  // A branch with neither still links to GitHub.
+  writeFileSync(
+    path.join(ghDir, 'reply.json'),
+    JSON.stringify({ data: { repository: { url: 'https://github.com/btmux-test/proj', b0: { nodes: [] }, c0: null } } }),
+  );
+  git('commit', '--allow-empty', '-m', 'Third');
+  git('update-ref', 'refs/remotes/origin/feat', 'HEAD');
+  const branch = page.locator('.astryx-token[href="https://github.com/btmux-test/proj/tree/feat"]');
+  await branch.waitFor({ timeout: 15_000 });
+  assert.equal(await branch.getAttribute('data-color'), 'gray');
+  assert.equal(await branch.getByText('Branch feat').count(), 1);
+  console.log('PASS a branch without a PR or checks links to its tree');
+
   mkdirSync(path.join(configHome, 'btmux'), { recursive: true });
   writeFileSync(path.join(configHome, 'btmux', 'config.toml'), '[github]\nenabled = false\n');
-  await badge.waitFor({ state: 'detached', timeout: 15_000 });
+  await branch.waitFor({ state: 'detached', timeout: 15_000 });
   console.log('PASS [github] enabled = false hides it');
 
   assert.deepEqual(errors, []);

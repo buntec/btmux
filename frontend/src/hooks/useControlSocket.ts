@@ -6,6 +6,9 @@ import { atLeast } from '../lib/notifications';
 import { SYSTEM_LIGHT_QUERY, systemColorMode } from '../state/startupTheme';
 
 let nextRequestId = 0;
+// Callers awaiting a command's result, by request id.
+const pendingRequests = new Map<string, (error: string | null) => void>();
+const LOST = 'Connection lost. The command was not sent.';
 let osNotificationsOffered = false;
 
 // Browsers ignore permission requests outside a user gesture, so ask from a toast button.
@@ -107,6 +110,10 @@ export function useControlSocket() {
           useStore.getState().updateAgentTelemetry(msg.panes, msg.replace, msg.removed_panes);
         } else if (msg.type === 'command_result') {
           if (msg.error) showToast(msg.error, 'error');
+          if (msg.request_id) {
+            pendingRequests.get(msg.request_id)?.(msg.error);
+            pendingRequests.delete(msg.request_id);
+          }
         } else if (msg.type === 'config') {
           const previous = useStore.getState().config?.version;
           setConfig(msg.config);
@@ -182,6 +189,8 @@ export function useControlSocket() {
             .catch(() => {});
         wsRef.current = null;
         clientId = null;
+        for (const resolve of pendingRequests.values()) resolve('Connection lost');
+        pendingRequests.clear();
         setControlConnectionState('reconnecting');
         if (!disposed) {
           console.log('[btmux] control socket closed, reconnecting in 2s...');
@@ -206,9 +215,24 @@ export function useControlSocket() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ ...msg, request_id: String(++nextRequestId) }));
     } else {
-      useStore.getState().showToast('Connection lost. The command was not sent.', 'error');
+      useStore.getState().showToast(LOST, 'error');
     }
   }, []);
 
-  return { send };
+  /** Like `send`, resolving with the command's error, or null once it succeeded. */
+  const request = useCallback(
+    (msg: ClientMessage) =>
+      new Promise<string | null>((resolve) => {
+        if (wsRef.current?.readyState !== WebSocket.OPEN) {
+          useStore.getState().showToast(LOST, 'error');
+          return resolve(LOST);
+        }
+        const id = String(++nextRequestId);
+        pendingRequests.set(id, resolve);
+        wsRef.current.send(JSON.stringify({ ...msg, request_id: id }));
+      }),
+    [],
+  );
+
+  return { send, request };
 }

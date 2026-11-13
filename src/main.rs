@@ -886,6 +886,21 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
 }
 
 async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
+    // A save already loaded what it wrote.
+    let text = tokio::fs::read_to_string(path).await.ok();
+    {
+        let mut mgr = state.write().await;
+        if text.is_some_and(|text| mgr.is_saved_config(&text)) {
+            return;
+        }
+        mgr.set_saved_config(None);
+    }
+    reload_config(path, state, "Config reloaded").await;
+}
+
+/// Load config.toml, drop session-only overrides, and broadcast the result
+/// with a toast of `message`.
+pub(crate) async fn reload_config(path: &std::path::Path, state: &AppState, message: &str) {
     let file_config = match config::load_with_colors(path).await {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -915,7 +930,7 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
     };
 
     let toast_json = serde_json::to_string(&ServerMessage::Toast {
-        message: "Config reloaded".into(),
+        message: message.into(),
         level: ws::control::NotificationLevel::Info,
     })
     .unwrap();

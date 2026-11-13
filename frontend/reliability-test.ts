@@ -1,7 +1,7 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
 
@@ -254,6 +254,34 @@ try {
     writeFileSync(configFile, original);
     await ready();
     console.log('PASS rows fit the font and disable-stdin blocks input');
+
+    // Save merges the settings into config.toml, keeping what's there.
+    writeFileSync(configFile, '# mine\nanimations = true\n');
+    const dialog = page.locator('dialog[open]');
+    const saveLevel = async (level: string) => {
+      await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+      await dialog.getByRole('tab', { name: 'Logging', exact: true }).click();
+      await dialog.getByLabel('Console level').fill(level);
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    };
+    await saveLevel('debug');
+    await page.getByText(`Saved to ${configFile}`).first().waitFor();
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(readFileSync(configFile, 'utf8'), '# mine\nanimations = true\n\n[log]\nconsole-level = "debug"\n');
+    // A read-only file (Nix) fails, keeping the dialog open with the TOML.
+    chmodSync(configFile, 0o444);
+    try {
+      await saveLevel('trace');
+      await page.getByText(`${configFile} is read-only`).first().waitFor();
+      await dialog.getByRole('textbox', { name: 'Generated TOML', exact: true }).waitFor();
+      assert.match(readFileSync(configFile, 'utf8'), /console-level = "debug"/);
+    } finally {
+      chmodSync(configFile, 0o644);
+    }
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+    await dialog.waitFor({ state: 'hidden' });
+    writeFileSync(configFile, original);
+    console.log('PASS settings save to config.toml and fail on a read-only file');
   }
   await page.evaluate(() => {
     (window as any).testSockets

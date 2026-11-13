@@ -37,3 +37,8 @@ export function isDesktopApp(): boolean {
 export function switchDesktopServer(): void {
   (window as TauriWindow).__TAURI_INTERNALS__?.invoke('switch_server').catch(() => {});
 }
+
+/** Opens another desktop app window on the server picker. */
+export function openDesktopWindow(): void {
+  (window as TauriWindow).__TAURI_INTERNALS__?.invoke('new_window').catch(() => {});
+}

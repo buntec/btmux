@@ -14,6 +14,7 @@ fn main() {
             "set_background",
             "desktop_info",
             "zoom",
+            "new_window",
         ]),
     ))
     .expect("build desktop permissions")

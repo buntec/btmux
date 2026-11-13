@@ -4,7 +4,7 @@
   "description": "allows the bundled startup picker to discover, connect to, start, and stop servers, and manage remote servers",
   "local": true,
   "windows": [
-    "main"
+    "*"
   ],
   "permissions": [
     "allow-discover-servers",
@@ -15,6 +15,7 @@
     "allow-add-remote-server",
     "allow-remove-remote-server",
     "allow-connect-remote-server",
-    "allow-zoom"
+    "allow-zoom",
+    "allow-new-window"
   ]
 }

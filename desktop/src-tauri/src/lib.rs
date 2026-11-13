@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -30,6 +30,7 @@ mod remote;
 mod servers;
 mod zoom;
 
+const NEW_WINDOW: &str = "new-window";
 const SWITCH_SERVER: &str = "switch-server";
 const ZOOM_IN: &str = "zoom-in";
 const ZOOM_OUT: &str = "zoom-out";
@@ -44,14 +45,49 @@ struct Server {
     child: Mutex<Option<CommandChild>>,
     // The bundled server, once ready. It does not publish a registration.
     private: Mutex<Option<discovery::RunningServer>>,
-    choices: Mutex<Vec<discovery::RunningServer>>,
-    // Bumped on every navigation so stale watchdogs stop.
-    connection: AtomicU64,
+    // Each window's last listed servers, by label.
+    choices: Mutex<HashMap<String, Vec<discovery::RunningServer>>>,
+    // Each window's current navigation, so stale watchdogs stop.
+    connections: Mutex<HashMap<String, u64>>,
+    next_connection: AtomicU64,
+    next_window: AtomicU64,
     picker: OnceLock<Url>,
     // Serializes edits of the remote server file.
     remotes: Mutex<()>,
     // Remote origins granted the connected-page commands.
     remote_origins: Mutex<HashSet<String>>,
+}
+
+impl Server {
+    // Starts a navigation of `window`, ending its previous one.
+    fn navigate(&self, window: &str) -> u64 {
+        let id = self.next_connection.fetch_add(1, Ordering::SeqCst);
+        self.connections.lock().unwrap().insert(window.into(), id);
+        id
+    }
+
+    fn is_current(&self, window: &str, id: u64) -> bool {
+        self.connections.lock().unwrap().get(window) == Some(&id)
+    }
+
+    fn forget(&self, window: &str) {
+        self.connections.lock().unwrap().remove(window);
+        self.choices.lock().unwrap().remove(window);
+    }
+
+    fn choice(&self, window: &str, address: &str) -> Result<discovery::RunningServer, String> {
+        self.choices
+            .lock()
+            .unwrap()
+            .get(window)
+            .and_then(|servers| {
+                servers
+                    .iter()
+                    .find(|server| server.address.to_string() == address)
+            })
+            .cloned()
+            .ok_or_else(|| "This server is no longer listed. Refresh the server list.".into())
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -66,7 +102,10 @@ struct ServerChoice {
 }
 
 #[tauri::command]
-async fn discover_servers(state: State<'_, Server>) -> Result<Vec<ServerChoice>, String> {
+async fn discover_servers(
+    window: WebviewWindow,
+    state: State<'_, Server>,
+) -> Result<Vec<ServerChoice>, String> {
     let private = state.private.lock().unwrap().clone();
     let bundled = private.as_ref().map(|server| server.address);
     let discovered = tauri::async_runtime::spawn_blocking(move || {
@@ -91,13 +130,17 @@ async fn discover_servers(state: State<'_, Server>) -> Result<Vec<ServerChoice>,
             (server, choice)
         })
         .unzip();
-    *state.choices.lock().unwrap() = servers;
+    state
+        .choices
+        .lock()
+        .unwrap()
+        .insert(window.label().into(), servers);
     Ok(choices)
 }
 
 fn show_picker(window: &WebviewWindow, reason: &str) {
     let state = window.state::<Server>();
-    state.connection.fetch_add(1, Ordering::SeqCst);
+    state.navigate(window.label());
     if let Some(picker) = state.picker.get() {
         #[cfg(target_os = "macos")]
         let _ = window
@@ -111,13 +154,12 @@ fn show_picker(window: &WebviewWindow, reason: &str) {
 }
 
 // Return to the picker once the connected server stops answering.
-fn watch(window: WebviewWindow, ready: impl Fn() -> bool + Send + 'static) {
-    let generation = window.state::<Server>().connection.load(Ordering::SeqCst);
+fn watch(window: WebviewWindow, id: u64, ready: impl Fn() -> bool + Send + 'static) {
     std::thread::spawn(move || {
         let mut failures = 0;
         while failures < 3 {
             std::thread::sleep(Duration::from_secs(2));
-            if window.state::<Server>().connection.load(Ordering::SeqCst) != generation {
+            if !window.state::<Server>().is_current(window.label(), id) {
                 return;
             }
             failures = if ready() { 0 } else { failures + 1 };
@@ -162,14 +204,11 @@ fn open_page(
     {
         return Err("Could not authenticate btmux.".into());
     }
-    window
-        .state::<Server>()
-        .connection
-        .fetch_add(1, Ordering::SeqCst);
+    let id = window.state::<Server>().navigate(window.label());
     window
         .navigate(url)
         .map_err(|_| "Could not open btmux.".to_string())?;
-    watch(window.clone(), ready);
+    watch(window.clone(), id, ready);
     Ok(())
 }
 
@@ -179,14 +218,7 @@ async fn connect_server(
     state: State<'_, Server>,
     address: String,
 ) -> Result<(), String> {
-    let server = state
-        .choices
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|server| server.address.to_string() == address)
-        .cloned()
-        .ok_or("This server is no longer listed. Refresh the server list.")?;
+    let server = state.choice(window.label(), &address)?;
     tauri::async_runtime::spawn_blocking(move || {
         if !servers::ready(&server) {
             return Err("This server is no longer available. Refresh the server list.".into());
@@ -317,11 +349,12 @@ fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
     let capability = CapabilityBuilder::new(format!("remote-{}", allowed.len()))
         .remote(remote::url_pattern(origin).ok_or("Could not open btmux.")?)
         .local(false)
-        .window("main")
+        .window("*")
         .permission("allow-notify")
         .permission("allow-desktop-info")
         .permission("allow-switch-server")
         .permission("allow-zoom")
+        .permission("allow-new-window")
         .permission("allow-set-background")
         .permission("shell:allow-open");
     app.add_capability(capability)
@@ -617,17 +650,11 @@ async fn start_server(
 #[tauri::command]
 async fn stop_server(
     app: AppHandle,
+    window: WebviewWindow,
     state: State<'_, Server>,
     address: String,
 ) -> Result<(), String> {
-    let server = state
-        .choices
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|server| server.address.to_string() == address)
-        .cloned()
-        .ok_or("This server is no longer listed. Refresh the server list.")?;
+    let server = state.choice(window.label(), &address)?;
     if server.profile.as_deref() != Some(DESKTOP_PROFILE) {
         return Err("Only desktop servers can be stopped here.".into());
     }
@@ -773,12 +800,85 @@ fn desktop_info() -> &'static str {
 
 // Zooms the page in, out, or to actual size ("reset").
 #[tauri::command]
-fn zoom(window: WebviewWindow, state: State<'_, zoom::Zoom>, step: String) {
-    state.step(
-        &window,
-        config_dir(window.app_handle()).ok().as_deref(),
-        &step,
-    );
+fn zoom(app: AppHandle, state: State<'_, zoom::Zoom>, step: String) {
+    state.step(&app, config_dir(&app).ok().as_deref(), &step);
+}
+
+// Opens another window on the picker. Async: WebView2 deadlocks when a
+// webview is built in a sync command.
+#[tauri::command]
+async fn new_window(app: AppHandle) -> Result<(), String> {
+    open_window(&app)
+        .map(drop)
+        .map_err(|_| "Could not open a window.".to_string())
+}
+
+// Opens and focuses a window off the calling native event handler, which
+// must return before WebView2 builds it.
+fn spawn_window(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Ok(window) = open_window(&app) {
+            let _ = window.set_focus();
+        }
+    });
+}
+
+fn focused_window(app: &AppHandle) -> Option<WebviewWindow> {
+    app.webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false))
+}
+
+// A picker window, cascaded from the focused one at its size.
+fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    let id = app
+        .state::<Server>()
+        .next_window
+        .fetch_add(1, Ordering::SeqCst);
+    let label = format!("window-{id}");
+    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .title("")
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(640.0, 400.0)
+        .initialization_script(include_str!("notification.js"))
+        .initialization_script(include_str!("zoom.js"))
+        // Some webviews reset zoom on navigation.
+        .on_page_load(|window, _| window.state::<zoom::Zoom>().apply(&window))
+        // window.open opens in the default browser; the shell plugin's
+        // script takes target=_blank clicks (`shell:allow-open`).
+        .on_new_window(|url, _| {
+            if matches!(url.scheme(), "http" | "https") {
+                let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+            }
+            NewWindowResponse::Deny
+        });
+    if let Some(focused) = focused_window(app)
+        && let (Ok(scale), Ok(position), Ok(size)) = (
+            focused.scale_factor(),
+            focused.outer_position(),
+            focused.inner_size(),
+        )
+    {
+        let (position, size) = (
+            position.to_logical::<f64>(scale),
+            size.to_logical::<f64>(scale),
+        );
+        builder = builder
+            .position(position.x + 28.0, position.y + 28.0)
+            .inner_size(size.width, size.height);
+    }
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .transparent(true)
+        // Shows the window background, which pages set to their own.
+        .title_bar_style(TitleBarStyle::Transparent)
+        .background_color(PICKER_BACKGROUND)
+        .initialization_script("window.__btmuxDesktopTransparency = true;");
+    let window = builder.build()?;
+    app.state::<zoom::Zoom>().apply(&window);
+    let _ = app.state::<Server>().picker.set(window.url()?);
+    Ok(window)
 }
 
 fn unused_loopback_port() -> std::io::Result<u16> {
@@ -793,7 +893,14 @@ pub fn run() {
         NSUserDefaults::standardUserDefaults()
             .setBool_forKey(false, ns_string!("ApplePressAndHoldEnabled"));
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Another launch opens a window here instead, sharing the desktop server.
+    // Not in debug builds, which would hand off to an installed app.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        spawn_window(app)
+    }));
+    builder
         .plugin(tauri_plugin_shell::init())
         .manage(Server::default())
         .invoke_handler(tauri::generate_handler![
@@ -809,20 +916,29 @@ pub fn run() {
             notify,
             set_background,
             desktop_info,
-            zoom
+            zoom,
+            new_window
         ])
         .on_menu_event(|app, event| {
-            let Some(window) = app.get_webview_window("main") else {
-                return;
-            };
             let step = match event.id().as_ref() {
-                SWITCH_SERVER => return show_picker(&window, "switch"),
+                NEW_WINDOW => return spawn_window(app),
+                SWITCH_SERVER => {
+                    if let Some(window) = focused_window(app) {
+                        show_picker(&window, "switch");
+                    }
+                    return;
+                }
                 ZOOM_IN => "in",
                 ZOOM_OUT => "out",
                 ACTUAL_SIZE => "reset",
                 _ => return,
             };
-            zoom(window, app.state(), step.into());
+            zoom(app.clone(), app.state(), step.into());
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                window.state::<Server>().forget(window.label());
+            }
         })
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -839,6 +955,13 @@ pub fn run() {
                     })
                 };
                 if let Some(file) = submenu("File") {
+                    let new = MenuItem::with_id(
+                        app,
+                        NEW_WINDOW,
+                        "New Window",
+                        true,
+                        Some("CmdOrCtrl+N"),
+                    )?;
                     let switch = MenuItem::with_id(
                         app,
                         SWITCH_SERVER,
@@ -846,8 +969,9 @@ pub fn run() {
                         true,
                         Some("CmdOrCtrl+Shift+O"),
                     )?;
-                    file.insert(&switch, 0)?;
-                    file.insert(&PredefinedMenuItem::separator(app)?, 1)?;
+                    file.insert(&new, 0)?;
+                    file.insert(&switch, 1)?;
+                    file.insert(&PredefinedMenuItem::separator(app)?, 2)?;
                 }
                 if let Some(view) = submenu("View") {
                     let items = [
@@ -866,33 +990,7 @@ pub fn run() {
                 app.set_menu(menu)?;
             }
             app.manage(zoom::Zoom::load(&config_dir(app.handle())?));
-            let window_builder =
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .title("")
-                    .inner_size(1200.0, 800.0)
-                    .min_inner_size(640.0, 400.0)
-                    .initialization_script(include_str!("notification.js"))
-                    .initialization_script(include_str!("zoom.js"))
-                    // Some webviews reset zoom on navigation.
-                    .on_page_load(|window, _| window.state::<zoom::Zoom>().apply(&window))
-                    // window.open opens in the default browser; the shell plugin's
-                    // script takes target=_blank clicks (`shell:allow-open`).
-                    .on_new_window(|url, _| {
-                        if matches!(url.scheme(), "http" | "https") {
-                            let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
-                        }
-                        NewWindowResponse::Deny
-                    });
-            #[cfg(target_os = "macos")]
-            let window_builder = window_builder
-                .transparent(true)
-                // Shows the window background, which pages set to their own.
-                .title_bar_style(TitleBarStyle::Transparent)
-                .background_color(PICKER_BACKGROUND)
-                .initialization_script("window.__btmuxDesktopTransparency = true;");
-            let window = window_builder.build()?;
-            app.state::<zoom::Zoom>().apply(&window);
-            let _ = app.state::<Server>().picker.set(window.url()?);
+            open_window(app.handle())?;
             Ok(())
         })
         .build(tauri::generate_context!())

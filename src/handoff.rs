@@ -223,7 +223,7 @@ pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), Refusal> {
                     format!("Upgrade postponed: {error}. Run btmux upgrade to retry.")
                 }
             };
-            toast(&state, message, NotificationLevel::Attention).await;
+            toast(&state, message, NotificationLevel::Attention, true).await;
             return Err(refusal);
         }
     };
@@ -232,22 +232,26 @@ pub async fn upgrade(state: AppState, exe: PathBuf) -> Result<(), Refusal> {
     }
     *LAST_ERROR.lock().unwrap() = None;
     let message = format!("Upgrading btmux to {target}…");
-    toast(&state, message, NotificationLevel::Info).await;
+    toast(&state, message, NotificationLevel::Info, false).await;
     tokio::spawn(async move {
         // Let the reply and toast reach their clients.
         tokio::time::sleep(Duration::from_millis(200)).await;
         let error = execute(state.clone(), context, &exe).await;
         tracing::error!("in-place upgrade failed: {error}");
         let message = format!("Upgrade failed: {error}");
-        toast(&state, message, NotificationLevel::Error).await;
+        toast(&state, message, NotificationLevel::Error, false).await;
         *LAST_ERROR.lock().unwrap() = Some(error);
         IN_PROGRESS.store(false, Ordering::SeqCst);
     });
     Ok(())
 }
 
-async fn toast(state: &AppState, message: String, level: NotificationLevel) {
-    let toast = ServerMessage::Toast { message, level };
+async fn toast(state: &AppState, message: String, level: NotificationLevel, persistent: bool) {
+    let toast = ServerMessage::Toast {
+        message,
+        level,
+        persistent,
+    };
     let _ = state
         .read()
         .await

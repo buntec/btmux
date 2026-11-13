@@ -14,6 +14,7 @@ function offerOsNotifications(showToast: ReturnType<typeof useStore.getState>['s
   osNotificationsOffered = true;
   showToast('Enable desktop notifications?', 'info', {
     body: 'Get alerted when an agent needs you while btmux is in the background.',
+    persistent: true,
     action: { label: 'Enable', run: () => void Notification.requestPermission() },
   });
 }
@@ -115,7 +116,7 @@ export function useControlSocket() {
             showToast(`btmux server updated to ${msg.config.version}`, 'success', { body: `Was ${previous}` });
           }
         } else if (msg.type === 'toast') {
-          showToast(msg.message, msg.level);
+          showToast(msg.message, msg.level, { persistent: msg.persistent });
         } else if (msg.type === 'pane_notification') {
           const away = !windowAttended();
           const paneId = msg.pane_id;

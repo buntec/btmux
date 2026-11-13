@@ -148,6 +148,7 @@ pub fn spawn(state: AppState) {
                     tag.trim_start_matches('v')
                 ),
                 level: NotificationLevel::Info,
+                persistent: true,
             };
             let json = serde_json::to_string(&message).unwrap();
             // Fails only when no browser is connected; retry on a later tick.

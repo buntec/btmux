@@ -11,9 +11,10 @@ export function NotificationToasts() {
   const toast = useToast();
   useEffect(
     () =>
-      subscribeNotifications(({ message, level, body, paneId, action }) => {
+      subscribeNotifications(({ message, level, body, paneId, persistent, action }) => {
         toast({
           type: level === 'error' ? 'error' : 'info',
+          ...(persistent && { isAutoHide: false }),
           body: (
             <VStack gap={1}>
               <HStack gap={2} align="start">

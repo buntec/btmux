@@ -5,6 +5,8 @@ export interface Notification {
   level: NotificationLevel;
   body?: string;
   paneId?: string;
+  /** Stays until dismissed. */
+  persistent?: boolean;
   action?: { label: string; run: () => void };
 }
 

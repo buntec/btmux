@@ -112,7 +112,7 @@ interface AppStore {
   showToast: (
     message: string,
     level?: NotificationLevel,
-    opts?: { body?: string; paneId?: string; action?: { label: string; run: () => void } },
+    opts?: { body?: string; paneId?: string; persistent?: boolean; action?: { label: string; run: () => void } },
   ) => void;
   toggleLatex: (paneId: string) => void;
   setFileBrowserOpen: (

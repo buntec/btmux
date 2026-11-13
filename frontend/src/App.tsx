@@ -320,7 +320,9 @@ export function App() {
   const serverVersion = config?.version;
   useEffect(() => {
     if (!desktopVersionMismatch(desktopVersion, serverVersion)) return;
-    useStore.getState().showToast(`Version mismatch: app ${desktopVersion}, server ${serverVersion}`, 'attention');
+    useStore.getState().showToast(`Version mismatch: app ${desktopVersion}, server ${serverVersion}`, 'attention', {
+      persistent: true,
+    });
   }, [desktopVersion, serverVersion]);
 
   useEffect(() => {

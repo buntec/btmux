@@ -804,12 +804,24 @@ fn zoom(app: AppHandle, state: State<'_, zoom::Zoom>, step: String) {
     state.step(&app, config_dir(&app).ok().as_deref(), &step);
 }
 
-// Opens another window on the picker.
+// Opens another window on the picker. Async: WebView2 deadlocks when a
+// webview is built in a sync command.
 #[tauri::command]
-fn new_window(app: AppHandle) -> Result<(), String> {
+async fn new_window(app: AppHandle) -> Result<(), String> {
     open_window(&app)
         .map(drop)
         .map_err(|_| "Could not open a window.".to_string())
+}
+
+// Opens and focuses a window off the calling native event handler, which
+// must return before WebView2 builds it.
+fn spawn_window(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Ok(window) = open_window(&app) {
+            let _ = window.set_focus();
+        }
+    });
 }
 
 fn focused_window(app: &AppHandle) -> Option<WebviewWindow> {
@@ -886,9 +898,7 @@ pub fn run() {
     // Not in debug builds, which would hand off to an installed app.
     #[cfg(not(debug_assertions))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
-        if let Ok(window) = open_window(app) {
-            let _ = window.set_focus();
-        }
+        spawn_window(app)
     }));
     builder
         .plugin(tauri_plugin_shell::init())
@@ -911,7 +921,7 @@ pub fn run() {
         ])
         .on_menu_event(|app, event| {
             let step = match event.id().as_ref() {
-                NEW_WINDOW => return drop(open_window(app)),
+                NEW_WINDOW => return spawn_window(app),
                 SWITCH_SERVER => {
                     if let Some(window) = focused_window(app) {
                         show_picker(&window, "switch");

@@ -322,7 +322,8 @@ fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
         .permission("allow-desktop-info")
         .permission("allow-switch-server")
         .permission("allow-zoom")
-        .permission("allow-set-background");
+        .permission("allow-set-background")
+        .permission("shell:allow-open");
     app.add_capability(capability)
         .map_err(|_| "Could not open btmux.".to_string())?;
     allowed.insert(origin.to_string());
@@ -874,7 +875,8 @@ pub fn run() {
                     .initialization_script(include_str!("zoom.js"))
                     // Some webviews reset zoom on navigation.
                     .on_page_load(|window, _| window.state::<zoom::Zoom>().apply(&window))
-                    // Links (window.open, target=_blank) open in the default browser.
+                    // window.open opens in the default browser; the shell plugin's
+                    // script takes target=_blank clicks (`shell:allow-open`).
                     .on_new_window(|url, _| {
                         if matches!(url.scheme(), "http" | "https") {
                             let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "notifications",
-  "description": "allows connected btmux servers to post OS notifications, read the app version, return to the picker, zoom, and set the window background",
+  "description": "allows connected btmux servers to post OS notifications, read the app version, return to the picker, zoom, set the window background, and open target=_blank links, which the shell plugin intercepts",
   "windows": [
     "main"
   ],
@@ -17,6 +17,7 @@
     "allow-desktop-info",
     "allow-switch-server",
     "allow-zoom",
-    "allow-set-background"
+    "allow-set-background",
+    "shell:allow-open"
   ]
 }

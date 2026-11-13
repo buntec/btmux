@@ -1039,6 +1039,8 @@ pub enum ServerMessage {
     Toast {
         message: String,
         level: NotificationLevel,
+        /// Stays until dismissed.
+        persistent: bool,
     },
     PaneNotification {
         pane_id: Uuid,

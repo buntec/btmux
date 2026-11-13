@@ -43,6 +43,7 @@ import { useModalBackdrop } from './hooks/useModalBackdrop';
 import { setPageBackground } from './lib/desktopTransparency';
 import { hasShaderWallpaper } from './lib/wallpaperCatalog';
 import { desktopVersionMismatch } from './lib/desktopApp';
+import { dismissNotification } from './lib/notifications';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
 import { useVisualViewport } from './hooks/useVisualViewport';
 import { MobileKeyBar } from './components/MobileKeyBar';
@@ -307,6 +308,8 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
   );
 }
 
+const VERSION_MISMATCH_TOAST = 'version-mismatch';
+
 export function App() {
   const { send } = useControlSocket();
   const allSessions = useStore((s) => s.allSessions);
@@ -319,8 +322,14 @@ export function App() {
   const desktopVersion = useDesktopVersion();
   const serverVersion = config?.version;
   useEffect(() => {
-    if (!desktopVersionMismatch(desktopVersion, serverVersion)) return;
-    useStore.getState().showToast(`Version mismatch: app ${desktopVersion}, server ${serverVersion}`, 'attention');
+    if (!desktopVersionMismatch(desktopVersion, serverVersion)) {
+      dismissNotification(VERSION_MISMATCH_TOAST);
+      return;
+    }
+    useStore.getState().showToast(`Version mismatch: app ${desktopVersion}, server ${serverVersion}`, 'attention', {
+      persistent: true,
+      id: VERSION_MISMATCH_TOAST,
+    });
   }, [desktopVersion, serverVersion]);
 
   useEffect(() => {

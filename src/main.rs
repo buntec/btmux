@@ -917,6 +917,7 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
     let toast_json = serde_json::to_string(&ServerMessage::Toast {
         message: "Config reloaded".into(),
         level: ws::control::NotificationLevel::Info,
+        persistent: false,
     })
     .unwrap();
 

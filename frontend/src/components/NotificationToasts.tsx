@@ -9,11 +9,21 @@ import { useStore } from '../state/store';
 
 export function NotificationToasts() {
   const toast = useToast();
-  useEffect(
-    () =>
-      subscribeNotifications(({ message, level, body, paneId, action }) => {
-        toast({
+  useEffect(() => {
+    // Dismissers of shown toasts with an id; an overwrite replaces its entry.
+    const byId = new Map<string, () => void>();
+    return subscribeNotifications({
+      dismiss: (id) => byId.get(id)?.(),
+      show: ({ message, level, body, paneId, persistent, id, action }) => {
+        const dismiss: () => void = toast({
           type: level === 'error' ? 'error' : 'info',
+          ...(persistent && { isAutoHide: false }),
+          ...(id && {
+            uniqueID: id,
+            onHide: () => {
+              if (byId.get(id) === dismiss) byId.delete(id);
+            },
+          }),
           body: (
             <VStack gap={1}>
               <HStack gap={2} align="start">
@@ -30,13 +40,14 @@ export function NotificationToasts() {
             </VStack>
           ),
           endContent: action ? (
-            <Button label={action.label} variant="ghost" onClick={action.run} />
+            <Button label={action.label} variant="ghost" onClick={() => action.run(dismiss)} />
           ) : paneId ? (
             <Button label="View pane" variant="ghost" onClick={() => useStore.getState().navigateToPane(paneId)} />
           ) : undefined,
         });
-      }),
-    [toast],
-  );
+        if (id) byId.set(id, dismiss);
+      },
+    });
+  }, [toast]);
   return null;
 }

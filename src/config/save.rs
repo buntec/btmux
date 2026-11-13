@@ -9,10 +9,18 @@ use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Tab
 
 use super::{ConfigUpdate, FileConfig, ShaderLayers, ShaderValue, MAX_FONT_SIZE, MIN_FONT_SIZE};
 
-/// Merge `update` into the config file at `path` and return the written text.
-/// A symlinked file is written through the link, so a link into a dotfiles
-/// repo stays one; a read-only file (Nix, Home Manager) is an error.
-pub fn save(path: &Path, update: &ConfigUpdate) -> Result<String, String> {
+/// A merged config.toml, checked but not yet written.
+pub struct Saved {
+    path: PathBuf,
+    target: PathBuf,
+    pub text: String,
+    pub config: FileConfig,
+}
+
+/// Merge `update` into the config file at `path`. A symlinked file is written
+/// through the link, so a link into a dotfiles repo stays one; a read-only
+/// file (Nix, Home Manager) is an error.
+pub fn render(path: &Path, update: &ConfigUpdate) -> Result<Saved, String> {
     let target = target(path)?;
     let text = match std::fs::read_to_string(&target) {
         Ok(text) => text,
@@ -25,9 +33,19 @@ pub fn save(path: &Path, update: &ConfigUpdate) -> Result<String, String> {
     apply(&mut doc, update);
     let text = doc.to_string();
     // Never write a file the next reload would reject.
-    toml::from_str::<FileConfig>(&text).map_err(|e| format!("Couldn't save settings: {e}"))?;
-    write(&target, &text).map_err(|e| io_error(path, &target, &e))?;
-    Ok(text)
+    let config = toml::from_str(&text).map_err(|e| format!("Couldn't save settings: {e}"))?;
+    Ok(Saved {
+        path: path.to_path_buf(),
+        target,
+        text,
+        config,
+    })
+}
+
+impl Saved {
+    pub fn write(&self) -> Result<(), String> {
+        write(&self.target, &self.text).map_err(|e| io_error(&self.path, &self.target, &e))
+    }
 }
 
 /// The file to write: `path` with symlinks resolved.
@@ -56,10 +74,28 @@ fn is_nix(target: &Path) -> bool {
 
 /// Write beside the target and rename over it, so a reload never reads half a file.
 fn write(target: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
     let dir = target.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!(".config.toml.{}.tmp", std::process::id()));
-    let result = std::fs::write(&tmp, text)
+    let (tmp, mut file) = loop {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let tmp = dir.join(format!(".config.toml.{}.{n}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = file
+        .write_all(text.as_bytes())
+        .and_then(|()| file.sync_all())
         .and_then(|()| match std::fs::metadata(target) {
             Ok(meta) => std::fs::set_permissions(&tmp, meta.permissions()),
             Err(_) => Ok(()),
@@ -478,7 +514,7 @@ mod tests {
             ..ConfigUpdate::default()
         };
 
-        save(&link, &update).unwrap();
+        render(&link, &update).unwrap().write().unwrap();
         assert!(is_symlink(&link));
         assert_eq!(
             std::fs::read_to_string(&real).unwrap(),
@@ -486,7 +522,7 @@ mod tests {
         );
 
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o444)).unwrap();
-        let error = save(&link, &update).unwrap_err();
+        let error = render(&link, &update).err().unwrap();
         assert!(error.contains("read-only"), "{error}");
         std::fs::remove_dir_all(&dir).unwrap();
     }

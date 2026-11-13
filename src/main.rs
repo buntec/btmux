@@ -885,7 +885,12 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
     });
 }
 
+/// Held while config.toml is saved or reloaded, so a save's read, merge, write,
+/// and install aren't interleaved with another's or the watcher's.
+static CONFIG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
+    let _lock = CONFIG_LOCK.lock().await;
     // A save already loaded what it wrote.
     let text = tokio::fs::read_to_string(path).await.ok();
     {
@@ -895,12 +900,6 @@ async fn handle_config_reload(path: &std::path::Path, state: &AppState) {
         }
         mgr.set_saved_config(None);
     }
-    reload_config(path, state, "Config reloaded").await;
-}
-
-/// Load config.toml, drop session-only overrides, and broadcast the result
-/// with a toast of `message`.
-pub(crate) async fn reload_config(path: &std::path::Path, state: &AppState, message: &str) {
     let file_config = match config::load_with_colors(path).await {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -914,13 +913,52 @@ pub(crate) async fn reload_config(path: &std::path::Path, state: &AppState, mess
             return;
         }
     };
+    install_config(state, file_config, None, "Config reloaded").await;
+    tracing::info!("config reloaded from {}", path.display());
+}
 
+/// Write the session-only overrides plus `update` into config.toml at `path`
+/// and load it, which drops the overrides. Nothing is written unless the
+/// result loads, remote palettes included.
+pub(crate) async fn save_config(
+    path: &std::path::Path,
+    update: &config::ConfigUpdate,
+    state: &AppState,
+) -> Result<(), String> {
+    let _lock = CONFIG_LOCK.lock().await;
+    let overrides = state.read().await.overrides_with(update);
+    let saved = tokio::task::spawn_blocking({
+        let path = path.to_path_buf();
+        move || config::render_config(&path, &overrides)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let file_config = config::resolve_remote_colors(saved.config.clone())
+        .await
+        .map_err(|e| format!("Couldn't save settings: {e}"))?;
+    let saved = tokio::task::spawn_blocking(move || saved.write().map(|()| saved))
+        .await
+        .map_err(|e| e.to_string())??;
+    let message = format!("Saved to {}", path.display());
+    install_config(state, file_config, Some(saved.text), &message).await;
+    Ok(())
+}
+
+/// Install a loaded config.toml, dropping session-only overrides, and
+/// broadcast it with a toast of `message`. `saved` is the text a save wrote.
+async fn install_config(
+    state: &AppState,
+    file_config: config::FileConfig,
+    saved: Option<String>,
+    message: &str,
+) {
     let blocking = (
         file_config.browser.block_ads,
         file_config.browser.block_autoplay,
     );
     let json = {
         let mut mgr = state.write().await;
+        mgr.set_saved_config(saved);
         // Also drops any session-only overrides picked from the command palette.
         let client_config = mgr.set_file_config(file_config).clone();
         serde_json::to_string(&ServerMessage::Config {
@@ -940,7 +978,6 @@ pub(crate) async fn reload_config(path: &std::path::Path, state: &AppState, mess
     let _ = mgr.events().send(toast_json);
     drop(mgr);
     browser::set_blocking(blocking.0, blocking.1).await;
-    tracing::info!("config reloaded from {}", path.display());
 }
 
 #[cfg(test)]
@@ -1087,5 +1124,140 @@ mod tests {
         );
         state.write().await.kill_pane(session, pane_id);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn config_state() -> super::AppState {
+        use super::{config, Arc, RwLock, SessionManager};
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        Arc::new(RwLock::new(SessionManager::new(
+            "/bin/sh".into(),
+            config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        )))
+    }
+
+    #[tokio::test]
+    async fn concurrent_saves_keep_every_change() {
+        use super::config::ConfigUpdate;
+        let dir = std::env::temp_dir().join(format!("btmux-save-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "# mine\n").unwrap();
+        let state = config_state();
+        let updates = [
+            ConfigUpdate {
+                animations: Some(false),
+                ..ConfigUpdate::default()
+            },
+            ConfigUpdate {
+                show_pane_titles: Some(false),
+                ..ConfigUpdate::default()
+            },
+            ConfigUpdate {
+                font_size: Some(15.0),
+                ..ConfigUpdate::default()
+            },
+            ConfigUpdate {
+                scrollback: Some(5000),
+                ..ConfigUpdate::default()
+            },
+            ConfigUpdate {
+                wallpaper_opacity: Some(0.5),
+                ..ConfigUpdate::default()
+            },
+            ConfigUpdate {
+                backdrop_blur: Some(3.0),
+                ..ConfigUpdate::default()
+            },
+        ];
+        let saves = updates.iter().map(|update| {
+            let (path, state) = (path.clone(), state.clone());
+            let update = update.clone();
+            tokio::spawn(async move { super::save_config(&path, &update, &state).await })
+        });
+        for save in futures_util::future::join_all(saves).await {
+            save.unwrap().unwrap();
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        for line in [
+            "# mine",
+            "animations = false",
+            "show-pane-titles = false",
+            "font-size = 15.0",
+            "scrollback = 5000",
+            "wallpaper-opacity = 0.5",
+            "backdrop-blur = 3.0",
+        ] {
+            assert!(text.contains(line), "{line} missing from {text}");
+        }
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["config.toml"]);
+        let config = state.read().await.config().clone();
+        assert!(!config.animations && !config.show_pane_titles);
+        assert!(state.read().await.is_saved_config(&text));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn save_fails_without_writing_when_a_remote_palette_is_unavailable() {
+        use super::{config, Arc};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/dark.yml", listener.local_addr().unwrap());
+        let up = Arc::new(AtomicBool::new(false));
+        tokio::spawn({
+            let up = up.clone();
+            async move {
+                let palette = include_str!("../extras/colors/btmux-default-dark.yml");
+                loop {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0; 4096];
+                    let _ = socket.read(&mut request).await;
+                    let response = if up.load(Ordering::SeqCst) {
+                        format!(
+                            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{palette}",
+                            palette.len()
+                        )
+                    } else {
+                        "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into()
+                    };
+                    let _ = socket.write_all(response.as_bytes()).await;
+                }
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("btmux-save-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let original = format!("colors-dark = \"{url}\"\n");
+        std::fs::write(&path, &original).unwrap();
+        let state = config_state();
+        let update = config::ConfigUpdate {
+            console_level: Some("trace".into()),
+            ..config::ConfigUpdate::default()
+        };
+
+        let error = super::save_config(&path, &update, &state)
+            .await
+            .unwrap_err();
+        assert!(error.contains("503"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert!(!state.read().await.is_saved_config(&original));
+
+        up.store(true, Ordering::SeqCst);
+        super::save_config(&path, &update, &state).await.unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("console-level = \"trace\""), "{text}");
+        let config = state.read().await.config().clone();
+        assert_eq!(config.colors_dark.as_deref(), Some(url.as_str()));
+        assert!(config.config_error.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -9,7 +9,7 @@ use crate::session::NotificationLevel;
 use crate::worktree::DEFAULT_PATH as DEFAULT_WORKTREE_PATH;
 
 mod save;
-pub use save::save as save_config;
+pub use save::render as render_config;
 
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8004;
@@ -1606,7 +1606,11 @@ pub async fn load_remote_color_scheme(url: &str) -> Result<BaseTheme, String> {
 /// used by commands that only need to inspect scalar settings (such as the
 /// service installer).
 pub async fn load_with_colors(path: &std::path::Path) -> Result<FileConfig, String> {
-    let mut config = load(path)?;
+    resolve_remote_colors(load(path)?).await
+}
+
+/// Fetch the remote `colors-*` palettes `config` names.
+pub async fn resolve_remote_colors(mut config: FileConfig) -> Result<FileConfig, String> {
     if config.theme_dark.is_none() {
         if let Some(url) = config
             .colors_dark

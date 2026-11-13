@@ -801,9 +801,11 @@ the appearance, color schemes, fonts, animations, wallpapers, and shader/border 
 settings out: they're dropped on restart and by `set_file_config`, i.e. on _any_
 config-file reload. The settings dialog's Save sends `save_config`, which
 merges the overrides plus its draft into config.toml with `toml_edit`
-(`config/save.rs`, keeping comments and other settings), writing through
-symlinks and renaming a temp file over the target, then reloads it; the
-watcher skips the echo (`is_saved_config`). A read-only file, as Nix and Home
+(`config/save.rs`, keeping comments and other settings), resolves its remote
+palettes, and only then writes through symlinks, renaming a temp file over the
+target, and installs it; the watcher skips the echo (`is_saved_config`). Saves
+and reloads hold `CONFIG_LOCK` (`main.rs`) throughout, so concurrent saves
+from several tabs each keep their changes. A read-only file, as Nix and Home
 Manager install, fails with an error toast and the dialog shows its TOML to
 copy. Anything added to the editor or pickers therefore needs a field in
 `ConfigUpdate`, `ConfigUpdate::merge`, `resolve_with_overrides`, and

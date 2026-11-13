@@ -357,25 +357,14 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return Ok(());
     }
 
-    // Saving writes the session-only overrides plus `update` into config.toml and
-    // reloads it, which drops the overrides. A read-only file (Nix, Home
-    // Manager) is reported and changes nothing.
+    // A read-only file (Nix, Home Manager) is reported and changes nothing.
     if let ClientMessage::SaveConfig { update } = &cmd {
         let mut update = update.clone();
         if let Some(prefix) = update.prefix.as_mut().filter(|p| !p.trim().is_empty()) {
             *prefix = crate::config::parse_prefix(prefix)?;
         }
         let path = crate::config::config_path().ok_or("No config directory: HOME is unset")?;
-        let overrides = state.read().await.overrides_with(&update);
-        let text = tokio::task::spawn_blocking({
-            let path = path.clone();
-            move || crate::config::save_config(&path, &overrides)
-        })
-        .await
-        .map_err(|e| e.to_string())??;
-        state.write().await.set_saved_config(Some(text));
-        crate::reload_config(&path, state, &format!("Saved to {}", path.display())).await;
-        return Ok(());
+        return crate::save_config(&path, &update, state).await;
     }
 
     if let ClientMessage::ResetConfig = &cmd {

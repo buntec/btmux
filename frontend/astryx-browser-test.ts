@@ -653,12 +653,12 @@ try {
   });
   assert.equal(focusedTab, await settingsTab(), 'focus follows the selected tab');
   await page.keyboard.press('Shift+Tab');
-  // Tab walks the footer up to Apply instead of cycling tabs.
+  // Tab walks the footer up to Save instead of cycling tabs.
   await dialog.getByRole('tab', { name: 'Logging', exact: true }).click();
   await dialog.getByLabel('Console level').fill('debug');
   await dialog.getByLabel('File level').focus();
   const footer: (string | undefined)[] = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     await page.keyboard.press('Tab');
     footer.push(
       await page.evaluate(() => {
@@ -667,7 +667,7 @@ try {
       }),
     );
   }
-  assert.deepEqual(footer, ['Reset', 'Show TOML', 'Clear background', 'Close', 'Apply']);
+  assert.deepEqual(footer, ['Reset', 'Show TOML', 'Clear background', 'Close', 'Apply', 'Save']);
   assert.equal(await settingsTab(), 'Logging', 'Tab in the footer keeps the tab');
   // ArrowDown stays in the generated TOML.
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();

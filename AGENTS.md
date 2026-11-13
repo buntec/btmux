@@ -793,15 +793,23 @@ broadcasts a new `Config`. A parse error logs and **keeps the last good config**
 above the panes until the file loads, with the message in a `config-error` overlay.
 
 **Session-only overrides:** the command-palette pickers and settings appearance
-overlay send `update_config` and **never touch config.toml**. They can override
+overlay send `update_config` and don't touch config.toml. They can override
 the appearance, color schemes, fonts, animations, wallpapers, and shader/border settings.
 `SessionManager` keeps the last-loaded `FileConfig` plus an accumulated
 `ConfigUpdate` override layer, and `resolve_with_overrides` re-resolves the
 `ClientConfig` from the two on every change. The overrides are for trying
 settings out: they're dropped on restart and by `set_file_config`, i.e. on _any_
-config-file reload. Persisting a setting is the user's job, by editing
-config.toml. Anything added to the editor or pickers therefore needs a field in
-`ConfigUpdate`, `ConfigUpdate::merge`, and `resolve_with_overrides`, plus the
+config-file reload. The settings dialog's Save sends `save_config`, which
+merges the overrides plus its draft into config.toml with `toml_edit`
+(`config/save.rs`, keeping comments and other settings), resolves its remote
+palettes, and only then writes through symlinks, renaming a temp file over the
+target, and installs it; the watcher skips the echo (`is_saved_config`). Saves
+and reloads hold `CONFIG_LOCK` (`main.rs`) throughout, so concurrent saves
+from several tabs each keep their changes. A read-only file, as Nix and Home
+Manager install, fails with an error toast and the dialog shows its TOML to
+copy. Anything added to the editor or pickers therefore needs a field in
+`ConfigUpdate`, `ConfigUpdate::merge`, `resolve_with_overrides`, and
+`config/save.rs`, plus the
 generated protocol if the wire type changes.
 
 ## Asset embedding

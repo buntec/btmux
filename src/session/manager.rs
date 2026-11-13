@@ -37,8 +37,11 @@ pub struct SessionManager {
     /// re-layered onto it without re-reading the file.
     file_config: FileConfig,
     /// Session-only overrides from the settings UI and command palette, dropped
-    /// on every config-file reload. Never written to disk.
+    /// on every config-file reload. Written to disk only by `save_config`.
     overrides: ConfigUpdate,
+    has_overrides: bool,
+    /// The text `save_config` last wrote, so the watcher skips its echo.
+    saved_config: Option<String>,
     /// The system color mode a browser last reported, for `appearance = "auto"`.
     system_color_mode: ColorMode,
     /// Why config.toml was rejected; cleared when it loads.
@@ -113,6 +116,8 @@ impl SessionManager {
             cli_shell,
             file_config,
             overrides: ConfigUpdate::default(),
+            has_overrides: false,
+            saved_config: None,
             system_color_mode: ColorMode::default(),
             config_error: None,
             config,
@@ -542,6 +547,7 @@ impl SessionManager {
     pub fn set_file_config(&mut self, file_config: FileConfig) -> &ClientConfig {
         self.file_config = file_config;
         self.overrides = ConfigUpdate::default();
+        self.has_overrides = false;
         self.config_error = None;
         self.config = self.resolve();
         if self.cli_shell.is_none() {
@@ -552,11 +558,11 @@ impl SessionManager {
     }
 
     /// Apply a config change from the settings UI or command palette. It is layered
-    /// over the on-disk config in memory only — nothing is written to
-    /// config.toml, and it lasts until the next restart or config reload. To
-    /// keep a setting the user edits config.toml themselves.
+    /// over the on-disk config in memory only and lasts until the next restart
+    /// or config reload, unless the settings dialog saves it.
     pub fn apply_config_override(&mut self, update: &ConfigUpdate) -> &ClientConfig {
         self.overrides.merge(update);
+        self.has_overrides = true;
         self.config = self.resolve();
         if update.shell.is_some() && self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
@@ -569,6 +575,7 @@ impl SessionManager {
     /// from the last-loaded config file (including built-in defaults).
     pub fn reset_config_overrides(&mut self) -> &ClientConfig {
         self.overrides = ConfigUpdate::default();
+        self.has_overrides = false;
         self.config = self.resolve();
         if let Some(shell) = &self.cli_shell {
             self.shell = shell.clone();
@@ -608,8 +615,26 @@ impl SessionManager {
             self.system_color_mode,
         );
         config.config_error = self.config_error.clone();
+        config.has_overrides = self.has_overrides;
         config.cli_shell = self.cli_shell.clone();
         config
+    }
+
+    /// The session-only overrides with `update` on top: what saving writes.
+    pub fn overrides_with(&self, update: &ConfigUpdate) -> ConfigUpdate {
+        let mut overrides = self.overrides.clone();
+        overrides.merge(update);
+        overrides
+    }
+
+    /// Record (or with `None`, forget) the text `save_config` writes.
+    pub fn set_saved_config(&mut self, text: Option<String>) {
+        self.saved_config = text;
+    }
+
+    /// Whether `text` is what `save_config` last wrote, which it already loaded.
+    pub fn is_saved_config(&self, text: &str) -> bool {
+        self.saved_config.as_deref() == Some(text)
     }
 
     /// Publish the resolved theme to PTY color queries and notify programs

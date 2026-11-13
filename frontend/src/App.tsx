@@ -50,7 +50,13 @@ import { MobileKeyBar } from './components/MobileKeyBar';
 import { TOUCH_QUERY } from './lib/touch';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 
-function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
+function AppInner({
+  send,
+  request,
+}: {
+  send: (msg: ClientMessage) => void;
+  request: (msg: ClientMessage) => Promise<string | null>;
+}) {
   const touch = useMediaQuery(TOUCH_QUERY);
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
@@ -270,7 +276,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
                 }}
               />
             )}
-            {settingsOpen && config && <ConfigPage config={config} send={send} />}
+            {settingsOpen && config && <ConfigPage config={config} send={send} request={request} />}
             {/* Single Overlay. While / redirects, activeSessionId is null, so
             anchor to the last-visited session. */}
             {!settingsOpen && (
@@ -311,7 +317,7 @@ function AppInner({ send }: { send: (msg: ClientMessage) => void }) {
 const VERSION_MISMATCH_TOAST = 'version-mismatch';
 
 export function App() {
-  const { send } = useControlSocket();
+  const { send, request } = useControlSocket();
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
   const configPreview = useStore((s) => s.configPreview);
@@ -358,7 +364,7 @@ export function App() {
     <BrowserRouter>
       <ConnectionBanner />
       <NotificationToasts />
-      <AppInner send={send} />
+      <AppInner send={send} request={request} />
     </BrowserRouter>
   );
 }

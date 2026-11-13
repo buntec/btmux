@@ -45,6 +45,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 opentelemetry-proto = { version = "0.33.1", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "with-serde"] }
 prost = "0.14"
 flate2 = "1"
+toml_edit = "0.25.19"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["term"] }

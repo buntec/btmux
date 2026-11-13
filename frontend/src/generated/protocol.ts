@@ -454,7 +454,11 @@ fonts: Array<FontEntry>,
 /**
  * Why config.toml was last rejected, while it still is. Set by `SessionManager`.
  */
-config_error: string | null, };
+config_error: string | null,
+/**
+ * Whether session-only overrides are applied. Set by `SessionManager`.
+ */
+has_overrides: boolean, };
 
 // prettier-ignore
 export type ServerInfo = { version: string, profile: string | null, config_file: string | null, state_file: string | null, token_file: string | null, token_source: string, listen_address: string, executable: string | null,
@@ -599,7 +603,7 @@ export type ClientMessage = { "type": "split", session_id: string, pane_id: stri
 /**
  * Local when absent.
  */
-runtime: Runtime | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "reset_config" };
+runtime: Runtime | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "save_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
 export type ServerMessage = { "type": "agent_telemetry", panes: Array<AgentTelemetry>, removed_panes: Array<string>, replace: boolean, } | { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: NotificationLevel,

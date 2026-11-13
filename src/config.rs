@@ -8,6 +8,9 @@ use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use crate::session::NotificationLevel;
 use crate::worktree::DEFAULT_PATH as DEFAULT_WORKTREE_PATH;
 
+mod save;
+pub use save::render as render_config;
+
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8004;
 #[cfg(unix)]
@@ -1375,6 +1378,8 @@ pub struct ClientConfig {
     pub fonts: Vec<FontEntry>,
     /// Why config.toml was last rejected, while it still is. Set by `SessionManager`.
     pub config_error: Option<String>,
+    /// Whether session-only overrides are applied. Set by `SessionManager`.
+    pub has_overrides: bool,
 }
 
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
@@ -1601,7 +1606,11 @@ pub async fn load_remote_color_scheme(url: &str) -> Result<BaseTheme, String> {
 /// used by commands that only need to inspect scalar settings (such as the
 /// service installer).
 pub async fn load_with_colors(path: &std::path::Path) -> Result<FileConfig, String> {
-    let mut config = load(path)?;
+    resolve_remote_colors(load(path)?).await
+}
+
+/// Fetch the remote `colors-*` palettes `config` names.
+pub async fn resolve_remote_colors(mut config: FileConfig) -> Result<FileConfig, String> {
     if config.theme_dark.is_none() {
         if let Some(url) = config
             .colors_dark
@@ -2224,6 +2233,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
             })
             .collect(),
         config_error: None,
+        has_overrides: false,
     }
 }
 
@@ -2232,9 +2242,9 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
 /// (`SessionManager::apply_config_override`). An absent field means
 /// "leave as configured"; an empty string clears that setting.
 ///
-/// These are **never written to disk**: the config file stays whatever the user
-/// wrote, and the overrides live only until btmux restarts or the config file is
-/// reloaded (which drops them, see `SessionManager::set_file_config`).
+/// They live only until btmux restarts or the config file is reloaded (which
+/// drops them, see `SessionManager::set_file_config`), unless the settings
+/// dialog saves them to config.toml (`save_config`).
 #[derive(Deserialize, Debug, Clone, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(optional_fields))]

@@ -357,6 +357,16 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return Ok(());
     }
 
+    // A read-only file (Nix, Home Manager) is reported and changes nothing.
+    if let ClientMessage::SaveConfig { update } = &cmd {
+        let mut update = update.clone();
+        if let Some(prefix) = update.prefix.as_mut().filter(|p| !p.trim().is_empty()) {
+            *prefix = crate::config::parse_prefix(prefix)?;
+        }
+        let path = crate::config::config_path().ok_or("No config directory: HOME is unset")?;
+        return crate::save_config(&path, &update, state).await;
+    }
+
     if let ClientMessage::ResetConfig = &cmd {
         let mut mgr = state.write().await;
         let config = mgr.reset_config_overrides().clone();
@@ -423,6 +433,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::CreateWorktree { .. }
         | ClientMessage::RemoveWorktree { .. }
         | ClientMessage::UpdateConfig { .. }
+        | ClientMessage::SaveConfig { .. }
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
         | ClientMessage::KillAgent { .. }
@@ -1010,6 +1021,10 @@ pub(crate) enum ClientMessage {
         pane_id: Uuid,
     },
     UpdateConfig {
+        update: Box<crate::config::ConfigUpdate>,
+    },
+    /// Write the overrides plus `update` to config.toml.
+    SaveConfig {
         update: Box<crate::config::ConfigUpdate>,
     },
     ResetConfig,

@@ -63,6 +63,8 @@ import { prefixError } from '../lib/prefixKey';
 interface Props {
   config: ClientConfig;
   send: (message: ClientMessage) => void;
+  /** Resolves with the command's error, or null. */
+  request: (message: ClientMessage) => Promise<string | null>;
 }
 
 type Draft = {
@@ -471,7 +473,7 @@ function KeyBindField({ label, value, onChange }: { label: string; value: string
   );
 }
 
-export function ConfigPage({ config, send }: Props) {
+export function ConfigPage({ config, send, request }: Props) {
   const isNarrow = useMediaQuery(NARROW_QUERY);
   const [tab, setTab] = useState<SettingsTab>('general');
   const setConfigPreview = useStore((state) => state.setConfigPreview);
@@ -592,6 +594,18 @@ export function ConfigPage({ config, send }: Props) {
     setDirty(new Set());
     toast({ body: 'Applied until restart' });
     setSettingsOpen(false);
+  };
+
+  const [saving, setSaving] = useState(false);
+  // Writes the applied overrides plus the draft to config.toml. A read-only
+  // file (Nix, Home Manager) fails with a toast; the TOML is shown to copy.
+  const save = async () => {
+    if (prefixInvalid || fontInvalid) return;
+    setSaving(true);
+    const error = await request({ type: 'save_config', update: toConfigUpdate(draft, dirty) });
+    setSaving(false);
+    if (error) setShowToml(true);
+    else setSettingsOpen(false);
   };
 
   const reset = () => {
@@ -1028,9 +1042,16 @@ export function ConfigPage({ config, send }: Props) {
                     <Button label="Close" onClick={goBack} />
                     <Button
                       label="Apply"
-                      variant="primary"
                       onClick={apply}
                       isDisabled={dirty.size === 0 || !!prefixInvalid || !!fontInvalid}
+                    />
+                    <Button
+                      label="Save"
+                      variant="primary"
+                      tooltip="Write to config.toml"
+                      onClick={() => void save()}
+                      isLoading={saving}
+                      isDisabled={(dirty.size === 0 && !config.has_overrides) || !!prefixInvalid || !!fontInvalid}
                     />
                   </HStack>
                 </HStack>

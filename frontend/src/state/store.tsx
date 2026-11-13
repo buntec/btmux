@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { showNotification } from '../lib/notifications';
+import { type NotificationAction, showNotification } from '../lib/notifications';
 import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
@@ -112,7 +112,7 @@ interface AppStore {
   showToast: (
     message: string,
     level?: NotificationLevel,
-    opts?: { body?: string; paneId?: string; persistent?: boolean; action?: { label: string; run: () => void } },
+    opts?: { body?: string; paneId?: string; persistent?: boolean; id?: string; action?: NotificationAction },
   ) => void;
   toggleLatex: (paneId: string) => void;
   setFileBrowserOpen: (

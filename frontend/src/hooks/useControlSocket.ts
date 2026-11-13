@@ -15,7 +15,14 @@ function offerOsNotifications(showToast: ReturnType<typeof useStore.getState>['s
   showToast('Enable desktop notifications?', 'info', {
     body: 'Get alerted when an agent needs you while btmux is in the background.',
     persistent: true,
-    action: { label: 'Enable', run: () => void Notification.requestPermission() },
+    action: {
+      label: 'Enable',
+      // Request within the click; dismiss once the user decides.
+      run: (dismiss) =>
+        void Notification.requestPermission().then((permission) => {
+          if (permission !== 'default') dismiss();
+        }),
+    },
   });
 }
 

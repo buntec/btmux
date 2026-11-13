@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use tauri::WebviewWindow;
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 const FILE: &str = "zoom";
 // Chromium's levels.
@@ -28,7 +28,8 @@ impl Zoom {
         let _ = window.set_zoom(LEVELS[*self.0.lock().unwrap()]);
     }
 
-    pub fn step(&self, window: &WebviewWindow, dir: Option<&Path>, step: &str) {
+    // Shared by all windows, as one level is saved.
+    pub fn step(&self, app: &AppHandle, dir: Option<&Path>, step: &str) {
         let mut index = self.0.lock().unwrap();
         *index = match step {
             "in" => (*index + 1).min(LEVELS.len() - 1),
@@ -36,7 +37,9 @@ impl Zoom {
             _ => ACTUAL_SIZE,
         };
         let level = LEVELS[*index];
-        let _ = window.set_zoom(level);
+        for window in app.webview_windows().values() {
+            let _ = window.set_zoom(level);
+        }
         if let Some(dir) = dir {
             let _ = std::fs::create_dir_all(dir)
                 .and_then(|()| std::fs::write(dir.join(FILE), level.to_string()));

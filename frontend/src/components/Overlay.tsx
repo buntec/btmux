@@ -27,7 +27,7 @@ import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
-import { isDesktopApp, switchDesktopServer } from '../lib/desktopApp';
+import { isDesktopApp, openDesktopWindow, switchDesktopServer } from '../lib/desktopApp';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
 const KEY_SECTIONS: { title: string; actions: string[] }[] = [
@@ -129,11 +129,17 @@ function defaultMount(sessionId: string): string {
   return pane?.cwd ?? '';
 }
 
-// Desktop app only, where just macOS has a menu for it.
+// Desktop app only, where just macOS has a menu for them.
 const SWITCH_SERVER: Command = {
   id: 'switch-server',
   label: 'desktop: switch server',
   description: "Return to the desktop app's server picker.",
+  confirm: null,
+};
+const NEW_WINDOW: Command = {
+  id: 'new-desktop-window',
+  label: 'desktop: new window',
+  description: 'Open another desktop app window, on its server picker.',
   confirm: null,
 };
 
@@ -212,7 +218,11 @@ export function Overlay({ sessionId, send, config }: Props) {
   const commands = useMemo(
     () =>
       overlay?.mode === 'command'
-        ? [...overlay.commands, ...(isDesktopApp() ? [SWITCH_SERVER] : []), ...actionCommands(overlay.commands, config)]
+        ? [
+            ...overlay.commands,
+            ...(isDesktopApp() ? [SWITCH_SERVER, NEW_WINDOW] : []),
+            ...actionCommands(overlay.commands, config),
+          ]
         : [],
     [overlay, config],
   );
@@ -306,6 +316,11 @@ export function Overlay({ sessionId, send, config }: Props) {
           if (id === SWITCH_SERVER.id) {
             setOverlay(null);
             switchDesktopServer();
+            return;
+          }
+          if (id === NEW_WINDOW.id) {
+            setOverlay(null);
+            openDesktopWindow();
             return;
           }
           if (id === 'about') {

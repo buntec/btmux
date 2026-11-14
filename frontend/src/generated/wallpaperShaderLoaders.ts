@@ -28,6 +28,7 @@ export const WALLPAPER_SHADER_LOADERS = {
   'reaction-diffusion': () => import('shaders/core/ReactionDiffusion'),
   smoke: () => import('shaders/core/Smoke'),
   'smoke-flow': () => import('shaders/core/SmokeFlow'),
+  aquarium: () => import('../shaders/Aquarium'),
   ascii: () => import('shaders/core/Ascii'),
   chalkboard: () => import('shaders/core/Chalkboard'),
   'chromatic-aberration': () => import('shaders/core/ChromaticAberration'),

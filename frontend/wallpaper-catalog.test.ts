@@ -16,7 +16,7 @@ import { WALLPAPER_SHADER_LOADERS } from './src/generated/wallpaperShaderLoaders
 const aurora = findWallpaperShader('aurora')!;
 
 test('catalog contains native generators and effects and rejects unknown IDs', () => {
-  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'generator').length).toBe(29);
+  expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'generator').length).toBe(30);
   expect(WALLPAPER_SHADERS.filter((shader) => shader.kind === 'effect').length).toBe(80);
   // Every effect appears in one of the layer picker's sections.
   expect(

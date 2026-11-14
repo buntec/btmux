@@ -536,7 +536,18 @@ try {
     Number(await first.getByRole('slider', { name: 'Seed', exact: true }).getAttribute('aria-valuenow')),
     defaultSeed,
   );
-  await first.getByRole('textbox', { name: 'Color A', exact: true }).fill('#abcdef');
+  const colorA = first.getByRole('textbox', { name: 'Color A value', exact: true });
+  const pickColorA = first.getByLabel('Pick Color A', { exact: true });
+  // The swatch picks RGB and keeps alpha, even below one byte.
+  await colorA.fill('rgb(255 0 0 / 0.001)');
+  assert.equal(await pickColorA.inputValue(), '#ff0000');
+  await pickColorA.fill('#123456');
+  assert.equal(await colorA.inputValue(), 'rgb(18 52 86 / 0.001)');
+  assert.equal((await preview())[0].params['color-a'], 'rgb(18 52 86 / 0.001)');
+  await colorA.fill('transparent');
+  await pickColorA.fill('#123456');
+  assert.equal(await colorA.inputValue(), '#123456', 'a fully transparent color must become opaque');
+  await colorA.fill('#abcdef');
   assert(
     await first.getByRole('slider', { name: 'Seed', exact: true }).evaluate((seed) => {
       const button = [...seed.closest('[role="group"]')!.querySelectorAll('button')].find(
@@ -550,7 +561,7 @@ try {
   await page.waitForFunction(
     () => (window as any).shaderStore.getState().configPreview.wallpaper_shaders[0].params.seed !== undefined,
   );
-  assert.notEqual(await first.getByRole('textbox', { name: 'Color A', exact: true }).inputValue(), '#abcdef');
+  assert.notEqual(await colorA.inputValue(), '#abcdef');
   assert.equal(
     await page.evaluate(() => (window as any).shaderStore.getState().config.wallpaper_shaders[0].params.seed),
     17,

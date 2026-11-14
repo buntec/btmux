@@ -1,18 +1,32 @@
-// A pixel-art fish tank. Plain TypeScript with only erasable syntax, so
-// scripts/sync-shaders.mjs can import it in Node.
+// A pixel-art fish tank. scripts/sync-shaders.mjs imports it, so it imports only shaders/std.
 import { ctx, defineShader, transformColor, wgsl } from 'shaders/std';
 
-/** An sRGB hex color as a linear `vec3f` literal. */
+/**
+ * An sRGB hex color as a linear `vec3f` literal, with the exact sRGB curve as the renderer's
+ * `transformColor` uses (not called here: its color space is set when the renderer starts).
+ */
 function linear(hex: string): string {
-  const channels = [1, 3, 5].map((i) => (parseInt(hex.slice(i, i + 2), 16) / 255) ** 2.2);
-  return `vec3f(${channels.map((c) => c.toFixed(4)).join(', ')})`;
+  const channels = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return `vec3f(${channels.map((c) => c.toFixed(5)).join(', ')})`;
 }
 
 /** A pseudo-random value in [0, 1) from an f32 expression and the seed (Hoskins' hash11). */
 const hash = (x: string) => {
   const p = `fract((${x}) * 0.1031 + seed * 0.0713)`;
-  return `fract(2.0 * pow(${p} * (${p} + 33.33), 2.0))`;
+  const q = `(${p} * (${p} + 33.33))`;
+  return `fract(2.0 * ${q} * ${q})`;
 };
+
+/** Draws straight-alpha `rgb` with alpha `a` over `color`/`alpha`. */
+const over = (rgb: string, a: string) => `{
+      let srcA = ${a};
+      let outA = srcA + alpha * (1.0 - srcA);
+      color = (${rgb} * srcA + color * alpha * (1.0 - srcA)) / max(outA, 0.0001);
+      alpha = outA;
+    }`;
 
 /** The top row of the sand at art-pixel column `x`. */
 const sandTop = (x: string) =>
@@ -30,13 +44,15 @@ const SPECIES = [
 ] as const;
 
 const body = `
-  // Shrink cells, never stretch one axis, to keep at least 32x24 of them.
-  let cellSize = min(max(pixelSize, 1.0), min(screen.x / 32.0, screen.y / 24.0));
-  let gridSize = floor(screen / cellSize + 0.001);
-  let cell = floor(uv * gridSize);
+  // Square cells of whole device pixels, shrunk to keep at least 32x24 of them; the last
+  // column and row may be partial.
+  let dpr = viewport.x / max(screen.x, 1.0);
+  let logicalCell = min(max(pixelSize, 1.0), min(screen.x / 32.0, screen.y / 24.0));
+  let cellSize = max(1.0, round(logicalCell * dpr));
+  let cell = floor(uv * viewport / cellSize);
   let pc = cell + 0.5;
-  let W = gridSize.x;
-  let H = gridSize.y;
+  let W = ceil(viewport.x / cellSize);
+  let H = ceil(viewport.y / cellSize);
   let depth = pc.y / H;
 
   var bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
@@ -45,6 +61,7 @@ const body = `
   // Water in dithered bands.
   let band = clamp(floor(depth * 7.0 + dither + 0.5) / 7.0, 0.0, 1.0);
   var color = mix(waterTop.rgb, waterBottom.rgb, band);
+  var alpha = mix(waterTop.a, waterBottom.a, band);
 
   // Light rays from the surface.
   let slant = pc.x + pc.y * 0.55;
@@ -58,6 +75,7 @@ const body = `
   let floorY = ${sandTop('cell.x')};
   if (cell.y >= floorY) {
     color = sand.rgb;
+    alpha = sand.a;
     let grain = ${hash('cell.x * 1.37 + cell.y * 57.1')};
     if (cell.y == floorY) {
       color = sand.rgb * 1.25;
@@ -79,6 +97,9 @@ const body = `
     let fk = f32(k);
     let rx = floor(W * (0.1 + 0.8 * ${hash('fk * 7.3 + 41.0')}));
     let rw = round(6.0 + 9.0 * ${hash('fk * 3.7 + 43.0')});
+    if (abs(pc.x - rx - 0.5) > rw) {
+      continue;
+    }
     let rh = round(rw * (0.55 + 0.4 * ${hash('fk * 5.1 + 47.0')}));
     let rbase = ${sandTop('rx')} + 2.0;
     let q = vec2f((pc.x - rx - 0.5) / rw, (pc.y - rbase) / rh);
@@ -86,6 +107,7 @@ const body = `
       let light = dot(normalize(q + vec2f(0.0001)), vec2f(-0.6, -0.8));
       let tone = floor(clamp(light * 0.5 + 0.5 + dither * 0.3, 0.0, 0.999) * 3.0);
       color = mix(vec3f(0.06, 0.07, 0.09), vec3f(0.30, 0.31, 0.36), tone / 2.0);
+      alpha = 1.0;
       if (dot(q, q) > 0.75 && q.y > -0.95) {
         color = vec3f(0.04, 0.05, 0.07);
       }
@@ -96,6 +118,10 @@ const body = `
   for (var k = 0u; k < u32(plants); k = k + 1u) {
     let fk = f32(k);
     let px0 = floor(W * ${hash('fk * 3.1 + 1.0')});
+    // Sway and leaves reach 3 cells each.
+    if (abs(pc.x - px0 - 0.5) > 6.0) {
+      continue;
+    }
     let tall = floor(H * (0.2 + 0.4 * ${hash('fk * 5.7 + 2.0')}));
     let pbase = ${sandTop('px0')} + 1.0;
     let t = (pbase - pc.y) / tall;
@@ -108,9 +134,9 @@ const body = `
       let kind = ${hash('fk * 9.3 + 3.0')};
       let green = select(plant.rgb, vec3f(plant.r * 1.4, plant.g * 1.1, plant.b * 0.5), kind > 0.6);
       if (dx == 0.0) {
-        color = green * 0.75;
+        ${over('green * 0.75', 'plant.a')}
       } else if (leaf < 3.0 && dx * side > 0.0 && dx * side <= 3.0 - leaf && t < 0.97) {
-        color = select(green, green * 1.25, dx * side == 1.0);
+        ${over('select(green, green * 1.25, dx * side == 1.0)', 'plant.a')}
       }
     }
   }
@@ -126,17 +152,21 @@ const body = `
     let L = round(3.0 + 3.0 * size);
     let Hh = round(L * (0.4 + 0.25 * ${hash('fi * 2.71 + 13.0')}));
     let tailLength = round(L * 0.6) + 1.0;
+    let laneTop = surfaceY + 4.0 + Hh;
+    let laneBottom = H - sandRows - 4.0 - Hh;
+    let fy = round(mix(laneTop, max(laneTop, laneBottom), ${hash('fi * 6.07 + 23.0')}) + sin(time * 0.6 + fi * 2.3) * 2.0);
+    let ly = pc.y - fy;
+    // The top fin's reach, or the tail's at its widest and fully flapped.
+    if (abs(ly) > max(Hh + 1.6, tailLength * 1.05 + 1.0)) {
+      continue;
+    }
     let span = W + 4.0 * L + 8.0;
     let pace = (5.0 + 9.0 * ${hash('fi * 3.33 + 17.0')}) / size;
     let phase = fract(time * pace / (2.0 * span) + ${hash('fi * 4.79 + 19.0')});
     let heading = select(-1.0, 1.0, phase < 0.5);
     let fx = round(-2.0 * L - 4.0 + (1.0 - abs(phase * 2.0 - 1.0)) * span);
-    let laneTop = surfaceY + 4.0 + Hh;
-    let laneBottom = H - sandRows - 4.0 - Hh;
-    let fy = round(mix(laneTop, max(laneTop, laneBottom), ${hash('fi * 6.07 + 23.0')}) + sin(time * 0.6 + fi * 2.3) * 2.0);
     let lx = (pc.x - fx) * heading;
-    let ly = pc.y - fy;
-    if (abs(ly) > Hh + 3.0 || lx < -L - tailLength - 1.0 || lx > L + 1.0) {
+    if (lx < -L - tailLength - 1.0 || lx > L + 1.0) {
       continue;
     }
     let species = u32(floor(${hash('fi * 7.77 + 29.0')} * ${SPECIES.length}.0)) % ${SPECIES.length}u;
@@ -171,10 +201,13 @@ const body = `
         c = vec3f(0.9);
       }
       color = c;
+      alpha = 1.0;
     } else if (tail || finTop) {
       color = select(skin * 0.6, accent * 0.75, patterns[species] == 2u);
+      alpha = 1.0;
     } else if (outer <= 1.0 && lx > -L) {
       color = skin * 0.3;
+      alpha = 1.0;
     }
   }
 
@@ -182,6 +215,10 @@ const body = `
   for (var b = 0u; b < u32(bubbles); b = b + 1u) {
     let fb = f32(b);
     let bx = floor(W * (0.08 + 0.84 * ${hash('fb * 11.1 + 31.0')}));
+    // Bubbles wobble a cell and have a radius of up to 3.
+    if (abs(pc.x - bx - 0.5) > 5.0) {
+      continue;
+    }
     let bbase = ${sandTop('bx')} - 1.0;
     let height = bbase - surfaceY;
     for (var j = 0u; j < 8u; j = j + 1u) {
@@ -195,11 +232,12 @@ const body = `
       let radius = round(progress * 2.2 * (0.5 + ${hash('fj * 3.7 + fb + 43.0')}));
       let d = length(pc - center);
       if (radius < 1.0 && d < 0.5) {
-        color = mix(color, vec3f(0.85, 0.95, 1.0), 0.7);
+        ${over('vec3f(0.85, 0.95, 1.0)', '0.7')}
       } else if (radius >= 1.0 && abs(d - radius) < 0.5) {
-        color = mix(color, vec3f(0.85, 0.95, 1.0), 0.6);
+        ${over('vec3f(0.85, 0.95, 1.0)', '0.6')}
       } else if (radius >= 2.0 && all(pc - center == vec2f(-1.0, -1.0))) {
         color = vec3f(1.0);
+        alpha = 1.0;
       }
     }
   }
@@ -208,11 +246,13 @@ const body = `
   let wave = surfaceY + round(sin(pc.x * 0.21 + time * 1.4) * 0.8 + sin(pc.x * 0.09 - time * 0.9) * 0.7);
   if (cell.y < wave) {
     color = mix(waterTop.rgb, vec3f(0.75, 0.9, 1.0), 0.15);
+    alpha = waterTop.a;
   } else if (cell.y == wave) {
     color = mix(waterTop.rgb, vec3f(0.9, 0.97, 1.0), 0.45);
+    alpha = mix(waterTop.a, 1.0, 0.45);
   }
 
-  return vec4f(color, 1.0);
+  return vec4f(color, alpha);
 `;
 
 export const componentDefinition = defineShader({

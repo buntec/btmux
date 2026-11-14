@@ -763,9 +763,9 @@ parameter changes may restart simulations. It adds runtime FPS, resolution, paus
 and cursor controls. No terminal post-processing. `wallpaperCatalog.ts` resolves IDs and
 kebab-case parameters. `just sync-shaders` regenerates parameter metadata and lazy loaders
 from the pinned package (the `generators`/`effects` lists in `scripts/sync-shaders.mjs`)
-and btmux's own shaders (its `local` list), `defineShader` definitions with a raw `wgsl`
-body in `frontend/src/shaders` (e.g. the pixel-art `Aquarium`). The script imports them in
-Node, so they use only erasable TypeScript and import only `shaders/std`.
+and btmux's own shaders (its `local` set, listed among them), `defineShader` definitions
+with a raw `wgsl` body in `frontend/src/shaders` (e.g. the pixel-art `Aquarium`). The script
+runs under Bun and imports them, so they import only `shaders/std`.
 `just test-frontend` checks that metadata is current. The session-only override replaces
 the whole `wallpaper_shaders` stack. GPU failure leaves the image or the theme background visible.
 Core rendering has no telemetry collector.

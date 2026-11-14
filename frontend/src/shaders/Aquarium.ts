@@ -30,8 +30,9 @@ const SPECIES = [
 ] as const;
 
 const body = `
-  let cellSize = max(pixelSize, 1.0);
-  let gridSize = max(floor(screen / cellSize), vec2f(32.0, 24.0));
+  // Shrink cells, never stretch one axis, to keep at least 32x24 of them.
+  let cellSize = min(max(pixelSize, 1.0), min(screen.x / 32.0, screen.y / 24.0));
+  let gridSize = floor(screen / cellSize + 0.001);
   let cell = floor(uv * gridSize);
   let pc = cell + 0.5;
   let W = gridSize.x;

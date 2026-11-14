@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@astryxdesign/core/Button';
+import { InputGroup, InputGroupText } from '@astryxdesign/core/InputGroup';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { NumberInput } from '@astryxdesign/core/NumberInput';
 import { Selector } from '@astryxdesign/core/Selector';
@@ -17,6 +18,7 @@ import {
   type WallpaperParameter,
   type WallpaperShader,
 } from '../lib/wallpaperCatalog';
+import { ColorSwatch } from './ColorSwatch';
 
 function ParameterText({
   param,
@@ -46,19 +48,43 @@ function ParameterText({
       setError(true);
     }
   };
-  const props = {
-    label: param.label,
-    description: param.description,
-    value: text,
-    onChange: change,
-    status: error
-      ? {
-          type: 'error' as const,
-          message: param.kind === 'json' ? 'Enter a valid parameter as JSON.' : 'Enter a valid color.',
-        }
-      : undefined,
-  };
-  return param.kind === 'json' ? <TextArea {...props} /> : <TextInput {...props} />;
+  const status = error
+    ? {
+        type: 'error' as const,
+        message: param.kind === 'json' ? 'Enter a valid parameter as JSON.' : 'Enter a valid color.',
+      }
+    : undefined;
+  if (param.kind === 'color')
+    return (
+      <InputGroup label={param.label} description={param.description} status={status}>
+        <InputGroupText>
+          <ColorSwatch label={`Pick ${param.label}`} value={text} onChange={change} />
+        </InputGroupText>
+        <TextInput label="value" value={text} onChange={change} />
+      </InputGroup>
+    );
+  const stops = param.name === 'stops' && Array.isArray(value) ? value : [];
+  return (
+    <VStack gap={2}>
+      <TextArea label={param.label} description={param.description} value={text} onChange={change} status={status} />
+      {stops.length > 0 && (
+        <HStack gap={2} wrap="wrap">
+          {stops.map((stop, index) =>
+            stop && typeof stop === 'object' && !Array.isArray(stop) && typeof stop.color === 'string' ? (
+              <ColorSwatch
+                key={index}
+                label={`Pick ${param.label} stop ${index + 1}`}
+                value={stop.color}
+                onChange={(color) =>
+                  onChange(stops.map((stop, i) => (i === index ? { ...(stop as object), color } : stop)))
+                }
+              />
+            ) : null,
+          )}
+        </HStack>
+      )}
+    </VStack>
+  );
 }
 
 export function ShaderParameterFields({

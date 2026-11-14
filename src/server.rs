@@ -1289,6 +1289,25 @@ mod pane_notification_tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
 
+        // A 304 carries the same Vary as the 200 it revalidates (RFC 9110 15.4.5).
+        let gzip = (header::ACCEPT_ENCODING, "gzip");
+        let response = app
+            .clone()
+            .oneshot(get("/", std::slice::from_ref(&gzip)))
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        let vary: Vec<_> = response.headers().get_all(header::VARY).iter().collect();
+        assert_eq!(vary, ["accept-encoding"]);
+        let response = app
+            .clone()
+            .oneshot(get("/", &[gzip, (header::IF_NONE_MATCH, &etag)]))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        let vary_304: Vec<_> = response.headers().get_all(header::VARY).iter().collect();
+        assert_eq!(vary_304, vary);
+
         // A client-side route, or an asset an older index named, gets index.html.
         let response = app
             .oneshot(get(
@@ -2018,11 +2037,14 @@ fn serve(path: &str, headers: &HeaderMap) -> Response {
         },
     };
     let mime = mime_guess::from_path(path).first_or_octet_stream();
+    // Set here, not left to the compression layer, which skips empty 304s.
+    let vary = (header::VARY, "accept-encoding");
     if path.starts_with("assets/") {
         return (
             [
                 (header::CONTENT_TYPE, mime.as_ref()),
                 (header::CACHE_CONTROL, IMMUTABLE),
+                vary,
             ],
             Body::from(file.data),
         )
@@ -2047,6 +2069,7 @@ fn serve(path: &str, headers: &HeaderMap) -> Response {
     let cache = [
         (header::CACHE_CONTROL, "no-cache"),
         (header::ETAG, etag.as_str()),
+        vary,
     ];
     if fresh {
         return (StatusCode::NOT_MODIFIED, cache).into_response();

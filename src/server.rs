@@ -155,10 +155,17 @@ pub fn create_app(state: AppState) -> Router {
         .merge(crate::telemetry::routes())
         .merge(crate::agent_limits::routes())
         .nest_service("/mcp", crate::mcp::mcp_service(state.clone()))
-        .route("/", get(|| async { serve("index.html") }))
+        .route(
+            "/",
+            get(|headers: HeaderMap| async move { serve("index.html", &headers) })
+                .layer(asset_compression()),
+        )
         .route(
             "/{*path}",
-            get(|Path(path): Path<String>| async move { serve(&path) }),
+            get(|Path(path): Path<String>, headers: HeaderMap| async move {
+                serve(&path, &headers)
+            })
+            .layer(asset_compression()),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -1230,6 +1237,90 @@ mod pane_notification_tests {
     }
 
     #[tokio::test]
+    async fn assets_are_cached_and_compressed() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        let get = |uri: &str, headers: &[(header::HeaderName, &str)]| {
+            let mut request = Request::get(uri);
+            for (name, value) in headers {
+                request = request.header(name, *value);
+            }
+            request.body(Body::empty()).unwrap()
+        };
+
+        let asset = Assets::iter()
+            .find(|p| p.starts_with("assets/") && p.ends_with(".js"))
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(get(
+                &format!("/{asset}"),
+                &[(header::ACCEPT_ENCODING, "gzip")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], IMMUTABLE);
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+
+        let response = app.clone().oneshot(get("/", &[])).await.unwrap();
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
+        let etag = response.headers()[header::ETAG]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(etag.starts_with("W/\""));
+        let response = app
+            .clone()
+            .oneshot(get("/", &[(header::IF_NONE_MATCH, &etag)]))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+
+        // A 304 carries the same Vary as the 200 it revalidates (RFC 9110 15.4.5).
+        let gzip = (header::ACCEPT_ENCODING, "gzip");
+        let response = app
+            .clone()
+            .oneshot(get("/", std::slice::from_ref(&gzip)))
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        let vary: Vec<_> = response.headers().get_all(header::VARY).iter().collect();
+        assert_eq!(vary, ["accept-encoding"]);
+        let response = app
+            .clone()
+            .oneshot(get("/", &[gzip, (header::IF_NONE_MATCH, &etag)]))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        let vary_304: Vec<_> = response.headers().get_all(header::VARY).iter().collect();
+        assert_eq!(vary_304, vary);
+
+        // A client-side route, or an asset an older index named, gets index.html.
+        let response = app
+            .oneshot(get(
+                "/assets/gone-1234.js",
+                &[(header::IF_NONE_MATCH, &etag)],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+    }
+
+    #[tokio::test]
     async fn paste_image_saves_a_private_file() {
         use axum::http::Request;
         use tower::ServiceExt;
@@ -1919,22 +2010,74 @@ async fn serve_wallpaper(Query(query): Query<WallpaperQuery>) -> Response {
     crate::wallpaper::serve(&query.source).await
 }
 
-fn serve(path: &str) -> Response {
-    match Assets::get(path) {
-        Some(file) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            (
-                [(header::CONTENT_TYPE, mime.as_ref())],
-                Body::from(file.data),
-            )
-                .into_response()
-        }
+/// Compression for embedded assets only: applied app-wide it would also hold
+/// back streamed responses (MCP, widget long polls) in encoder buffers.
+fn asset_compression() -> tower_http::compression::CompressionLayer<
+    tower_http::compression::predicate::And<
+        tower_http::compression::predicate::DefaultPredicate,
+        tower_http::compression::predicate::NotForContentType,
+    >,
+> {
+    use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
+    // woff2 is already compressed.
+    tower_http::compression::CompressionLayer::new()
+        .compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/woff2")))
+}
+
+/// Vite content-hashes everything under `assets/`. Behind auth, so `private`.
+const IMMUTABLE: &str = "private, max-age=31536000, immutable";
+
+fn serve(path: &str, headers: &HeaderMap) -> Response {
+    let (path, file) = match Assets::get(path) {
+        Some(file) => (path, file),
         // Fall back to index.html for client-side routing
         None => match Assets::get("index.html") {
-            Some(file) => {
-                ([(header::CONTENT_TYPE, "text/html")], Body::from(file.data)).into_response()
-            }
-            None => StatusCode::NOT_FOUND.into_response(),
+            Some(file) => ("index.html", file),
+            None => return StatusCode::NOT_FOUND.into_response(),
         },
+    };
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    // Set here, not left to the compression layer, which skips empty 304s.
+    let vary = (header::VARY, "accept-encoding");
+    if path.starts_with("assets/") {
+        return (
+            [
+                (header::CONTENT_TYPE, mime.as_ref()),
+                (header::CACHE_CONTROL, IMMUTABLE),
+                vary,
+            ],
+            Body::from(file.data),
+        )
+            .into_response();
     }
+    // Other files keep their names across versions, so they revalidate.
+    // Weak, since compression changes the bytes.
+    let hash: String = file.metadata.sha256_hash()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let opaque = format!("\"{hash}\"");
+    let etag = format!("W/{opaque}");
+    let fresh = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| {
+            v.split(',')
+                .map(str::trim)
+                .any(|tag| tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == opaque)
+        });
+    let cache = [
+        (header::CACHE_CONTROL, "no-cache"),
+        (header::ETAG, etag.as_str()),
+        vary,
+    ];
+    if fresh {
+        return (StatusCode::NOT_MODIFIED, cache).into_response();
+    }
+    (
+        cache,
+        [(header::CONTENT_TYPE, mime.as_ref())],
+        Body::from(file.data),
+    )
+        .into_response()
 }

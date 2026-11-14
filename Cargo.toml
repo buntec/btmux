@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
-shlex = "1.3"
+shlex = "2.0"
 tokio = { version = "1", features = ["full"] }
 portable-pty = "0.9"
 uuid = { version = "1", features = ["v4", "serde"] }

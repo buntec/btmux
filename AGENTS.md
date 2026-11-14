@@ -825,6 +825,9 @@ generated protocol if the wire type changes.
 `server.rs` uses `rust_embed` to compile `frontend/dist` into the binary at
 build time. The binary serves the frontend from memory, so it works from any
 working directory — no runtime dependency on the `frontend/dist` folder.
+Vite's content-hashed `assets/` are served `immutable`; other files `no-cache`
+with an ETag. Only these routes are compressed (gzip, Brotli; not woff2), since
+compressing streamed responses would hold them back.
 `ws/nvim.rs` embeds the Neovim plugin (`extras/nvim`) the same way and unpacks
 it beside the Neovim socket each time it starts the built-in Neovim.
 

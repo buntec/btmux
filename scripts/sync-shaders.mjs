@@ -144,7 +144,11 @@ for (const name of [...generators, ...effects]) {
   const { componentDefinition: definition } = await import(
     pathToFileURL(modulePath(specifier(name)))
   );
-  const params = Object.entries(definition.props).map(([name, prop]) => {
+  // Local props without `ui` are set by the renderer, not by config.
+  const props = Object.entries(definition.props).filter(
+    ([, prop]) => !local.has(name) || prop.ui,
+  );
+  const params = props.map(([name, prop]) => {
     const ui = prop.ui ?? {};
     const value = prop.default;
     const kind =

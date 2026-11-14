@@ -45,9 +45,11 @@ const SPECIES = [
 
 const body = `
   // Square cells of whole device pixels, shrunk to keep at least 32x24 of them; the last
-  // column and row may be partial.
-  let dpr = viewport.x / max(screen.x, 1.0);
-  let logicalCell = min(max(pixelSize, 1.0), min(screen.x / 32.0, screen.y / 24.0));
+  // column and row may be partial. logicalViewportSize is CSS pixels times the device pixel
+  // ratio, so btmux supplies the CSS width.
+  let dpr = viewport.x / select(screen.x, cssWidth, cssWidth > 0.0);
+  let css = viewport / dpr;
+  let logicalCell = min(max(pixelSize, 1.0), min(css.x / 32.0, css.y / 24.0));
   let cellSize = max(1.0, round(logicalCell * dpr));
   let cell = floor(uv * viewport / cellSize);
   let pc = cell + 0.5;
@@ -268,7 +270,7 @@ export const componentDefinition = defineShader({
     },
     pixelSize: {
       default: 6,
-      description: 'Size of one art pixel in screen pixels',
+      description: 'Size of one art pixel in CSS pixels',
       ui: { type: 'range', min: 2, max: 16, step: 1, label: 'Pixel Size' },
     },
     fish: {
@@ -285,6 +287,10 @@ export const componentDefinition = defineShader({
       default: 2,
       description: 'Number of bubble streams',
       ui: { type: 'range', min: 0, max: 6, step: 1, label: 'Bubbles' },
+    },
+    cssWidth: {
+      default: 0,
+      description: 'Canvas width in CSS pixels, set by the renderer (0: unknown)',
     },
     seed: {
       default: 0,

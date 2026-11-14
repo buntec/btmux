@@ -765,7 +765,9 @@ kebab-case parameters. `just sync-shaders` regenerates parameter metadata and la
 from the pinned package (the `generators`/`effects` lists in `scripts/sync-shaders.mjs`)
 and btmux's own shaders (its `local` set, listed among them), `defineShader` definitions
 with a raw `wgsl` body in `frontend/src/shaders` (e.g. the pixel-art `Aquarium`). The script
-runs under Bun and imports them, so they import only `shaders/std`.
+runs under Bun and imports them, so they import only `shaders/std`. Their props without `ui`
+aren't config parameters: the renderer sets `cssWidth`, the canvas width in CSS pixels, since
+core's `logicalViewportSize` is that size times the capped device pixel ratio.
 `just test-frontend` checks that metadata is current. The session-only override replaces
 the whole `wallpaper_shaders` stack. GPU failure leaves the image or the theme background visible.
 Core rendering has no telemetry collector.

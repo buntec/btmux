@@ -25,7 +25,7 @@ export const WALLPAPER_SHADER_DEFINITIONS = [
         name: 'pixelSize',
         key: 'pixel-size',
         label: 'Pixel Size',
-        description: 'Size of one art pixel in screen pixels',
+        description: 'Size of one art pixel in CSS pixels',
         kind: 'number',
         default: 6,
         min: 2,

@@ -97,6 +97,78 @@ try {
     assert.equal(results.startupAlpha, 0, 'the removed Checkerboard must not remain beneath Invert after startup');
     assert(results.weaveChanged, 'Film Stock Gate Weave must animate over a static generator');
     console.log('PASS shader changes during GPU initialization and callback-driven animation');
+
+    // Aquarium's pixel size is in CSS pixels at any device pixel ratio and resolution.
+    for (const [deviceScaleFactor, resolution] of [
+      [1, 1],
+      [2, 1],
+      [2, 0.5],
+    ]) {
+      const context = await browser.newContext({ deviceScaleFactor });
+      try {
+        const page = await context.newPage();
+        await page.goto(process.env.BTMUX_TEST_URL ?? 'http://localhost:5173');
+        const cell = await page.evaluate(async (resolution) => {
+          const { createWallpaperRenderer } = await import('/src/lib/wallpaperRenderer.ts' as string);
+          const { createShaderLayer } = await import('/src/lib/wallpaperCatalog.ts' as string);
+          const canvas = document.createElement('canvas');
+          canvas.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:300px';
+          document.body.append(canvas);
+          const params = { 'pixel-size': 6, fish: 0, plants: 0, bubbles: 0, 'water-top': '#ffffff', 'water-bottom': '#000000' };
+          const renderer = createWallpaperRenderer(
+            canvas,
+            {
+              image: null,
+              layers: [{ ...createShaderLayer('aquarium'), params }],
+              speed: 1,
+              fps: 20,
+              resolution,
+              animated: false,
+              paused: false,
+              followsMouseCursor: false,
+              followsKeyboardInput: false,
+            },
+            () => {},
+          );
+          try {
+            await renderer.initialize();
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const image = new Image();
+            image.src = canvas.toDataURL();
+            await image.decode();
+            const copy = document.createElement('canvas');
+            copy.width = image.width;
+            copy.height = image.height;
+            const context = copy.getContext('2d')!;
+            context.drawImage(image, 0, 0);
+            const pixels = new Uint32Array(context.getImageData(0, 0, copy.width, copy.height).data.buffer);
+            // The narrowest run of one color, ignoring each row's partial last column.
+            let narrowest = Infinity;
+            for (let y = 0; y < copy.height; y++) {
+              let start = 0;
+              for (let x = 1; x < copy.width; x++) {
+                if (pixels[y * copy.width + x] === pixels[y * copy.width + x - 1]) continue;
+                narrowest = Math.min(narrowest, x - start);
+                start = x;
+              }
+            }
+            return { narrowest, width: copy.width };
+          } finally {
+            renderer.dispose();
+            canvas.remove();
+          }
+        }, resolution);
+        assert.equal(cell.width, 400 * deviceScaleFactor * resolution, 'the canvas must use the requested pixel ratio');
+        assert.equal(
+          cell.narrowest,
+          6 * deviceScaleFactor * resolution,
+          `Aquarium cells must be 6 CSS pixels at DPR ${deviceScaleFactor} and resolution ${resolution}`,
+        );
+      } finally {
+        await context.close();
+      }
+    }
+    console.log('PASS Aquarium pixel size in CSS pixels across device pixel ratios');
   } else console.log('SKIP shader lifecycle checks: the test browser has no usable WebGPU adapter');
 } finally {
   await browser.close();

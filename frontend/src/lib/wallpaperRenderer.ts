@@ -39,6 +39,10 @@ type FrameParams = Omit<NativeFrameParams, 'pointer'> & {
 // These read the pointer position even while it is inactive.
 const IDLE_POINTER_OFFSCREEN = new Set(['Boids', 'PixelSort']);
 
+// Shaders with this prop get the canvas width in CSS pixels: core's logicalViewportSize
+// is scaled by the device pixel ratio.
+const CSS_WIDTH = 'cssWidth';
+
 const IMAGE = 'image';
 const LOADERS: Record<string, () => Promise<{ componentDefinition: unknown }>> = {
   ...WALLPAPER_SHADER_LOADERS,
@@ -128,6 +132,7 @@ export function createWallpaperRenderer(
   let resolution = 0;
   let synced = Promise.resolve();
   let pointer = { x: 0.5, y: 0.5, seen: false };
+  let cssWidth = canvas.getBoundingClientRect().width;
   const running = () => current.animated && current.speed > 0 && !current.paused && !document.hidden;
   const following = () => current.followsMouseCursor || current.followsKeyboardInput;
 
@@ -177,12 +182,15 @@ export function createWallpaperRenderer(
         : undefined,
     };
   };
-  const uniformValues = (node: Pick<LayerNode, 'shader' | 'source' | 'layer'>) =>
-    wallpaperUniformValues(
+  const uniformValues = (node: Pick<LayerNode, 'shader' | 'source' | 'layer'>) => {
+    const values = wallpaperUniformValues(
       node.shader,
       node.layer.params,
       node.source.usesPointer ? 1 : current.animated ? current.speed : 0,
     );
+    if (CSS_WIDTH in node.source.props) values[CSS_WIDTH] = cssWidth;
+    return values;
+  };
   const metadataOf = (layer: ShaderLayer, renderOrder: number) => ({
     blendMode: BLEND_MODES[layer['blend-mode']] ?? 'normal',
     opacity: layer.opacity,
@@ -354,8 +362,15 @@ export function createWallpaperRenderer(
     if (initialized && !disposed) void sync();
   };
   const resize = () => {
-    if (disposed || !renderer.isInitialized()) return;
+    if (disposed) return;
     const rect = canvas.getBoundingClientRect();
+    cssWidth = rect.width;
+    for (const node of nodes) {
+      if (!(CSS_WIDTH in node.source.props) || node.values[CSS_WIDTH] === cssWidth) continue;
+      renderer.updateUniformValue(node.id, CSS_WIDTH, cssWidth);
+      node.values[CSS_WIDTH] = cssWidth;
+    }
+    if (!renderer.isInitialized()) return;
     renderer.resize(rect.width, rect.height);
     renderer.setResolutionScale(current.resolution);
     void paint().catch(onUnavailable);

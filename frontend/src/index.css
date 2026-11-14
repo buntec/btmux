@@ -40,6 +40,28 @@
   font-weight: 400;
 }
 
+/* Native color input drawn as a plain swatch. */
+.btm-color-swatch {
+  appearance: none;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.btm-color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.btm-color-swatch::-webkit-color-swatch {
+  border: var(--border-width) solid var(--color-border-emphasized);
+  border-radius: var(--radius-inner);
+}
+.btm-color-swatch::-moz-color-swatch {
+  border: var(--border-width) solid var(--color-border-emphasized);
+  border-radius: var(--radius-inner);
+}
+
 /* btmux wordmark: Geist Pixel only shows its grid at large sizes. The
    variables size SideNavHeading's inner heading. */
 .btm-brand {

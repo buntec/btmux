@@ -154,7 +154,7 @@ setup:
 
 # Refresh wallpaper parameter metadata from the pinned Shaders dependency.
 sync-shaders:
-    node scripts/sync-shaders.mjs
+    bun scripts/sync-shaders.mjs
 
 # Clean build artifacts
 clean:
@@ -247,7 +247,7 @@ test:
 
 # Frontend unit tests
 test-frontend:
-    node scripts/sync-shaders.mjs --check
+    bun scripts/sync-shaders.mjs --check
     cd frontend && bun test
 
 # Generate the TypeScript wire contract from Rust
